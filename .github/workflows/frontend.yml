@@ -2,6 +2,12 @@ name: frontend
 
 on:
   push: { branches: [main, dev] }
+  # Publishing a GitHub Release is what stamps the version: vite.config.js reads
+  # `git describe --tags`, and a pushed tag alone never triggers this workflow (on.push
+  # filters branches only). `published` fires for a brand-new release and for publishing a
+  # draft -- editing an already-published release fires `edited` instead, which is
+  # deliberately NOT wired here: cut a new release per version rather than rewriting one.
+  release: { types: [published] }
   pull_request:
   merge_group:
 
@@ -166,19 +172,23 @@ jobs:
         run: node scripts/ci/release-gate.mjs
 
   # Cloudflare Pages deploy — needs only release-gate (the single fail-closed check across
-  # frontend-unit-build/relayer/keeper/soroban/playwright); only pushes (never PRs from forks).
-  # main -> Production (protected environment); any other pushed branch -> Preview (aliased by
-  # branch name). Needs repo secrets: CLOUDFLARE_API_TOKEN (Pages:Edit), CLOUDFLARE_ACCOUNT_ID.
-  # Runtime env vars/secrets are NOT set here -- they live in the Pages project
-  # (Settings -> Variables and Secrets, per Production/Preview environment).
+  # frontend-unit-build/relayer/keeper/soroban/playwright); pushes and published releases only
+  # (never PRs from forks). main -> Production (protected environment); any other pushed branch
+  # -> Preview (aliased by branch name). Needs repo secrets: CLOUDFLARE_API_TOKEN (Pages:Edit),
+  # CLOUDFLARE_ACCOUNT_ID. Runtime env vars/secrets are NOT set here -- they live in the Pages
+  # project (Settings -> Variables and Secrets, per Production/Preview environment).
+  #
+  # A published release always deploys Production: its ref is refs/tags/<tag>, so ref_name is the
+  # tag and the main check below cannot match. That second Production deploy is the point -- the
+  # merge to main shipped the code, publishing the release is what re-stamps the version banner.
   deploy:
     needs: release-gate
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'release'
     runs-on: ubuntu-latest
     concurrency:
       group: deploy-${{ github.ref }}
       cancel-in-progress: false
-    environment: ${{ github.ref_name == 'main' && 'production' || 'preview' }}
+    environment: ${{ (github.event_name == 'release' || github.ref_name == 'main') && 'production' || 'preview' }}
     permissions:
       contents: read
       deployments: write
@@ -187,6 +197,12 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          # vite.config.js stamps the Settings > About version from `git describe --tags`.
+          # The default shallow checkout fetches no tags, so the deployed build would
+          # silently read 'dev'. Tags only -- no need for full history.
+          fetch-tags: true
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -211,4 +227,6 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: frontend
-          command: pages deploy ./dist --project-name=vibing-farmer --branch=${{ github.ref_name }}
+          # On a release, ref_name is the tag (v1.15.0-beta) — passing that would alias the
+          # deploy as a preview branch instead of updating Production, so pin it to main.
+          command: pages deploy ./dist --project-name=vibing-farmer --branch=${{ github.event_name == 'release' && 'main' || github.ref_name }}

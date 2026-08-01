@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -12,6 +13,25 @@ import onrampSessionProxy from './api/onramp-session.js'
 // Repo root (parent of frontend/) — needed below so the dev server's fs.allow boundary covers
 // frontend/src/stellar/vaultReads.js's cross-package import of keeper/src/apr.js.
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+// ponytail: the newest reachable git tag IS the version — no version field to hand-edit, no
+// release bot. `git tag vX.Y.Z-beta` is the single bump. Shallow clones and tarball builds have
+// no tags, so fall back to 'dev' rather than baking a stale literal (CI must checkout with
+// fetch-depth: 0, see .github/workflows/frontend.yml). Upgrade path: if release notes ever need
+// generating too, add release-please — the commits are already Conventional Commits.
+const appVersion = (() => {
+  try {
+    return execFileSync('git', ['describe', '--tags', '--abbrev=0'], {
+      cwd: repoRoot,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+    })
+      .trim()
+      .replace(/^v/, '')
+  } catch {
+    return 'dev'
+  }
+})()
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '') // all vars (incl. non-VITE server-side)
@@ -35,8 +55,10 @@ export default defineConfig(({ mode }) => {
   // fail-closed passthrough discipline as the single-value vars above. Cloudflare Pages
   // (_pagesAdapter.js) already forwards ALL context.env keys unconditionally; only this
   // hand-rolled `vite dev` allowlist needed the three new keys added.
-  if (env.SOROBAN_ROUTER_ADDRESSES) process.env.SOROBAN_ROUTER_ADDRESSES = env.SOROBAN_ROUTER_ADDRESSES
-  if (env.SOROBAN_AGENT_WASM_HASHES) process.env.SOROBAN_AGENT_WASM_HASHES = env.SOROBAN_AGENT_WASM_HASHES
+  if (env.SOROBAN_ROUTER_ADDRESSES)
+    process.env.SOROBAN_ROUTER_ADDRESSES = env.SOROBAN_ROUTER_ADDRESSES
+  if (env.SOROBAN_AGENT_WASM_HASHES)
+    process.env.SOROBAN_AGENT_WASM_HASHES = env.SOROBAN_AGENT_WASM_HASHES
   if (env.SOROBAN_TOKEN_MESSENGER_ADDRESS)
     process.env.SOROBAN_TOKEN_MESSENGER_ADDRESS = env.SOROBAN_TOKEN_MESSENGER_ADDRESS
 
@@ -76,6 +98,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), apiProxyPlugin],
     root: '.',
+    define: { 'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion) },
     build: {
       outDir: 'dist',
       rollupOptions: {
