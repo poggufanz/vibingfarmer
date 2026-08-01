@@ -58,6 +58,9 @@ STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 
 # See deployments/stellar-testnet.json for live values
 SOROBAN_VAULT_ADDRESS=CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77
+SOROBAN_ROUTER_ADDRESSES=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE,CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
+SOROBAN_AGENT_WASM_HASHES=1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1,d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba
+# Compatibility fallback for older readers; the plural V2,V1 list above is canonical.
 SOROBAN_ROUTER_ADDRESS=CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
 ```
 
@@ -84,8 +87,9 @@ Optional: **`/farm`** cross-chain flow needs `relayer/` running + ZeroDev/CCTP e
 ## 4. Contracts (WSL only)
 
 ```bash
-wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && stellar contract build"
-wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo test"
+# Replace <repo> with this checkout's WSL path.
+wsl -e bash -lc "cd /mnt/<drive>/<repo>/soroban && stellar contract build"
+wsl -e bash -lc "cd /mnt/<drive>/<repo>/soroban && cargo test"
 ```
 
 Deploy/seed scripts live under `scripts/soroban/` (e.g. `deploy-seed.sh`). Never run `cargo`/`stellar` from bare PowerShell.
@@ -125,9 +129,9 @@ If a doc still says “1Shot”, treat it as historical unless it is this file o
 ## 7. Tests & lint
 
 ```bash
-cd frontend && npm test && npm run lint:ci && npm run build
+cd frontend && npm run lint:ci && npm test && npm run build
 
-wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo test"
+wsl -e bash -lc "cd /mnt/<drive>/<repo>/soroban && cargo test"
 ```
 
 `npm run lint:ci` is what CI actually gates on — ESLint checked against the warning-fingerprint
@@ -150,170 +154,134 @@ Both, plus everything else standing between this branch and a release, are in se
 
 ## 8. Release prerequisites (read before deploying anything)
 
-This branch is a **partial execution** of the IQ Alter Remediation plan — 8 of its 14 tasks landed,
-F-01..F-11 closure is partial, and Router V3 / agent V4 and everything that depends on them were not
-built; see 8.2 for exactly what that means in practice.
+All implementation tasks in the IQ Alter Remediation plan have now been attempted and landed, but
+the plan is **not complete**: Task 13 confirm-list item 2 remains `NOT VERIFIED`. A fresh Router
+V3 permission still stops at the production dispatch boundary, so the distinct-run, zero-confirm
+reuse seam has not been proved. W4/Protect activation and every release action remain separate
+authority.
 
-Local suites being green is **not** release readiness. This section is the honest state of the
-branch, split into what ships, what was never built, and what still needs an explicit human
-decision. Nothing in the "needs authority" list has been done.
+Local checks are evidence about this checkout, not release readiness. Nothing in the "needs
+authority" list below was performed by this review.
 
-### 8.1 Built and locally verified
+### 8.1 Current local verification evidence
 
-`frontend` (`lint:ci`, `npm test`, `npm run build`), `relayer` (`npm test`), `keeper` (`npm test`)
-and `node --test scripts/ci/release-gate.test.mjs` all pass on a Linux dev box. That exercises the
-Stellar grant/relay path, the Base mandate + durable-intent path, the agent-index D1 receipt and
-base-child stores, the relayer association outbox, the money/valuation layer and the CI gate's own
-self-test.
+The Task 14 rerun uses the commands in section 7 serially. On this Windows checkout:
 
-Green does not mean complete, and the Base leg specifically is **not** fully covered by the above:
-section 8.8 records one open money-custody defect and one parked coverage gap that sit inside that
-same Base mandate/burn path. Read 8.8 before treating the Base leg as verified.
+* `npm run lint:ci` stays within the checked-in warning baseline.
+* `npm test` exits 1 with the accepted Windows baseline: **exactly 7 failures in 5 files** —
+  two approval-view CRLF substitutions, two extension-brand symlink `EPERM` failures, one
+  brand-manifest SHA drift, and two CSS CRLF parser failures. This is baseline equivalence, **not
+  PASS**.
+* `npm run build`, the relayer suite, and the keeper suite pass.
+* WSL `stellar contract build`, `cargo test`, and
+  `cargo clippy --all-targets -- -D warnings` pass from this checkout's `soroban/`
+  directory. Cargo was not run natively.
 
-### 8.2 Not built — do not read these as "pending verification"
+These checks exercise source and local artifacts only. They do not prove a live deployment,
+production D1 schema, worker activation, repository settings, or a release.
 
-**Router V3 and agent-account V4 do not exist.** No `grant_v3`, `pull_v3`, `permission_grant` or
-per-execution scope entry point exists anywhere under `soroban/contracts/`. The live contracts are
-still the V2 generation recorded in `deployments/stellar-testnet.json`. Consequently these are also
-absent, not merely untested: the reviewed **Protect grant** that would read a V3 remaining-budget
-view, the `AllocationReceiptV2` **producer-to-render custody** chain, and **lease-owned recovery**
-(no `selectRecoveryAction`, no `requestRecovery`). There is no V3/V4 contract to deploy, no new WASM
-hash to record, and no deployment JSON to update.
+### 8.2 Source exists; V3/V4 is not live
 
-**Soroban build/test/clippy is UNVERIFIED on this branch**, separately from the above: the commands
-in section 4 are WSL-only and were not run. The CI `soroban` job (pinned Rust 1.91.0) is the first
-place they will execute. Treat a green local checkout as saying nothing about the contracts.
+Router V3 and agent-account V4 exist in source and local tests. The source contains `grant_v3`,
+`pull_v3`, `permission_grant`, `remaining_budget`, V3 replay/spend accounting,
+and the V4 `per_execution_max`/owner-withdraw constraints. A local contract build produces
+verification artifacts only.
 
-**Relayer outbox dead-letters are not observable in the product.** The relayer stores and
-dead-letters correctly, and `GET /status/:jobId` returns `associationDelivery`, but
-`crossChainFarm.js` `runFarmFlow` drops that field and `app.jsx` never passes it to
-`readOwnerMoney`. The money layer therefore reports `associationCoverage: 'unknown'` and a null
-complete-Base total for any owner with a Base child. That is deliberate fail-closed behaviour — the
-proven Stellar subtotal and the known Base subtotal are still retained and rendered — but a
-user-visible dead-letter needs `associationDelivery` wired through the poll path first.
+No reviewed V3/V4 **release artifact** or hash is registered, no V3/V4 WASM was uploaded, no
+contract was deployed, no V3 address/schema was registered, and no live path was activated.
+`submitGrantV3` exists, but the registered router schemas still contain only live V2 and V1;
+production fresh mode independently throws `VF_V3_FRESH_GRANT_UNSUPPORTED`. The live relay and
+receipt-authority order remains:
 
-### 8.3 Relayer production boot contract (new — get the order right)
+```env
+SOROBAN_ROUTER_ADDRESSES=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE,CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
+SOROBAN_AGENT_WASM_HASHES=1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1,d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba
+SOROBAN_ROUTER_ADDRESS=CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
+```
 
-In `production`/`staging` the relayer refuses to open its listener until every one of these holds.
-It is fail-closed by design, so a missed step looks like a boot failure, not silent degradation.
+The singular V1 value is compatibility fallback; it is not the canonical production relay list.
+Do not add a V3 address or hash until an authorized deployment produces one.
 
-1. **D1 migrations `0005` and `0006` applied first.** Boot probes
-   `POST /api/agent-index?action=base-child-ready` and demands `ready:true`, `schemaVersion:1` and
-   both the `executionReceipts` and `baseChildIntents` stores present. Migrations before relayer,
-   never the other way round.
-2. **`AGENT_INDEX_REPORTER_SECRET` set identically on both sides** — the Pages env and the relayer
-   VM. It is the Bearer credential for every receipt/intent/lifecycle write and for that same boot
-   probe. Server-side only; the browser never receives it.
-3. **`RELAYER_DB_PATH` set** (`config.mjs` `need()`s it in production). It is also what starts the
-   association outbox delivery worker; without it `POST /farm` answers 503.
-4. **`RELAYER_PUBLIC_ORIGIN` and `AGENT_INDEX_REPORTER_URL` over HTTPS**, and the public origin must
-   be an origin only — no credentials, path, query or fragment.
-5. **Deployment facts must match.** The relayer loads `deployments/stellar-testnet.json` and
-   `deployments/base-sepolia.json` at config time and refuses to start if a production env mirror
-   disagrees with the tracked fact (including every `baseMandatePolicy` address and selector). Set
-   env values from those files; never the reverse, and never source secrets from them.
+Stellar receipt/recovery is implemented and tested: authenticated challenges, fresh ordered-router
+authority reads, durable receipts, one-use proofs, leases, recovery selection, and guarded
+pull/deposit/poll execution all exist. Every receipt that touches Base deliberately returns
+`blocked-reconcile`; see section 8.8.
 
-### 8.4 Needs explicit authority — none of this has been done
+### 8.3 D1 and relayer production boot contract
 
-* Apply D1 `0005` then `0006` per environment, with a backup and a post-migration schema check.
-* Set `RELAYER_DB_PATH`, reporter credentials, `RELAYER_PUBLIC_ORIGIN` and deployment-fact values in
-  the target environment.
-* Enable the relayer outbox worker and validate its retry/dead-letter behaviour against a
-  **non-production** reporter.
-* Push, merge, or enable deploy after CI `release-gate` is green.
-* Deploy contracts. (Nothing to deploy on this branch — see 8.2 — but the authority requirement
-  stands for any contract change.)
+Migrations `0005_execution_receipts.sql` and `0006_base_child_intents.sql` exist and run in
+local SQLite-backed repository tests. That does **not** mean they have been applied to production.
 
-### 8.5 Two gate settings that live in repo settings, not in YAML
+In `production`/`staging` the relayer refuses to open its listener until these hold:
 
-`release-gate` is only *described* as the required check by `.github/workflows/frontend.yml`. Until
-someone does both of these, "one required check" is aspirational:
+1. Apply D1 `0005` then `0006`, with a backup and a post-migration schema check.
+   The boot probe requires `ready:true`, schema version 1, and both receipt/Base-child stores.
+2. Set the same server-only `AGENT_INDEX_REPORTER_SECRET` on Pages and the relayer.
+3. Set `RELAYER_DB_PATH`; production requires it and it backs jobs, mandates, idempotency,
+   and the association outbox.
+4. Use HTTPS for `RELAYER_PUBLIC_ORIGIN` and `AGENT_INDEX_REPORTER_URL`; the public
+   origin must contain no credentials, path, query, or fragment.
+5. Keep tracked deployment facts canonical. The loader validates the tracked Stellar/Base JSON,
+   including the pinned Base mandate policy; supported production env mirrors must equal their
+   tracked values. Deployment JSON never supplies secrets.
 
-* Register `release-gate` as the **required status check** in branch protection.
-* Create and protect the `production` GitHub Environment. `frontend.yml` names it; naming does not
-  create it. Note that adding required reviewers turns every `main` deploy into a manual approval.
+### 8.4 Needs explicit authority — none of this was done
 
-### 8.6 Known gate blocker: visual baselines have never run on a runner
+* Build and approve V3/V4 release artifacts; upload, deploy, register, and activate them only under
+  separate authority. W4 must wire Protect activation, fresh-ledger reads, current grant readers,
+  `submitGrantV3`, and production dispatch before Task 13 item 2 can be re-run.
+* Apply production D1 `0005` then `0006` with backup and schema verification.
+* Write target-environment secrets/configuration, enable the relayer outbox worker, and validate it
+  against a non-production reporter.
+* Create/protect the `production` GitHub Environment, register `release-gate` as the
+  required status check, push/publish, or enable deployment.
 
-`test:visual` is merge-blocking through the `playwright` job, but the 47 baseline PNGs were frozen on
-a developer box and `frontend/playwright.config.js` sets **no** `maxDiffPixels`/`maxDiffPixelRatio`,
-so they are compared at **zero** tolerance on `ubuntu-latest`. `test:visual` has never executed on a
-runner. **Re-freeze the baselines on the runner image (or a matching container) before making
-`release-gate` the required check.** A diff tolerance is deliberately not the fix — it weakens a real
-guard — and `snapshotPathTemplate`'s missing `{platform}` key buys nothing here, since it resolves to
-`linux` on both hosts.
+Product/marketing claims of “0 repeat” in `prd.md`, `FEATURES.md`, the docs site,
+`AGENTS.md`, and `CLAUDE.md` remain out-of-scope release blockers until the fresh-V3
+seam is live and verified. This setup/operations review does not edit or validate those claims.
 
-### 8.7 Deliberate deviation to know about: the CI Rust pin is 1.91.0
+### 8.5 Two gate settings that live in repo settings, not YAML
 
-The remediation plan mandated `1.82.0`. That is unbuildable: `soroban/Cargo.toml` pins
-`soroban-sdk = "26.1.0"`, whose manifest declares `rust-version = "1.91.0"`, and the
-`wasm32v1-none` target did not exist before Rust 1.84. A 1.82.0 pin would make the `soroban` job —
-and therefore `release-gate`, and therefore every merge — permanently red. `1.91.0` is the exact
-minimum that satisfies both the SDK and the "pinned, deterministic, not `stable`" intent.
+`.github/workflows/frontend.yml` describes `release-gate` as the intended single required
+check, but repository settings still need to register it and create/protect the `production`
+GitHub Environment. Naming an environment in YAML does not create it.
 
-### 8.8 Open defect and parked coverage gap in the Base leg
+### 8.6 Visual baselines still need runner evidence
 
-Both of these sit in the Base mandate/burn path that section 8.1's green suites otherwise exercise.
+`test:visual` is merge-blocking through `playwright`, but the 47 baseline PNGs were
+frozen on a developer box and the config has no pixel-difference tolerance. Re-freeze them on the
+runner image (or a matching container) before making `release-gate` required. No tolerance
+was added by this review.
 
-**Open defect — the burn path has no indeterminate-outcome signal at all, so a lost burn response is
-reported as confirmed agent custody.**
+### 8.7 CI Rust pin
 
-The mechanism is an absence, not a discarded field. `frontend/src/stellar/relay.js:31-63`
-`submitViaRelay` **returns `null`** — it does not throw — when the `fetch` itself rejects
-(`:39-41`), when the relay answers HTTP 503 (`:43`), and when it answers `configured: false`
-(`:56`). A network timeout, where the CCTP burn may well have reached the chain but the response was
-lost, is exactly that first case. `frontend/src/stellar/agentBurn.js` therefore never enters its
-`catch` for a lost response; it falls through to `:92-93` and throws
-`new Error('deposit_for_burn: relay returned no response')` — a plain `Error` with no machine-readable
-tag. (The `catch` at `:89-91` fires only for a `RelayRejectedError`, which `relay.js:8-14` defines with
-just `.name` and `.status` — the relay was *reachable and definitely refused*, a determinate failure,
-not this one.)
+CI pins Ubuntu 24.04, Rust 1.91.0, and `stellar-cli` 26.1.0. Rust 1.91.0 is the
+`soroban-sdk` 26.1.0 minimum; the remediation plan's 1.82.0 cannot build this tree.
 
-Downstream, `frontend/src/baseLeg.js:330` decides certainty from
-`failureEvidence.code === 'VF_SUBMISSION_UNKNOWN'`. Nothing in the burn path ever sets that code: its
-only producer is `frontend/src/stellar/activeAccount.js:10-22`, and the one `stage: 'burn'` call site
-(`frontend/src/orchestrator.js:154`) fires solely on an **active-account/epoch change** *after*
-`runAgentBurn` returned — never on a relay outcome, and unreachable when `runAgentBurn` threw. So for
-every burn-stage transport failure the tag is absent by construction, `submissionUnknown` is false,
-and with `fundsPulled` already true (`baseLeg.js:257`) `baseLeg.js:358-359` reports
-`{ location: 'agent', confirmed: true }`. **`baseLeg.js`'s indeterminacy branch cannot be reached by
-any relay outcome on the burn path** — it exists, and the burn path cannot feed it.
+### 8.8 Base recovery is deliberately blocked pending durable evidence
 
-Concretely, for an operator: **the USDC can be in CCTP transit while the dashboard states the agent
-still holds it.** Under a lost-response timeout, treat any agent-custody claim on a Base allocation as
-unproven and reconcile against the CCTP burn on-chain and the relayer's own job status before acting
-on it — in particular, do not re-run the allocation on the assumption nothing moved. What the product
-*does* get right: `baseLeg.js:355` still surfaces `strandedFunds { pulled: true, bridgeAgentAddress }`,
-so the recovery handle for an `owner_withdraw` sweep is present. It is the `confirmed: true` that
-overstates what is known, not the location.
+The stale burn-custody defect described by older revisions is fixed: the client and server relays
+now use typed `RelaySubmissionUnknownError` evidence, `runAgentBurn` preserves it, and
+`baseLeg` reports unknown/unconfirmed custody for an ambiguous submission. The mounted App
+pre-grant mandate producer also has a producer-faithful regression test.
 
-This is an **open defect awaiting its own task**, not a known-and-accepted limitation. The fix is not
-to preserve fields — there are none to preserve. The follow-up task must **create** the indeterminate
-signal for the cases that currently produce an untagged `Error`: a `null`/no-response return and a
-post-submit refusal. `frontend/src/stellar/grant.js:419,426` already does exactly this for
-`stage: 'pull'` via `activeAccountSubmissionUnknown`, so the pattern to copy is in the tree.
+Stellar recovery is automated only from durable receipt evidence. Base/CCTP recovery remains
+manual: any Base-touched receipt returns `blocked-reconcile`. Before mainnet cross-chain
+money movement, these three blockers must land in order:
 
-**Provenance, since it changes who owns the fix:** `agentBurn.js` was **not touched** by the work that
-found this — `git log ab67f6f..HEAD -- frontend/src/stellar/agentBurn.js` is empty, and the re-wrap
-arrived in `3d4cf26` (2026-07-21), before that work began. It is pre-existing, and finding it was
-incidental to verifying something else.
+1. **Persist the CCTP nonce and attestation message at burn time.** The watcher currently persists
+   only pending/minted job status around polling; the nonce/message needed to resume the same mint
+   is not durable.
+2. **Provide a relayer → frontend/API/D1 read path for durable Base evidence.** The UserOperation
+   hash is captured only inside relayer job state, and no recovery reader exposes the exact
+   UserOperation, vault transaction/event, or resulting vault-position evidence.
+3. **Expand the recovery-lease identity space to Base child ids, or unify the identity spaces.**
+   Stellar leases key on execution identity while Base children key on binding/allocation/child
+   identity; the selector cannot safely claim a Base child movement today.
 
-**Parked coverage gap — the pre-grant Base mandate re-check is untested.**
-`runOrchestratorDispatch` (`frontend/src/app.jsx:3176`) re-checks each Base allocation's mandate
-immediately before the Stellar grant, and has **zero** test references — no test mounts `App` with a
-Base allocation, so the block never executes under test. The production code is believed correct on
-inspection, and the same "a revoked mandate blocks the flow" gate is covered one layer down at
-`frontend/src/baseLeg.js:190-210`, which does have tests. So the untested code duplicates a
-covered guarantee rather than being the only thing standing behind it. Parked deliberately: closing it
-needs a new `App`-mounting integration test, judged disproportionate to the risk. Assessed as **not
-merge-blocking** — but it is untested code on a money path, so weigh it yourself rather than taking
-that assessment on trust.
-
-**Provenance, and unlike the defect above it is not pre-existing:** this gate was *added* by the same
-recent work, in commit `2e04999`. Verified by bisect — `baseMandateRequiresReview` is absent from
-`app.jsx` at that work's base commit and at the three commits before `2e04999`, and present after. So
-this is newly written money-path code that shipped without a test, not an old gap inherited from
-earlier work.
+The relayer association outbox still persists retries/dead letters and `GET /status/:jobId`
+returns `associationDelivery`, but `crossChainFarm.js` drops that field before the
+frontend money/recovery readers. Wiring that read path is product work, not Task 14 work.
 
 ***
 

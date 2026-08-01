@@ -32,8 +32,13 @@ SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 SOROBAN_VAULT_ADDRESS=CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77
 
-# funding_router for the one-popup grant flow; unset = router relaying disabled
-# (relay then sponsors only router.grant / router.pull on this exact contract)
+# Canonical production relay and receipt-authority lists, in deployment-fact order: live V2 first,
+# then V1 compatibility. Production rejects a different order or value. These agent WASM hashes
+# are the corresponding live bridge/deposit generations; there is no deployed V3/V4 release hash.
+SOROBAN_ROUTER_ADDRESSES=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE,CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
+SOROBAN_AGENT_WASM_HASHES=1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1,d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba
+
+# Singular V1 compatibility fallback for older deployments/readers. The plural V2,V1 list wins.
 SOROBAN_ROUTER_ADDRESS=CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
 
 # exit_router for the one-popup full-exit sweep (VF Wallet Task 5); unset = sweep relaying

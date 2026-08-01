@@ -105,7 +105,8 @@ Primary chain: Stellar / Soroban. Optional cross-chain leg to Base via Circle CC
 | Contract                                    | Address                                                    |
 | ------------------------------------------- | ---------------------------------------------------------- |
 | Autofarm vault (live deposit, `vfVLT` 7-dp) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` |
-| Funding router (single-signature grant)     | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` |
+| Funding router V2 (current app)             | `CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE` |
+| Funding router V1 (relay compatibility)     | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` |
 | Registry                                    | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
 | Blend USDC token (7-dp)                     | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
 | Blend v2 pool                               | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
@@ -190,7 +191,9 @@ STELLAR_RELAYER_SECRET=S...                       # fee-bump sponsor (fund on te
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 SOROBAN_VAULT_ADDRESS=CDWHNHIH…KM77               # autofarm vault
-SOROBAN_ROUTER_ADDRESS=CCEWWRQV…CYE5              # funding_router
+SOROBAN_ROUTER_ADDRESSES=CB675TTS…TRSE,CCEWWRQV…CYE5  # canonical V2,V1 order
+SOROBAN_AGENT_WASM_HASHES=1fdbe175…fbe1,d61ceaaa…a2ba # matching ordered hashes
+SOROBAN_ROUTER_ADDRESS=CCEWWRQV…CYE5              # singular V1 compatibility fallback
 ALLOWED_ORIGIN=https://your-project.pages.dev     # /api/* origin allowlist
 DEEPSEEK_API_KEY=sk-...                           # optional AI fallback (BYOK-first)
 TAVILY_API_KEY=tvly-...                           # optional market search
@@ -200,9 +203,12 @@ Leave host AI keys unset for a lockdown deploy (users bring their own keys).
 
 ### Contracts
 
+Contract commands are WSL-only on Windows. From a WSL shell, change to this checkout's
+`soroban/` directory (for example `/mnt/<drive>/<path-to-repo>/soroban`), then run:
+
 ```bash
-cd soroban
-stellar contract build                       # 6 wasms
+cd /mnt/<drive>/<path-to-repo>/soroban
+stellar contract build
 cargo test                                   # unit + integration + security drills
 cargo clippy --all-targets -- -D warnings
 ```
@@ -226,7 +232,7 @@ npm run pages:dev              # build + wrangler pages dev (Functions locally)
 
 `.github/workflows/frontend.yml` triggers on every `push` to `main`/`dev`, every `pull_request`, and `merge_group` (no narrowing `types`/`paths` filters — the gate always evaluates). Five stable jobs always report a result: `frontend-unit-build` (`npm ci`, `lint:ci`, `format:check`, `brand:check`, unit tests, `build`, `build:ext`, `manifest:check`, banned-string scan), `relayer`, `keeper`, `soroban` (pinned Ubuntu 24.04 + Rust 1.91.0 + `stellar-cli` 26.1.0 — the SDK's MSRV, not the plan's stated 1.82.0 — `stellar contract build`, `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`), and `playwright` (`test:visual`, uploads the report/traces on failure). `release-gate` (`if: always()`, `needs` on all five, evaluated by `scripts/ci/release-gate.mjs`) is the intended single required check — it fails if any job is anything other than `success`, including skipped. `deploy` needs only `release-gate`, so no other job can be bypassed to reach Cloudflare Pages: `dev` → preview, `main` → the `production` GitHub Environment, with a non-secret readiness check before the traffic-shifting `wrangler pages deploy` step and serialized (non-cancelling) concurrency per ref.
 
-Two of those guarantees are repo settings, not YAML, and are **not yet in place**: `release-gate` still has to be registered as the required status check in branch protection, and the `production` environment has to be created and protected — `frontend.yml` only names it. The `playwright` job is also merge-blocking on 47 visual baselines that were frozen on a developer box and have never run on a runner, at zero pixel tolerance. See [GETTING\_STARTED.md](GETTING_STARTED.md) section 8 for the full release-prerequisite list, including what this branch has *not* built and the relayer's production boot ordering (D1 `0005`/`0006` before the relayer, never after).
+Two of those guarantees are repo settings, not YAML, and are **not yet in place**: `release-gate` still has to be registered as the required status check in branch protection, and the `production` environment has to be created and protected — `frontend.yml` only names it. The `playwright` job is also merge-blocking on 47 visual baselines that were frozen on a developer box and have never run on a runner, at zero pixel tolerance. See [GETTING\_STARTED.md](GETTING_STARTED.md) section 8 for the full release-prerequisite list, including source-only V3/V4 activation, the three Base-recovery evidence blockers, and the relayer's production boot ordering (D1 `0005`/`0006` before the relayer, never after).
 
 ### Directory structure
 
