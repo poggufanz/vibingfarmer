@@ -35,6 +35,13 @@ import {
   assertActiveAccountBoundary,
 } from './stellar/activeAccount.js'
 import { getActiveAccount } from './stellar/walletKit.js'
+// Task 6 chunk C1 -- the real AllocationReceiptV2 evidence producer (Chunk A) and its authenticated
+// transport (Chunk B), both closed/reviewed. Neither import pulls in `./stellar/config.js` or
+// `./stellar/agentCache.js` (allocationReceipt.js has NO imports at all; agentIndexReceiptClient.js
+// only reaches `@stellar/stellar-sdk` + the `buffer` polyfill) -- safe against the small mocked
+// export sets orchestrator.baseleg.test.js gives those two modules (this file's own note above).
+import { createAllocationReceipt, appendPhase, confirmCustody } from './strategy/allocationReceipt.js'
+import { postReceiptEvidence } from './stellar/agentIndexReceiptClient.js'
 // NOTE (Strategy Task 7): every OTHER new dependency this file needed for the permission-locked
 // path (`./strategy/reusePreflight.js`, `./stellar/grantReceiptStore.js`, and `readConfirmedLedger`
 // from `./stellar/grant.js`, plus `loadCachedAgents`/`SOROBAN_FUNDING_ROUTER_ADDRESS`) is imported
@@ -53,6 +60,11 @@ const SCOPE_TTL_SECONDS = 3600
 const BASE_UNIT = 10 ** SOROBAN_DECIMALS // 1 VFUSD = 10_000_000 (7-dp)
 // Gap between serial worker dispatches — keeps the relay off its per-IP rate limit.
 const DISPATCH_INTERVAL_MS = 2000
+// Task 6 chunk C1 -- the only network the Stellar dispatch loops below ever run against. Mirrors
+// planModel.js's own STELLAR_NETWORK_ID and executionReceipts.js's SUPPORTED_NETWORKS literal
+// (the server accepts no other value) -- not invented here, just the same constant every other
+// Stellar-side producer in this repo already hardcodes.
+const RECEIPT_NETWORK_ID = 'stellar-testnet'
 
 /** hex string (0x-prefixed or not) -> 32-byte Uint8Array, for a reviewed AgentInit's
  * `mintRecipient` (reusePreflight.js stores it hex-encoded via `bytesToHex`). */
@@ -82,6 +94,87 @@ function splitUnitsByRatio(totalUnits, ratios) {
   const shares = ratios.map((r) => (totalUnits * scale(r)) / SCALE)
   const remainder = localTotalUnits - shares.reduce((a, b) => a + b, 0n)
   return shares.map((s, i) => (remainder > 0n && BigInt(i) < remainder ? s + 1n : s))
+}
+
+/**
+ * Task 6 chunk C1 -- per-allocation `AllocationReceiptV2` evidence, shared by
+ * `dispatchPermissioned`'s plain worker loop and `dispatchConfirmedMixed`'s Stellar leg (the two
+ * loops this chunk's brief scopes to; the Base leg keeps its own, separate custody handling via
+ * `bindBaseLegCustodyDeps` above, untouched). Builds the receipt in-memory with allocationReceipt.js's
+ * pure producer and best-effort posts each mutation via agentIndexReceiptClient.js's
+ * `postReceiptEvidence`.
+ *
+ * Evidence TRANSPORT never gates or reverses the underlying pull/deposit outcome: a failed POST
+ * (network error, proof rejected, version conflict, an unreachable agent-index, ...) is reported
+ * via `onEvent('receipt-evidence-failed', ...)` and swallowed, never thrown -- the
+ * `Promise.allSettled` semantics for the allocation itself must never depend on whether the
+ * agent-index happened to answer. `.custody(evidence)` is a SEPARATE call from `.record(attempt)`
+ * so a caller always decides custody from the pull/deposit's OWN on-chain evidence
+ * (`txSuccess`/`matchingEvent`), never from whether the POST itself succeeded -- "transport
+ * acceptance is never final custody" (brief). `sessionKey` is passed straight to
+ * `postReceiptEvidence` as the signer (it only ever calls `.sign()` on it, per Chunk B's own
+ * contract) -- never spread into the `evidence`/`intent` bodies this function builds, so a session
+ * secret can never reach the wire through this path.
+ * @param {{runId:string, allocationId:string, owner:string, agentAddress:string, sessionKey:object,
+ *   worker:string, amount:{token:string,units:string,decimals:number}, onEvent?:Function}} p
+ */
+function createEvidenceRecorder({
+  runId,
+  allocationId,
+  owner,
+  agentAddress,
+  sessionKey,
+  worker,
+  amount,
+  onEvent,
+}) {
+  let receipt = createAllocationReceipt({
+    networkId: RECEIPT_NETWORK_ID,
+    // Deterministic per (run, allocation) -- this dispatch path never retries an allocation
+    // within one call, so this is genuinely the allocation's one execution attempt for this run,
+    // consistent with allocationId's own `${runId}:kind:key` convention (planModel.js).
+    executionId: `${runId}:exec:${allocationId}`,
+    allocationId,
+    owner,
+    runId,
+    worker,
+    agent: agentAddress,
+    intent: { allocationId, kind: 'deposit', allocation: amount },
+    amount,
+  })
+  // Non-negative safe integer, per applyAuthenticatedReceiptMutation's own validation
+  // (executionReceipts.js:212-218); 0 is the required value for the first (INSERT) write
+  // (store.js:505-506's versionConflict check), incremented to whatever the server actually
+  // committed after every accepted write.
+  let expectedVersion = 0
+
+  async function record({ phase, status, evidence }) {
+    receipt = appendPhase(receipt, { phase, status, evidence })
+    const attempt = receipt.attempts[receipt.attempts.length - 1]
+    try {
+      const result = await postReceiptEvidence({
+        activeAccount: owner,
+        agentAddress,
+        sessionKey,
+        body: { expectedVersion, receipt, attempt },
+      })
+      expectedVersion = result.version
+    } catch (error) {
+      onEvent?.('receipt-evidence-failed', { allocationId, phase, status, error: error.message })
+    }
+  }
+
+  function custody(evidence) {
+    receipt = confirmCustody(receipt, evidence)
+  }
+
+  return {
+    record,
+    custody,
+    get receipt() {
+      return receipt
+    },
+  }
 }
 
 /** Bind the two Stellar custody mutations inside baseLeg.js to the same owner capability as the
@@ -633,7 +726,30 @@ export class OrchestratorAgent {
         agent: w.agentAddress,
         queueIndex: i,
       })
+      // Task 6 chunk C1 -- one AllocationReceiptV2 per worker, opened BEFORE either submission so
+      // even a pre-pull failure journals against a real receipt (custody stays at owner/confirmed,
+      // every phase stays not_started) rather than the evidence never existing at all. Constructed
+      // INSIDE the try block (not before it) so even a malformed-input throw from
+      // createAllocationReceipt itself isolates to THIS worker, never the whole loop -- the same
+      // per-worker isolation guarantee every other step in this loop already gets.
+      let pullTxHash = null
+      let evidenceRecorder = null
       try {
+        const receiptAmount = {
+          token: SOROBAN_TOKEN_ADDRESS,
+          units: w.amount.toString(),
+          decimals: SOROBAN_DECIMALS,
+        }
+        evidenceRecorder = createEvidenceRecorder({
+          runId: strategyPlan.runId,
+          allocationId: w.allocationId,
+          owner: this.user,
+          agentAddress: w.agentAddress,
+          sessionKey: w.sessionKey,
+          worker: w.sessionKey?.publicKey,
+          amount: receiptAmount,
+          onEvent: this.onEvent,
+        })
         // Fund only the shortfall case (a reused/aborted agent may already hold the asset) — same
         // rule as the legacy router path. The pull is relayed: the agent's own session key signs
         // the pull auth entry, the relay fee-bumps — zero further wallet signatures either mode.
@@ -656,36 +772,129 @@ export class OrchestratorAgent {
               message: `No proven execution for allocation ${w.allocationId}.`,
             })
           }
-          const res = v3Exec
-            ? await this.runAgentPullV3({
-                permissionId: v3Pull.permissionId,
-                executionId: v3Exec.executionId,
-                agentAddress: w.agentAddress,
-                amount: w.amount,
-                sessionKey: w.sessionKey,
-                router: v3Pull.router,
+          // Persist intent BEFORE submission (brief) -- a crash/reload between this line and the
+          // pull's own outcome still leaves a durable "we were about to pull" fact behind.
+          await evidenceRecorder.record({ phase: 'pull', status: 'submitted', evidence: {} })
+          let res
+          try {
+            res = v3Exec
+              ? await this.runAgentPullV3({
+                  permissionId: v3Pull.permissionId,
+                  executionId: v3Exec.executionId,
+                  agentAddress: w.agentAddress,
+                  amount: w.amount,
+                  sessionKey: w.sessionKey,
+                  router: v3Pull.router,
+                })
+              : await runAgentPull({
+                  agentAddress: w.agentAddress,
+                  amount: w.amount,
+                  sessionKey: w.sessionKey,
+                  activeAccount: this.activeAccount,
+                  getCurrentActiveAccount: this.getCurrentActiveAccount,
+                  signal: this.signal,
+                })
+            this.assertCurrentAccount()
+            if (!res)
+              throw new Error(
+                'The Stellar relay is unavailable. Funds could not be sent to the agent.'
+              )
+            if (res.status !== 'SUCCESS')
+              throw new Error(`The funding router returned ${res.status}.`)
+            pullTxHash = res.hash || null
+            // Every FORWARD confirmCustody must pass amount (brief) -- an exact successful pull
+            // IS the movement to stellar-agent, the one location confirmable on txSuccess alone.
+            await evidenceRecorder.record({
+              phase: 'pull',
+              status: 'confirmed',
+              evidence: { txHash: pullTxHash },
+            })
+            evidenceRecorder.custody({
+              location: 'stellar-agent',
+              txSuccess: true,
+              amount: receiptAmount,
+            })
+          } catch (pullError) {
+            // runAgentPull's own indeterminate-outcome signal (grant.js) -- never reported as a
+            // clean failure; custody stays wherever it already was (owner, since the pull was
+            // never proven), the ambiguity lands in custody.reason.
+            if (pullError?.code === 'VF_SUBMISSION_UNKNOWN') {
+              await evidenceRecorder.record({
+                phase: 'pull',
+                status: 'unknown',
+                evidence: { reason: pullError.message, txHash: pullError.result?.hash ?? null },
               })
-            : await runAgentPull({
-                agentAddress: w.agentAddress,
-                amount: w.amount,
-                sessionKey: w.sessionKey,
-                activeAccount: this.activeAccount,
-                getCurrentActiveAccount: this.getCurrentActiveAccount,
-                signal: this.signal,
+              evidenceRecorder.custody({ location: 'unknown', reason: pullError.message })
+            } else {
+              await evidenceRecorder.record({
+                phase: 'pull',
+                status: 'failed',
+                evidence: { reason: pullError.message },
               })
-          this.assertCurrentAccount()
-          if (!res)
-            throw new Error(
-              'The Stellar relay is unavailable. Funds could not be sent to the agent.'
-            )
-          if (res.status !== 'SUCCESS')
-            throw new Error(`The funding router returned ${res.status}.`)
+            }
+            throw pullError
+          }
         }
+        await evidenceRecorder.record({ phase: 'stellar_deposit', status: 'submitted', evidence: {} })
         const res = await w.execute()
         this.assertCurrentAccount()
-        workerResults.push({ status: 'fulfilled', value: res })
+        if (res?.success) {
+          await evidenceRecorder.record({
+            phase: 'stellar_deposit',
+            status: 'confirmed',
+            evidence: { txHash: res.txHash },
+          })
+          // stellar-vault requires final transaction success PLUS a matching share/deposit event
+          // (brief) -- a confirmed worker.execute() genuinely proved both (verifyMinted polled a
+          // real share increase), never transport acceptance alone.
+          evidenceRecorder.custody({
+            location: 'stellar-vault',
+            txSuccess: true,
+            matchingEvent: true,
+            amount: receiptAmount,
+          })
+        } else if (res?.status === 'unknown') {
+          // worker.js's own indeterminate-outcome signal (Task 6 chunk C1) -- never success, never
+          // a clean failure; custody stays at its last proven location (stellar-agent, if the pull
+          // above confirmed).
+          await evidenceRecorder.record({
+            phase: 'stellar_deposit',
+            status: 'unknown',
+            evidence: { reason: res.error, txHash: res.txHash ?? null },
+          })
+          evidenceRecorder.custody({ location: 'unknown', reason: res.error })
+        } else {
+          await evidenceRecorder.record({
+            phase: 'stellar_deposit',
+            status: 'failed',
+            evidence: { reason: res?.error, txHash: res?.txHash ?? null },
+          })
+          // The deposit tx itself may still have SUCCEEDED even though worker.execute() reports a
+          // failure (shares never minted) -- exercise the ambiguous path honestly (txSuccess:true,
+          // matchingEvent:false) rather than pretending no evidence exists. confirmCustody's own
+          // ladder guarantees this can never advance custody to stellar-vault on transaction
+          // success alone (allocationReceipt.js) -- it only records the ambiguity.
+          if (res?.txSuccess) {
+            evidenceRecorder.custody({
+              location: 'stellar-vault',
+              txSuccess: true,
+              matchingEvent: false,
+            })
+          }
+        }
+        workerResults.push({
+          status: 'fulfilled',
+          value: { ...res, pullTxHash, receipt: evidenceRecorder.receipt },
+        })
       } catch (e) {
-        workerResults.push({ status: 'rejected', reason: e })
+        workerResults.push({
+          status: 'rejected',
+          reason: e,
+          // evidenceRecorder can genuinely be null here -- createEvidenceRecorder itself is what
+          // threw (a malformed-input edge case, never observed in production; every input it
+          // takes is already validated earlier in this method).
+          value: { pullTxHash, receipt: evidenceRecorder?.receipt ?? null },
+        })
       }
       if (i < workers.length - 1) await new Promise((r) => setTimeout(r, DISPATCH_INTERVAL_MS))
       this.assertCurrentAccount()
@@ -695,8 +904,12 @@ export class OrchestratorAgent {
       agentId: workers[i].agentId,
       allocationId: workers[i].allocationId,
       vault: workers[i].vault,
-      success: r.status === 'fulfilled' && r.value?.success,
-      txHash: r.value?.txHash,
+      agentAddress: workers[i].agentAddress,
+      success: r.status === 'fulfilled' && r.value?.success === true,
+      txHash: r.value?.txHash ?? null,
+      pullTxHash: r.value?.pullTxHash ?? null,
+      custody: r.value?.receipt?.custody ?? null,
+      receipt: r.value?.receipt ?? null,
       error: r.reason?.message || r.value?.error,
     }))
     const completed = results.filter((r) => r.success).length
@@ -735,28 +948,120 @@ export class OrchestratorAgent {
         })
         let pullTxHash = null
         let movedToAgent = false
+        // Task 6 chunk C1 -- one AllocationReceiptV2 per worker, opened BEFORE either
+        // submission, constructed INSIDE the try block (not before it) so even a malformed-input
+        // throw from createAllocationReceipt isolates to THIS worker, never the whole loop. Same
+        // reasoning as dispatchPermissioned's plain loop above. `custody` below (CustodyV1:
+        // {location,confirmed,checkedAt}) is the PRE-EXISTING legacy vocabulary
+        // dispatchSummary.js's buildDispatchReceipt already consumes -- left completely
+        // untouched. `allocationReceipt` is the NEW evidence, added alongside it under its own
+        // name so nothing downstream collides.
+        let evidenceRecorder = null
         try {
+          const receiptAmount = {
+            token: SOROBAN_TOKEN_ADDRESS,
+            units: worker.amount.toString(),
+            decimals: SOROBAN_DECIMALS,
+          }
+          evidenceRecorder = createEvidenceRecorder({
+            runId: strategyPlan.runId,
+            allocationId: worker.allocationId,
+            owner: this.user,
+            agentAddress: worker.agentAddress,
+            sessionKey: worker.sessionKey,
+            worker: worker.sessionKey?.publicKey,
+            amount: receiptAmount,
+            onEvent: this.onEvent,
+          })
           const balance = await readTokenBalance(worker.agentAddress)
           this.assertCurrentAccount()
           movedToAgent = balance != null && balance >= worker.amount
           if (balance == null || balance < worker.amount) {
-            const pulled = await runAgentPull({
-              agentAddress: worker.agentAddress,
-              amount: worker.amount,
-              sessionKey: worker.sessionKey,
-              activeAccount: this.activeAccount,
-              getCurrentActiveAccount: this.getCurrentActiveAccount,
-              signal: this.signal,
-            })
-            this.assertCurrentAccount()
-            if (!pulled) throw new Error('The Stellar relay is unavailable.')
-            if (pulled.status !== 'SUCCESS')
-              throw new Error(`The funding router returned ${pulled.status}.`)
-            pullTxHash = pulled.hash || null
-            movedToAgent = true
+            await evidenceRecorder.record({ phase: 'pull', status: 'submitted', evidence: {} })
+            let pulled
+            try {
+              pulled = await runAgentPull({
+                agentAddress: worker.agentAddress,
+                amount: worker.amount,
+                sessionKey: worker.sessionKey,
+                activeAccount: this.activeAccount,
+                getCurrentActiveAccount: this.getCurrentActiveAccount,
+                signal: this.signal,
+              })
+              this.assertCurrentAccount()
+              if (!pulled) throw new Error('The Stellar relay is unavailable.')
+              if (pulled.status !== 'SUCCESS')
+                throw new Error(`The funding router returned ${pulled.status}.`)
+              pullTxHash = pulled.hash || null
+              movedToAgent = true
+              await evidenceRecorder.record({
+                phase: 'pull',
+                status: 'confirmed',
+                evidence: { txHash: pullTxHash },
+              })
+              evidenceRecorder.custody({
+                location: 'stellar-agent',
+                txSuccess: true,
+                amount: receiptAmount,
+              })
+            } catch (pullError) {
+              if (pullError?.code === 'VF_SUBMISSION_UNKNOWN') {
+                await evidenceRecorder.record({
+                  phase: 'pull',
+                  status: 'unknown',
+                  evidence: { reason: pullError.message, txHash: pullError.result?.hash ?? null },
+                })
+                evidenceRecorder.custody({ location: 'unknown', reason: pullError.message })
+              } else {
+                await evidenceRecorder.record({
+                  phase: 'pull',
+                  status: 'failed',
+                  evidence: { reason: pullError.message },
+                })
+              }
+              throw pullError
+            }
           }
+          await evidenceRecorder.record({
+            phase: 'stellar_deposit',
+            status: 'submitted',
+            evidence: {},
+          })
           const deposited = await worker.execute()
           this.assertCurrentAccount()
+          if (deposited?.success) {
+            await evidenceRecorder.record({
+              phase: 'stellar_deposit',
+              status: 'confirmed',
+              evidence: { txHash: deposited.txHash },
+            })
+            evidenceRecorder.custody({
+              location: 'stellar-vault',
+              txSuccess: true,
+              matchingEvent: true,
+              amount: receiptAmount,
+            })
+          } else if (deposited?.status === 'unknown') {
+            await evidenceRecorder.record({
+              phase: 'stellar_deposit',
+              status: 'unknown',
+              evidence: { reason: deposited.error, txHash: deposited.txHash ?? null },
+            })
+            evidenceRecorder.custody({ location: 'unknown', reason: deposited.error })
+          } else {
+            await evidenceRecorder.record({
+              phase: 'stellar_deposit',
+              status: 'failed',
+              evidence: { reason: deposited?.error, txHash: deposited?.txHash ?? null },
+            })
+            if (deposited?.txSuccess) {
+              evidenceRecorder.custody({
+                location: 'stellar-vault',
+                txSuccess: true,
+                matchingEvent: false,
+              })
+            }
+          }
           settled.push({
             status: 'fulfilled',
             value: {
@@ -769,6 +1074,7 @@ export class OrchestratorAgent {
                 confirmed: false,
                 checkedAt: null,
               },
+              allocationReceipt: evidenceRecorder.receipt,
             },
           })
         } catch (reason) {
@@ -781,6 +1087,7 @@ export class OrchestratorAgent {
               custody: movedToAgent
                 ? { location: 'agent', confirmed: true, checkedAt: null }
                 : { location: 'unknown', confirmed: false, checkedAt: null },
+              allocationReceipt: evidenceRecorder?.receipt ?? null,
             },
           })
         }
@@ -798,6 +1105,7 @@ export class OrchestratorAgent {
         depositTxHash: entry.value?.depositTxHash || null,
         agentAddress: entry.value?.agentAddress || stellarWorkers[index].agentAddress,
         custody: entry.value?.custody,
+        allocationReceipt: entry.value?.allocationReceipt,
         error: entry.reason?.message || entry.value?.error,
       }))
     }

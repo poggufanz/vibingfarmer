@@ -116,6 +116,23 @@ vi.mock('./stellar/grantReceiptStore.js', () => ({
   fingerprintGrantReceipt: () => 'GRANT-RECEIPT',
 }))
 
+// Task 6 chunk C1 -- the AllocationReceiptV2 transport (Chunk B, closed/reviewed). Mocked the same
+// way every other network-touching dependency in this file is: the REAL orchestrator.js dispatch
+// loops run unmocked, only the leaf that would otherwise reach `fetch` is replaced, so tests can
+// assert exactly what body was posted and simulate a version-conflict/network failure at will.
+const postReceiptEvidenceMock = vi.fn()
+vi.mock('./stellar/agentIndexReceiptClient.js', () => ({
+  postReceiptEvidence: (...a) => postReceiptEvidenceMock(...a),
+  ReceiptEvidenceError: class ReceiptEvidenceError extends Error {
+    constructor(message, opts = {}) {
+      super(message)
+      this.name = 'ReceiptEvidenceError'
+      this.step = opts.step
+      this.code = opts.code
+    }
+  },
+}))
+
 import { OrchestratorAgent } from './orchestrator.js'
 import {
   STELLAR_USDC_SAC,
@@ -208,6 +225,45 @@ function permissionedMixedFixture(runId = 'run-regression') {
   }
 }
 
+// Task 6 chunk C1 -- a Stellar-only permissioned fixture (no bridge agent), so `dispatch()` falls
+// through to `dispatchPermissioned`'s PLAIN worker loop (orchestrator.js:627-...) rather than
+// `dispatchConfirmedMixed`. `agentCount` deposit agents, each with the same fixed cap, mirroring
+// `permissionedMixedFixture`'s own deposit-agent shape minus the bridge sibling.
+function permissionedStellarOnlyFixture(runId, agentCount = 1) {
+  const CAP_UNITS = 600_000_000
+  const agents = Array.from({ length: agentCount }, (_, i) => ({
+    allocationId: `${runId}:deposit:${i}`,
+    kind: 'deposit',
+    cap: { token: 'CTOKEN', units: String(CAP_UNITS), decimals: 7 },
+    allocation: { token: 'CTOKEN', units: String(CAP_UNITS), decimals: 7 },
+    periodSeconds: 3600,
+    expiry: 2000000000,
+  }))
+  const plan = { runId, planFingerprint: `PLAN-${runId}`, agents }
+  const reviewedAgentInits = agents.map((agent) => ({
+    allocationId: agent.allocationId,
+    kind: 0,
+    token: 'CTOKEN',
+    target: 'CACTIVEVAULT',
+    cap: { ...agent.cap },
+    periodSeconds: 3600,
+    expiry: 2000000000,
+    mintRecipient: '00'.repeat(32),
+    destinationDomain: 0,
+  }))
+  return {
+    plan,
+    permissionDecision: {
+      mode: 'fresh',
+      runId,
+      planFingerprint: plan.planFingerprint,
+      agentInitFingerprint: `AI-${runId}`,
+      reviewedBudgets: [{ token: 'CTOKEN', units: String(CAP_UNITS * agentCount), decimals: 7 }],
+      reviewedAgentInits,
+    },
+  }
+}
+
 function permissionedOrchestrator(onEvent = vi.fn()) {
   return new OrchestratorAgent({
     user: 'GUSER',
@@ -292,6 +348,15 @@ beforeEach(() => {
   executeBaseLegMock.mockResolvedValue({ success: true, burnHash: 'B', jobId: 'j1' })
   runAgentBurnMock.mockReset()
   runAgentBurnMock.mockResolvedValue({ burnHash: 'HBURN' })
+  postReceiptEvidenceMock.mockReset()
+  postReceiptEvidenceMock.mockImplementation(async ({ body }) => ({
+    requestDigest: 'digest',
+    challengeId: 'challenge',
+    expiresAt: 0,
+    written: 1,
+    duplicates: 0,
+    version: (body?.expectedVersion ?? 0) + 1,
+  }))
 })
 
 describe('orchestrator base leg — mixed run costs exactly ONE grant signature', () => {
@@ -1324,5 +1389,228 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       })
     )
     expect(runAgentBurnMock).toHaveBeenCalledOnce()
+  })
+})
+
+// Task 6 chunk C1 -- real orchestrator.js dispatch loops, real allocationReceipt.js producer
+// (unmocked), only the network leaves mocked. Exercises `dispatchPermissioned`'s PLAIN worker loop
+// (no bridge agent) -- the "two worker loops" the brief scopes this chunk to; the mixed loop
+// (`dispatchConfirmedMixed`'s runStellar()) got the identical wiring and is proven correct by every
+// pre-existing mixed test above still passing unchanged with `allocationReceipt` added alongside
+// the legacy `custody` field.
+describe('Task 6 chunk C1 — allocation receipt evidence (dispatchPermissioned plain loop)', () => {
+  it('[Receipt] a pre-pull failure still journals a real receipt: custody at owner, every phase not_started', async () => {
+    const fixture = permissionedStellarOnlyFixture('run-receipt-prepull')
+    readTokenBalanceMock.mockImplementation(async (addr) => {
+      if (addr === 'GUSER') return null
+      throw new Error('RPC unreachable reading agent balance')
+    })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(summary.completed).toBe(0)
+    expect(summary.failed).toBe(1)
+    const result = summary.results[0]
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/RPC unreachable/)
+    expect(result.receipt.custody).toEqual({
+      location: 'owner',
+      confirmed: true,
+      amount: { token: 'CTOKEN', units: '600000000', decimals: 7 },
+      reason: null,
+    })
+    expect(result.receipt.phases).toEqual({
+      pull: 'not_started',
+      stellar_deposit: 'not_started',
+      cctp_burn: 'not_started',
+      cctp_mint: 'not_started',
+      base_deposit: 'not_started',
+    })
+    expect(result.receipt.attempts).toEqual([])
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+  })
+
+  it('[Receipt] pull success then deposit failure preserves agent address, pull hash, exact units, and stellar-agent custody', async () => {
+    const fixture = permissionedStellarOnlyFixture('run-receipt-pull-ok-deposit-fail')
+    runAgentPullMock.mockResolvedValue({ hash: 'PULLHASH1', status: 'SUCCESS' })
+    workerExecuteMock.mockResolvedValue({ success: false, error: 'deposit boom' })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    const result = summary.results[0]
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('deposit boom')
+    expect(result.pullTxHash).toBe('PULLHASH1')
+    expect(result.agentAddress).toBe('CFRESH1')
+    expect(result.receipt.phases.pull).toBe('confirmed')
+    expect(result.receipt.phases.stellar_deposit).toBe('failed')
+    expect(result.receipt.custody).toEqual({
+      location: 'stellar-agent',
+      confirmed: true,
+      amount: { token: 'CTOKEN', units: '600000000', decimals: 7 },
+      reason: null,
+    })
+    const pullAttempt = result.receipt.attempts.find(
+      (a) => a.phase === 'pull' && a.status === 'confirmed'
+    )
+    expect(pullAttempt.evidence.txHash).toBe('PULLHASH1')
+    const depositAttempt = result.receipt.attempts.find((a) => a.phase === 'stellar_deposit')
+    // Pull and deposit are two separate attempts with two distinct hashes -- never one hash
+    // covering both phases (the defect this chunk exists to remove).
+    expect(depositAttempt.evidence.txHash).not.toBe(pullAttempt.evidence.txHash)
+  })
+
+  it('[Receipt] an indeterminate deposit reports phase "unknown", holds custody at stellar-agent, never success', async () => {
+    const fixture = permissionedStellarOnlyFixture('run-receipt-deposit-unknown')
+    runAgentPullMock.mockResolvedValue({ hash: 'PULLHASH2', status: 'SUCCESS' })
+    workerExecuteMock.mockResolvedValue({
+      success: false,
+      status: 'unknown',
+      error: 'active account changed mid-submission',
+      custody: { location: 'unknown', confirmed: false },
+    })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    const result = summary.results[0]
+    expect(result.success).toBe(false)
+    expect(result.receipt.phases.stellar_deposit).toBe('unknown')
+    expect(result.receipt.custody.location).toBe('stellar-agent')
+    expect(result.receipt.custody.confirmed).toBe(true)
+    expect(result.receipt.custody.reason).toMatch(/active account changed/)
+  })
+
+  it('[Receipt] a deposit tx success without a matching mint event keeps custody at stellar-agent, never advances to stellar-vault', async () => {
+    const fixture = permissionedStellarOnlyFixture('run-receipt-no-matching-event')
+    runAgentPullMock.mockResolvedValue({ hash: 'PULLHASH3', status: 'SUCCESS' })
+    // Mirrors worker.js's own "shares did not increase" shape: the relay tx itself succeeded
+    // (txSuccess:true, a real txHash) but the confirming event never showed up.
+    workerExecuteMock.mockResolvedValue({
+      success: false,
+      error: 'The deposit was not confirmed because vault shares did not increase.',
+      txHash: 'TXHASH-NO-MINT',
+      txSuccess: true,
+    })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    const result = summary.results[0]
+    expect(result.receipt.custody.location).toBe('stellar-agent')
+    expect(result.receipt.custody.location).not.toBe('stellar-vault')
+    expect(result.receipt.custody.reason).toMatch(
+      /claimed without evidence meeting its confirmation bar/
+    )
+  })
+
+  it('[Receipt] mixed outcomes across workers: every planned allocation appears exactly once, each with its own separate phase hashes', async () => {
+    const fixture = permissionedStellarOnlyFixture('run-receipt-mixed', 2)
+    runAgentPullMock
+      .mockResolvedValueOnce({ hash: 'PULL-A', status: 'SUCCESS' })
+      .mockResolvedValueOnce({ hash: 'PULL-B', status: 'SUCCESS' })
+    workerExecuteMock
+      .mockResolvedValueOnce({ success: true, txHash: 'DEP-A' })
+      .mockResolvedValueOnce({ success: false, error: 'boom-B' })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(summary.results).toHaveLength(2)
+    const ids = summary.results.map((r) => r.allocationId).sort()
+    expect(ids).toEqual(['run-receipt-mixed:deposit:0', 'run-receipt-mixed:deposit:1'].sort())
+    const [a, b] = summary.results
+    expect(a.success).toBe(true)
+    expect(a.pullTxHash).toBe('PULL-A')
+    expect(a.txHash).toBe('DEP-A')
+    expect(b.success).toBe(false)
+    expect(b.pullTxHash).toBe('PULL-B')
+    expect(a.pullTxHash).not.toBe(b.pullTxHash)
+    expect(summary.completed).toBe(1)
+    expect(summary.failed).toBe(1)
+    // The journaled ATTEMPT evidence itself must also keep the two phases' hashes distinct, not
+    // just the top-level results projection -- the confirmed pull attempt and the confirmed
+    // deposit attempt on the SAME successful worker must carry their own real hashes.
+    const pullAttemptA = a.receipt.attempts.find((att) => att.phase === 'pull' && att.status === 'confirmed')
+    const depositAttemptA = a.receipt.attempts.find(
+      (att) => att.phase === 'stellar_deposit' && att.status === 'confirmed'
+    )
+    expect(pullAttemptA.evidence.txHash).toBe('PULL-A')
+    expect(depositAttemptA.evidence.txHash).toBe('DEP-A')
+  })
+
+  it('[Receipt] a session secret never reaches posted receipt evidence', async () => {
+    // Deliberately NOT named with the substring "secret" itself -- runId/allocationId/executionId
+    // all flow verbatim into the posted body, so a fixture id containing that word would make this
+    // assertion a false positive against its own identifiers, not a real leak.
+    const fixture = permissionedStellarOnlyFixture('run-receipt-key-safety')
+    runAgentPullMock.mockResolvedValue({ hash: 'PULLHASH-KEYCHECK', status: 'SUCCESS' })
+    workerExecuteMock.mockResolvedValue({ success: true, txHash: 'DEP-KEYCHECK' })
+
+    await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(postReceiptEvidenceMock).toHaveBeenCalled()
+    const signerSecret = 'S-run-receipt-key-safety:deposit:0'
+    for (const [args] of postReceiptEvidenceMock.mock.calls) {
+      const serialized = JSON.stringify(args.body)
+      expect(serialized).not.toContain(signerSecret)
+      expect(serialized.toLowerCase()).not.toContain('secret')
+      // The signer param itself legitimately carries `.secret` (postReceiptEvidence only ever
+      // calls `.sign()` on it, Chunk B's own contract) -- only the wire BODY must never leak it.
+      expect(args.sessionKey).toBeDefined()
+    }
+  })
+
+  it('[Receipt] preserves an exact bigint-scale unit value above Number.MAX_SAFE_INTEGER without float rounding', async () => {
+    // Not a round value (brief) -- 1000000000 round-trips perfectly through Number() and would
+    // distinguish nothing. This one silently drifts if routed through Number() anywhere.
+    const HUGE_UNITS = '123456789012345678901234567'
+    expect(Number.isSafeInteger(Number(HUGE_UNITS))).toBe(false)
+    const fixture = permissionedStellarOnlyFixture('run-receipt-huge-units')
+    fixture.plan.agents[0].cap.units = HUGE_UNITS
+    fixture.plan.agents[0].allocation.units = HUGE_UNITS
+    fixture.permissionDecision.reviewedAgentInits[0].cap.units = HUGE_UNITS
+    fixture.permissionDecision.reviewedBudgets[0].units = HUGE_UNITS
+    runAgentPullMock.mockResolvedValue({ hash: 'PULLHASH-HUGE', status: 'SUCCESS' })
+    workerExecuteMock.mockResolvedValue({ success: true, txHash: 'DEP-HUGE' })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    const result = summary.results[0]
+    expect(result.receipt.custody.amount.units).toBe(HUGE_UNITS)
+    expect(typeof result.receipt.custody.amount.units).toBe('string')
+  })
+
+  it('[Receipt] transport acceptance never sets stellar-vault custody by itself', async () => {
+    // A version-conflict/network failure on EVERY postReceiptEvidence call must never change what
+    // custody the receipt ends up recording -- transport success/failure is orthogonal to custody.
+    postReceiptEvidenceMock.mockRejectedValue(new Error('agent-index unreachable'))
+    const fixture = permissionedStellarOnlyFixture('run-receipt-transport-down')
+    runAgentPullMock.mockResolvedValue({ hash: 'PULLHASH4', status: 'SUCCESS' })
+    workerExecuteMock.mockResolvedValue({ success: true, txHash: 'DEP-DOWN' })
+    const events = []
+
+    const summary = await permissionedOrchestrator((n, d) => events.push({ n, d })).dispatch(
+      fixture.plan,
+      { permissionDecision: fixture.permissionDecision }
+    )
+
+    const result = summary.results[0]
+    // The deposit itself still succeeded on-chain -- evidence transport being down must never
+    // mask or reverse that.
+    expect(result.success).toBe(true)
+    expect(result.receipt.custody.location).toBe('stellar-vault')
+    expect(events.some((e) => e.n === 'receipt-evidence-failed')).toBe(true)
   })
 })

@@ -22,6 +22,12 @@ export class WorkerAgent {
    * @param {object} [c.submitGate]
    * @param {number} [c.verifyAttempts] share-mint poll attempts (prod default 8)
    * @param {number} [c.verifyIntervalMs] share-mint poll interval (prod default 3000)
+   * @param {object} [c.activeAccount] Task 6 chunk C1 -- threaded straight through to
+   *   runAgentDeposit so its indeterminate-outcome check (agentDeposit.js) has a captured
+   *   account to compare against. Optional/additive: omitted, `runAgentDeposit`'s own check is a
+   *   no-op, identical to every caller that existed before this chunk.
+   * @param {Function} [c.getCurrentActiveAccount]
+   * @param {AbortSignal} [c.signal]
    */
   constructor({
     agentId,
@@ -37,6 +43,9 @@ export class WorkerAgent {
     verifyIntervalMs,
     eligibilityToken,
     allocationId,
+    activeAccount,
+    getCurrentActiveAccount,
+    signal,
   }) {
     this.agentId = agentId
     this.user = user
@@ -50,6 +59,9 @@ export class WorkerAgent {
     this.submitGate = submitGate || createSubmitGate()
     this.verifyAttempts = verifyAttempts ?? 8
     this.verifyIntervalMs = verifyIntervalMs ?? 3000
+    this.activeAccount = activeAccount || null
+    this.getCurrentActiveAccount = getCurrentActiveAccount
+    this.signal = signal
     this.memoryEntries = []
     // Strategy Task 7 (Pocket Crew redesign) — the StrategyPlan's stable per-allocation id
     // (planModel.js), carried on every emitted event alongside `agentId` so a consumer can key
@@ -71,6 +83,13 @@ export class WorkerAgent {
   }
 
   async execute() {
+    // Task 6 chunk C1 -- declared OUTSIDE the try block so the catch handler below can still see
+    // the deposit tx's own outcome (hash/status) even when a LATER step (verifyMinted) is what
+    // actually threw. Without this, "the deposit tx succeeded but shares never minted" is
+    // indistinguishable from every other failure once caught -- exactly the kind of evidence loss
+    // this task exists to stop (mirrors the pull/deposit hash-collapse defect in orchestrator.js,
+    // one layer down).
+    let depositResult = null
     try {
       this.emit('started', { agentId: this.agentId, vault: this.vault })
       // ROOT CAUSE of the "stuck at 6/9" run: the UI progress counts 3 steps per agent
@@ -123,11 +142,15 @@ export class WorkerAgent {
       const baseline = await readVaultShares(this.agentAddress)
 
       this.emit('step', { step: 'deposit', status: 'pending' })
-      const res = await runAgentDeposit({
+      depositResult = await runAgentDeposit({
         agentAddress: this.agentAddress,
         amount: this.amount,
         sessionKey: this.sessionKey,
+        activeAccount: this.activeAccount,
+        getCurrentActiveAccount: this.getCurrentActiveAccount,
+        signal: this.signal,
       })
+      const res = depositResult
       if (!res)
         throw new Error(
           'The Stellar relay is unavailable. The gasless deposit could not be submitted.'
@@ -173,12 +196,35 @@ export class WorkerAgent {
       })
       return { success: true, txHash: res.hash }
     } catch (err) {
+      // Task 6 chunk C1 -- three distinguishable outcomes, never collapsed into one:
+      //  - indeterminate (active account changed mid-submission, agentDeposit.js's new path):
+      //    never success, never a plain failure -- status:'unknown', custody carried through
+      //    verbatim from the error so the caller can hold custody at its last proven location.
+      //  - a tx that itself SUCCEEDED but the confirming event (shares minting) never showed up:
+      //    a real failure, but one whose txHash/txSuccess must survive so the caller can prove
+      //    custody correctly stops short of stellar-vault rather than silently having no evidence
+      //    to reason about at all.
+      //  - every other failure: unchanged from before this chunk.
+      const isUnknown = err?.code === 'VF_SUBMISSION_UNKNOWN'
+      const txHash = depositResult?.hash ?? err?.result?.hash ?? null
+      const txSuccess = depositResult?.status === 'SUCCESS'
       this.memoryEntries.push(
-        createEntry('deposit', 'failed', {}, buildLesson(this.vault, { error: err.message }))
+        createEntry(
+          'deposit',
+          isUnknown ? 'unknown' : 'failed',
+          {},
+          buildLesson(this.vault, { error: err.message })
+        )
       )
       writeMemory(this.agentId, this.sessionId, this.vault, this.memoryEntries)
       this.emit('failed', { agentId: this.agentId, vault: this.vault, error: err.message })
-      return { success: false, error: err.message }
+      return {
+        success: false,
+        error: err.message,
+        ...(txHash ? { txHash } : {}),
+        ...(txSuccess ? { txSuccess: true } : {}),
+        ...(isUnknown ? { status: 'unknown', custody: err.custody } : {}),
+      }
     }
   }
 
