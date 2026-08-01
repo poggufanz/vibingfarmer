@@ -264,7 +264,7 @@ describe('submitOwnerAuthorizedTx — C, relay-only (every C owner action)', () 
     ).rejects.toMatchObject({ code: 'VF_RELAY_REFUSED', submission: 'not-submitted' })
   })
 
-  test('relay unreachable AFTER signing: unknown, not not-submitted — no automatic retry', async () => {
+  test('exact relay-unconfigured null after signing is typed unavailable and not-submitted', async () => {
     submitViaRelayMock.mockResolvedValue(null)
     const model = { kind: 'C', source: RELAYER_G, owner: OWNER_C, contractId: OWNER_C }
     const sign = vi.fn(async () => 'SIGNED_C')
@@ -274,8 +274,11 @@ describe('submitOwnerAuthorizedTx — C, relay-only (every C owner action)', () 
         build: async () => ({ tx: {}, xdr: 'UNSIGNED' }),
         sign,
       })
-    ).rejects.toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' })
-    expect(sign).toHaveBeenCalled() // the ceremony DID run — this is why it can't be "not-submitted"
+    ).rejects.toMatchObject({
+      code: 'VF_FEE_PAYER_UNAVAILABLE',
+      submission: 'not-submitted',
+    })
+    expect(sign).toHaveBeenCalled()
   })
 
   test.each(['build', 'sign', 'submit'])(

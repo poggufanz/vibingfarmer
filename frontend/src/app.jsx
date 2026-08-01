@@ -581,6 +581,127 @@ export function buildRecoveryAllocationMappings({
   return mappings
 }
 
+const RECOVERY_MANUAL_REVIEW_CODES = new Set([
+  'RECOVERY_POLL_TX_HASH_REQUIRED',
+  'RECOVERY_POLL_SHARE_BASELINE_REQUIRED',
+])
+
+function canonicalRecoveryValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalRecoveryValue)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalRecoveryValue(value[key])])
+    )
+  }
+  return value
+}
+
+function sameRecoveryReceipt(left, right) {
+  return (
+    JSON.stringify(canonicalRecoveryValue(left)) === JSON.stringify(canonicalRecoveryValue(right))
+  )
+}
+
+function latestRealRecoveryAttempt(receipt, phase) {
+  const attempts = Array.isArray(receipt?.attempts) ? receipt.attempts : []
+  for (let index = attempts.length - 1; index >= 0; index -= 1) {
+    const attempt = attempts[index]
+    if (attempt?.kind === 'phase' && attempt.phase === phase) return attempt
+  }
+  return null
+}
+
+function currentPollProofError(projection) {
+  if (projection.action !== 'poll') return null
+  const attempt = latestRealRecoveryAttempt(projection.receipt, projection.phase)
+  if (typeof attempt?.evidence?.txHash !== 'string' || attempt.evidence.txHash.length === 0) {
+    return {
+      code: 'RECOVERY_POLL_TX_HASH_REQUIRED',
+      phase: projection.phase,
+      message: `Recovery poll for ${projection.phase} has no durable transaction hash`,
+    }
+  }
+  if (
+    projection.phase === 'stellar_deposit' &&
+    (typeof attempt.evidence.preShareUnits !== 'string' ||
+      !/^\d+$/.test(attempt.evidence.preShareUnits))
+  ) {
+    return {
+      code: 'RECOVERY_POLL_SHARE_BASELINE_REQUIRED',
+      phase: projection.phase,
+      message: 'Deposit poll has no durable pre-submission share baseline',
+    }
+  }
+  return null
+}
+
+/**
+ * Project the one current authoritative recovery row after a poll-proof failure. A known claim is
+ * the local monotonic floor: an absent, malformed, lower, or same-version-but-different reread
+ * cannot replace it. Poll is exposed only from proof carried by the current phase's latest real
+ * attempt; stale errors never override newer terminal/manual states or safe newer work.
+ */
+function projectRecoveryAuthority({ authoritative, claim, error, identity, projectReceipt }) {
+  const claimHasReceipt = claim?.receipt != null && Number.isSafeInteger(claim?.version)
+  const currentVersion = authoritative?.version
+  const currentReceipt = authoritative?.receipt
+  const currentRowValid =
+    Number.isSafeInteger(currentVersion) &&
+    currentVersion >= 0 &&
+    ((currentReceipt == null && currentVersion === 0) || currentReceipt?.version === currentVersion)
+  const violatesClaimFloor =
+    claimHasReceipt &&
+    (!currentRowValid ||
+      currentReceipt == null ||
+      currentVersion < claim.version ||
+      (currentVersion === claim.version && !sameRecoveryReceipt(currentReceipt, claim.receipt)))
+  const selected = violatesClaimFloor
+    ? { receipt: claim.receipt, version: claim.version }
+    : authoritative
+  const next = projectReceipt({ ...selected, identity })
+  const proofError = currentPollProofError(next)
+  if (proofError) {
+    return {
+      ...next,
+      action: 'manual-review',
+      phase: proofError.phase,
+      reasonCode: proofError.code,
+      reason: proofError.message,
+    }
+  }
+  if (violatesClaimFloor) {
+    return {
+      ...next,
+      action: 'manual-review',
+      phase: error?.phase ?? claim.phase ?? next.phase,
+      reasonCode: error?.code ?? 'RECOVERY_RECEIPT_CHANGED',
+      reason:
+        error?.primaryError?.message ??
+        error?.message ??
+        'Recovery reread did not preserve the claimed receipt; manual reconciliation is required.',
+    }
+  }
+  if (!RECOVERY_MANUAL_REVIEW_CODES.has(error?.code)) return next
+  if (
+    next.action === 'complete' ||
+    next.action === 'manual-review' ||
+    next.action === 'blocked-reconcile' ||
+    next.action === 'poll' ||
+    (Number.isSafeInteger(currentVersion) && currentVersion > claim.version)
+  ) {
+    return next
+  }
+  return {
+    ...next,
+    action: 'manual-review',
+    phase: error.phase ?? claim.phase ?? next.phase,
+    reasonCode: error.code,
+    reason: error.primaryError?.message ?? error.message,
+  }
+}
+
 /** Stable, dependency-injected controller shared by App and app.recovery.test.jsx. */
 export function createRecoveryActionRunner({
   getActiveAccount,
@@ -599,10 +720,6 @@ export function createRecoveryActionRunner({
   vault,
 }) {
   const pending = new Set()
-  const manualReviewCodes = new Set([
-    'RECOVERY_POLL_TX_HASH_REQUIRED',
-    'RECOVERY_POLL_SHARE_BASELINE_REQUIRED',
-  ])
   const assertCurrent = (captured) =>
     assertCurrentActiveAccount({ captured, current: getActiveAccount() })
   const projectAuthoritative = async (mapping, captured) => {
@@ -674,32 +791,21 @@ export function createRecoveryActionRunner({
           permissionEvidence: getPermission(),
         })
         assertCurrent(captured)
-        let next = projectReceipt({
-          receipt: result.receipt,
-          version: result.version,
+        const next = projectRecoveryAuthority({
+          authoritative: result,
+          claim,
+          error: result.error,
           identity: mapping,
+          projectReceipt,
         })
-        if (manualReviewCodes.has(result.error?.code)) {
-          next = {
-            ...next,
-            action: 'manual-review',
-            phase: result.error.phase ?? claim.phase ?? next.phase,
-            reasonCode: result.error.code,
-            reason: result.error.message,
-            receipt: result.receipt,
-            version: result.version,
-          }
-        }
         onProjection(allocationId, next)
         if (result.error) onError(result.error, allocationId)
         return result
       } catch (error) {
         try {
           assertCurrent(captured)
-          const primaryError = error?.primaryError ?? error
-          if (manualReviewCodes.has(error?.code) && claim) {
+          if (RECOVERY_MANUAL_REVIEW_CODES.has(error?.code) && claim) {
             let authoritative = { receipt: claim.receipt, version: claim.version }
-            let rereadSucceeded = false
             try {
               authoritative = await readReceipt({
                 networkId: mapping.networkId,
@@ -707,33 +813,20 @@ export function createRecoveryActionRunner({
                 executionId: mapping.executionId,
                 allocationId: mapping.allocationId,
               })
-              rereadSucceeded = true
             } catch {
               // The claimed receipt/version remains the authoritative input for this local,
               // disabled projection when both post-action reads are unavailable.
             }
             assertCurrent(captured)
-            const next = projectReceipt({
-              ...authoritative,
+            const next = projectRecoveryAuthority({
+              authoritative,
+              claim,
+              error,
               identity: mapping,
+              projectReceipt,
             })
             assertCurrent(captured)
-            const failedPhase = error.phase ?? primaryError.phase ?? claim.phase
-            const remainsFailedPoll = next.action === 'poll' && next.phase === failedPhase
-            onProjection(
-              allocationId,
-              !rereadSucceeded || remainsFailedPoll
-                ? {
-                    ...next,
-                    action: 'manual-review',
-                    phase: failedPhase ?? next.phase,
-                    reasonCode: error.code,
-                    reason: primaryError.message,
-                    receipt: authoritative.receipt,
-                    version: authoritative.version,
-                  }
-                : next
-            )
+            onProjection(allocationId, next)
           } else {
             try {
               await projectAuthoritative(mapping, captured)

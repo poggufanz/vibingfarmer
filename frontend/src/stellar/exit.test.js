@@ -400,15 +400,12 @@ describe('sweepAgents', () => {
     expect(out.swept).toEqual([5n, 5n])
   })
 
-  it('C owner: a post-sign relay loss carries code+submission through out.errors, and ownerActionOutcome reads it as unknown, never confirmed-failed', async () => {
-    // Fix 1: the ceremony (WebAuthn) already ran, then the relay went silent — relayOnly throws
-    // OwnerActionSubmissionError('...', 'VF_SUBMISSION_UNKNOWN', 'unknown'). Before Fix 1,
-    // sweepChunk's catch flattened this to `e.message`, so ownerActionOutcome could never see
-    // `.submission` and reported the sweep as a confirmed failure — inviting a retry of a
-    // transaction that may already have landed.
+  it('C owner: exact relay-unconfigured carries not-submitted through out.errors and ownerActionOutcome', async () => {
+    // submitViaRelay null is the exact producer-backed pre-submit unconfigured result. The C owner
+    // has no direct fallback, and sweepChunk must retain the typed unavailable disposition.
     getRelayerAddressMock.mockResolvedValue(RELAYER_G)
     signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C')
-    submitViaRelayMock.mockResolvedValue(null) // relay unreachable AFTER signing
+    submitViaRelayMock.mockResolvedValue(null)
 
     const out = await sweepAgents({
       owner: OWNER_C,
@@ -418,9 +415,12 @@ describe('sweepAgents', () => {
     })
 
     expect(out.swept).toEqual([0n])
-    expect(out.errors[0]).toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' })
+    expect(out.errors[0]).toMatchObject({
+      code: 'VF_FEE_PAYER_UNAVAILABLE',
+      submission: 'not-submitted',
+    })
     const outcome = ownerActionOutcome({ agentAddress: AGENT, ok: false, error: out.errors[0] })
-    expect(outcome.outcome).toBe('unknown')
+    expect(outcome.outcome).toBe('not-submitted')
   })
 
   it('C owner: fails BEFORE the passkey ceremony when no relayer is funded', async () => {

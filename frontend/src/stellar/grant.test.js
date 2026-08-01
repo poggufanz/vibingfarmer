@@ -437,11 +437,11 @@ describe('submitGrant - C owner (passkey), routed through OwnerAuthorizationV1',
     expect(out).toMatchObject({ hash: 'HC', status: 'SUCCESS', agentAddresses: [AGENT_1] })
   })
 
-  it('has no user-funded fallback: an unreachable relay throws instead of billing the C owner', async () => {
+  it('has no user-funded fallback: exact relay-unconfigured is unavailable and not-submitted', async () => {
     const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1]) })
     getRelayerAddressMock.mockResolvedValue(RELAYER_G)
     signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C_XDR')
-    submitViaRelayMock.mockResolvedValue(null) // relay unreachable AFTER the ceremony already ran
+    submitViaRelayMock.mockResolvedValue(null) // exact producer-backed pre-submit unconfigured
 
     await expect(
       submitGrant({
@@ -452,7 +452,10 @@ describe('submitGrant - C owner (passkey), routed through OwnerAuthorizationV1',
         server,
         activeAccount: { kind: 'C', address: OWNER_C },
       })
-    ).rejects.toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN' })
+    ).rejects.toMatchObject({
+      code: 'VF_FEE_PAYER_UNAVAILABLE',
+      submission: 'not-submitted',
+    })
   })
 
   it('fails BEFORE the passkey ceremony when no relayer is funded', async () => {
@@ -1100,11 +1103,11 @@ describe('submitGrantV3 - C owner (passkey), routed through OwnerAuthorizationV1
     expect(out.permissionId).toBe('0x' + '11'.repeat(32))
   })
 
-  it('has no user-funded fallback: an unreachable relay throws instead of billing the C owner', async () => {
+  it('has no user-funded fallback: exact relay-unconfigured is unavailable and not-submitted', async () => {
     const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1]) })
     getRelayerAddressMock.mockResolvedValue(RELAYER_G)
     signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C_XDR_V3')
-    submitViaRelayMock.mockResolvedValue(null) // relay unreachable AFTER the ceremony already ran
+    submitViaRelayMock.mockResolvedValue(null) // exact producer-backed pre-submit unconfigured
     const sign = vi.fn(async (x) => `SIGNED:${x}`)
 
     await expect(
@@ -1120,7 +1123,10 @@ describe('submitGrantV3 - C owner (passkey), routed through OwnerAuthorizationV1
         activeAccount: { kind: 'C', address: OWNER_C },
         resolveSchema: asV3,
       })
-    ).rejects.toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN' })
+    ).rejects.toMatchObject({
+      code: 'VF_FEE_PAYER_UNAVAILABLE',
+      submission: 'not-submitted',
+    })
     expect(sign).not.toHaveBeenCalled()
   })
 

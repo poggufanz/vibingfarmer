@@ -215,13 +215,12 @@ async function relayOnly(signedXdr, label, check = () => {}, signal) {
     throw dispatchError(e, label, signal)
   }
   if (!relayed) {
-    // The ceremony (WebAuthn) already ran; a C account has no direct fallback to reach for. We
-    // cannot prove the relay never saw the request, so this is neither "not submitted" (unsafe to
-    // assume) nor "submitted" (unsafe to mark done) — only chain reconciliation is honest here.
+    // submitViaRelay returns null only for the exact, producer-backed unconfigured response. It
+    // proves the relay rejected this before submission; C has no direct fee-paying fallback.
     throw new OwnerActionSubmissionError(
-      `Lost contact with the relay after signing${label ? ` (${label})` : ''}. Check the chain before retrying.`,
-      'VF_SUBMISSION_UNKNOWN',
-      'unknown'
+      'The gasless relay has no funded fee payer available right now.',
+      'VF_FEE_PAYER_UNAVAILABLE',
+      'not-submitted'
     )
   }
   check()

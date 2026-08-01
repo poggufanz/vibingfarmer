@@ -167,6 +167,7 @@ describe('feeBumpAndSubmit', () => {
       rpcServer: rpc,
     })
     expect(out).toEqual({ hash: 'OUTERHASH', status: 'SUCCESS', relayer: RELAYER_SOURCE })
+    expect(relayApi.relayResultHttpResponse(out)).toEqual({ status: 200, body: out })
     expect(buildFeeBumpTransaction).toHaveBeenCalledOnce()
     expect(signSpy).toHaveBeenCalledOnce()
     expect(rpc.sendTransaction).toHaveBeenCalledOnce()
@@ -377,24 +378,44 @@ describe('feeBumpAndSubmit', () => {
 
       const duplicateSdk = makeSdk({ innerHashHex })
       const duplicateRpc = makeRpc()
-      await expect(
-        feeBumpAndSubmit({
-          xdr: 'X',
-          secret: SECRET,
-          passphrase: PASS,
-          vaultAddr: VAULT,
-          sdk: duplicateSdk.sdk,
-          rpcServer: duplicateRpc,
-        })
-      ).resolves.toEqual({
+      const cached = await feeBumpAndSubmit({
+        xdr: 'X',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: VAULT,
+        sdk: duplicateSdk.sdk,
+        rpcServer: duplicateRpc,
+      })
+      expect(cached).toEqual({
         hash: 'OUTERHASH',
         status,
         relayer: RELAYER_SOURCE,
         duplicate: true,
       })
+      const response = relayApi.relayResultHttpResponse(cached)
+      expect(response.status).toBe(status === 'PENDING' ? 502 : 200)
+      expect(response.body).toMatchObject(
+        status === 'PENDING'
+          ? { submission: 'unknown', hash: 'OUTERHASH', status, duplicate: true }
+          : cached
+      )
       expect(duplicateRpc.sendTransaction).not.toHaveBeenCalled()
     }
   )
+
+  it('classifies a malformed resolved result as unknown while retaining its evidence', () => {
+    expect(
+      relayApi.relayResultHttpResponse({ status: 'SUCCESS', relayer: RELAYER_SOURCE })
+    ).toEqual({
+      status: 502,
+      body: {
+        status: 'SUCCESS',
+        relayer: RELAYER_SOURCE,
+        error: 'Stellar relay returned no hash-backed terminal result',
+        submission: 'unknown',
+      },
+    })
+  })
 
   it('returns a structured 409 unknown for an identical inner transaction already in flight', async () => {
     let releasePoll

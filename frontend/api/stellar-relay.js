@@ -61,11 +61,25 @@ export function relayUnknownHttpResponse(error) {
   return {
     status: error?.httpStatus === 409 ? 409 : 502,
     body: {
+      ...result,
       error: error?.message || 'Stellar relay submission outcome is unknown',
       submission: 'unknown',
-      ...result,
     },
   }
+}
+
+/** Only a hash-backed SUCCESS/FAILED result is an ordinary terminal relay response. */
+export function relayResultHttpResponse(result) {
+  const terminal =
+    typeof result?.hash === 'string' &&
+    result.hash.length > 0 &&
+    (result.status === 'SUCCESS' || result.status === 'FAILED')
+  if (terminal) return { status: 200, body: result }
+  return relayUnknownHttpResponse(
+    new RelaySubmissionUnknownError('Stellar relay returned no hash-backed terminal result', {
+      result: result && typeof result === 'object' ? result : null,
+    })
+  )
 }
 
 export const STELLAR_RELAY_FACTS = TRACKED_STELLAR_RELAY_FACTS
@@ -832,7 +846,9 @@ export default async function handler(req, res) {
           sdk,
           rpcServer,
         })
-        return res.end(JSON.stringify(out))
+        const response = relayResultHttpResponse(out)
+        res.statusCode = response.status
+        return res.end(JSON.stringify(response.body))
       } catch (e) {
         if (e instanceof RelaySubmissionUnknownError) {
           const response = relayUnknownHttpResponse(e)

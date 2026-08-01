@@ -6,7 +6,13 @@ import {
   createAccountScopedRecoveryConfig,
   createRecoveryActionRunner,
 } from './app.jsx'
-import { StartStage } from './components/strategy/StartStage.jsx'
+import { StartStage as _StartStage } from './components/strategy/StartStage.jsx'
+import { projectRecoveryReceipt } from './strategy/receiptProjection.js'
+import {
+  appendPhase,
+  confirmCustody,
+  createAllocationReceipt,
+} from './strategy/allocationReceipt.js'
 
 afterEach(cleanup)
 
@@ -50,6 +56,83 @@ function projection(action = 'deposit') {
     },
     route: { allocationId: 'run-recovery-app:deposit:0', source: 'receipt' },
   }
+}
+
+const RECOVERY_AMOUNT = Object.freeze({ token: 'CTOKEN', units: '7000000', decimals: 7 })
+
+function producedReceipt(overrides = {}) {
+  return createAllocationReceipt({
+    networkId: 'stellar-testnet',
+    executionId: 'run-recovery-app:exec:run-recovery-app:deposit:0',
+    allocationId: 'run-recovery-app:deposit:0',
+    owner: ACCOUNT.address,
+    runId: PLAN.runId,
+    worker: 'GWORKER',
+    agent: 'CDEPOSIT',
+    intent: { allocationId: 'run-recovery-app:deposit:0', kind: 'deposit' },
+    amount: RECOVERY_AMOUNT,
+    ...overrides,
+  })
+}
+
+function producedPullPoll({ txHash } = {}) {
+  return appendPhase(producedReceipt(), {
+    attemptId: 'pull-attempt',
+    phase: 'pull',
+    status: 'submitted',
+    evidence: txHash === undefined ? {} : { txHash },
+    observedAt: 1,
+  })
+}
+
+function producedAgentCustody() {
+  let receipt = appendPhase(producedReceipt(), {
+    attemptId: 'pull-confirmed',
+    phase: 'pull',
+    status: 'confirmed',
+    evidence: { txHash: 'HPULL' },
+    observedAt: 1,
+  })
+  receipt = confirmCustody(receipt, {
+    location: 'stellar-agent',
+    txSuccess: true,
+    amount: RECOVERY_AMOUNT,
+  })
+  return receipt
+}
+
+function producedDepositPoll({ txHash, preShareUnits } = {}) {
+  return appendPhase(producedAgentCustody(), {
+    attemptId: 'deposit-attempt',
+    phase: 'stellar_deposit',
+    status: 'submitted',
+    evidence: {
+      ...(txHash === undefined ? {} : { txHash }),
+      ...(preShareUnits === undefined ? {} : { preShareUnits }),
+    },
+    observedAt: 2,
+  })
+}
+
+function producedComplete() {
+  let receipt = producedAgentCustody()
+  receipt = confirmCustody(receipt, {
+    location: 'stellar-vault',
+    txSuccess: true,
+    matchingEvent: true,
+    amount: RECOVERY_AMOUNT,
+  })
+  return appendPhase(receipt, {
+    attemptId: 'deposit-confirmed',
+    phase: 'stellar_deposit',
+    status: 'confirmed',
+    evidence: { txHash: 'HDEPOSIT', preShareUnits: '10', postShareUnits: '11' },
+    observedAt: 2,
+  })
+}
+
+function row(receipt, version) {
+  return { receipt: receipt == null ? null : { ...receipt, version }, version }
 }
 
 function runnerHarness(overrides = {}) {
@@ -98,6 +181,32 @@ function runnerHarness(overrides = {}) {
     ...overrides,
   }
   return { mapping, projected, credential, claim, recovered, deps }
+}
+
+function useProducedClaim({ mapping, claim, deps }, { receipt, version, phase }) {
+  const authoritative = row(receipt, version)
+  const projected = projectRecoveryReceipt({ ...authoritative, identity: mapping })
+  Object.assign(claim, {
+    action: projected.action,
+    phase: phase ?? projected.phase,
+    receipt: authoritative.receipt,
+    version,
+  })
+  deps.getProjection.mockReturnValue(projected)
+  deps.requestAction.mockResolvedValue(claim)
+  deps.projectReceipt = projectRecoveryReceipt
+  return { authoritative, projected }
+}
+
+function pollProofError(code, phase, message = 'Durable poll evidence is incomplete.') {
+  return Object.assign(new Error(message), { code, phase })
+}
+
+function aggregatePollError(primary) {
+  return Object.assign(
+    new AggregateError([primary, new Error('mandatory reread unavailable')], 'reread failed'),
+    { code: primary.code, phase: primary.phase, primaryError: primary }
+  )
 }
 
 function renderRecoveryControl(mapping, projectedRecovery) {
@@ -158,7 +267,7 @@ function renderRecoveryControl(mapping, projectedRecovery) {
   }
 
   render(
-    <StartStage
+    <_StartStage
       plan={uiPlan}
       permission={{ mode: 'fresh' }}
       receipt={receipt}
@@ -367,188 +476,135 @@ describe('createRecoveryActionRunner', () => {
     expect(deps.onPending.mock.calls).toEqual([[mapping.allocationId, true]])
   })
 
-  it.each([
-    ['RECOVERY_POLL_TX_HASH_REQUIRED', 'pull'],
-    ['RECOVERY_POLL_SHARE_BASELINE_REQUIRED', 'stellar_deposit'],
-  ])(
-    'projects %s as a disabled local manual-review control through StartStage',
-    async (code, phase) => {
-      const error = Object.assign(new Error('Durable poll evidence is incomplete.'), {
-        code,
-        phase,
+  it('lets a normal resolved mandatory reread publish newer completion over its stale poll error', async () => {
+    const harness = runnerHarness()
+    const { mapping, deps } = harness
+    useProducedClaim(harness, { receipt: producedPullPoll(), version: 3, phase: 'pull' })
+    const completed = row(producedComplete(), 4)
+    const error = pollProofError(
+      'RECOVERY_POLL_TX_HASH_REQUIRED',
+      'pull',
+      'The old poll evidence had no hash.'
+    )
+    deps.recoverAllocation.mockResolvedValue({ ...completed, error })
+    const runner = createRecoveryActionRunner(deps)
+
+    await runner.run(mapping.allocationId)
+
+    expect(deps.onProjection).toHaveBeenLastCalledWith(
+      mapping.allocationId,
+      expect.objectContaining({
+        action: 'complete',
+        phase: null,
+        reasonCode: 'deposit-confirmed',
+        receipt: completed.receipt,
+        version: completed.version,
       })
-      const { mapping, recovered, deps } = runnerHarness({
-        recoverAllocation: vi.fn(async () => ({ ...recovered, error })),
+    )
+  })
+
+  it.each([
+    [
+      'manual-review',
+      () =>
+        producedReceipt({
+          initialCustody: { location: 'unknown', reason: 'pre-movement evidence unavailable' },
+        }),
+    ],
+    [
+      'blocked-reconcile',
+      () =>
+        appendPhase(producedReceipt(), {
+          attemptId: 'base-evidence',
+          phase: 'cctp_burn',
+          status: 'submitted',
+          evidence: { txHash: 'HBASE' },
+          observedAt: 3,
+        }),
+    ],
+  ])(
+    'lets a newer authoritative %s state win over a stale poll error',
+    async (action, makeReceipt) => {
+      const harness = runnerHarness()
+      const { mapping, deps } = harness
+      useProducedClaim(harness, { receipt: producedPullPoll(), version: 3, phase: 'pull' })
+      const current = row(makeReceipt(), 4)
+      deps.recoverAllocation.mockResolvedValue({
+        ...current,
+        error: pollProofError('RECOVERY_POLL_TX_HASH_REQUIRED', 'pull'),
       })
       const runner = createRecoveryActionRunner(deps)
 
       await runner.run(mapping.allocationId)
 
-      const next = deps.onProjection.mock.calls.at(-1)[1]
-      expect(next).toMatchObject({
-        action: 'manual-review',
-        phase,
-        reasonCode: code,
-        receipt: recovered.receipt,
-        version: recovered.version,
-      })
-
-      const amount = { token: 'CTOKEN', units: '7000000', decimals: 7 }
-      const uiPlan = {
-        runId: PLAN.runId,
-        planFingerprint: PLAN.planFingerprint,
-        amount,
-        agents: [
-          {
-            ...PLAN.agents[0],
-            hostNetworkId: 'stellar-testnet',
-            allocation: amount,
-            periodSeconds: 3600,
-            expiry: 2_000_000_000,
-            destination: 'Stellar deposit',
-            children: [],
-          },
-        ],
-        truth: {
-          agentIsolationCount: 1,
-          stellarVenueCount: 1,
-          baseUsesProxyVaults: false,
-        },
-      }
-      const outcome = {
-        allocationId: mapping.allocationId,
-        amount,
-        networkContext: {
-          executionNetwork: 'stellar-testnet',
-          currentCustodyNetwork: null,
-          transit: false,
-        },
-        executionStatus: 'failed',
-        custody: { location: 'unknown', confirmed: false, checkedAt: null },
-        txHash: null,
-        error: 'Original dispatch failed.',
-        evidence: { allocationId: mapping.allocationId },
-      }
-      const receipt = {
-        version: 1,
-        runId: PLAN.runId,
-        planFingerprint: PLAN.planFingerprint,
-        permission: {
-          mode: 'fresh',
-          status: 'confirmed',
-          confirmationCount: 1,
-          txHash: 'HGRANT',
-          grantReceiptFingerprint: 'FP',
-          expiryLedger: 9_001,
-          agentAddresses: [mapping.agentAddress],
-        },
-        branches: {
-          stellar: { status: 'failed', results: [outcome] },
-          base: { status: 'not-planned', results: [] },
-        },
-        allocations: [outcome],
-      }
-
-      render(
-        <StartStage
-          plan={uiPlan}
-          permission={{ mode: 'fresh' }}
-          receipt={receipt}
-          recoveryByAllocation={{ [mapping.allocationId]: next }}
-        />
+      expect(deps.onProjection).toHaveBeenLastCalledWith(
+        mapping.allocationId,
+        expect.objectContaining({ action, receipt: current.receipt, version: current.version })
       )
-
-      const control = screen.getByRole('button', { name: 'Manual review' })
-      expect(control.disabled).toBe(true)
-      expect(screen.queryByRole('button', { name: 'Poll' })).toBeNull()
     }
   )
 
   it.each([
-    ['RECOVERY_POLL_TX_HASH_REQUIRED', 'pull'],
-    ['RECOVERY_POLL_SHARE_BASELINE_REQUIRED', 'stellar_deposit'],
-  ])(
-    'keeps %s disabled from the claimed receipt when executor and fallback rereads both fail',
-    async (code, phase) => {
-      const primary = Object.assign(new Error('Durable poll evidence is incomplete.'), {
-        code,
-        phase,
-      })
-      const aggregate = Object.assign(
-        new AggregateError([primary, new Error('mandatory reread unavailable')], 'reread failed'),
-        { code, phase, primaryError: primary }
-      )
-      const { mapping, projected, claim, deps } = runnerHarness()
-      claim.action = 'poll'
-      claim.phase = phase
-      claim.receipt = { ...projected.receipt, proofCase: code }
-      claim.version = projected.version
-      deps.getProjection.mockReturnValue({
-        ...projected,
-        action: 'poll',
-        phase,
-        receipt: claim.receipt,
-        version: claim.version,
-      })
-      deps.requestAction.mockResolvedValue(claim)
-      deps.recoverAllocation.mockRejectedValue(aggregate)
-      deps.readReceipt.mockRejectedValue(new Error('fallback reread unavailable'))
-      const runner = createRecoveryActionRunner(deps)
+    ['absent', { receipt: null, version: 0 }],
+    ['lower', row(producedReceipt(), 2)],
+    ['same-version drift', row(producedReceipt(), 3)],
+  ])('keeps the known claim disabled when the fallback reread is %s', async (_case, reread) => {
+    const harness = runnerHarness()
+    const { mapping, claim, deps } = harness
+    useProducedClaim(harness, { receipt: producedPullPoll(), version: 3, phase: 'pull' })
+    const primary = pollProofError('RECOVERY_POLL_TX_HASH_REQUIRED', 'pull')
+    const aggregate = aggregatePollError(primary)
+    deps.recoverAllocation.mockRejectedValue(aggregate)
+    deps.readReceipt.mockResolvedValue(reread)
+    const runner = createRecoveryActionRunner(deps)
 
-      await expect(runner.run(mapping.allocationId)).rejects.toBe(aggregate)
+    await expect(runner.run(mapping.allocationId)).rejects.toBe(aggregate)
 
-      const next = deps.onProjection.mock.calls.at(-1)?.[1]
-      expect(next).toMatchObject({
-        action: 'manual-review',
-        phase,
-        reasonCode: code,
-        receipt: claim.receipt,
-        version: claim.version,
-      })
-      renderRecoveryControl(mapping, next)
-      expect(screen.getByRole('button', { name: 'Manual review' }).disabled).toBe(true)
-      expect(screen.queryByRole('button', { name: 'Poll' })).toBeNull()
-    }
-  )
-
-  it('publishes a newer completed fallback reread instead of overlaying stale poll manual-review', async () => {
-    const primary = Object.assign(new Error('The old poll evidence had no hash.'), {
-      code: 'RECOVERY_POLL_TX_HASH_REQUIRED',
+    const next = deps.onProjection.mock.calls.at(-1)[1]
+    expect(next).toMatchObject({
+      action: 'manual-review',
       phase: 'pull',
-    })
-    const aggregate = Object.assign(
-      new AggregateError([primary, new Error('mandatory reread unavailable')], 'reread failed'),
-      {
-        code: primary.code,
-        phase: primary.phase,
-        primaryError: primary,
-      }
-    )
-    const { mapping, projected, claim, deps } = runnerHarness()
-    claim.action = 'poll'
-    claim.phase = 'pull'
-    claim.receipt = { ...projected.receipt, oldPoll: true }
-    const completed = {
-      receipt: { ...projected.receipt, version: 8, completed: true },
-      version: 8,
-    }
-    deps.getProjection.mockReturnValue({
-      ...projected,
-      action: 'poll',
-      phase: 'pull',
+      reasonCode: 'RECOVERY_POLL_TX_HASH_REQUIRED',
       receipt: claim.receipt,
       version: claim.version,
     })
-    deps.requestAction.mockResolvedValue(claim)
+  })
+
+  it('keeps the claim disabled when a normal resolved result is non-monotonic even without an error', async () => {
+    const harness = runnerHarness()
+    const { mapping, claim, deps } = harness
+    useProducedClaim(harness, {
+      receipt: producedPullPoll({ txHash: 'HPULL' }),
+      version: 3,
+      phase: 'pull',
+    })
+    deps.recoverAllocation.mockResolvedValue({ receipt: null, version: 0 })
+    const runner = createRecoveryActionRunner(deps)
+
+    await runner.run(mapping.allocationId)
+
+    expect(deps.onProjection).toHaveBeenLastCalledWith(
+      mapping.allocationId,
+      expect.objectContaining({
+        action: 'manual-review',
+        phase: 'pull',
+        reasonCode: 'RECOVERY_RECEIPT_CHANGED',
+        receipt: claim.receipt,
+        version: claim.version,
+      })
+    )
+  })
+
+  it('disables a newer different-phase poll from the current phase proof, not the stale error', async () => {
+    const harness = runnerHarness()
+    const { mapping, deps } = harness
+    useProducedClaim(harness, { receipt: producedPullPoll(), version: 3, phase: 'pull' })
+    const aggregate = aggregatePollError(
+      pollProofError('RECOVERY_POLL_TX_HASH_REQUIRED', 'pull', 'The old pull lacked a hash.')
+    )
+    const newerDeposit = row(producedDepositPoll({ txHash: 'HDEPOSIT' }), 4)
     deps.recoverAllocation.mockRejectedValue(aggregate)
-    deps.readReceipt.mockResolvedValue(completed)
-    deps.projectReceipt.mockImplementation(({ receipt, version }) => ({
-      ...projected,
-      action: receipt.completed ? null : 'poll',
-      phase: receipt.completed ? null : 'pull',
-      receipt,
-      version,
-    }))
+    deps.readReceipt.mockResolvedValue(newerDeposit)
     const runner = createRecoveryActionRunner(deps)
 
     await expect(runner.run(mapping.allocationId)).rejects.toBe(aggregate)
@@ -556,13 +612,97 @@ describe('createRecoveryActionRunner', () => {
     expect(deps.onProjection).toHaveBeenLastCalledWith(
       mapping.allocationId,
       expect.objectContaining({
-        action: null,
-        phase: null,
-        receipt: completed.receipt,
-        version: completed.version,
+        action: 'manual-review',
+        phase: 'stellar_deposit',
+        reasonCode: 'RECOVERY_POLL_SHARE_BASELINE_REQUIRED',
+        receipt: newerDeposit.receipt,
+        version: newerDeposit.version,
       })
     )
-    expect(deps.onProjection.mock.calls.at(-1)[1].reasonCode).toBeUndefined()
+  })
+
+  it('enables a newer same-phase poll once the current receipt has real proof', async () => {
+    const harness = runnerHarness()
+    const { mapping, deps } = harness
+    useProducedClaim(harness, { receipt: producedPullPoll(), version: 3, phase: 'pull' })
+    const aggregate = aggregatePollError(pollProofError('RECOVERY_POLL_TX_HASH_REQUIRED', 'pull'))
+    const newerPull = row(producedPullPoll({ txHash: 'HPULL' }), 4)
+    deps.recoverAllocation.mockRejectedValue(aggregate)
+    deps.readReceipt.mockResolvedValue(newerPull)
+    const runner = createRecoveryActionRunner(deps)
+
+    await expect(runner.run(mapping.allocationId)).rejects.toBe(aggregate)
+
+    expect(deps.onProjection).toHaveBeenLastCalledWith(
+      mapping.allocationId,
+      expect.objectContaining({
+        action: 'poll',
+        phase: 'pull',
+        reasonCode: 'pull-v2-uncertain',
+        receipt: newerPull.receipt,
+        version: newerPull.version,
+      })
+    )
+  })
+
+  it.each([
+    [
+      'pull',
+      () =>
+        appendPhase(producedReceipt(), {
+          attemptId: 'pull-failed',
+          phase: 'pull',
+          status: 'failed',
+          evidence: { reason: 'proved pre-movement failure' },
+          observedAt: 3,
+        }),
+    ],
+    ['deposit', producedAgentCustody],
+  ])('lets a safe newer %s action win over the stale poll error', async (action, makeReceipt) => {
+    const harness = runnerHarness()
+    const { mapping, deps } = harness
+    useProducedClaim(harness, { receipt: producedPullPoll(), version: 3, phase: 'pull' })
+    const aggregate = aggregatePollError(pollProofError('RECOVERY_POLL_TX_HASH_REQUIRED', 'pull'))
+    const newer = row(makeReceipt(), 4)
+    deps.recoverAllocation.mockRejectedValue(aggregate)
+    deps.readReceipt.mockResolvedValue(newer)
+    const runner = createRecoveryActionRunner(deps)
+
+    await expect(runner.run(mapping.allocationId)).rejects.toBe(aggregate)
+
+    expect(deps.onProjection).toHaveBeenLastCalledWith(
+      mapping.allocationId,
+      expect.objectContaining({ action, receipt: newer.receipt, version: newer.version })
+    )
+  })
+
+  it('keeps the real claimed poll disabled when both executor and fallback reads fail', async () => {
+    const harness = runnerHarness()
+    const { mapping, claim, deps } = harness
+    useProducedClaim(harness, {
+      receipt: producedDepositPoll({ txHash: 'HDEPOSIT' }),
+      version: 3,
+      phase: 'stellar_deposit',
+    })
+    const primary = pollProofError('RECOVERY_POLL_SHARE_BASELINE_REQUIRED', 'stellar_deposit')
+    const aggregate = aggregatePollError(primary)
+    deps.recoverAllocation.mockRejectedValue(aggregate)
+    deps.readReceipt.mockRejectedValue(new Error('fallback reread unavailable'))
+    const runner = createRecoveryActionRunner(deps)
+
+    await expect(runner.run(mapping.allocationId)).rejects.toBe(aggregate)
+
+    const next = deps.onProjection.mock.calls.at(-1)[1]
+    expect(next).toMatchObject({
+      action: 'manual-review',
+      phase: 'stellar_deposit',
+      reasonCode: 'RECOVERY_POLL_SHARE_BASELINE_REQUIRED',
+      receipt: claim.receipt,
+      version: claim.version,
+    })
+    renderRecoveryControl(mapping, next)
+    expect(screen.getByRole('button', { name: 'Manual review' }).disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Poll' })).toBeNull()
   })
 })
 
