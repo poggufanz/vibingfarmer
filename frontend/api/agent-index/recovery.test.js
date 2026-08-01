@@ -908,20 +908,20 @@ describe('requestRecovery (authenticated lease claim)', () => {
     expect(correct.ok).toBe(true)
   })
 
-  it('R12: caller childId cannot partition a genuine absent-receipt lease', async () => {
+  it('R12: a genuine absent receipt has one no-child lease and rejects child-scoped claims', async () => {
     const request = baseRequest()
     const parent = await claim({
       store,
       request: { ...request, childId: null },
       challengeId: 'challenge-child-parent',
     })
-    const child = await claim({
+    const childClaim = claim({
       store,
       request: { ...request, childId: 'child-1' },
       challengeId: 'challenge-child-child',
     })
     expect(parent).toMatchObject({ ok: true, action: 'pull' })
-    expect(child).toMatchObject({ ok: false, status: 409, code: 'lease-conflict' })
+    await expect(childClaim).rejects.toThrow(/childId.*absent.*receipt/i)
     const leaseRows = db._raw
       .prepare('SELECT child_id FROM execution_recovery_leases ORDER BY child_id')
       .all()

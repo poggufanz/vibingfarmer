@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -1052,21 +1052,18 @@ describe('handleRecoveryRequest', () => {
     expect(out.body.lease).toMatchObject({ holder: 'holder-h' })
   })
 
-  it('canonicalizes absent-receipt leases so varying childId cannot acquire parallel claims', async () => {
-    const store = createAgentIndexStore(fakeD1())
-    const first = await authenticatedRecoveryCall({
+  it('rejects a signed child for an absent receipt instead of silently retargeting its lease', async () => {
+    const d1Store = createAgentIndexStore(fakeD1())
+    const acquireRecoveryLease = vi.fn(d1Store.acquireRecoveryLease)
+    const store = { ...d1Store, acquireRecoveryLease }
+    const out = await authenticatedRecoveryCall({
       store,
-      request: recoveryRequestBody({ childId: 'caller-child-a', leaseOwner: 'holder-first' }),
-      challengeId: 'challenge-handler-child-a',
-    })
-    const second = await authenticatedRecoveryCall({
-      store,
-      request: recoveryRequestBody({ childId: 'caller-child-b', leaseOwner: 'holder-second' }),
-      challengeId: 'challenge-handler-child-b',
+      request: recoveryRequestBody({ childId: 'caller-child' }),
+      challengeId: 'challenge-handler-absent-child',
     })
 
-    expect(first).toMatchObject({ status: 200, body: { phase: 'pull' } })
-    expect(second).toMatchObject({ status: 409, body: { code: 'lease-conflict' } })
+    expect(out).toMatchObject({ status: 400, body: { error: 'Invalid recovery request' } })
+    expect(acquireRecoveryLease).not.toHaveBeenCalled()
   })
 
   it('rejects a signed childId that disagrees with the stored receipt', async () => {

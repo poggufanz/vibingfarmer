@@ -51,6 +51,21 @@ describe('projectRecoveryReceipt', () => {
     })
   })
 
+  it('does not turn an absent caller child into a Stellar recovery identity', () => {
+    const projected = projectRecoveryReceipt({
+      receipt: null,
+      version: 0,
+      identity: { ...IDENTITY, childId: 'caller-child' },
+    })
+
+    expect(projected.requestIdentity).toEqual({
+      executionId: IDENTITY.executionId,
+      allocationId: IDENTITY.allocationId,
+      expectedReceiptVersion: 0,
+    })
+    expect(projected.route.childId).toBeNull()
+  })
+
   it('pins every server custody value to the existing UI vocabulary', () => {
     const expected = {
       owner: 'owner',
@@ -203,7 +218,7 @@ describe('projectRecoveryReceipt', () => {
     const projected = projectRecoveryReceipt({
       receipt: null,
       version: 0,
-      identity: IDENTITY,
+      identity: { ...IDENTITY, childId: 'base-child-display-route' },
       baseResult,
     })
 
@@ -217,7 +232,14 @@ describe('projectRecoveryReceipt', () => {
         jobId: baseResult.jobId,
         authorization: 'display-only',
       },
+      route: {
+        allocationId: baseResult.allocationId,
+        childId: 'base-child-display-route',
+        jobId: baseResult.jobId,
+        source: 'base-child-result',
+      },
     })
+    expect(projected.requestIdentity).not.toHaveProperty('childId')
     expect(projected.reason).toMatch(/no durable Base execution receipt producer/i)
   })
 })

@@ -238,7 +238,7 @@ describe('requestRecoveryAction', () => {
     }
   })
 
-  it('requires one authoritative absent-receipt mapping and rejects scalar or receipt child replacements', async () => {
+  it('requires an authoritative explicit no-child mapping and rejects child replacements', async () => {
     const fetchImpl = vi.fn()
     const common = {
       ...IDENTITY,
@@ -250,6 +250,35 @@ describe('requestRecoveryAction', () => {
     await expect(
       requestRecoveryAction({ ...common, receipt: null, agentAddress: AGENT, childId: 'child-a' })
     ).rejects.toMatchObject({ code: 'missing-allocation-mapping' })
+    await expect(
+      requestRecoveryAction({
+        ...common,
+        receipt: null,
+        allocationMapping: { ...IDENTITY, agentAddress: AGENT },
+      })
+    ).rejects.toMatchObject({ code: 'missing-allocation-mapping' })
+    await expect(
+      requestRecoveryAction({
+        ...common,
+        receipt: null,
+        allocationMapping: { ...IDENTITY, childId: 'child-a', agentAddress: AGENT },
+      })
+    ).rejects.toMatchObject({ code: 'allocation-mapping-mismatch' })
+    await expect(
+      requestRecoveryAction({
+        ...common,
+        receipt: null,
+        allocationMapping: { ...IDENTITY, childId: '', agentAddress: AGENT },
+      })
+    ).rejects.toMatchObject({ code: 'allocation-mapping-mismatch' })
+    await expect(
+      requestRecoveryAction({
+        ...common,
+        receipt: null,
+        childId: 'child-a',
+        allocationMapping: { ...IDENTITY, childId: null, agentAddress: AGENT },
+      })
+    ).rejects.toMatchObject({ code: 'child-mismatch' })
     await expect(
       requestRecoveryAction({ ...common, receipt: receipt(), agentAddress: 'CDIFFERENT' })
     ).rejects.toMatchObject({ code: 'agent-mismatch' })
@@ -274,7 +303,7 @@ describe('requestRecoveryAction', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('uses one exact allocation mapping for a genuine absent receipt', async () => {
+  it('uses an explicit no-child mapping and omits child from the signed absent-receipt request', async () => {
     const sessionKey = newSessionKey()
     const decision = selectRecoveryAction(null)
     const requests = []
@@ -311,14 +340,22 @@ describe('requestRecoveryAction', () => {
     await requestRecoveryAction({
       ...IDENTITY,
       receipt: null,
-      allocationMapping: { ...IDENTITY, childId: 'child-a', agentAddress: AGENT },
+      allocationMapping: { ...IDENTITY, childId: null, agentAddress: AGENT },
       expectedReceiptVersion: 0,
       leaseOwner: 'tab-a',
       resolveCredential: () => ({ ...sessionKey, agentAddress: AGENT }),
       fetchImpl,
     })
 
-    expect(requests[0]).toMatchObject({ childId: 'child-a' })
+    expect(requests).toEqual([
+      {
+        executionId: IDENTITY.executionId,
+        allocationId: IDENTITY.allocationId,
+        expectedReceiptVersion: 0,
+        leaseOwner: 'tab-a',
+      },
+    ])
+    expect(requests[0]).not.toHaveProperty('childId')
   })
 
   it('derives a persisted child identity into the signed business request', async () => {

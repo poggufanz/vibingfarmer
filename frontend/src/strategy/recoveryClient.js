@@ -125,7 +125,7 @@ function optionalChildId(value) {
   return value == null || value === '' ? null : requireText(value, 'childId')
 }
 
-function requireAllocationMapping(mapping, identity) {
+function requireAllocationMapping(mapping, identity, { requireNoChild = false } = {}) {
   if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) {
     fail('An authoritative allocation mapping is required when no receipt exists', {
       step: 'credential',
@@ -144,6 +144,12 @@ function requireAllocationMapping(mapping, identity) {
     fail('Allocation mapping must carry its authoritative child identity', {
       step: 'credential',
       code: 'missing-allocation-mapping',
+    })
+  }
+  if (requireNoChild && mapping.childId !== null) {
+    fail('An absent receipt requires an explicit no-child allocation mapping', {
+      step: 'credential',
+      code: 'allocation-mapping-mismatch',
     })
   }
   return {
@@ -285,7 +291,7 @@ export async function requestRecoveryAction({
       }
     }
   } else {
-    const mapping = requireAllocationMapping(allocationMapping, identity)
+    const mapping = requireAllocationMapping(allocationMapping, identity, { requireNoChild: true })
     originalAgent = mapping.agentAddress
     originalChild = mapping.childId
     if (agentAddress && agentAddress !== originalAgent) {

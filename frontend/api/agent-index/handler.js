@@ -404,9 +404,11 @@ export async function requestRecovery({
   if (receipt && childId !== receiptChildId) {
     throw new AgentIndexValidationError('childId does not match the stored receipt')
   }
-  // A missing receipt has no authoritative child identity. Canonicalize every signed caller value
-  // to the one no-child lease key so it cannot partition a single pull claim.
-  const leaseChildId = receipt ? receiptChildId : ''
+  if (!receipt && childId !== '') {
+    throw new AgentIndexValidationError('childId must be absent when no receipt exists')
+  }
+  // A missing receipt has no authoritative child identity and uses the one no-child lease key.
+  const leaseChildId = receiptChildId
 
   const actualVersion = receipt?.version ?? 0
   const decision = selectRecoveryAction(receipt)
