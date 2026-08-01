@@ -873,12 +873,16 @@ describe('dispatch(strategyPlan, { permissionDecision }) — V3 reuse mode (boun
   // things. Before this fix the router's replay-guard id appeared nowhere in the receipt -- a V3
   // recovery could not resend the identical still-valid envelope because the id it would need was
   // unrecoverable from the persisted evidence.
-  it('[Important 3] threads the V3 router replay-guard executionId into the pull attempt evidence, distinct from this receipt\'s own executionId', async () => {
+  it("[Important 3] threads the V3 router replay-guard executionId into the pull attempt evidence, distinct from this receipt's own executionId", async () => {
     const addresses = ['CV3AGENT1', 'CV3AGENT2']
     loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
     const decision = reuseDecisionV3For(PLAN, addresses)
     preflightPermissionMock.mockResolvedValue(decision)
-    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-evidence', onEvent: () => {} })
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'v3-evidence',
+      onEvent: () => {},
+    })
 
     await orch.dispatch(PLAN, { permissionDecision: decision })
 
@@ -893,9 +897,7 @@ describe('dispatch(strategyPlan, { permissionDecision }) — V3 reuse mode (boun
     const [args] = confirmedPullCall
     // The receipt's OWN executionId stays the deterministic agent-index form -- NOT the V3
     // router's replay-guard id.
-    expect(args.body.receipt.executionId).toBe(
-      `${PLAN.runId}:exec:${PLAN.agents[0].allocationId}`
-    )
+    expect(args.body.receipt.executionId).toBe(`${PLAN.runId}:exec:${PLAN.agents[0].allocationId}`)
     // The V3 router's OWN replay-guard id (decision.executions[0].executionId, '0xEXEC0') is
     // recoverable from the attempt evidence.
     expect(args.body.attempt.evidence.v3ExecutionId).toBe('0xEXEC0')

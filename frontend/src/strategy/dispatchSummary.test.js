@@ -767,7 +767,7 @@ describe('Task 6 chunk C2 -- receipt custody amounts stay exact and unknown neve
     expect(typeof outcome.custody.amount.units).toBe('string')
   })
 
-  it('unknown custody carries amount:null, never a coerced zero -- the receipt\'s own ambiguous-evidence verdict (allocationReceipt.js\'s confirmCustody)', () => {
+  it("unknown custody carries amount:null, never a coerced zero -- the receipt's own ambiguous-evidence verdict (allocationReceipt.js's confirmCustody)", () => {
     const receipt = buildDispatchReceipt({
       plan: plan(),
       permission: permission(),
@@ -777,7 +777,12 @@ describe('Task 6 chunk C2 -- receipt custody amounts stay exact and unknown neve
             {
               allocationId: 'run-mixed-8:deposit:0',
               receipt: {
-                custody: { location: 'unknown', confirmed: false, amount: null, reason: 'ambiguous' },
+                custody: {
+                  location: 'unknown',
+                  confirmed: false,
+                  amount: null,
+                  reason: 'ambiguous',
+                },
               },
             },
           ],

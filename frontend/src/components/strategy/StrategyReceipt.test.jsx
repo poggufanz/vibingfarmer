@@ -405,8 +405,9 @@ describe('Task 6 chunk C2 -- custody evidence is projected as evidence, never re
       />
     )
     fireEvent.click(document.querySelector('.pc-technical-details summary'))
-    expect(screen.getByText(/custody evidence unreadable \(receipt custody location "base-relay"/))
-      .toBeTruthy()
+    expect(
+      screen.getByText(/custody evidence unreadable \(receipt custody location "base-relay"/)
+    ).toBeTruthy()
     expect(screen.queryByText(/custody unknown \(/)).toBeNull()
   })
 

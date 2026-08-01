@@ -215,7 +215,7 @@ function unmappedCustody(receiptCustody, allocationId) {
     reason:
       `receipt custody location "${receiptCustody.location}" for allocation "${allocationId}" is ` +
       'outside the server RECEIPT_CUSTODY_LOCATIONS vocabulary this module knows (client/server ' +
-      'vocabulary drift) -- this allocation\'s custody could not be read; it is NOT a genuine ' +
+      "vocabulary drift) -- this allocation's custody could not be read; it is NOT a genuine " +
       '"no evidence" verdict.',
     source: 'unmapped',
   }
