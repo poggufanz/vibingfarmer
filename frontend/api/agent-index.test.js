@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Keypair, Networks } from '@stellar/stellar-sdk'
+import { Keypair, Networks, StrKey } from '@stellar/stellar-sdk'
 
 const mocked = vi.hoisted(() => ({
   store: null,
@@ -22,7 +22,7 @@ const OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 21)).publicKey()
 const OTHER_OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 22)).publicKey()
 const SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 23))
 const OTHER_SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 24))
-const AGENT = 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5'
+const AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 const ROUTER = 'CBEI5VJKT2KZR6TU6NKHKJRIQORXTSTAH5RDUA7MBUNCPZDN6ZLQSYE4'
 const ROUTER_V2 = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
 const ROUTER_V1 = 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5'
@@ -201,6 +201,11 @@ beforeEach(() => {
 })
 
 describe('/api/agent-index authenticated execution routes', () => {
+  it('uses a valid agent contract identity distinct from every router fixture', () => {
+    expect(StrKey.isValidContract(AGENT)).toBe(true)
+    expect([ROUTER, ROUTER_V2, ROUTER_V1]).not.toContain(AGENT)
+  })
+
   it('issues a reachable challenge with singular router compatibility without disclosing configuration', async () => {
     const requestDigest = 'ab'.repeat(32)
     const { res, body } = await call(

@@ -17,7 +17,7 @@ import {
 
 const NETWORK = 'stellar-testnet'
 const OWNER = Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(1)).publicKey()
-const AGENT = 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5'
+const AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 const IDENTITY = {
   networkId: NETWORK,
   owner: OWNER,
