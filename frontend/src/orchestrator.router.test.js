@@ -8,10 +8,14 @@
 // PermissionPhaseError(phase:'fresh-grant'), and the queue/dispatch events carry real order; and
 // (2) the LEGACY `dispatch(strategy, totalAmount)` router path (`setupViaRouter` /
 // `tryReuseAllCached` / `grantFreshAgents`, unchanged — `dispatchLegacy` is a byte-for-byte rename)
-// — restored here (review round 2) after an earlier pass on this file dropped its coverage
-// while this path is STILL PRODUCTION (orchestrator.baseleg.test.js exercises adjacent scenarios
-// but not these directly). orchestrator.test.js covers the separate `setupLegacy` (non-router)
-// path.
+// — restored here (review round 2) after an earlier pass on this file dropped its coverage.
+// CORRECTION (Task 6 chunk C1 fix round 1): this path is NOT reached in production anymore.
+// `dispatch()` (`orchestrator.js:361-364`) picks `dispatchLegacy` only when its second argument is
+// NOT an object, and the sole production call site (`app.jsx:3296`) always passes
+// `{permissionDecision}`. Kept here as defensive/regression coverage for a code path that still
+// exists and is reachable by any caller that passes a bare number, not because anything in
+// production still calls it that way. orchestrator.baseleg.test.js exercises adjacent scenarios
+// but not these directly; orchestrator.test.js covers the separate `setupLegacy` (non-router) path.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const submitGrantMock = vi.fn()
@@ -111,6 +115,23 @@ vi.mock('./stellar/grantReceiptStore.js', () => ({
   buildGrantReceiptV1: (p) => ({ version: 1, ...p }),
   saveGrantReceipt: (...a) => saveGrantReceiptMock(...a),
   fingerprintGrantReceipt: (...a) => fingerprintGrantReceiptMock(...a),
+}))
+
+// Task 6 chunk C1 fix round 1, Important 3 -- the AllocationReceiptV2 transport (Chunk B). Mocked
+// the same way every other network-touching dependency in this file is: the REAL orchestrator.js
+// dispatch loops run unmocked, so the V3-executionId-in-evidence test below can assert exactly
+// what body was posted.
+const postReceiptEvidenceMock = vi.fn()
+vi.mock('./stellar/agentIndexReceiptClient.js', () => ({
+  postReceiptEvidence: (...a) => postReceiptEvidenceMock(...a),
+  ReceiptEvidenceError: class ReceiptEvidenceError extends Error {
+    constructor(message, opts = {}) {
+      super(message)
+      this.name = 'ReceiptEvidenceError'
+      this.step = opts.step
+      this.code = opts.code
+    }
+  },
 }))
 
 const workerInstances = []
@@ -328,6 +349,15 @@ beforeEach(() => {
     signer: new Uint8Array(32).fill(1),
     salt: new Uint8Array(32).fill(2),
     signerSecret: `SPREPARED-${allocationId}`,
+  }))
+  postReceiptEvidenceMock.mockReset()
+  postReceiptEvidenceMock.mockImplementation(async ({ body }) => ({
+    requestDigest: 'digest',
+    challengeId: 'challenge',
+    expiresAt: 0,
+    written: 1,
+    duplicates: 0,
+    version: (body?.expectedVersion ?? 0) + 1,
   }))
 })
 
@@ -729,6 +759,44 @@ describe('dispatch(strategyPlan, { permissionDecision }) — reuse mode', () => 
     expect(res.failed).toBe(1)
     expect(res.results.find((r) => !r.success).error).toMatch(/router pull reported FAILED/)
   })
+
+  // Task 6 chunk C1 fix round 1, Important 2 -- no WorkerAgent was ever constructed with
+  // activeAccount/getCurrentActiveAccount/signal, so runAgentDeposit's indeterminate-outcome check
+  // (agentDeposit.js) was a permanent no-op on the deposit leg in production even though the pull
+  // leg (runAgentPull, above) is armed with these same three fields everywhere it runs. Asserts
+  // the REAL buildReuseWorkers code -- not a stub's own claim -- threads them onto every
+  // constructed worker.
+  it('threads activeAccount/getCurrentActiveAccount/signal onto every WorkerAgent constructed by buildReuseWorkers', async () => {
+    const addresses = ['CCACHED1', 'CCACHED2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionFor(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue(decision)
+    const activeAccount = Object.freeze({
+      version: 1,
+      kind: 'G',
+      address: 'GUSER',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      connectorId: 'freighter',
+      epoch: 1,
+    })
+    const getCurrentActiveAccount = () => activeAccount
+    const signal = new AbortController().signal
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 's-wiring-reuse',
+      onEvent: () => {},
+      activeAccount,
+      getCurrentActiveAccount,
+      signal,
+    })
+    await orch.dispatch(PLAN, { permissionDecision: decision })
+    expect(workerInstances.length).toBe(2)
+    for (const w of workerInstances) {
+      expect(w.activeAccount).toBe(activeAccount)
+      expect(w.getCurrentActiveAccount).toBe(getCurrentActiveAccount)
+      expect(w.signal).toBe(signal)
+    }
+  })
 })
 
 // Task 5 chunk B — the V3 reuse dispatch path. Unreachable in production today (THE DORMANCY
@@ -797,6 +865,40 @@ describe('dispatch(strategyPlan, { permissionDecision }) — V3 reuse mode (boun
       amount: BigInt(PLAN.agents[1].cap.units),
       relayer: 'GRELAYER',
     })
+  })
+
+  // Task 6 chunk C1 fix round 1, Important 3 -- the receipt's OWN `executionId` (agent-index id
+  // space, `${runId}:exec:${allocationId}`) and the V3 router's OWN replay-guard id
+  // (`v3Exec.executionId`, what `buildAgentPullV3` actually submits on-chain) are two SEPARATE
+  // things. Before this fix the router's replay-guard id appeared nowhere in the receipt -- a V3
+  // recovery could not resend the identical still-valid envelope because the id it would need was
+  // unrecoverable from the persisted evidence.
+  it('[Important 3] threads the V3 router replay-guard executionId into the pull attempt evidence, distinct from this receipt\'s own executionId', async () => {
+    const addresses = ['CV3AGENT1', 'CV3AGENT2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionV3For(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue(decision)
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-evidence', onEvent: () => {} })
+
+    await orch.dispatch(PLAN, { permissionDecision: decision })
+
+    expect(postReceiptEvidenceMock).toHaveBeenCalled()
+    const confirmedPullCall = postReceiptEvidenceMock.mock.calls.find(
+      ([args]) =>
+        args.body.receipt.allocationId === PLAN.agents[0].allocationId &&
+        args.body.attempt.phase === 'pull' &&
+        args.body.attempt.status === 'confirmed'
+    )
+    expect(confirmedPullCall).toBeTruthy()
+    const [args] = confirmedPullCall
+    // The receipt's OWN executionId stays the deterministic agent-index form -- NOT the V3
+    // router's replay-guard id.
+    expect(args.body.receipt.executionId).toBe(
+      `${PLAN.runId}:exec:${PLAN.agents[0].allocationId}`
+    )
+    // The V3 router's OWN replay-guard id (decision.executions[0].executionId, '0xEXEC0') is
+    // recoverable from the attempt evidence.
+    expect(args.body.attempt.evidence.v3ExecutionId).toBe('0xEXEC0')
   })
 
   it('revalidates through a freshly captured preflight immediately before the first pull, threading permissionId/approval/activeAccount', async () => {

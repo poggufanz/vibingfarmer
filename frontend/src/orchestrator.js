@@ -33,6 +33,7 @@ import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
 import {
   activeAccountSubmissionUnknown,
   assertActiveAccountBoundary,
+  assertActiveOwner,
 } from './stellar/activeAccount.js'
 import { getActiveAccount } from './stellar/walletKit.js'
 // Task 6 chunk C1 -- the real AllocationReceiptV2 evidence producer (Chunk A) and its authenticated
@@ -40,7 +41,11 @@ import { getActiveAccount } from './stellar/walletKit.js'
 // `./stellar/agentCache.js` (allocationReceipt.js has NO imports at all; agentIndexReceiptClient.js
 // only reaches `@stellar/stellar-sdk` + the `buffer` polyfill) -- safe against the small mocked
 // export sets orchestrator.baseleg.test.js gives those two modules (this file's own note above).
-import { createAllocationReceipt, appendPhase, confirmCustody } from './strategy/allocationReceipt.js'
+import {
+  createAllocationReceipt,
+  appendPhase,
+  confirmCustody,
+} from './strategy/allocationReceipt.js'
 import { postReceiptEvidence } from './stellar/agentIndexReceiptClient.js'
 // NOTE (Strategy Task 7): every OTHER new dependency this file needed for the permission-locked
 // path (`./strategy/reusePreflight.js`, `./stellar/grantReceiptStore.js`, and `readConfirmedLedger`
@@ -115,6 +120,19 @@ function splitUnitsByRatio(totalUnits, ratios) {
  * `postReceiptEvidence` as the signer (it only ever calls `.sign()` on it, per Chunk B's own
  * contract) -- never spread into the `evidence`/`intent` bodies this function builds, so a session
  * secret can never reach the wire through this path.
+ *
+ * Review round 1, Important 3 -- two SEPARATE id spaces, both real, neither invented here:
+ *   - This receipt's `executionId` (`${runId}:exec:${allocationId}`) is a free-form TEXT primary
+ *     key for the agent-index (`migrations/0005_execution_receipts.sql:5,42`) -- what Task 7's
+ *     `requestRecovery({executionId,...})` keys on. Deterministic, no nonce/salt/counter, so a
+ *     resend within one dispatch call stays safe.
+ *   - The V3 router's OWN replay-guard id is a DIFFERENT thing: `permissionGrantV3.js`'s
+ *     `makeAllocationExecution({runId,allocationId,scopeId,amountUnits})` mints a deterministic
+ *     bytes32 hash that `pull_v3` itself records on-chain (only on success), passed to
+ *     `buildAgentPullV3` as `{bytes32}` (`grant.js:401`). When a worker's pull runs through V3
+ *     (`v3Exec` non-null in the loops below), that id is threaded into the pull attempt's evidence
+ *     as `v3ExecutionId` so a V3 recovery can resend the IDENTICAL still-valid envelope rather than
+ *     rebuilding one (the router replay-guard id is otherwise unrecoverable from the receipt).
  * @param {{runId:string, allocationId:string, owner:string, agentAddress:string, sessionKey:object,
  *   worker:string, amount:{token:string,units:string,decimals:number}, onEvent?:Function}} p
  */
@@ -132,7 +150,9 @@ function createEvidenceRecorder({
     networkId: RECEIPT_NETWORK_ID,
     // Deterministic per (run, allocation) -- this dispatch path never retries an allocation
     // within one call, so this is genuinely the allocation's one execution attempt for this run,
-    // consistent with allocationId's own `${runId}:kind:key` convention (planModel.js).
+    // consistent with allocationId's own `${runId}:kind:key` convention (planModel.js). This is
+    // the agent-index's own id space -- see this function's own doc comment above for why it is
+    // deliberately NOT the V3 router's replay-guard id (`makeAllocationExecution`).
     executionId: `${runId}:exec:${allocationId}`,
     allocationId,
     owner,
@@ -147,6 +167,18 @@ function createEvidenceRecorder({
   // (store.js:505-506's versionConflict check), incremented to whatever the server actually
   // committed after every accepted write.
   let expectedVersion = 0
+  // Review round 1, Important 4 -- once a POST fails, `expectedVersion` can never recover on its
+  // own: the server's 409 body carries no current-version field to adopt
+  // (`api/agent-index/handler.js:43-44,174-176` -- just `{error:'...conflict'}`), and Chunk B's
+  // client deliberately has no GET receipt-read counterpart to re-derive it from
+  // (agentIndexReceiptClient.js's own header). Re-attempting with a known-stale version would just
+  // 409 forever. Rather than silently degrading to zero durable evidence for the rest of this
+  // receipt's life, `durable` flips to `false` on the FIRST failure and stays false -- surfaced to
+  // the caller (`.durable`) so a run-level "evidence not durable" signal exists, cheaply, without
+  // inventing a new read-side client this chunk was never asked to build. Posts keep being
+  // attempted regardless (fire-and-forget) -- a transient failure that clears on its own should
+  // not be treated as permanently lost.
+  let durable = true
 
   async function record({ phase, status, evidence }) {
     receipt = appendPhase(receipt, { phase, status, evidence })
@@ -160,7 +192,14 @@ function createEvidenceRecorder({
       })
       expectedVersion = result.version
     } catch (error) {
-      onEvent?.('receipt-evidence-failed', { allocationId, phase, status, error: error.message })
+      durable = false
+      onEvent?.('receipt-evidence-failed', {
+        allocationId,
+        phase,
+        status,
+        error: error.message,
+        durable,
+      })
     }
   }
 
@@ -173,6 +212,9 @@ function createEvidenceRecorder({
     custody,
     get receipt() {
       return receipt
+    },
+    get durable() {
+      return durable
     },
   }
 }
@@ -589,6 +631,15 @@ export class OrchestratorAgent {
     // untouched V2 `runAgentPull` call. null for every V2/fresh path (unchanged behavior).
     let v3Pull = null
     if (permissionDecision.mode === 'reuse') {
+      // Minor fix round 1 -- closes report-concern 4 cheaply: `postReceiptEvidence`'s owner guard
+      // is fed the SAME `this.user` variable on both sides at this file's evidence-posting call
+      // site, so it is currently a tautology there (see the chunk C1 report's identity-question
+      // section). This is the one place on the reuse-mode path that can independently assert
+      // `this.activeAccount.address === this.user` BEFORE any evidence is built from it. A
+      // divergence still fails closed at the server's on-chain re-read either way; this just moves
+      // the failure earlier and local. A no-op for every existing caller that never sets
+      // `activeAccount` (defaults to null; `assertActiveOwner` only checks a version:1 capability).
+      assertActiveOwner({ owner: this.user, activeAccount: this.activeAccount })
       const { revalidated, credentialByAllocation } = await this.revalidateReuse(
         strategyPlan,
         permissionDecision,
@@ -772,9 +823,18 @@ export class OrchestratorAgent {
               message: `No proven execution for allocation ${w.allocationId}.`,
             })
           }
+          // Review round 1, Important 3 -- the V3 router's own replay-guard id
+          // (`v3Exec.executionId`, distinct from this receipt's own `executionId` -- see
+          // createEvidenceRecorder's doc comment) must be recoverable from the receipt, not just
+          // from the live in-memory `v3Exec` this loop iteration happens to hold.
+          const v3EvidenceExtra = v3Exec ? { v3ExecutionId: v3Exec.executionId } : {}
           // Persist intent BEFORE submission (brief) -- a crash/reload between this line and the
           // pull's own outcome still leaves a durable "we were about to pull" fact behind.
-          await evidenceRecorder.record({ phase: 'pull', status: 'submitted', evidence: {} })
+          await evidenceRecorder.record({
+            phase: 'pull',
+            status: 'submitted',
+            evidence: { ...v3EvidenceExtra },
+          })
           let res
           try {
             res = v3Exec
@@ -807,7 +867,7 @@ export class OrchestratorAgent {
             await evidenceRecorder.record({
               phase: 'pull',
               status: 'confirmed',
-              evidence: { txHash: pullTxHash },
+              evidence: { txHash: pullTxHash, ...v3EvidenceExtra },
             })
             evidenceRecorder.custody({
               location: 'stellar-agent',
@@ -822,20 +882,41 @@ export class OrchestratorAgent {
               await evidenceRecorder.record({
                 phase: 'pull',
                 status: 'unknown',
-                evidence: { reason: pullError.message, txHash: pullError.result?.hash ?? null },
+                evidence: {
+                  reason: pullError.message,
+                  txHash: pullError.result?.hash ?? null,
+                  ...v3EvidenceExtra,
+                },
               })
               evidenceRecorder.custody({ location: 'unknown', reason: pullError.message })
             } else {
               await evidenceRecorder.record({
                 phase: 'pull',
                 status: 'failed',
-                evidence: { reason: pullError.message },
+                evidence: { reason: pullError.message, ...v3EvidenceExtra },
               })
             }
             throw pullError
           }
+        } else {
+          // CRITICAL fix round 1 -- the agent already holds the funds (the pull was skipped
+          // above); the balance READ just performed IS the proof of stellar-agent custody, the
+          // same fact an exact successful pull would establish, observed by a different route.
+          // Without this call the receipt opens at owner/confirmed with pull:not_started even
+          // though the money is provably at the agent -- if the deposit then fails, a recovery
+          // reading that receipt would authorize a duplicate pull of funds already there. Money
+          // would move twice.
+          evidenceRecorder.custody({
+            location: 'stellar-agent',
+            txSuccess: true,
+            amount: receiptAmount,
+          })
         }
-        await evidenceRecorder.record({ phase: 'stellar_deposit', status: 'submitted', evidence: {} })
+        await evidenceRecorder.record({
+          phase: 'stellar_deposit',
+          status: 'submitted',
+          evidence: {},
+        })
         const res = await w.execute()
         this.assertCurrentAccount()
         if (res?.success) {
@@ -875,16 +956,27 @@ export class OrchestratorAgent {
           // ladder guarantees this can never advance custody to stellar-vault on transaction
           // success alone (allocationReceipt.js) -- it only records the ambiguity.
           if (res?.txSuccess) {
+            // Minor fix round 1 -- pass `amount` for uniformity with every other custody call.
+            // Harmless today (the bar already fails on matchingEvent:false, routing to the
+            // ambiguous path regardless of amount), but keeps this call from being the one place
+            // an accidental future `matchingEvent:true` flip would trip the brief's
+            // confirmed-amount-drop guard.
             evidenceRecorder.custody({
               location: 'stellar-vault',
               txSuccess: true,
               matchingEvent: false,
+              amount: receiptAmount,
             })
           }
         }
         workerResults.push({
           status: 'fulfilled',
-          value: { ...res, pullTxHash, receipt: evidenceRecorder.receipt },
+          value: {
+            ...res,
+            pullTxHash,
+            receipt: evidenceRecorder.receipt,
+            receiptEvidenceDurable: evidenceRecorder.durable,
+          },
         })
       } catch (e) {
         workerResults.push({
@@ -893,7 +985,11 @@ export class OrchestratorAgent {
           // evidenceRecorder can genuinely be null here -- createEvidenceRecorder itself is what
           // threw (a malformed-input edge case, never observed in production; every input it
           // takes is already validated earlier in this method).
-          value: { pullTxHash, receipt: evidenceRecorder?.receipt ?? null },
+          value: {
+            pullTxHash,
+            receipt: evidenceRecorder?.receipt ?? null,
+            receiptEvidenceDurable: evidenceRecorder?.durable ?? false,
+          },
         })
       }
       if (i < workers.length - 1) await new Promise((r) => setTimeout(r, DISPATCH_INTERVAL_MS))
@@ -910,6 +1006,10 @@ export class OrchestratorAgent {
       pullTxHash: r.value?.pullTxHash ?? null,
       custody: r.value?.receipt?.custody ?? null,
       receipt: r.value?.receipt ?? null,
+      // Review round 1, Important 4 -- run-level "evidence not durable" signal: false once any
+      // POST for this allocation's receipt failed. Never gates `success` (evidence transport is
+      // orthogonal to the underlying financial outcome), purely observability.
+      receiptEvidenceDurable: r.value?.receiptEvidenceDurable ?? null,
       error: r.reason?.message || r.value?.error,
     }))
     const completed = results.filter((r) => r.success).length
@@ -1021,6 +1121,18 @@ export class OrchestratorAgent {
               }
               throw pullError
             }
+          } else {
+            // CRITICAL fix round 1 -- same reasoning as dispatchPermissioned's plain loop above:
+            // the agent already holds the funds, so the balance READ just performed IS the proof
+            // of stellar-agent custody. Without this, a receipt whose pull was skipped opens at
+            // owner/confirmed with pull:not_started -- if the deposit then fails, recovery
+            // reading that receipt would authorize a duplicate pull of funds already at the
+            // agent. Money would move twice.
+            evidenceRecorder.custody({
+              location: 'stellar-agent',
+              txSuccess: true,
+              amount: receiptAmount,
+            })
           }
           await evidenceRecorder.record({
             phase: 'stellar_deposit',
@@ -1055,10 +1167,13 @@ export class OrchestratorAgent {
               evidence: { reason: deposited?.error, txHash: deposited?.txHash ?? null },
             })
             if (deposited?.txSuccess) {
+              // Minor fix round 1 -- pass `amount` for uniformity; see the plain loop's identical
+              // comment above.
               evidenceRecorder.custody({
                 location: 'stellar-vault',
                 txSuccess: true,
                 matchingEvent: false,
+                amount: receiptAmount,
               })
             }
           }
@@ -1075,6 +1190,7 @@ export class OrchestratorAgent {
                 checkedAt: null,
               },
               allocationReceipt: evidenceRecorder.receipt,
+              receiptEvidenceDurable: evidenceRecorder.durable,
             },
           })
         } catch (reason) {
@@ -1088,6 +1204,7 @@ export class OrchestratorAgent {
                 ? { location: 'agent', confirmed: true, checkedAt: null }
                 : { location: 'unknown', confirmed: false, checkedAt: null },
               allocationReceipt: evidenceRecorder?.receipt ?? null,
+              receiptEvidenceDurable: evidenceRecorder?.durable ?? false,
             },
           })
         }
@@ -1106,6 +1223,8 @@ export class OrchestratorAgent {
         agentAddress: entry.value?.agentAddress || stellarWorkers[index].agentAddress,
         custody: entry.value?.custody,
         allocationReceipt: entry.value?.allocationReceipt,
+        // Review round 1, Important 4 -- see the plain loop's identical field for the contract.
+        receiptEvidenceDurable: entry.value?.receiptEvidenceDurable ?? null,
         error: entry.reason?.message || entry.value?.error,
       }))
     }
@@ -1502,6 +1621,13 @@ export class OrchestratorAgent {
         agentAddress: credential.agentAddress,
         sessionKey: newSessionKey(credential.cached.secret),
         eligibilityToken: this.reviewedEligibilityToken(),
+        // Review round 1, Important 2 -- without this, runAgentDeposit's indeterminate-outcome
+        // check (agentDeposit.js) is a permanent no-op on the deposit leg (captured==null), even
+        // though the pull leg is armed with these same three fields everywhere it runs. Threading
+        // them here is what makes VF_SUBMISSION_UNKNOWN reachable on the deposit leg at all.
+        activeAccount: this.activeAccount,
+        getCurrentActiveAccount: this.getCurrentActiveAccount,
+        signal: this.signal,
       })
     })
   }
@@ -1521,6 +1647,10 @@ export class OrchestratorAgent {
           onEvent: this.onEvent,
           agentAddress: null,
           eligibilityToken: this.reviewedEligibilityToken(),
+          // Review round 1, Important 2 -- see buildReuseWorkers' identical comment above.
+          activeAccount: this.activeAccount,
+          getCurrentActiveAccount: this.getCurrentActiveAccount,
+          signal: this.signal,
         })
     )
   }
@@ -1854,6 +1984,10 @@ export class OrchestratorAgent {
               onEvent: this.onEvent,
               agentAddress: null, // set right after the per-worker deploy below
               eligibilityToken: p.eligibilityToken,
+              // Review round 1, Important 2 -- same reasoning as buildReuseWorkers/buildFreshWorkers.
+              activeAccount: this.activeAccount,
+              getCurrentActiveAccount: this.getCurrentActiveAccount,
+              signal: this.signal,
             })
         )
 

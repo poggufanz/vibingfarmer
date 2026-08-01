@@ -61,6 +61,12 @@ vi.mock('./stellar/config.js', () => ({
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',
   SOROBAN_FUNDING_ROUTER_ADDRESS: 'CROUTER',
   USE_FUNDING_ROUTER: true,
+  // Task 6 chunk C1 fix round 1 (Important 2) — needed by stellar/activeAccount.js's own
+  // (unmocked) import of this same module, so a V1-shaped activeAccount fixture can satisfy
+  // assertActiveAccountBoundary's network check in the WorkerAgent-wiring tests below. Every
+  // pre-existing test in this file omits `activeAccount` (defaults to null), so this addition
+  // changes nothing for them (mirrors orchestrator.router.test.js's identical addition).
+  NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
 }))
 vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
 vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
@@ -1464,6 +1470,37 @@ describe('Task 6 chunk C1 — allocation receipt evidence (dispatchPermissioned 
     expect(depositAttempt.evidence.txHash).not.toBe(pullAttempt.evidence.txHash)
   })
 
+  // CRITICAL fix round 1: when the agent already holds the funds, the pull is skipped entirely --
+  // no confirmCustody call existed on that branch, so the receipt opened at owner/confirmed with
+  // pull:not_started even though the money was provably at the agent. If the deposit then failed,
+  // the persisted receipt read "owner custody, pull not_started" -- Task 7's "owner/never-submitted
+  // permits one pull" row -- so recovery would authorize a duplicate pull of funds already at the
+  // agent. Money would move twice.
+  it('[Receipt] CRITICAL: agent already funded (pull skipped) then deposit fails keeps custody at stellar-agent, never owner', async () => {
+    const fixture = permissionedStellarOnlyFixture('run-receipt-already-funded')
+    readTokenBalanceMock.mockImplementation(async (addr) =>
+      addr === 'GUSER' ? null : 600_000_000n
+    )
+    workerExecuteMock.mockResolvedValue({ success: false, error: 'deposit boom' })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    const result = summary.results[0]
+    expect(result.success).toBe(false)
+    expect(result.receipt.phases.pull).toBe('not_started')
+    expect(result.receipt.custody.location).toBe('stellar-agent')
+    expect(result.receipt.custody.location).not.toBe('owner')
+    expect(result.receipt.custody).toEqual({
+      location: 'stellar-agent',
+      confirmed: true,
+      amount: { token: 'CTOKEN', units: '600000000', decimals: 7 },
+      reason: null,
+    })
+  })
+
   it('[Receipt] an indeterminate deposit reports phase "unknown", holds custody at stellar-agent, never success', async () => {
     const fixture = permissionedStellarOnlyFixture('run-receipt-deposit-unknown')
     runAgentPullMock.mockResolvedValue({ hash: 'PULLHASH2', status: 'SUCCESS' })
@@ -1538,7 +1575,9 @@ describe('Task 6 chunk C1 — allocation receipt evidence (dispatchPermissioned 
     // The journaled ATTEMPT evidence itself must also keep the two phases' hashes distinct, not
     // just the top-level results projection -- the confirmed pull attempt and the confirmed
     // deposit attempt on the SAME successful worker must carry their own real hashes.
-    const pullAttemptA = a.receipt.attempts.find((att) => att.phase === 'pull' && att.status === 'confirmed')
+    const pullAttemptA = a.receipt.attempts.find(
+      (att) => att.phase === 'pull' && att.status === 'confirmed'
+    )
     const depositAttemptA = a.receipt.attempts.find(
       (att) => att.phase === 'stellar_deposit' && att.status === 'confirmed'
     )
@@ -1612,5 +1651,253 @@ describe('Task 6 chunk C1 — allocation receipt evidence (dispatchPermissioned 
     expect(result.success).toBe(true)
     expect(result.receipt.custody.location).toBe('stellar-vault')
     expect(events.some((e) => e.n === 'receipt-evidence-failed')).toBe(true)
+  })
+})
+
+// Task 6 chunk C1 fix round 1 -- Critical 1, Important 2, Important 4, Important 5. The mixed
+// loop's ~180 new lines (dispatchConfirmedMixed's runStellar()) had zero assertions before this
+// round: every pre-existing mixed test above only proved a throw would surface, never checked the
+// field name, custody outcome, or hash separation the new `allocationReceipt` evidence carries.
+function permissionedMixedFixtureTwoDeposits(runId) {
+  const plan = {
+    runId,
+    planFingerprint: `PLAN-${runId}`,
+    agents: [
+      {
+        allocationId: `${runId}:deposit:0`,
+        kind: 'deposit',
+        cap: { token: 'CTOKEN', units: '300000000', decimals: 7 },
+        allocation: { token: 'CTOKEN', units: '300000000', decimals: 7 },
+        periodSeconds: 3600,
+        expiry: 2000000000,
+      },
+      {
+        allocationId: `${runId}:deposit:1`,
+        kind: 'deposit',
+        cap: { token: 'CTOKEN', units: '300000000', decimals: 7 },
+        allocation: { token: 'CTOKEN', units: '300000000', decimals: 7 },
+        periodSeconds: 3600,
+        expiry: 2000000000,
+      },
+      {
+        allocationId: `${runId}:bridge:base`,
+        kind: 'bridge',
+        cap: { token: STELLAR_USDC_SAC, units: '400000000', decimals: 7 },
+        allocation: { token: STELLAR_USDC_SAC, units: '400000000', decimals: 7 },
+        periodSeconds: 3600,
+        expiry: 2000000000,
+        children: [
+          {
+            allocationId: `${runId}:bridge:pool-a`,
+            address: '0x389250872044368759D3db5C09b2706A6628d4e0',
+            allocation: { token: 'USDC', units: '40000000', decimals: 6 },
+          },
+        ],
+      },
+    ],
+  }
+  const depositInit = (agent) => ({
+    allocationId: agent.allocationId,
+    kind: 0,
+    token: 'CTOKEN',
+    target: 'CACTIVEVAULT',
+    cap: { ...agent.cap },
+    periodSeconds: 3600,
+    expiry: 2000000000,
+    mintRecipient: '00'.repeat(32),
+    destinationDomain: 0,
+  })
+  const reviewedAgentInits = [
+    depositInit(plan.agents[0]),
+    depositInit(plan.agents[1]),
+    {
+      allocationId: plan.agents[2].allocationId,
+      kind: 1,
+      token: STELLAR_USDC_SAC,
+      target: STELLAR_TOKEN_MESSENGER_MINTER,
+      cap: { ...plan.agents[2].cap },
+      periodSeconds: 3600,
+      expiry: 2000000000,
+      mintRecipient: Array.from(evmAddrToBytes32(KERNEL), (byte) =>
+        byte.toString(16).padStart(2, '0')
+      ).join(''),
+      destinationDomain: CCTP_BASE_DOMAIN,
+    },
+  ]
+  return {
+    plan,
+    permissionDecision: {
+      mode: 'fresh',
+      runId,
+      planFingerprint: plan.planFingerprint,
+      agentInitFingerprint: `AI-${runId}`,
+      reviewedBudgets: [
+        { token: 'CTOKEN', units: '600000000', decimals: 7 },
+        { token: STELLAR_USDC_SAC, units: '400000000', decimals: 7 },
+      ],
+      reviewedAgentInits,
+    },
+  }
+}
+
+describe('Task 6 chunk C1 fix round 1 — dispatchConfirmedMixed evidence + critical/important fixes', () => {
+  it('[Receipt][Mixed] CRITICAL: agent already funded (pull skipped) then deposit fails keeps custody at stellar-agent, never owner', async () => {
+    const fixture = permissionedMixedFixture('run-mixed-already-funded')
+    readTokenBalanceMock.mockImplementation(async (addr) =>
+      addr === 'CFRESH1' ? 600_000_000n : 0n
+    )
+    workerExecuteMock.mockResolvedValue({ success: false, error: 'deposit boom' })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    const result = summary.results[0]
+    expect(result.success).toBe(false)
+    expect(result.allocationReceipt.phases.pull).toBe('not_started')
+    expect(result.allocationReceipt.custody.location).toBe('stellar-agent')
+    expect(result.allocationReceipt.custody.location).not.toBe('owner')
+  })
+
+  it('[Receipt][Mixed] pull success then deposit failure preserves agent address, pull hash, exact units, and stellar-agent custody', async () => {
+    const fixture = permissionedMixedFixture('run-mixed-pull-ok-deposit-fail')
+    runAgentPullMock.mockResolvedValue({ hash: 'MIXPULL1', status: 'SUCCESS' })
+    workerExecuteMock.mockResolvedValue({ success: false, error: 'deposit boom' })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    const result = summary.results[0]
+    expect(result.success).toBe(false)
+    expect(result.pullTxHash).toBe('MIXPULL1')
+    expect(result.agentAddress).toBe('CFRESH1')
+    expect(result.allocationReceipt.phases.pull).toBe('confirmed')
+    expect(result.allocationReceipt.phases.stellar_deposit).toBe('failed')
+    expect(result.allocationReceipt.custody).toEqual({
+      location: 'stellar-agent',
+      confirmed: true,
+      amount: { token: 'CTOKEN', units: '600000000', decimals: 7 },
+      reason: null,
+    })
+    const pullAttempt = result.allocationReceipt.attempts.find(
+      (a) => a.phase === 'pull' && a.status === 'confirmed'
+    )
+    expect(pullAttempt.evidence.txHash).toBe('MIXPULL1')
+    // The pre-existing legacy CustodyV1 field must stay completely untouched by this chunk: a
+    // deposit FAILURE never throws (worker.execute() always resolves), so this settles on the
+    // FULFILLED branch, whose legacy custody fallback (deposited?.custody || {location:'unknown',
+    // confirmed:false, checkedAt:null}) is unchanged pre-existing behavior -- this chunk only adds
+    // the NEW `allocationReceipt` field, asserted above, alongside it.
+    expect(result.custody).toEqual({ location: 'unknown', confirmed: false, checkedAt: null })
+  })
+
+  it('[Receipt][Mixed] mixed outcomes across TWO Stellar deposit workers (beside a bridge leg): every planned allocation appears exactly once, each with its own separate phase hashes', async () => {
+    const fixture = permissionedMixedFixtureTwoDeposits('run-mixed-two-deposits')
+    runAgentPullMock
+      .mockResolvedValueOnce({ hash: 'MIXPULL-A', status: 'SUCCESS' })
+      .mockResolvedValueOnce({ hash: 'MIXPULL-B', status: 'SUCCESS' })
+    workerExecuteMock
+      .mockResolvedValueOnce({ success: true, txHash: 'MIXDEP-A' })
+      .mockResolvedValueOnce({ success: false, error: 'boom-B' })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(summary.results).toHaveLength(2)
+    const ids = summary.results.map((r) => r.allocationId).sort()
+    expect(ids).toEqual(
+      ['run-mixed-two-deposits:deposit:0', 'run-mixed-two-deposits:deposit:1'].sort()
+    )
+    const [a, b] = summary.results
+    expect(a.success).toBe(true)
+    expect(a.pullTxHash).toBe('MIXPULL-A')
+    expect(a.txHash).toBe('MIXDEP-A')
+    expect(b.success).toBe(false)
+    expect(b.pullTxHash).toBe('MIXPULL-B')
+    expect(a.pullTxHash).not.toBe(b.pullTxHash)
+    const pullAttemptA = a.allocationReceipt.attempts.find(
+      (att) => att.phase === 'pull' && att.status === 'confirmed'
+    )
+    const depositAttemptA = a.allocationReceipt.attempts.find(
+      (att) => att.phase === 'stellar_deposit' && att.status === 'confirmed'
+    )
+    expect(pullAttemptA.evidence.txHash).toBe('MIXPULL-A')
+    expect(depositAttemptA.evidence.txHash).toBe('MIXDEP-A')
+  })
+
+  // Important 2: no WorkerAgent was ever constructed with activeAccount/getCurrentActiveAccount/
+  // signal, so runAgentDeposit's indeterminate-outcome check on the deposit leg was a permanent
+  // no-op in production even though the pull leg was armed with these same three fields
+  // everywhere it runs. Asserts the REAL dispatchPermissioned/buildFreshWorkers code -- not a
+  // stub's own claim -- actually threads them onto every constructed worker.
+  it('[Important 2] threads activeAccount/getCurrentActiveAccount/signal onto every WorkerAgent constructed by the real dispatch path (fresh mode)', async () => {
+    const fixture = permissionedMixedFixtureTwoDeposits('run-worker-wiring-fresh')
+    const activeAccount = Object.freeze({
+      version: 1,
+      kind: 'G',
+      address: 'GUSER',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      connectorId: 'freighter',
+      epoch: 1,
+    })
+    const getCurrentActiveAccount = () => activeAccount
+    const signal = new AbortController().signal
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'worker-wiring-fresh',
+      onEvent: vi.fn(),
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+      activeAccount,
+      getCurrentActiveAccount,
+      signal,
+    })
+
+    await orch.dispatch(fixture.plan, { permissionDecision: fixture.permissionDecision })
+
+    expect(workerInstances.length).toBeGreaterThan(0)
+    for (const w of workerInstances) {
+      expect(w.activeAccount).toBe(activeAccount)
+      expect(w.getCurrentActiveAccount).toBe(getCurrentActiveAccount)
+      expect(w.signal).toBe(signal)
+    }
+  })
+
+  // Reuse-mode WorkerAgent wiring is asserted in orchestrator.router.test.js instead -- this
+  // file's mock of ./stellar/agentCache.js and ./strategy/reusePreflight.js deliberately omits
+  // loadCachedAgents/preflightPermission (never needed by any pre-existing fresh-mode-only mixed
+  // test here), and orchestrator.router.test.js already carries the full reuse-mode fixture
+  // machinery (preflightPermissionMock, loadCachedAgentsMock, reuseDecisionFor) this needs.
+
+  // Important 4: expectedVersion never recovered from a failed POST -- every evidence POST for
+  // this allocation was made to fail, so `receiptEvidenceDurable` must surface false even though
+  // the underlying financial outcome (deposit success) is completely unaffected.
+  it('[Important 4] surfaces receiptEvidenceDurable:false once any POST fails, without affecting the financial outcome', async () => {
+    postReceiptEvidenceMock.mockRejectedValue(new Error('agent-index unreachable'))
+    const fixture = permissionedStellarOnlyFixture('run-receipt-durable-flag')
+    runAgentPullMock.mockResolvedValue({ hash: 'DURPULL', status: 'SUCCESS' })
+    workerExecuteMock.mockResolvedValue({ success: true, txHash: 'DURDEP' })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    const result = summary.results[0]
+    expect(result.success).toBe(true)
+    expect(result.receiptEvidenceDurable).toBe(false)
+  })
+
+  it('[Important 4] surfaces receiptEvidenceDurable:true when every POST succeeds', async () => {
+    const fixture = permissionedStellarOnlyFixture('run-receipt-durable-flag-ok')
+    runAgentPullMock.mockResolvedValue({ hash: 'DURPULLOK', status: 'SUCCESS' })
+    workerExecuteMock.mockResolvedValue({ success: true, txHash: 'DURDEPOK' })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(summary.results[0].receiptEvidenceDurable).toBe(true)
   })
 })
