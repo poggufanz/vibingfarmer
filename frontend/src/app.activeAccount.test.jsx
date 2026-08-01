@@ -166,15 +166,27 @@ import { BASE_POOL_CATALOG } from './config.js'
 const G = Object.freeze({
   version: 1,
   kind: 'G',
-  address: 'GOWNER',
+  address: `G${'A'.repeat(55)}`,
   networkPassphrase: 'Test SDF Network ; September 2015',
   connectorId: 'freighter',
   epoch: 1,
 })
 const C = Object.freeze({ ...G, kind: 'C', address: 'COWNER', connectorId: 'vf-wallet', epoch: 2 })
-const BASE_KERNEL = '0x0000000000000000000000000000000000000AA1'
-const BASE_SESSION = '0x0000000000000000000000000000000000000BB2'
+const BASE_KERNEL = `0x${'11'.repeat(20)}`
+const BASE_SESSION = '0x1563915e194D8CfBA1943570603F7606A3115508'
 const BASE_RELAYER_ORIGIN = 'https://relayer.test'
+const BASE_EXPIRES_AT_MS = 2_000_000_000_000
+const BASE_PERMISSION_ID = '0x12345678'
+const BASE_IMPLEMENTATION = '0xBAC849bB641841b44E965fB01A4Bf5F074f84b4D'
+const BASE_ECDSA_SIGNER = '0x6A6F069E2a08c2468e7724Ab3250CdBFBA14D4FF'
+const BASE_CALL_POLICY = '0x9a52283276A0ec8740DF50bF01B28A80D880eaf2'
+const BASE_TIMESTAMP_POLICY = '0xB9f8f524bE6EcD8C945b1b87f9ae5C192FdCE20F'
+const BASE_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
+const BASE_ROUTER = '0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d'
+const BASE_POLICY_DATA = [
+  `0x0000${BASE_CALL_POLICY.slice(2)}`,
+  `0x0000${BASE_TIMESTAMP_POLICY.slice(2)}`,
+]
 
 function discoveryWith(rows = []) {
   return {
@@ -200,8 +212,7 @@ function moneyReads(agents = []) {
   }
 }
 
-function activeBaseEvidence(overrides = {}) {
-  const expiresAt = Math.floor(Date.now() / 1000) + 3600
+function activeBaseWireEvidence() {
   return {
     version: 2,
     status: 'active',
@@ -211,16 +222,49 @@ function activeBaseEvidence(overrides = {}) {
     relayerOrigin: BASE_RELAYER_ORIGIN,
     sessionKeyAddress: BASE_SESSION,
     bindingId: 'binding-test',
-    bindingHash: 'binding-hash-test',
-    expiresAt,
-    expected: { chainId: 84532 },
+    bindingHash: '761ae6f804c1c9774dc3d91678a4752f46259cb6ffa346c996bef372675c0725',
+    expiresAt: BASE_EXPIRES_AT_MS,
+    expected: {
+      chainId: 84532,
+      relayerOrigin: BASE_RELAYER_ORIGIN,
+      kernelImplementation: BASE_IMPLEMENTATION,
+      kernelVersion: '0.3.1',
+      entryPointVersion: '0.7',
+      entryPointAddress: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
+      policyContracts: {
+        call: BASE_CALL_POLICY,
+        timestamp: BASE_TIMESTAMP_POLICY,
+        signer: BASE_ECDSA_SIGNER,
+      },
+      allowedCalls: [
+        { target: BASE_USDC, selector: '0x095ea7b3' },
+        { target: BASE_ROUTER, selector: '0x0efe6a8b' },
+      ],
+      executionHorizonSeconds: 2700,
+      observationMaxAgeSeconds: 12,
+      owner: G.address,
+      kernelAddress: BASE_KERNEL,
+      sessionKeyAddress: BASE_SESSION,
+      permissionId: BASE_PERMISSION_ID,
+      policyDigest: 'c'.repeat(64),
+      bindingId: 'binding-test',
+      bindingHash: '761ae6f804c1c9774dc3d91678a4752f46259cb6ffa346c996bef372675c0725',
+      expiresAt: BASE_EXPIRES_AT_MS,
+    },
     observed: {
       blockNumber: '101',
-      blockHash: '0xblock',
-      blockTime: Date.now(),
-      implementation: '0ximpl',
-      permission: { digest: 'permission-digest' },
-      preparedCallDigest: 'prepared-call-digest',
+      blockHash: `0x${'ab'.repeat(32)}`,
+      blockTime: Date.now() - 1000,
+      chainId: 84532,
+      implementation: BASE_IMPLEMENTATION,
+      permission: {
+        permissionId: BASE_PERMISSION_ID,
+        permissionFlag: '0x0000',
+        signer: BASE_ECDSA_SIGNER,
+        policyData: BASE_POLICY_DATA,
+        digest: '3570159502324ec8b94b984b62452c9fc026c937bffde96e83472c2d4d26655f',
+      },
+      preparedCallDigest: 'd'.repeat(64),
     },
     checks: {
       chain: true,
@@ -237,7 +281,6 @@ function activeBaseEvidence(overrides = {}) {
       reconstruction: true,
       prepared: true,
     },
-    ...overrides,
   }
 }
 
@@ -482,14 +525,22 @@ describe('active account application state', () => {
   })
 
   it('mounted App rechecks a reviewed Base mandate immediately before grant and blocks every movement when it was revoked', async () => {
-    const reviewedEvidence = activeBaseEvidence()
+    const reviewedEvidence = activeBaseWireEvidence()
     let remoteEvidence = reviewedEvidence
     getMandateStatus.mockImplementation(async () => remoteEvidence)
     localStorage.setItem(
       baseMandateStorageKey(G.address),
       JSON.stringify({
-        ...reviewedEvidence,
+        version: 2,
+        stellarOwner: G.address,
+        kernelAddress: BASE_KERNEL,
         serializedApproval: 'APPROVAL',
+        sessionKeyAddress: BASE_SESSION,
+        relayerOrigin: BASE_RELAYER_ORIGIN,
+        expiresAt: BASE_EXPIRES_AT_MS / 1000,
+        status: 'active',
+        bindingId: reviewedEvidence.bindingId,
+        bindingHash: reviewedEvidence.bindingHash,
         createdAt: Date.now(),
       })
     )
@@ -529,10 +580,28 @@ describe('active account application state', () => {
     })
 
     const reviewedStatusCalls = getMandateStatus.mock.calls.length
-    remoteEvidence = activeBaseEvidence({
+    remoteEvidence = {
+      ...reviewedEvidence,
       status: 'revoked',
       reasonCodes: ['PERMISSION_REVOKED'],
-    })
+      observed: {
+        ...reviewedEvidence.observed,
+        permission: {
+          permissionId: BASE_PERMISSION_ID,
+          permissionFlag: '0x0000',
+          signer: `0x${'00'.repeat(20)}`,
+          policyData: [],
+          digest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+        },
+        preparedCallDigest: null,
+      },
+      checks: {
+        ...reviewedEvidence.checks,
+        permission: false,
+        reconstruction: false,
+        prepared: false,
+      },
+    }
     let confirmation
     await act(async () => {
       confirmation = mountedHarness.routeProps.protectProps.onRequestGrant()
