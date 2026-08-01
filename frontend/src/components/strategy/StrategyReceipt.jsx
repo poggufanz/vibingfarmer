@@ -112,22 +112,42 @@ function explorerAccountUrl(address) {
 
 // Task 6 chunk C2 -- projects an allocation's own custody evidence AS EVIDENCE, rather than the
 // page silently treating a proven receipt-sourced verdict and the pre-existing inferred fallback
-// (dispatchSummary.js's CustodyV1 `source:'receipt'|'inferred'`) with the same confidence. Leaving
-// that distinction unrendered would be exactly the "transport acceptance mistaken for custody"
-// defect this task exists to remove, just relocated to the view layer instead of fixed. Reads
-// `custody` as supplied -- never re-derives a location, a confirmation, or an amount from
-// `executionStatus`/`txHash` the way the OLD `inferredCustody()` guessed. `custody.amount` is the
-// receipt's OWN amount (present only when proven); it is never folded into the plan-authoritative
-// `a.amount` reconciliation above (`reconcileAllocations` untouched), and 'unknown' custody's
-// `amount:null` renders as the literal word "unknown" here -- never a coerced/defaulted zero.
+// (dispatchSummary.js's CustodyV1 `source:'receipt'|'inferred'|'unmapped'`) with the same
+// confidence. Leaving that distinction unrendered would be exactly the "transport acceptance
+// mistaken for custody" defect this task exists to remove, just relocated to the view layer
+// instead of fixed. Reads `custody` as supplied -- never re-derives a location, a confirmation, or
+// an amount from `executionStatus`/`txHash` the way the OLD `inferredCustody()` guessed.
+// `custody.amount` is the receipt's OWN amount (present only when proven); it is never folded into
+// the plan-authoritative `a.amount` reconciliation above (`reconcileAllocations` untouched).
 function custodyEvidenceText(custody) {
   if (!custody) return null
+  // Fix round 1, Important finding 2: `source:'unmapped'` (dispatchSummary.js's `unmappedCustody`,
+  // the controller-ruled per-allocation fail-loud verdict for a receipt location this module's
+  // vocabulary copy doesn't recognize) is its own case, rendered distinctly so it is never mistaken
+  // for a genuine "no evidence" `unknown` -- the whole point of that fix was to make the failure
+  // loud and visible instead of indistinguishable from an honest absence of evidence.
+  if (custody.source === 'unmapped') {
+    return `custody evidence unreadable (${custody.reason || 'unrecognized receipt location'})`
+  }
   const provenance = custody.source === 'receipt' ? 'receipt-confirmed' : 'not receipt-confirmed'
-  if (custody.location === 'unknown' || custody.amount == null) {
+  // Fix round 1, Important finding 1: `location` and `amount` are INDEPENDENT facts on CustodyV1 --
+  // a confirmed, proven custody at a known, non-'unknown' location with NO amount evidence is real
+  // and producible (allocationReceipt.js's `confirmCustody` omits `amount` whenever a caller does,
+  // e.g. a bare `{location:'stellar-vault', txSuccess:true, matchingEvent:true}` call never passes
+  // one). The earlier version of this function branched on `custody.amount == null` to decide
+  // whether to show "unknown," which silently erased a proven LOCATION any time its amount merely
+  // happened to be absent -- the exact silent-discard defect this chunk exists to close, relocated
+  // into the view. Only a genuine `location === 'unknown'` gets the "unknown" text now; every other
+  // location renders as given, with the amount clause simply omitted (never a coerced zero) when
+  // there is no amount to show.
+  if (custody.location === 'unknown') {
     return `custody unknown (${provenance})`
   }
-  const amountText = `${unitsToDisplay(custody.amount.units, custody.amount.decimals)} ${tokenSymbol(custody.amount.token)}`
-  return `custody: ${custody.location}, ${amountText} (${provenance})`
+  const amountText =
+    custody.amount == null
+      ? ''
+      : `, ${unitsToDisplay(custody.amount.units, custody.amount.decimals)} ${tokenSymbol(custody.amount.token)}`
+  return `custody: ${custody.location}${amountText} (${provenance})`
 }
 
 export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDeposit, onViewCrew }) {
@@ -253,22 +273,29 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
             </a>
           </p>
         ))}
-        {allocations.map((a) => (
-          <p key={a.allocationId}>
-            <span className="pc-technical">{a.allocationId}</span>:{' '}
-            {a.txHash ? (
-              <a className="pc-technical" href={explorerTxUrl(a)} target="_blank" rel="noreferrer">
-                {a.txHash}
-              </a>
-            ) : (
-              'No transaction yet'
-            )}
-            {a.error ? ` -- ${a.error}` : ''}
-            {custodyEvidenceText(a.custody) && (
-              <span className="pc-field-help"> ({custodyEvidenceText(a.custody)})</span>
-            )}
-          </p>
-        ))}
+        {allocations.map((a) => {
+          // Fix round 1 (minor): computed once, not twice, per allocation.
+          const custodyNote = custodyEvidenceText(a.custody)
+          return (
+            <p key={a.allocationId}>
+              <span className="pc-technical">{a.allocationId}</span>:{' '}
+              {a.txHash ? (
+                <a
+                  className="pc-technical"
+                  href={explorerTxUrl(a)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {a.txHash}
+                </a>
+              ) : (
+                'No transaction yet'
+              )}
+              {a.error ? ` -- ${a.error}` : ''}
+              {custodyNote && <span className="pc-field-help"> ({custodyNote})</span>}
+            </p>
+          )
+        })}
       </TechnicalDetails>
 
       {/* Task 7 (Start polish) -- brief's own file list named only StartStage.jsx/strategy.css/

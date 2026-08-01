@@ -468,14 +468,17 @@ describe('Task 6 chunk C2 -- proven custody is projected from the receipt, never
       },
     })
     const outcome = receipt.allocations.find((a) => a.allocationId === 'run-mixed-8:deposit:0')
+    // Fix round 1: `checkedAt` is now OMITTED (not merely null) on the receipt-sourced path -- see
+    // dispatchSummary.js's module header for why keeping it present-but-always-null there inverted
+    // the freshness intuition of any consumer reading it.
     expect(outcome.custody).toEqual({
       location: 'stellar-vault',
       confirmed: true,
-      checkedAt: null,
       amount: { token: 'USDC', units: '6000000', decimals: 7 },
       reason: null,
       source: 'receipt',
     })
+    expect(outcome.custody).not.toHaveProperty('checkedAt')
   })
 
   it('MUTATION GUARD: reads receipt custody under raw.allocationReceipt (the mixed Stellar+Base dispatch shape, orchestrator.js:1085/1098/1116) even though the legacy raw.custody field there is a stale "unknown" placeholder', () => {
@@ -646,27 +649,84 @@ describe('Task 6 chunk C2 -- the server custody vocabulary is mapped totally and
   // Not a shape any current producer can emit -- allocationReceipt.js's own `confirmCustody`
   // already refuses any location outside RECEIPT_CUSTODY_LOCATIONS before a receipt like this
   // could exist (see that module's `confirmCustody`, which throws first). This guards against
-  // FUTURE drift between the server's vocabulary and this module's local copy, the same reason
-  // `provenCustody` throws instead of silently falling through to 'unknown'.
-  it('fails loudly on a receipt custody location outside the server vocabulary rather than silently presenting it as unknown', () => {
-    expect(() =>
-      buildDispatchReceipt({
-        plan: plan(),
-        permission: permission(),
-        branches: {
-          stellar: {
-            results: [
-              {
-                allocationId: 'run-mixed-8:deposit:0',
-                receipt: {
-                  custody: { location: 'base-relay', confirmed: true, amount: null, reason: null },
+  // FUTURE drift between the server's vocabulary and this module's local copy -- the reason
+  // `provenCustody` refuses to map it, rather than silently falling through to plain 'unknown'.
+  //
+  // Fix round 1 (controller ruling): an EARLIER version of this test asserted `buildDispatchReceipt`
+  // itself throws here -- but that throw propagated out and aborted the WHOLE receipt for every
+  // allocation in the run, even though both real call sites (app.jsx:3310, orchestrator.js's
+  // `buildDispatchReceipt` calls) build the receipt strictly AFTER dispatch; a single unmapped
+  // value would have cost the user the entire receipt for money that had already moved. The
+  // ruling: contain the failure to the ONE bad allocation instead. This test now proves BOTH
+  // halves of that ruling directly: (1) the receipt still builds -- one bad allocation among
+  // several good ones does NOT abort the others -- and (2) the bad allocation is never silently
+  // presented as an honest, evidence-free 'unknown': it gets its own distinct `source:'unmapped'`
+  // verdict, never `'inferred'`, with a `reason` naming the exact bad value and allocation.
+  it('contains an unmapped receipt custody location to the ONE bad allocation -- the receipt still builds, and the bad allocation is never silently indistinguishable from a genuine no-evidence "unknown"', () => {
+    const receipt = buildDispatchReceipt({
+      plan: plan(),
+      permission: permission(),
+      branches: {
+        stellar: {
+          results: [
+            {
+              allocationId: 'run-mixed-8:deposit:0',
+              receipt: {
+                custody: {
+                  location: 'stellar-vault',
+                  confirmed: true,
+                  amount: amount('6000000'),
+                  reason: null,
                 },
               },
-            ],
-          },
+            },
+          ],
         },
-      })
-    ).toThrow(/custody location "base-relay"/)
+        base: {
+          results: [
+            {
+              allocationId: 'run-mixed-8:bridge:base-a',
+              receipt: {
+                custody: { location: 'base-relay', confirmed: true, amount: null, reason: null },
+              },
+            },
+            {
+              allocationId: 'run-mixed-8:bridge:base-b',
+              finalStatus: 'done',
+              mintTxHash: 'mint-b',
+              custody: { location: 'base-proxy', confirmed: true, checkedAt: 101 },
+            },
+          ],
+        },
+      },
+    })
+
+    // (1) The whole receipt built: all three planned allocations are present, none dropped.
+    expect(receipt.allocations).toHaveLength(3)
+    const good = receipt.allocations.find((a) => a.allocationId === 'run-mixed-8:deposit:0')
+    const bad = receipt.allocations.find((a) => a.allocationId === 'run-mixed-8:bridge:base-a')
+    const otherGood = receipt.allocations.find(
+      (a) => a.allocationId === 'run-mixed-8:bridge:base-b'
+    )
+
+    // The two GOOD allocations render exactly as their own evidence says, unaffected by their
+    // sibling's bad value.
+    expect(good.custody).toEqual({
+      location: 'stellar-vault',
+      confirmed: true,
+      amount: { token: 'USDC', units: '6000000', decimals: 7 },
+      reason: null,
+      source: 'receipt',
+    })
+    expect(otherGood.custody.location).toBe('base-proxy')
+    expect(otherGood.custody.source).toBe('inferred')
+
+    // (2) The BAD allocation is loud and distinct, never silently 'unknown'/'inferred'.
+    expect(bad.custody.source).toBe('unmapped')
+    expect(bad.custody.source).not.toBe('inferred')
+    expect(bad.custody.location).toBe('unknown')
+    expect(bad.custody.reason).toMatch(/base-relay/)
+    expect(bad.custody.reason).toMatch(/run-mixed-8:bridge:base-a/)
   })
 })
 

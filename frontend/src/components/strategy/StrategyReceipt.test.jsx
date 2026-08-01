@@ -295,23 +295,34 @@ describe('StrategyReceipt -- optional attestation is separate and counts its own
 })
 
 describe('Task 6 chunk C2 -- custody evidence is projected as evidence, never re-derived or silently zeroed', () => {
+  // Fix round 1, Important finding 2: the PRIOR version of this test used a fixture no real
+  // producer can emit -- `{location:'agent', confirmed:false, ...}`, commented as
+  // allocationReceipt.js's own "ambiguous evidence" path. That is verifiably false:
+  // `custodyAfterAmbiguousEvidence` (allocationReceipt.js:342-355) either keeps a PRIOR
+  // `confirmed:true` custody intact (only `reason` changes) or resets fully to
+  // `{location:'unknown', confirmed:false}` -- and `initialCustodyState` (:168-174) THROWS on any
+  // non-'unknown' unconfirmed initial custody. `confirmed:false` at a non-'unknown' location is
+  // therefore structurally unreachable; that prior test's own assertion
+  // (`custody unknown (receipt-confirmed)`) locked in Important finding 1's bug rather than
+  // guarding against it, and its second assertion (`queryByText(/stellar-vault/)` is null) passed
+  // under any implementation and constrained nothing. Replaced with the producible combination the
+  // review specified: `executionStatus` and `custody` are INDEPENDENTLY populated fields on
+  // AllocationOutcomeV1 (dispatchSummary.js's `executionStatus()` derives from
+  // raw.success/finalStatus/status; `custodyFor()`'s receipt path derives from a completely
+  // separate `raw.receipt`/`raw.allocationReceipt` object) -- nothing in either function ties them
+  // together, so a receipt confirming custody only at 'stellar-agent' (this module's 'agent') next
+  // to an independently-reported 'succeeded' executionStatus is a real, structurally valid
+  // combination this component must render exactly as given.
   it('renders custody exactly as supplied by the receipt -- never re-deriving location/confirmation from executionStatus, txHash, or any other field', () => {
-    // A deliberately adversarial fixture: executionStatus is 'succeeded' (the deposit tx itself
-    // went through), but the receipt's OWN custody evidence says the vault-share event never
-    // matched (confirmed:false, location still 'agent') -- a real, receipt-honest state
-    // (allocationReceipt.js's own "ambiguous evidence" path). If this component re-derived
-    // custody from executionStatus instead of reading it, it would show 'stellar-vault'/confirmed
-    // here; it must show exactly what was supplied.
     const allocations = [
       alloc({
         allocationId: 'a',
         executionStatus: 'succeeded',
         custody: {
           location: 'agent',
-          confirmed: false,
-          checkedAt: null,
-          amount: null,
-          reason: 'ambiguous evidence reported',
+          confirmed: true,
+          amount: { token: TOKEN_ADDR, units: '1000000000', decimals: 7 },
+          reason: null,
           source: 'receipt',
         },
       }),
@@ -324,8 +335,79 @@ describe('Task 6 chunk C2 -- custody evidence is projected as evidence, never re
       />
     )
     fireEvent.click(document.querySelector('.pc-technical-details summary'))
-    expect(screen.getByText(/custody unknown \(receipt-confirmed\)/)).toBeTruthy()
-    expect(screen.queryByText(/stellar-vault/)).toBeNull()
+    // A component that re-derived custody from `executionStatus:'succeeded'` (as the reconciliation
+    // summary above does for its OWN, unrelated bucketing) would show 'stellar-vault' here, since
+    // that is the location a genuinely completed Stellar deposit reaches. The supplied evidence
+    // says 'agent' -- proving the render used exactly what was given, this assertion is real and
+    // constraining, not merely non-null.
+    expect(screen.getByText(/custody: agent, 100 USDC \(receipt-confirmed\)/)).toBeTruthy()
+    expect(screen.queryByText(/custody: stellar-vault/)).toBeNull()
+  })
+
+  // Fix round 1, Important finding 1: `location` and `amount` are INDEPENDENT facts on CustodyV1 --
+  // a confirmed, proven custody at a KNOWN, non-'unknown' location with NO amount evidence is real
+  // and producible: allocationReceipt.js's `confirmCustody` omits `amount` whenever a caller does
+  // (assertAmount(:120-121) returns null for a bare `{location, txSuccess, matchingEvent}` call
+  // with no `amount` key at all, and `confirmCustody`'s own destructure (:391-397) defaults
+  // `amount` to `null` when omitted). The PRIOR version of `custodyEvidenceText` branched on
+  // `custody.amount == null` to decide whether to render "unknown," which silently erased this
+  // proven LOCATION whenever its amount merely happened to be absent -- the exact silent-discard
+  // defect this chunk exists to close (dispatchSummary.js:55, relocated into the view).
+  it('renders the custody LOCATION even when amount is null -- amount and location are independent facts, and a proven location must never be presented as "unknown" for lack of an amount', () => {
+    const allocations = [
+      alloc({
+        allocationId: 'a',
+        executionStatus: 'succeeded',
+        custody: {
+          location: 'stellar-vault',
+          confirmed: true,
+          amount: null,
+          reason: null,
+          source: 'receipt',
+        },
+      }),
+    ]
+    render(
+      <StrategyReceipt
+        receipt={receipt(allocations)}
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    fireEvent.click(document.querySelector('.pc-technical-details summary'))
+    expect(screen.getByText(/custody: stellar-vault \(receipt-confirmed\)/)).toBeTruthy()
+    expect(screen.queryByText(/custody unknown/)).toBeNull()
+  })
+
+  it('renders an unmapped receipt custody location (dispatchSummary.js\'s source:"unmapped", the controller-ruled per-allocation fail-loud verdict) distinctly -- never indistinguishable from a genuine no-evidence "unknown"', () => {
+    const allocations = [
+      alloc({
+        allocationId: 'a',
+        executionStatus: 'failed',
+        custody: {
+          location: 'unknown',
+          confirmed: false,
+          amount: null,
+          reason:
+            'receipt custody location "base-relay" for allocation "a" is outside the server ' +
+            'RECEIPT_CUSTODY_LOCATIONS vocabulary this module knows (client/server vocabulary ' +
+            'drift) -- this allocation\'s custody could not be read; it is NOT a genuine "no ' +
+            'evidence" verdict.',
+          source: 'unmapped',
+        },
+      }),
+    ]
+    render(
+      <StrategyReceipt
+        receipt={receipt(allocations)}
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    fireEvent.click(document.querySelector('.pc-technical-details summary'))
+    expect(screen.getByText(/custody evidence unreadable \(receipt custody location "base-relay"/))
+      .toBeTruthy()
+    expect(screen.queryByText(/custody unknown \(/)).toBeNull()
   })
 
   it('distinguishes a proven (receipt-sourced) allocation from an inferred one in the rendered Technical details, even though both report the same custody location', () => {
@@ -362,7 +444,11 @@ describe('Task 6 chunk C2 -- custody evidence is projected as evidence, never re
     )
     fireEvent.click(document.querySelector('.pc-technical-details summary'))
     expect(screen.getByText(/custody: agent, 100 USDC \(receipt-confirmed\)/)).toBeTruthy()
-    expect(screen.getByText(/custody unknown \(not receipt-confirmed\)/)).toBeTruthy()
+    // Fix round 1: the inferred fixture here has a KNOWN location ('agent') with no amount --
+    // Important finding 1's fix means this now correctly shows the location (amount clause simply
+    // omitted), not "unknown." The distinguishing signal between the two allocations is the
+    // provenance suffix, not whether a location renders at all.
+    expect(screen.getByText(/custody: agent \(not receipt-confirmed\)/)).toBeTruthy()
   })
 
   it('renders unknown custody with amount:null as the literal word "unknown", never a coerced/defaulted zero', () => {
