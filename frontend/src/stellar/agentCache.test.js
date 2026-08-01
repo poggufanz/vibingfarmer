@@ -1,6 +1,7 @@
 // frontend/src/stellar/agentCache.test.js — agent reuse cache: persistence, on-chain scope
 // validation (expiry / revoked / cap headroom / rolling window), pruning, and run-local exclusion.
 import { describe, test, expect, beforeEach, vi } from 'vitest'
+import { StrKey } from '@stellar/stellar-sdk'
 
 const readContractMock = vi.fn()
 vi.mock('./client.js', () => ({
@@ -17,13 +18,19 @@ import {
   readAgentSigner,
   computeScopeFingerprint,
   inspectReusableAgents,
+  inspectAgentsV4,
   EXPIRY_MARGIN_SECONDS,
 } from './agentCache.js'
 
 const NOW = 1_800_000_000
 const OWNER = 'GOWNER'
 const VAULT = 'CVAULT'
+const VAULT_2 = 'CVAULT2'
 const NET = 'Test Net'
+
+// Local hex helper for test fixtures/assertions only — mirrors agentCache.js's own private
+// `bytesToHex` (not exported), never imported from production code.
+const toHex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 
 // Deterministic injectable storage — the module falls back to an in-memory store when
 // localStorage is absent (node env), but tests want per-test isolation.
@@ -373,5 +380,172 @@ describe('inspectReusableAgents (non-mutating)', () => {
       args({ readScope: async () => scope(), readSigner: async () => new Uint8Array(32) })
     )
     expect(rows.map((r) => r.agentAddress).sort()).toEqual(['CAGENT1', 'CAGENT2'])
+  })
+})
+
+// --- inspectAgentsV4 (Task W3b) -----------------------------------------------------------------
+// The V4 row supplier for permissionGrantV3.js's injected `inspectAgents`. A DIFFERENT consumer,
+// DIFFERENT row shape than inspectReusableAgents above — see agentCache.js's own doc for why the
+// two are never unified.
+
+describe('inspectAgentsV4', () => {
+  const CODE_BYTES = new Uint8Array(32).fill(0xaa)
+  const CODE_HEX = '0x' + toHex(CODE_BYTES)
+  const SIGNER_BYTES = new Uint8Array(32).fill(0xbb)
+  const SIGNER_PUB = StrKey.encodeEd25519PublicKey(SIGNER_BYTES)
+
+  // A real AgentScope (agent_account/src/types.rs) — full shape for fidelity, even though
+  // inspectAgentsV4 only reads target/token/cap_per_period/per_execution_max/expiry/revoked.
+  const scopeV4 = (over = {}) => ({
+    owner: OWNER,
+    target: VAULT,
+    token: 'CTOKEN',
+    kind: 0,
+    mint_recipient: new Uint8Array(32),
+    destination_domain: 0,
+    cap_per_period: 500000000n,
+    period_duration: 86400n,
+    spent_in_period: 0n,
+    period_start: 0n,
+    expiry: BigInt(NOW + 3600),
+    revoked: false,
+    per_execution_max: 50000000n,
+    ...over,
+  })
+
+  const args = (over = {}) => ({
+    owner: OWNER,
+    network: NET,
+    storage,
+    readScope: async () => scopeV4(),
+    readSigner: async () => SIGNER_BYTES,
+    readRouterAgentWasmHash: async () => CODE_BYTES,
+    ...over,
+  })
+
+  const seedOneAgent = (over = {}) =>
+    saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(over), storage })
+
+  test('returns [] and never calls the router or agent readers when the cache is empty', async () => {
+    const readRouterAgentWasmHash = vi.fn(async () => CODE_BYTES)
+    const readScope = vi.fn(async () => scopeV4())
+    const rows = await inspectAgentsV4(args({ readRouterAgentWasmHash, readScope }))
+    expect(rows).toEqual([])
+    expect(readRouterAgentWasmHash).not.toHaveBeenCalled()
+    expect(readScope).not.toHaveBeenCalled()
+  })
+
+  test('every field is sourced correctly: target/token/caps/expiry/revoked from scope_of(), signerPub from signer(), code from the ROUTER config() — never the agent', async () => {
+    seedOneAgent()
+    const rows = await inspectAgentsV4(args())
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toEqual({
+      agentAddress: 'CAGENT1',
+      signerPub: SIGNER_PUB,
+      code: CODE_HEX,
+      target: VAULT,
+      token: 'CTOKEN',
+      capPerPeriodUnits: '500000000',
+      perExecutionMaxUnits: '50000000',
+      expiry: NOW + 3600,
+      revoked: false,
+    })
+  })
+
+  test('reads the router config() ONCE per call, not once per row', async () => {
+    seedOneAgent()
+    saveCachedAgent({
+      owner: OWNER,
+      vault: VAULT,
+      network: NET,
+      entry: entry({ agentAddress: 'CAGENT2', secret: 'SSECRET2' }),
+      storage,
+    })
+    const readRouterAgentWasmHash = vi.fn(async () => CODE_BYTES)
+    const rows = await inspectAgentsV4(args({ readRouterAgentWasmHash }))
+    expect(rows).toHaveLength(2)
+    expect(readRouterAgentWasmHash).toHaveBeenCalledTimes(1)
+  })
+
+  test('spans every cached vault for (owner, network), not just one', async () => {
+    seedOneAgent()
+    saveCachedAgent({
+      owner: OWNER,
+      vault: VAULT_2,
+      network: NET,
+      entry: entry({ agentAddress: 'CAGENT2', secret: 'SSECRET2' }),
+      storage,
+    })
+    const readScope = async (agentAddress) =>
+      scopeV4({ target: agentAddress === 'CAGENT2' ? VAULT_2 : VAULT })
+    const rows = await inspectAgentsV4(args({ readScope }))
+    expect(rows.map((r) => r.agentAddress).sort()).toEqual(['CAGENT1', 'CAGENT2'])
+    expect(rows.find((r) => r.agentAddress === 'CAGENT2').target).toBe(VAULT_2)
+  })
+
+  test('does not mutate or prune the cache — a pure read, even for a failing entry', async () => {
+    seedOneAgent()
+    await inspectAgentsV4(args({ readScope: async () => null }))
+    expect(loadCachedAgents({ owner: OWNER, vault: VAULT, network: NET, storage })).toHaveLength(1)
+  })
+
+  test('capPerPeriodUnits/perExecutionMaxUnits are canonical decimal STRINGS, bigint-safe above Number.MAX_SAFE_INTEGER', async () => {
+    seedOneAgent()
+    // 2^53 + 1 — NOT a round value: Number(9007199254740993n) rounds to 9007199254740992,
+    // so a Number()-based implementation would silently emit the WRONG string here.
+    const HUGE = 9007199254740993n
+    expect(HUGE).toBeGreaterThan(BigInt(Number.MAX_SAFE_INTEGER))
+    const rows = await inspectAgentsV4(
+      args({ readScope: async () => scopeV4({ cap_per_period: HUGE }) })
+    )
+    expect(rows[0].capPerPeriodUnits).toBe('9007199254740993')
+  })
+
+  test.each([
+    ['scope', { readScope: async () => null }],
+    ['signer', { readSigner: async () => null }],
+  ])('a failed %s read drops the agent from the result — never a partial row', async (_label, over) => {
+    seedOneAgent()
+    const rows = await inspectAgentsV4(args(over))
+    expect(rows).toEqual([])
+  })
+
+  test('a row never carries signerPub: undefined — a failed signer read is absent, not present-but-empty', async () => {
+    seedOneAgent()
+    const rows = await inspectAgentsV4(args({ readSigner: async () => null }))
+    expect(rows.some((r) => r.agentAddress === 'CAGENT1')).toBe(false)
+    expect(rows.some((r) => 'signerPub' in r && r.signerPub === undefined)).toBe(false)
+  })
+
+  test.each([
+    ['non-string target', { target: 42 }],
+    ['empty token', { token: '' }],
+    ['non-boolean revoked', { revoked: 'false' }],
+    ['non-BigInt cap_per_period', { cap_per_period: 500000000 }],
+    ['negative cap_per_period', { cap_per_period: -1n }],
+    ['non-BigInt per_execution_max', { per_execution_max: 50000000 }],
+    ['non-BigInt expiry', { expiry: NOW + 3600 }],
+  ])('a structurally invalid scope (%s) drops the row, never throws', async (_label, over) => {
+    seedOneAgent()
+    const rows = await inspectAgentsV4(
+      args({ readScope: async () => scopeV4(over) })
+    )
+    await expect(Promise.resolve(rows)).resolves.toEqual([])
+  })
+
+  test('a malformed router wasm-hash resolution throws rather than silently dropping every row', async () => {
+    seedOneAgent()
+    await expect(
+      inspectAgentsV4(args({ readRouterAgentWasmHash: async () => new Uint8Array(16) }))
+    ).rejects.toThrow(/32-byte/)
+  })
+
+  test('code is read from the injected router reader, never derived from the agent itself', async () => {
+    seedOneAgent()
+    // Router code and agent signer are deliberately DIFFERENT byte patterns so a row that
+    // accidentally sourced `code` from the agent (e.g. from its signer bytes) is distinguishable.
+    const rows = await inspectAgentsV4(args())
+    expect(rows[0].code).toBe(CODE_HEX)
+    expect(rows[0].code).not.toBe('0x' + toHex(SIGNER_BYTES))
   })
 })
