@@ -2,7 +2,8 @@
 
 use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
-use soroban_sdk::{vec, Address, BytesN, Env, Error, IntoVal, Vec};
+use soroban_sdk::xdr::WriteXdr;
+use soroban_sdk::{vec, xdr, Address, Bytes, BytesN, Env, Error, IntoVal, Vec};
 
 use crate::types::{AgentInit, AgentScope, DataKey, PermissionGrantV3, RouterError, TokenBudget};
 use crate::{FundingRouter, FundingRouterClient};
@@ -878,6 +879,61 @@ fn v3_init(env: &Env, token: &Address, target: &Address, seed: u8, cap: i128) ->
     agent_init(env, token, target, seed, cap)
 }
 
+fn signed_pull_v3_auth(
+    env: &Env,
+    router: &Address,
+    agent: &Address,
+    permission_id: &BytesN<32>,
+    execution_id: &BytesN<32>,
+    amount: i128,
+    signature: [u8; 64],
+) -> xdr::SorobanAuthorizationEntry {
+    let invoke = MockAuthInvoke {
+        contract: router,
+        fn_name: "pull_v3",
+        args: (
+            permission_id.clone(),
+            execution_id.clone(),
+            agent.clone(),
+            amount,
+        )
+            .into_val(env),
+        sub_invokes: &[],
+    };
+    let mut entry: xdr::SorobanAuthorizationEntry = MockAuth {
+        address: agent,
+        invoke: &invoke,
+    }
+    .into();
+    let xdr::SorobanCredentials::Address(credentials) = &mut entry.credentials else {
+        unreachable!()
+    };
+    credentials.nonce = 777;
+    credentials.signature_expiration_ledger = 1_000_000;
+    credentials.signature = xdr::ScVal::Bytes(xdr::ScBytes(
+        signature.as_slice().try_into().unwrap(),
+    ));
+    entry
+}
+
+fn pull_v3_auth_payload(env: &Env, entry: &xdr::SorobanAuthorizationEntry) -> [u8; 32] {
+    let xdr::SorobanCredentials::Address(credentials) = &entry.credentials else {
+        unreachable!()
+    };
+    let preimage = xdr::HashIdPreimage::SorobanAuthorization(
+        xdr::HashIdPreimageSorobanAuthorization {
+            network_id: xdr::Hash([9u8; 32]),
+            invocation: entry.root_invocation.clone(),
+            nonce: credentials.nonce,
+            signature_expiration_ledger: credentials.signature_expiration_ledger,
+        },
+    );
+    let bytes = preimage.to_xdr(xdr::Limits::none()).unwrap();
+    env.crypto()
+        .sha256(&Bytes::from_slice(env, bytes.as_slice()))
+        .to_array()
+}
+
 #[test]
 fn grant_v3_creates_bounded_reusable_permission_and_links_agents() {
     let s = setup();
@@ -1080,6 +1136,63 @@ fn pull_v3_moves_funds_and_tracks_confirmed_spent() {
     assert_eq!(t.balance(&owner), 380_000_000);
     assert_eq!(client.permission_grant(&permission_id).unwrap().confirmed_spent, 120_000_000);
     assert_eq!(client.remaining_budget(&permission_id), 180_000_000);
+}
+
+#[test]
+fn pull_v3_uses_the_deployed_agent_accounts_real_custom_auth() {
+    let s = setup();
+    s.env.ledger().set_network_id([9u8; 32]);
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let mut init = v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000);
+    init.signer = BytesN::from_array(
+        &s.env,
+        &[
+            0x19, 0x7f, 0x6b, 0x23, 0xe1, 0x6c, 0x85, 0x32, 0xc6, 0xab, 0xc8, 0x38, 0xfa,
+            0xcd, 0x5e, 0xa7, 0x89, 0xbe, 0x0c, 0x76, 0xb2, 0x92, 0x03, 0x34, 0x03, 0x9b,
+            0xfa, 0x8b, 0x3d, 0x36, 0x8d, 0x61,
+        ],
+    );
+    let (permission_id, agents) = client.grant_v3(
+        &owner,
+        &s.token,
+        &300_000_000,
+        &200_000_000,
+        &1_000,
+        &vec![&s.env, init],
+    );
+    let agent = agents.get(0).unwrap();
+    let execution_id = BytesN::from_array(&s.env, &[0x44u8; 32]);
+    let auth = signed_pull_v3_auth(
+        &s.env,
+        &s.router,
+        &agent,
+        &permission_id,
+        &execution_id,
+        120_000_000,
+        [
+            199, 6, 121, 41, 99, 180, 109, 194, 3, 62, 46, 67, 91, 169, 89, 78, 94, 97,
+            76, 100, 211, 107, 17, 197, 12, 200, 129, 78, 173, 183, 115, 19, 11, 168,
+            222, 223, 142, 85, 104, 84, 234, 11, 40, 59, 112, 247, 4, 22, 120, 100, 223,
+            139, 100, 80, 59, 56, 165, 26, 134, 220, 32, 209, 237, 5,
+        ],
+    );
+    assert_eq!(
+        pull_v3_auth_payload(&s.env, &auth),
+        [
+            238, 28, 120, 189, 67, 214, 39, 122, 52, 120, 242, 239, 145, 61, 148, 154,
+            243, 177, 132, 195, 29, 9, 240, 40, 102, 196, 199, 255, 219, 39, 209, 116,
+        ]
+    );
+
+    // Arrangement used mocked owner/admin auth. The action below explicitly disables all mocks:
+    // the deployed AgentAccount WASM must verify this ed25519 signature and accept pull_v3.
+    s.env.set_auths(&[auth]);
+    client.pull_v3(&permission_id, &execution_id, &agent, &120_000_000);
+
+    assert_eq!(TokenClient::new(&s.env, &s.token).balance(&agent), 120_000_000);
 }
 
 #[test]

@@ -74,7 +74,7 @@ impl AgentAccount {
     /// scope; `signer` = the ephemeral ed25519 session pubkey the worker signs with.
     /// `router` = the funding_router factory that deployed this agent (`None` for
     /// legacy direct deploys). When set, the session key may additionally authorize
-    /// `pull` on that router — funding is bounded by the owner's SEP-41 allowance to
+    /// `pull` or `pull_v3` on that router — funding is bounded by the owner's SEP-41 allowance to
     /// the router at the token level, never by (nor counted against) the deposit cap.
     /// The constructor also self-approves the vault to pull up to `cap_per_period` of
     /// the asset, so the deployed vault's `transfer_from(spender=vault, from=agent)`

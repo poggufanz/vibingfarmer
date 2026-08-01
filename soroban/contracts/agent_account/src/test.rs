@@ -807,6 +807,25 @@ fn pull_ctx(env: &Env, router: &Address, agent: &Address, amount: i128) -> Vec<C
     )
 }
 
+fn pull_v3_ctx(
+    env: &Env,
+    router: &Address,
+    agent: &Address,
+    amount: i128,
+) -> Vec<Context> {
+    let permission_id = BytesN::from_array(env, &[0x31; 32]);
+    let execution_id = BytesN::from_array(env, &[0x32; 32]);
+    let args: Vec<Val> = (permission_id, execution_id, agent.clone(), amount).into_val(env);
+    Vec::from_array(
+        env,
+        [Context::Contract(ContractContext {
+            contract: router.clone(),
+            fn_name: symbol_short!("pull_v3"),
+            args,
+        })],
+    )
+}
+
 #[test]
 fn session_key_accepts_pull_on_deploying_router_without_spending_cap() {
     let env = Env::default();
@@ -840,6 +859,38 @@ fn session_key_accepts_pull_on_deploying_router_without_spending_cap() {
 
     // …and did NOT count toward spent_in_period: a FULL-cap deposit still fits after it
     // (cap accounting stays deposit-only; funding is bounded by the token allowance).
+    let dep = deposit_ctx(&env, &vault, &id, 1_000_000_000);
+    let res2 = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), dep)
+    });
+    assert!(res2.is_ok());
+}
+
+#[test]
+fn session_key_accepts_pull_v3_on_deploying_router_without_spending_cap() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let router = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let id = env.register(
+        AgentAccount,
+        (
+            owner.clone(),
+            pubkey,
+            scope(&env, &owner, &vault, &token),
+            Some(router.clone()),
+        ),
+    );
+
+    let ctx = pull_v3_ctx(&env, &router, &id, 500_000_000);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert!(res.is_ok());
+
     let dep = deposit_ctx(&env, &vault, &id, 1_000_000_000);
     let res2 = env.as_contract(&id, || {
         AgentAccount::enforce_scope_for_test(env.clone(), dep)
