@@ -306,8 +306,9 @@ describe('/api/agent-index authenticated execution routes', () => {
     mocked.readContract.mockImplementation(async ({ contract, method }) => {
       if (contract === ROUTER_V2 && method === 'owner_of') return OTHER_OWNER
       if (contract === ROUTER_V1 && method === 'owner_of') return OWNER
-      if (contract === AGENT && method === 'scope_of') return { owner: OWNER, revoked: false }
-      if (contract === AGENT && method === 'signer') return SESSION.rawPublicKey()
+      if (contract === AGENT && ['scope_of', 'signer'].includes(method)) {
+        throw new Error('agent authority must not be read after router owner mismatch')
+      }
       throw new Error('unexpected authority read')
     })
     const { res, body } = await call(
@@ -323,11 +324,7 @@ describe('/api/agent-index authenticated execution routes', () => {
     )
     expect(res.statusCode).toBe(403)
     expect(body).toEqual({ error: 'Agent authority could not be verified' })
-    expect(authorityCalls()).toEqual([
-      [ROUTER_V2, 'owner_of'],
-      [AGENT, 'scope_of'],
-      [AGENT, 'signer'],
-    ])
+    expect(authorityCalls()).toEqual([[ROUTER_V2, 'owner_of']])
   })
 
   it('returns 503 immediately when a router owner read is indeterminate', async () => {
@@ -377,8 +374,13 @@ describe('/api/agent-index authenticated execution routes', () => {
         return ownerRead === 1 ? OWNER : OTHER_OWNER
       }
       if (contract === ROUTER_V1 && method === 'owner_of') return OWNER
-      if (contract === AGENT && method === 'scope_of') return { owner: OWNER, revoked: false }
-      if (contract === AGENT && method === 'signer') return SESSION.rawPublicKey()
+      if (contract === AGENT && ['scope_of', 'signer'].includes(method)) {
+        if (ownerRead > 1) {
+          throw new Error('agent authority must not be re-read after router owner mismatch')
+        }
+        if (method === 'scope_of') return { owner: OWNER, revoked: false }
+        return SESSION.rawPublicKey()
+      }
       throw new Error('unexpected authority read')
     })
     const routerEnv = env({
@@ -422,17 +424,13 @@ describe('/api/agent-index authenticated execution routes', () => {
     ).toHaveLength(2)
     expect(
       mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'scope_of')
-    ).toHaveLength(2)
-    expect(mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'signer')).toHaveLength(
-      2
-    )
+    ).toHaveLength(1)
+    expect(mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'signer')).toHaveLength(1)
     expect(authorityCalls()).toEqual([
       [ROUTER_V2, 'owner_of'],
       [AGENT, 'scope_of'],
       [AGENT, 'signer'],
       [ROUTER_V2, 'owner_of'],
-      [AGENT, 'scope_of'],
-      [AGENT, 'signer'],
     ])
   })
 

@@ -99,7 +99,7 @@ function configuredRouterAddresses(req) {
 /** Fresh production authority adapter. No browser hints or local epochs participate in authority. */
 export function createReceiptAuthorityReader({ network, routerAddresses, server }) {
   if (!network?.networkId || !network.passphrase || !routerAddresses?.length || !server) return null
-  return async ({ networkId, agent }) => {
+  return async ({ networkId, owner, agent }) => {
     if (networkId !== network.networkId) {
       throw new AgentIndexValidationError('Requested network does not match configured network')
     }
@@ -115,6 +115,7 @@ export function createReceiptAuthorityReader({ network, routerAddresses, server 
         if (routerOwner != null) break
       }
       if (routerOwner == null) return { routerOwner }
+      if (routerOwner !== owner) return { routerOwner }
       const [scope, signer] = await Promise.all([
         readContract({ contract: agent, method: 'scope_of', server }),
         readContract({ contract: agent, method: 'signer', server }),
