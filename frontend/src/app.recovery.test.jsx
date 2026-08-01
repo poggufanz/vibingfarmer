@@ -1,6 +1,14 @@
-// @vitest-environment node
-import { describe, expect, it, vi } from 'vitest'
-import { buildRecoveryAllocationMappings, createRecoveryActionRunner } from './app.jsx'
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/react'
+import {
+  buildRecoveryAllocationMappings,
+  createAccountScopedRecoveryConfig,
+  createRecoveryActionRunner,
+} from './app.jsx'
+import { StartStage } from './components/strategy/StartStage.jsx'
+
+afterEach(cleanup)
 
 const ACCOUNT = Object.freeze({
   version: 1,
@@ -290,5 +298,124 @@ describe('createRecoveryActionRunner', () => {
     expect(deps.onProjection).not.toHaveBeenCalled()
     expect(deps.onError).not.toHaveBeenCalled()
     expect(deps.onPending.mock.calls).toEqual([[mapping.allocationId, true]])
+  })
+
+  it.each([
+    ['RECOVERY_POLL_TX_HASH_REQUIRED', 'pull'],
+    ['RECOVERY_POLL_SHARE_BASELINE_REQUIRED', 'stellar_deposit'],
+  ])(
+    'projects %s as a disabled local manual-review control through StartStage',
+    async (code, phase) => {
+      const error = Object.assign(new Error('Durable poll evidence is incomplete.'), {
+        code,
+        phase,
+      })
+      const { mapping, recovered, deps } = runnerHarness({
+        recoverAllocation: vi.fn(async () => ({ ...recovered, error })),
+      })
+      const runner = createRecoveryActionRunner(deps)
+
+      await runner.run(mapping.allocationId)
+
+      const next = deps.onProjection.mock.calls.at(-1)[1]
+      expect(next).toMatchObject({
+        action: 'manual-review',
+        phase,
+        reasonCode: code,
+        receipt: recovered.receipt,
+        version: recovered.version,
+      })
+
+      const amount = { token: 'CTOKEN', units: '7000000', decimals: 7 }
+      const uiPlan = {
+        runId: PLAN.runId,
+        planFingerprint: PLAN.planFingerprint,
+        amount,
+        agents: [
+          {
+            ...PLAN.agents[0],
+            hostNetworkId: 'stellar-testnet',
+            allocation: amount,
+            periodSeconds: 3600,
+            expiry: 2_000_000_000,
+            destination: 'Stellar deposit',
+            children: [],
+          },
+        ],
+        truth: {
+          agentIsolationCount: 1,
+          stellarVenueCount: 1,
+          baseUsesProxyVaults: false,
+        },
+      }
+      const outcome = {
+        allocationId: mapping.allocationId,
+        amount,
+        networkContext: {
+          executionNetwork: 'stellar-testnet',
+          currentCustodyNetwork: null,
+          transit: false,
+        },
+        executionStatus: 'failed',
+        custody: { location: 'unknown', confirmed: false, checkedAt: null },
+        txHash: null,
+        error: 'Original dispatch failed.',
+        evidence: { allocationId: mapping.allocationId },
+      }
+      const receipt = {
+        version: 1,
+        runId: PLAN.runId,
+        planFingerprint: PLAN.planFingerprint,
+        permission: {
+          mode: 'fresh',
+          status: 'confirmed',
+          confirmationCount: 1,
+          txHash: 'HGRANT',
+          grantReceiptFingerprint: 'FP',
+          expiryLedger: 9_001,
+          agentAddresses: [mapping.agentAddress],
+        },
+        branches: {
+          stellar: { status: 'failed', results: [outcome] },
+          base: { status: 'not-planned', results: [] },
+        },
+        allocations: [outcome],
+      }
+
+      render(
+        <StartStage
+          plan={uiPlan}
+          permission={{ mode: 'fresh' }}
+          receipt={receipt}
+          recoveryByAllocation={{ [mapping.allocationId]: next }}
+        />
+      )
+
+      const control = screen.getByRole('button', { name: 'Manual review' })
+      expect(control.disabled).toBe(true)
+      expect(screen.queryByRole('button', { name: 'Poll' })).toBeNull()
+    }
+  )
+})
+
+describe('createAccountScopedRecoveryConfig', () => {
+  it('drops a recovery recorder event that arrives after the captured account epoch changes', () => {
+    let current = ACCOUNT
+    const onEvent = vi.fn()
+    const config = createAccountScopedRecoveryConfig({
+      captured: ACCOUNT,
+      getCurrent: () => current,
+      onEvent,
+      sessionId: 'recovery-event-epoch',
+    })
+
+    config.onEvent('receipt-before-switch', { allocationId: PLAN.agents[0].allocationId })
+    current = Object.freeze({ ...ACCOUNT, epoch: ACCOUNT.epoch + 1 })
+    config.onEvent('receipt-after-switch', { allocationId: PLAN.agents[0].allocationId })
+
+    expect(onEvent).toHaveBeenCalledOnce()
+    expect(onEvent).toHaveBeenCalledWith('receipt-before-switch', {
+      allocationId: PLAN.agents[0].allocationId,
+    })
   })
 })

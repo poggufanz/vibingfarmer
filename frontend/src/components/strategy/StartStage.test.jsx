@@ -594,6 +594,69 @@ describe('StartStage -- evidence-selected recovery actions', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Recover' })).toBeNull()
   })
+
+  it('folds a completed recovery receipt into both the lane and settled receipt views', () => {
+    const allocationId = 'run-1:deposit:1'
+    const oldError = 'The Stellar relay returned FAILED.'
+    const recoveredHash = 'b4c5d6e7'.repeat(8)
+    const receipt = receiptFor({
+      allocations: [
+        succeededAllocation('run-1:deposit:0'),
+        failedAllocation(allocationId, { heldInAgent: true }),
+      ],
+    })
+    const recoveryReceipt = {
+      version: 8,
+      phases: { pull: 'confirmed', stellar_deposit: 'confirmed' },
+      custody: {
+        location: 'stellar-vault',
+        confirmed: true,
+        amount: amount(TOKEN_ADDR, '1000000000'),
+        reason: null,
+      },
+      attempts: [
+        {
+          attemptId: 'recovered-deposit-confirmed',
+          phase: 'stellar_deposit',
+          status: 'confirmed',
+          evidence: { txHash: recoveredHash, preShareUnits: '10', postShareUnits: '20' },
+          observedAt: NOW + 10,
+        },
+      ],
+    }
+
+    render(
+      <StartStage
+        plan={PLAN_TWO_DEPOSITS}
+        permission={PERMISSION_FRESH}
+        events={[depositFailed(allocationId, 'agent-1', oldError)]}
+        receipt={receipt}
+        recoveryByAllocation={{
+          [allocationId]: {
+            action: 'complete',
+            phase: null,
+            version: 8,
+            receipt: recoveryReceipt,
+            custody: {
+              location: 'stellar-vault',
+              confirmed: true,
+              amount: amount(TOKEN_ADDR, '1000000000'),
+              reason: null,
+              source: 'receipt',
+            },
+            route: { allocationId, source: 'receipt' },
+          },
+        }}
+      />
+    )
+
+    expect(screen.getAllByText('Working')).toHaveLength(2)
+    expect(screen.queryByText('Failed')).toBeNull()
+    expect(screen.queryByText(oldError)).toBeNull()
+    expect(screen.getAllByText(recoveredHash)).toHaveLength(2)
+    expect(screen.getByText(/custody: stellar-vault, 100 USDC \(receipt-confirmed\)/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^(recover|deposit|poll)$/i })).toBeNull()
+  })
 })
 
 describe('StartStage -- bridge lane: one mark, all Base child destinations, correct network route/custody', () => {

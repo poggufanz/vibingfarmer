@@ -232,7 +232,15 @@ function custodyLabelFor(kind, outcome) {
 function foldDepositReceipt(lane, outcome) {
   if (!outcome) return lane
   if (outcome.executionStatus === 'succeeded') {
-    return { ...lane, phase: 'working', txHash: outcome.txHash, recoveryEligible: false }
+    return {
+      ...lane,
+      phase: 'working',
+      txHash: outcome.txHash,
+      error: null,
+      custodyLabel: null,
+      custody: outcome.custody,
+      recoveryEligible: false,
+    }
   }
   if (outcome.executionStatus === 'failed') {
     return {
@@ -245,6 +253,82 @@ function foldDepositReceipt(lane, outcome) {
     }
   }
   return lane
+}
+
+function latestConfirmedRecoveryHash(receipt) {
+  const attempts = Array.isArray(receipt?.attempts) ? receipt.attempts : []
+  for (let index = attempts.length - 1; index >= 0; index -= 1) {
+    const attempt = attempts[index]
+    if (
+      attempt?.phase === 'stellar_deposit' &&
+      attempt.status === 'confirmed' &&
+      typeof attempt.evidence?.txHash === 'string' &&
+      attempt.evidence.txHash.length > 0
+    ) {
+      return attempt.evidence.txHash
+    }
+  }
+  return null
+}
+
+// A recovery projection is newer durable evidence than the original DispatchReceiptV1. Fold only
+// the strongest terminal verdict: a completed Stellar deposit with receipt-confirmed vault
+// custody. This single derived receipt feeds both the lane and StrategyReceipt, preventing a
+// recovered allocation from remaining failed/held in one view while appearing complete in another.
+function foldRecoveryReceipt(receipt, recoveryByAllocation) {
+  if (!receipt) return receipt
+  const replacements = new Map()
+  for (const outcome of receipt.allocations || []) {
+    const projection = recoveryByAllocation?.[outcome.allocationId]
+    if (
+      projection?.action !== 'complete' ||
+      projection.receipt?.phases?.stellar_deposit !== 'confirmed' ||
+      projection.custody?.location !== 'stellar-vault' ||
+      projection.custody.confirmed !== true
+    ) {
+      continue
+    }
+    const txHash = latestConfirmedRecoveryHash(projection.receipt)
+    replacements.set(outcome.allocationId, {
+      ...outcome,
+      networkContext: {
+        ...outcome.networkContext,
+        currentCustodyNetwork: 'stellar-testnet',
+        transit: false,
+      },
+      executionStatus: 'succeeded',
+      custody: projection.custody,
+      txHash,
+      error: null,
+      evidence: {
+        allocationId: outcome.allocationId,
+        recoveryReceiptVersion: projection.version,
+        ...(txHash ? { depositTxHash: txHash } : {}),
+      },
+    })
+  }
+  if (replacements.size === 0) return receipt
+  const replace = (outcome) => replacements.get(outcome.allocationId) || outcome
+  const allocations = receipt.allocations.map(replace)
+  const stellarResults = (receipt.branches?.stellar?.results || []).map(replace)
+  const stellarStatus =
+    stellarResults.length > 0 && stellarResults.every((row) => row.executionStatus === 'succeeded')
+      ? 'succeeded'
+      : stellarResults.length > 0 && stellarResults.every((row) => row.executionStatus === 'failed')
+        ? 'failed'
+        : 'partial'
+  return {
+    ...receipt,
+    allocations,
+    branches: {
+      ...receipt.branches,
+      stellar: {
+        ...receipt.branches?.stellar,
+        status: stellarStatus,
+        results: stellarResults,
+      },
+    },
+  }
 }
 
 // dispatchSummary.js:27-34 (`plannedAllocations`) -- a bridge agent with children NEVER gets an
@@ -381,9 +465,14 @@ export function StartStage({
   // re-implementing money rounding is exactly how this repo has reintroduced rounding bugs before.
   const capDisplay = useMemo(() => buildAmountDisplayMap(plan.agents, 'allocation'), [plan.agents])
 
+  const effectiveReceipt = useMemo(
+    () => foldRecoveryReceipt(receipt, recoveryByAllocation),
+    [receipt, recoveryByAllocation]
+  )
+
   const lanes = useMemo(
-    () => buildLanes({ plan, permission, events, receipt }),
-    [plan, permission, events, receipt]
+    () => buildLanes({ plan, permission, events, receipt: effectiveReceipt }),
+    [plan, permission, events, effectiveReceipt]
   )
 
   const anyFailed = lanes.some((lane) => lane.phase === 'failed')
@@ -568,7 +657,7 @@ export function StartStage({
 
       {receipt && (
         <StrategyReceipt
-          receipt={receipt}
+          receipt={effectiveReceipt}
           runId={runId}
           onViewMoney={onViewMoney}
           onMakeAnotherDeposit={onMakeAnotherDeposit}

@@ -133,7 +133,8 @@ function splitUnitsByRatio(totalUnits, ratios) {
  *     as `v3ExecutionId` so a V3 recovery can resend the IDENTICAL still-valid envelope rather than
  *     rebuilding one (the router replay-guard id is otherwise unrecoverable from the receipt).
  * @param {{runId:string, allocationId:string, owner:string, agentAddress:string, sessionKey:object,
- *   worker:string, amount:{token:string,units:string,decimals:number}, onEvent?:Function}} p
+ *   worker:string, amount:{token:string,units:string,decimals:number}, onEvent?:Function,
+ *   beforePost?:Function, abortRecoveryConflict?:boolean}} p
  */
 function createEvidenceRecorder({
   runId,
@@ -146,6 +147,8 @@ function createEvidenceRecorder({
   onEvent,
   persistedReceipt = null,
   persistedVersion = 0,
+  beforePost = null,
+  abortRecoveryConflict = false,
 }) {
   let receipt = createAllocationReceipt({
     networkId: RECEIPT_NETWORK_ID,
@@ -291,9 +294,10 @@ function createEvidenceRecorder({
   }
 
   const mayHaveCommitted = (error) =>
-    error?.status === 409 ||
-    error?.step == null ||
-    (error.step === 'write' && ![400, 401, 403].includes(error.status))
+    error?.code !== 'RECOVERY_POST_GUARD_FAILED' &&
+    (error?.status === 409 ||
+      error?.step == null ||
+      (error.step === 'write' && ![400, 401, 403].includes(error.status)))
 
   const readAuthoritative = async () => {
     // Dynamic for the same reason as the permission-locked imports above: legacy orchestrator
@@ -325,13 +329,21 @@ function createEvidenceRecorder({
   async function record({ phase, status, evidence }) {
     receipt = appendPhase(receipt, { phase, status, evidence })
     const attempt = receipt.attempts[receipt.attempts.length - 1]
-    const post = () =>
-      postReceiptEvidence({
+    const post = async () => {
+      try {
+        await beforePost?.()
+      } catch (cause) {
+        const error = new Error(cause?.message || 'Recovery evidence POST guard failed', { cause })
+        error.code = 'RECOVERY_POST_GUARD_FAILED'
+        throw error
+      }
+      return postReceiptEvidence({
         activeAccount: owner,
         agentAddress,
         sessionKey,
         body: { expectedVersion, receipt, attempt },
       })
+    }
     try {
       const result = await post()
       expectedVersion = result.version
@@ -347,6 +359,14 @@ function createEvidenceRecorder({
         if (authoritative?.attempts?.some((entry) => sameAttempt(entry, attempt))) {
           receipt = writableReceipt(authoritative)
           return
+        }
+        if (abortRecoveryConflict && error?.status === 409) {
+          if (authoritative) receipt = writableReceipt(authoritative)
+          const conflict = new Error(
+            'Recovery receipt changed under this lease; authoritative evidence must be reprojected'
+          )
+          conflict.code = 'RECOVERY_RECEIPT_CHANGED'
+          failWrite(conflict, phase, status)
         }
         if (authoritative) receipt = rebaseAttempt(authoritative, receipt, attempt)
       } catch (rebaseError) {
@@ -417,19 +437,67 @@ function assertRecoveryLease(claim, phase) {
   return lease
 }
 
-function recoveryAmount(mapping) {
-  const amount = mapping?.amount
+function recoveryAmount(value, field = 'allocation mapping') {
+  const amount = value?.amount ?? value
   if (
     !amount ||
     typeof amount.token !== 'string' ||
+    amount.token.length === 0 ||
     typeof amount.units !== 'string' ||
     !/^\d+$/.test(amount.units) ||
     !Number.isInteger(amount.decimals) ||
     amount.decimals < 0
   ) {
-    throw new Error('Recovery allocation amount must preserve exact integer-string units')
+    throw new Error(
+      `Recovery ${field} amount must preserve exact token, integer-string units, and decimals`
+    )
   }
   return { token: amount.token, units: amount.units, decimals: amount.decimals }
+}
+
+function sameRecoveryAmount(left, right) {
+  return (
+    left.token === right.token && left.units === right.units && left.decimals === right.decimals
+  )
+}
+
+function recoveryPermissionAmount(permissionEvidence, allocationId) {
+  if (permissionEvidence == null) return null
+  const matches = Array.isArray(permissionEvidence.reviewedAgentInits)
+    ? permissionEvidence.reviewedAgentInits.filter((entry) => entry?.allocationId === allocationId)
+    : []
+  if (matches.length !== 1) {
+    throw new Error('Recovery permission must contain exactly one reviewed allocation amount')
+  }
+  const reviewed = matches[0]
+  return recoveryAmount(
+    {
+      token: reviewed.token,
+      units: reviewed.cap?.units,
+      decimals: reviewed.cap?.decimals,
+    },
+    'permission'
+  )
+}
+
+function resolveRecoveryAmount({ mapping, receipt, permissionEvidence, allocationId }) {
+  const mapped = recoveryAmount(mapping, 'allocation mapping')
+  const durable = receipt
+    ? recoveryAmount(receipt.intent?.allocation, 'durable receipt intent')
+    : mapped
+  const supplied = [
+    ['allocation mapping', mapped],
+    ['permission', recoveryPermissionAmount(permissionEvidence, allocationId)],
+    ['durable receipt custody', receipt?.custody?.amount ?? null],
+  ]
+  for (const [field, candidateValue] of supplied) {
+    if (candidateValue == null) continue
+    const candidate = recoveryAmount(candidateValue, field)
+    if (!sameRecoveryAmount(durable, candidate)) {
+      throw new Error(`Recovery ${field} amount conflicts with durable receipt intent`)
+    }
+  }
+  return durable
 }
 
 function lastRecoveryAttempt(receipt, phase) {
@@ -438,6 +506,28 @@ function lastRecoveryAttempt(receipt, phase) {
     if (attempts[index]?.phase === phase) return attempts[index]
   }
   return null
+}
+
+function recoveryManualReviewError(code, phase, message) {
+  const error = new Error(message)
+  error.code = code
+  error.phase = phase
+  return error
+}
+
+async function recoveryRelayError(result, operation) {
+  if (result == null || result.status === 'FAILED') {
+    return new Error(
+      result
+        ? `The ${operation} relay returned ${result.status}.`
+        : 'The Stellar relay is unavailable before submission.'
+    )
+  }
+  const { RelaySubmissionUnknownError } = await import('./stellar/relay.js')
+  return new RelaySubmissionUnknownError(
+    `The ${operation} relay returned an unproved outcome (${result.status || 'malformed'}).`,
+    result
+  )
 }
 
 /** Bind the two Stellar custody mutations inside baseLeg.js to the same owner capability as the
@@ -651,7 +741,6 @@ export class OrchestratorAgent {
       ) {
         throw new Error('Recovery allocation mapping does not match this Stellar execution')
       }
-      const amount = recoveryAmount(mapping)
       const agentAddress = assertRecoveryText(mapping.agentAddress, 'agent address')
       if (
         credential?.agentAddress !== agentAddress ||
@@ -681,6 +770,12 @@ export class OrchestratorAgent {
           throw new Error('Recovery receipt does not match the original agent, signer, or child')
         }
       }
+      const amount = resolveRecoveryAmount({
+        mapping,
+        receipt: claim.receipt,
+        permissionEvidence,
+        allocationId: identity.allocationId,
+      })
       const selected = selectRecoveryAction(claim.receipt)
       for (const field of ['action', 'phase', 'reasonCode']) {
         if (claim?.[field] !== selected[field]) {
@@ -704,6 +799,11 @@ export class OrchestratorAgent {
         onEvent: this.onEvent,
         persistedReceipt: claim.receipt,
         persistedVersion: claim.version,
+        beforePost: () => {
+          assertRecoveryLease(claim, selected.phase)
+          this.assertCurrentAccount()
+        },
+        abortRecoveryConflict: true,
       })
       const write = async (attempt) => {
         assertRecoveryLease(claim, selected.phase)
@@ -761,12 +861,8 @@ export class OrchestratorAgent {
           await recordSubmissionFailure(error, 'pull', v3Evidence)
           throw error
         }
-        if (!result || result.status !== 'SUCCESS') {
-          const error = new Error(
-            result
-              ? `The funding router returned ${result.status}.`
-              : 'The Stellar relay is unavailable.'
-          )
+        if (!result || !['SUCCESS', 'duplicate'].includes(result.status)) {
+          const error = await recoveryRelayError(result, 'funding router')
           await recordSubmissionFailure(error, 'pull', v3Evidence)
           throw error
         }
@@ -832,16 +928,16 @@ export class OrchestratorAgent {
             })
           )
         } catch (error) {
-          await recordSubmissionFailure(error, 'stellar_deposit')
+          await recordSubmissionFailure(error, 'stellar_deposit', {
+            preShareUnits: preShares.toString(),
+          })
           throw error
         }
-        if (!result || result.status !== 'SUCCESS') {
-          const error = new Error(
-            result
-              ? `The vault relay returned ${result.status}.`
-              : 'The Stellar relay is unavailable.'
-          )
-          await recordSubmissionFailure(error, 'stellar_deposit')
+        if (!result || !['SUCCESS', 'duplicate'].includes(result.status)) {
+          const error = await recoveryRelayError(result, 'vault')
+          await recordSubmissionFailure(error, 'stellar_deposit', {
+            preShareUnits: preShares.toString(),
+          })
           throw error
         }
         const postShares = await move(() => readVaultShares(agentAddress))
@@ -877,7 +973,23 @@ export class OrchestratorAgent {
         const attempt = lastRecoveryAttempt(claim.receipt, selected.phase)
         const txHash = attempt?.evidence?.txHash
         if (typeof txHash !== 'string' || txHash.length === 0) {
-          throw new Error(`Recovery poll for ${selected.phase} has no durable transaction hash`)
+          throw recoveryManualReviewError(
+            'RECOVERY_POLL_TX_HASH_REQUIRED',
+            selected.phase,
+            `Recovery poll for ${selected.phase} has no durable transaction hash`
+          )
+        }
+        const preShareUnits =
+          selected.phase === 'stellar_deposit' ? attempt?.evidence?.preShareUnits : null
+        if (
+          selected.phase === 'stellar_deposit' &&
+          (typeof preShareUnits !== 'string' || !/^\d+$/.test(preShareUnits))
+        ) {
+          throw recoveryManualReviewError(
+            'RECOVERY_POLL_SHARE_BASELINE_REQUIRED',
+            selected.phase,
+            'Deposit poll has no durable pre-submission share baseline'
+          )
         }
         let confirmation
         try {
@@ -896,10 +1008,6 @@ export class OrchestratorAgent {
             evidence: { txHash, ...confirmation },
           })
         } else {
-          const preShareUnits = attempt?.evidence?.preShareUnits
-          if (typeof preShareUnits !== 'string' || !/^\d+$/.test(preShareUnits)) {
-            throw new Error('Deposit poll has no durable pre-submission share baseline')
-          }
           const postShares = await move(() => readVaultShares(agentAddress))
           if (postShares != null && postShares > BigInt(preShareUnits)) {
             recorder.custody({

@@ -495,6 +495,21 @@ export function createEpochBoundRun({ captured, getCurrent, onEvent = () => {} }
   }
 }
 
+/** Account-epoch-scoped constructor input for the raw recovery orchestrator. Keeping this guard at
+ * the App boundary prevents a late recorder callback from reaching React even if an internal
+ * orchestrator event source is added later without its own account assertion. */
+export function createAccountScopedRecoveryConfig({ captured, getCurrent, onEvent, sessionId }) {
+  const epochRun = createEpochBoundRun({ captured, getCurrent, onEvent })
+  return {
+    user: captured.address,
+    activeAccount: captured,
+    getCurrentActiveAccount: getCurrent,
+    sessionId,
+    signal: epochRun.signal,
+    onEvent: epochRun.onEvent,
+  }
+}
+
 /**
  * Recoverable Stellar rows are reconstructed only from the confirmed address vector and the same
  * ordered top-level plan that produced it. Base parents/children are intentionally absent: their
@@ -584,6 +599,10 @@ export function createRecoveryActionRunner({
   vault,
 }) {
   const pending = new Set()
+  const manualReviewCodes = new Set([
+    'RECOVERY_POLL_TX_HASH_REQUIRED',
+    'RECOVERY_POLL_SHARE_BASELINE_REQUIRED',
+  ])
   const assertCurrent = (captured) =>
     assertCurrentActiveAccount({ captured, current: getActiveAccount() })
   const projectAuthoritative = async (mapping, captured) => {
@@ -654,11 +673,22 @@ export function createRecoveryActionRunner({
           permissionEvidence: getPermission(),
         })
         assertCurrent(captured)
-        const next = projectReceipt({
+        let next = projectReceipt({
           receipt: result.receipt,
           version: result.version,
           identity: mapping,
         })
+        if (manualReviewCodes.has(result.error?.code)) {
+          next = {
+            ...next,
+            action: 'manual-review',
+            phase: result.error.phase ?? claim.phase ?? next.phase,
+            reasonCode: result.error.code,
+            reason: result.error.message,
+            receipt: result.receipt,
+            version: result.version,
+          }
+        }
         onProjection(allocationId, next)
         if (result.error) onError(result.error, allocationId)
         return result
@@ -3675,13 +3705,14 @@ const App = () => {
       recoverAllocation: async (args) => {
         const captured = activeAccountRef.current
         assertCurrentActiveAccount({ captured, current: activeAccountRef.current })
-        const orchestrator = new OrchestratorAgent({
-          user: captured.address,
-          activeAccount: captured,
-          getCurrentActiveAccount: () => activeAccountRef.current,
-          sessionId: `session-${strategyFlowRef.current.plan?.runId || runId}-recovery`,
-          onEvent: handleNewRunEvent,
-        })
+        const orchestrator = new OrchestratorAgent(
+          createAccountScopedRecoveryConfig({
+            captured,
+            getCurrent: () => activeAccountRef.current,
+            sessionId: `session-${strategyFlowRef.current.plan?.runId || runId}-recovery`,
+            onEvent: handleNewRunEvent,
+          })
+        )
         return orchestrator.recoverAllocation(args)
       },
       onProjection: (allocationId, projected) =>

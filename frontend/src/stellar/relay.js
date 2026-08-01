@@ -13,31 +13,46 @@ export class RelayRejectedError extends Error {
   }
 }
 
+/** The submit POST may have reached the relay, but its chain outcome is not proven yet. */
+export class RelaySubmissionUnknownError extends Error {
+  constructor(message, result = null, cause) {
+    super(message, cause === undefined ? undefined : { cause })
+    this.name = 'RelaySubmissionUnknownError'
+    this.code = 'VF_SUBMISSION_UNKNOWN'
+    this.submission = 'unknown'
+    this.result = result
+  }
+}
+
 /**
  * Submit an agent-signed inner Soroban transaction (base64 XDR) to the gasless relay.
  *
- * Two outcomes callers MUST NOT confuse:
- *   • null  — no relay to talk to (unreachable, or it answers "unconfigured"). Falling back to a
- *             user-paid submit is legitimate.
- *   • throw — the relay answered and REFUSED (403 origin, 429, guard rejection, failed fee-bump).
- *             A refusal is NOT permission to bill the user, who by product design holds no XLM.
+ * Three outcomes callers MUST NOT confuse:
+ *   • null  — the relay definitively answered "unconfigured"; no submit was accepted.
+ *   • RelayRejectedError — the relay explicitly refused the transaction.
+ *   • RelaySubmissionUnknownError — the submit response was lost or did not prove a final result.
  *
  * These used to both return null, so a policy refusal silently became a user-paid submit that the
  * user could never afford — surfacing as a bogus balance error while destroying the real reason.
- * @param {{ xdr: string }} p
+ * @param {{ xdr: string, signal?: AbortSignal }} p
  * @returns {Promise<{ hash: string, status: string, relayer?: string } | null>}
- * @throws {RelayRejectedError} when the relay refused the transaction
+ * @throws {RelayRejectedError|RelaySubmissionUnknownError}
  */
-export async function submitViaRelay({ xdr }) {
+export async function submitViaRelay({ xdr, signal }) {
   let res
   try {
     res = await fetch(RELAY_PROXY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'submit', xdr }),
+      ...(signal ? { signal } : {}),
     })
-  } catch {
-    return null // no relay reachable — fallback is legitimate
+  } catch (cause) {
+    throw new RelaySubmissionUnknownError(
+      'Lost contact with the Stellar relay after submission. Check the chain before retrying.',
+      null,
+      cause
+    )
   }
   // 503 is the relay's own "I am not configured" — the one non-2xx that means "no relay here".
   if (res.status === 503) return null
@@ -59,7 +74,21 @@ export async function submitViaRelay({ xdr }) {
       `The Stellar relay refused this transaction: ${d.error}`,
       res.status
     )
-  return { hash: d.hash, status: d.status, relayer: d.relayer }
+  const result = Object.fromEntries(
+    ['hash', 'status', 'relayer']
+      .filter((field) => Object.prototype.hasOwnProperty.call(d || {}, field))
+      .map((field) => [field, d[field]])
+  )
+  const hashProven = typeof result.hash === 'string' && result.hash.length > 0
+  if (!hashProven || !['SUCCESS', 'FAILED', 'duplicate'].includes(result.status)) {
+    throw new RelaySubmissionUnknownError(
+      `The Stellar relay returned an unproved submission outcome${
+        result.status ? ` (${result.status})` : ''
+      }. Check the chain before retrying.`,
+      result
+    )
+  }
+  return result
 }
 
 /**

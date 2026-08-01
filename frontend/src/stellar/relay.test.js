@@ -59,12 +59,39 @@ describe('stellar client relay', () => {
     await expect(submitViaRelay({ xdr: 'x' })).rejects.toThrow(/429/)
   })
 
-  it('returns null on a network throw (never crashes the worker)', async () => {
+  it('classifies a lost response after POST as submission-unknown, never unconfigured', async () => {
     global.fetch = vi.fn(async () => {
       throw new Error('offline')
     })
-    expect(await submitViaRelay({ xdr: 'x' })).toBeNull()
+    await expect(submitViaRelay({ xdr: 'x' })).rejects.toMatchObject({
+      name: 'RelaySubmissionUnknownError',
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+      result: null,
+    })
   })
+
+  it.each([
+    [
+      { hash: 'HPENDING', status: 'PENDING' },
+      { hash: 'HPENDING', status: 'PENDING' },
+    ],
+    [{ hash: 'HMALFORMED' }, { hash: 'HMALFORMED' }],
+    [{ status: 'SUCCESS' }, { status: 'SUCCESS' }],
+  ])(
+    'classifies an unproved 2xx relay body as unknown and preserves its evidence',
+    async (body, result) => {
+      global.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => body }))
+
+      await expect(submitViaRelay({ xdr: 'x' })).rejects.toEqual(
+        expect.objectContaining({
+          name: 'RelaySubmissionUnknownError',
+          code: 'VF_SUBMISSION_UNKNOWN',
+          result,
+        })
+      )
+    }
+  )
 
   it('getRelayerAddress returns the relayer pubkey', async () => {
     global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ address: 'GREL' }) }))

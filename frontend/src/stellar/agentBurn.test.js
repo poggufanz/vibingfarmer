@@ -125,6 +125,24 @@ describe('runAgentBurn - relayed, session-key-signed, user-paid nothing', () => 
     ).rejects.toThrow(/deposit_for_burn:.*relay refused/)
   })
 
+  it('preserves a typed ambiguous relay outcome so Base custody stays unknown', async () => {
+    const ambiguous = Object.assign(new Error('relay response lost'), {
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+      result: { hash: 'HBURNPENDING', status: 'PENDING' },
+    })
+    submitViaRelayMock.mockRejectedValue(ambiguous)
+
+    await expect(
+      runAgentBurn({
+        bridgeAgentAddress: BRIDGE_AGENT,
+        amountUnits: 2_000_000n,
+        mintRecipient: MINT_RECIPIENT,
+        sessionKey,
+      })
+    ).rejects.toBe(ambiguous)
+  })
+
   it('a non-SUCCESS relay status throws with method context instead of silently returning a fake hash', async () => {
     submitViaRelayMock.mockResolvedValue({ hash: 'H', status: 'PENDING' })
     await expect(
