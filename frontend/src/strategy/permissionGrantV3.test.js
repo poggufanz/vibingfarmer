@@ -1072,6 +1072,25 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
         expect(decision.freshReason).toBe('agent-cap-drift')
       }
     )
+
+    // Fix round 1, finding 2: `BigInt(undefined)` throws — no producer supplies `capPerPeriodUnits`
+    // today (Part B, `inspectAgentsV4`, has not landed), so a naive comparison would let a real
+    // caller's TypeError escape instead of the all-or-nothing `fresh` decision this function's own
+    // header comment promises. Both `undefined` (the field entirely absent) and `null` are pinned,
+    // not just one, since a future producer might use either to mean "unknown."
+    test.each([
+      ['absent', undefined],
+      ['null', null],
+    ])(
+      'a bound row with a %s capPerPeriodUnits forces fresh (agent-cap-drift), never a thrown TypeError',
+      async (_label, capPerPeriodUnits) => {
+        const decision = await proveReusablePermission(
+          baseDeps({ inspectAgents: vi.fn(async () => [inspectedAgent({ capPerPeriodUnits })]) })
+        )
+        expect(decision.mode).toBe('fresh')
+        expect(decision.freshReason).toBe('agent-cap-drift')
+      }
+    )
   })
 
   describe('the scope-id derivation itself (Task F2, item 3)', () => {

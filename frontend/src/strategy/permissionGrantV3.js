@@ -519,39 +519,33 @@ export async function proveReusablePermission({
     if (linkedPermissionId !== permissionId) return freshDecision(base, 'agent-not-linked')
   }
 
-  // 7e. CORRECTED (Task W3a — the previous version of this check, added by Task F2, compared two
-  // fields no chain read can ever produce, and passed review only because the test fixtures
-  // invented them). The scope id above binds ONLY target/token/kind/bridge-config
-  // (deriveScopeIdV3's own doc) — it does NOT bind the agent's own recorded cap, so a separate
-  // check is needed. But `AgentScope` (agent_account/src/types.rs:19-32) carries `cap_per_period`
-  // and `per_execution_max` and NOTHING ELSE — no cumulative or lifetime aggregate of any kind —
-  // and `mandate_ceiling`/`per_run_max` (funding_router/src/types.rs's `PermissionGrantV3`) live
-  // EXCLUSIVELY on the router-side permission record: `grant_v3`'s deploy loop
-  // (funding_router/src/lib.rs:406-421) writes an agent's scope from `cap_per_period: init.cap` and
-  // `per_execution_max: per_agent_max` ONLY, never from `mandate_ceiling` or `per_run_max`
-  // themselves. So `cumulativeCapUnits` had no possible source and is deleted, not replaced, and a
-  // per-agent `cap_per_period` is not the same number as the permission-wide `per_run_max` — comparing
-  // one against the other conflated two different bounds.
+  // 7e. `AgentScope` records no permission-wide cumulative cap: its only cap fields are the
+  // period-scoped `cap_per_period` and `per_execution_max` (agent_account/src/types.rs:26,32).
+  // `mandate_ceiling`/`per_run_max` (funding_router's `PermissionGrantV3`) are never written into a
+  // scope verbatim; `per_execution_max` carries only their floor-divided derivative
+  // (funding_router/src/lib.rs:401,420). So the check this replaced (`row.perRunCapUnits` vs.
+  // `grant.perRunMaxUnits`, `row.cumulativeCapUnits` vs. `grant.mandateCeilingUnits`) compared
+  // fields no chain read can produce; `cumulativeCapUnits` is deleted outright, and the surviving
+  // comparison is a DIFFERENT pair: each bound agent's own `cap_per_period` (row field
+  // `capPerPeriodUnits`, a future `inspectAgents` supplier's contract to satisfy) against the
+  // REVIEWED per-allocation cap the user approved (`agentInits[i].cap.units`) — catches an agent
+  // whose recorded cap moved after review, real drift the scope id (7b) cannot see.
   //
-  // What IS provable, and what this checks instead: each bound agent's own on-chain
-  // `cap_per_period` (row field `capPerPeriodUnits` — the contract a future `inspectAgents`
-  // supplier must satisfy; not implemented by this task) against the REVIEWED per-allocation cap
-  // the user actually approved (`agentInits[i].cap.units`). This catches an agent whose recorded
-  // cap moved after the user reviewed it — real drift the scope id cannot see. Indexed pairing
-  // (`bound[i]`/`agentInits[i]`), not `for...of`: the reviewed cap is per-ALLOCATION, and `bound` is
-  // pushed in `agentInits` order at the claim loop above (7c), so the indices already correspond —
-  // the same indexed pairing the per-execution check just below (step 8) already uses.
+  // Indexed pairing (`bound[i]`/`agentInits[i]`), not `for...of`: the reviewed cap is
+  // per-ALLOCATION, and `bound` is pushed in `agentInits` order at the claim loop above (7c) — the
+  // same pairing step 8 already uses. A missing `capPerPeriodUnits` (no producer supplies it today)
+  // fails CLOSED to `agent-cap-drift`, never a thrown `TypeError`, per this function's own
+  // all-or-nothing contract (header comment above). It shares the reason rather than minting a
+  // distinct one: from a caller's perspective a MISSING cap and a DRIFTED cap both mean "cannot
+  // confirm the agent's cap still matches what was reviewed" — no action differs between them.
   //
-  // `grant.perRunMaxUnits` — a property on the object `readPermissionGrant` resolves at step 4 — has
-  // no per-agent counterpart to check it against (`AgentScope` records no per-run field at all), and
-  // the REVIEWED `approval` this run built (`buildReusableApproval`, above) carries no per-run
-  // figure either — see that function's own doc for its full field list. Inventing a comparison for
-  // it here would be exactly the fabricated-fixture failure this task exists to remove, so none is
-  // added. Net effect: `grant.perRunMaxUnits` is now DEAD — no line in this file accesses it — left
-  // that way deliberately rather than silently deleted, since removing a field from a chain-read
-  // shape it does not own is not this task's call to make; see the task report.
+  // `grant.perRunMaxUnits` has no per-agent counterpart to compare it against, and the REVIEWED
+  // `approval` (`buildReusableApproval`, above) carries no per-run figure either — inventing a
+  // comparison here would repeat the same fabricated-fixture mistake this check exists to fix, so
+  // none is added; the field is unread anywhere else in this file.
   for (let i = 0; i < agentInits.length; i++) {
-    if (BigInt(bound[i].capPerPeriodUnits) !== BigInt(agentInits[i].cap.units))
+    const cap = bound[i].capPerPeriodUnits
+    if (cap == null || BigInt(cap) !== BigInt(agentInits[i].cap.units))
       return freshDecision(base, 'agent-cap-drift')
   }
 
