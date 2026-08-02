@@ -53,9 +53,9 @@ function shortAddress(address) {
 // with a sibling's, and its own honesty coverage reason (readOwnerMoney.js's per-leg
 // `coverageReason`: 'stale'|'unavailable'|'dead-letter'|null) renders right next to it.
 const COVERAGE_REASON_COPY = {
-  stale: 'Confirmed evidence is a little older than usual -- refreshing.',
-  unavailable: 'Could not reconfirm this round -- last known amount shown, not zero.',
-  'dead-letter': 'Delivery report is stuck -- needs attention.',
+  stale: 'Confirmed evidence is a little older than usual — refreshing.',
+  unavailable: 'Could not reconfirm this round — last known amount shown, not zero.',
+  'dead-letter': 'Delivery report is stuck — needs attention.',
 }
 
 // One display leg -> { networkId | routeContext, label, amount, key }. `location` values are
@@ -176,17 +176,29 @@ function unattributedRows(unattributed) {
   }))
 }
 
-export function PositionList({ agents = [], unattributed = {} }) {
+export function PositionList({ agents = [], unattributed = {}, collectionState = null }) {
   const rows = agents.map(positionRowFor).filter(Boolean)
   const idleRows = unattributedRows(unattributed)
 
+  // 2026-08-02 polish: "No confirmed positions yet" is an AUTHORITATIVE-empty claim (spec §11:
+  // empty copy only after the read truly completed). A disconnected or unconfirmed wallet must
+  // never read as a proven-empty account, so the empty line follows the collection's own state.
+  const emptyCopy =
+    collectionState === 'disconnected'
+      ? 'Connect a wallet to see where your money sits.'
+      : collectionState === 'loading'
+        ? 'Checking your positions…'
+        : collectionState === 'unavailable'
+          ? 'Positions unavailable — nothing could be confirmed this round.'
+          : 'No confirmed positions yet.'
+
   return (
-    <section className="pc-money-section" aria-labelledby="your-position-heading">
+    <section className="pc-money-section" aria-labelledby="your-position-heading" data-pocket-enter>
       <header>
         <h2 id="your-position-heading">Your position</h2>
       </header>
       <div>
-        {rows.length === 0 && idleRows.length === 0 && <p>No confirmed positions yet.</p>}
+        {rows.length === 0 && idleRows.length === 0 && <p>{emptyCopy}</p>}
         <ul className="pc-position-list">
           {rows.map((row) => (
             <li key={row.address} className="pc-position-row">
@@ -262,7 +274,7 @@ export function PositionList({ agents = [], unattributed = {} }) {
                     currency={row.amount.token}
                   />
                 ) : (
-                  <p className="pc-money pc-money--unknown">Unavailable -- needs confirming</p>
+                  <p className="pc-money pc-money--unknown">Unavailable — needs confirming</p>
                 )}
               </div>
               <span />

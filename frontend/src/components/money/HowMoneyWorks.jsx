@@ -11,10 +11,7 @@
 // optional: a caller that hasn't wired the real automation reads yet (this task never wires app.jsx
 // -- My Money Task 13 does) still gets an honest "Unavailable" for each, never a silent gap.
 import { VenueTruth } from '../pocket/Primitives.jsx'
-
-function formatHeartbeat(lastHeartbeatAt) {
-  return Number.isFinite(lastHeartbeatAt) ? new Date(lastHeartbeatAt).toISOString() : 'Unavailable'
-}
+import { formatUtcMs } from './formatUtc.js'
 
 const KEEPER_LABEL = Object.freeze({
   healthy: 'Healthy',
@@ -35,7 +32,11 @@ export function HowMoneyWorks({ keeper, strategyConfig, riskWatch, yieldInfo, ve
     Number.isFinite(yieldInfo.apy)
 
   return (
-    <section className="pc-money-section" aria-labelledby="how-money-works-heading">
+    <section
+      className="pc-money-section"
+      aria-labelledby="how-money-works-heading"
+      data-pocket-enter
+    >
       <header>
         <h2 id="how-money-works-heading">How your money is working</h2>
       </header>
@@ -47,7 +48,7 @@ export function HowMoneyWorks({ keeper, strategyConfig, riskWatch, yieldInfo, ve
         />
 
         <p>Keeper automation: {keeperLabel}</p>
-        <p>Last keeper heartbeat: {formatHeartbeat(keeper?.lastHeartbeatAt)}</p>
+        <p>Last keeper heartbeat: {formatUtcMs(keeper?.lastHeartbeatAt)}</p>
         <p>Vault strategy: {strategyLabel}</p>
         <p>Risk radar: {riskWatchLabel}</p>
       </div>

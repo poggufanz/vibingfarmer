@@ -226,9 +226,9 @@ describe('MyMoneyRoute — checklist item 4: Rice never holds unconfirmed money 
 })
 
 describe('MyMoneyRoute — Vault protection is Vault-wide and gates renewal to the configured authority', () => {
-  it('states the literal "Vault-wide" fact', () => {
+  it('states the literal "vault-wide" fact', () => {
     render(<MyMoneyRoute model={baseModel()} agents={[]} />)
-    expect(screen.getByText(/Vault-wide/)).toBeTruthy()
+    expect(screen.getByText(/vault-wide/i)).toBeTruthy()
   })
 
   it('shows Renew vault protection only when the connected owner IS the configured authority', () => {

@@ -45,7 +45,7 @@ const TABS = [
   { id: 'reasoning', label: 'AI Reasoning' },
 ]
 
-const Empty = ({ what }) => <div className="history-empty mono">No {what} yet.</div>
+const Empty = ({ what }) => <div className="history-empty">No {what} yet.</div>
 
 /* ---------- Transactions (Etherscan-like table) ---------- */
 const TxList = ({ rows }) => {
@@ -304,12 +304,23 @@ const HistoryPanel = ({ connectedAddress }) => {
   return (
     <section className="history-page enter">
       <div className="history-head">
-        <div className="eyebrow">
-          <span>History, on-chain explorer</span>
+        {/* 2026-08-02 polish (audit item #12): the route previously had NO real heading (a tiny
+            mono "History, on-chain explorer" eyebrow), a "0" count pill on every tab, and a
+            full-width destructive Clear-all over an EMPTY list. Now: one real h1, counts only
+            when non-zero, Clear-all only when there is local Stellar history to clear. */}
+        <div>
+          <h1 className="history-title">History</h1>
+          <p className="history-intro">Every recorded move and decision, newest first.</p>
         </div>
-        <button className="perm-revoke" onClick={onClear} title="Clears Stellar local history only">
-          Clear all
-        </button>
+        {counts.transactions + counts.strategies + counts.reasoning > 0 && (
+          <button
+            className="perm-revoke"
+            onClick={onClear}
+            title="Clears Stellar local history only"
+          >
+            Clear all
+          </button>
+        )}
       </div>
 
       <div className="history-tabs">
@@ -324,9 +335,9 @@ const HistoryPanel = ({ connectedAddress }) => {
               <span className="history-tab-count" aria-label="loading">
                 …
               </span>
-            ) : (
+            ) : counts[t.id] > 0 ? (
               <span className="history-tab-count">{counts[t.id]}</span>
-            )}
+            ) : null}
           </button>
         ))}
       </div>

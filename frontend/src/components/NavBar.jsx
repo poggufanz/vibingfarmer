@@ -8,19 +8,16 @@
 
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { BrandLockup } from './pocket/BrandLockup.jsx'
 
 const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
 const DOCS_URL = 'https://vibingfarmer.gitbook.io/vibingfarmer/'
 
-function Wordmark() {
-  return (
-    <span className="nv-wordmark">
-      <span className="nv-wordmark__vibe">vibing</span>
-      <span className="nv-wordmark__slash">/</span>
-      <span className="nv-wordmark__farm">farmer</span>
-    </span>
-  )
-}
+// 2026-08-02 polish (audit item #14): the public pages' brand slot used the retired
+// pre-Pocket-Crew "vibing / farmer" script+mono text treatment -- a different product read from
+// the app shell one click away. The fixed Pocket Crew lockup (pocket/V mark + wordmark,
+// BrandLockup) is the one approved identity everywhere, landing included (2026-07-28 owner
+// alignment: logo treatment follows the app, narrative/layout unchanged).
 
 export default function NavBar({ onLaunch }) {
   const navigate = useNavigate()
@@ -51,7 +48,7 @@ export default function NavBar({ onLaunch }) {
     <nav className={`nv-bar${menuOpen ? ' is-open' : ''}`} aria-label="Main navigation">
       <NavStyle />
       <button className="nv-brand" onClick={() => go('/')} aria-label="Vibing Farmer home">
-        <Wordmark />
+        <BrandLockup variant="full" />
       </button>
 
       <button
@@ -131,29 +128,11 @@ function NavStyle() {
   cursor: pointer;
   display: inline-flex;
 }
-.nv-wordmark {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.38ch;
+/* The lockup's own geometry comes from pocket-crew.css (.pc-brand-lockup); this slot only sizes
+   the wordmark text to the bar's scale and colors it with the local palette token. */
+.nv-brand .pc-brand-wordmark {
   font-size: clamp(1rem, 1.7vw, 1.22rem);
   letter-spacing: -0.01em;
-  user-select: none;
-}
-.nv-wordmark__vibe {
-  font-family: var(--font-script, "Newsreader", serif);
-  font-style: italic;
-  font-weight: 500;
-  color: var(--text);
-}
-.nv-wordmark__slash {
-  color: var(--text-faint);
-  transform: translateY(-0.02em);
-}
-.nv-wordmark__farm {
-  font-family: var(--font-mono, "JetBrains Mono", monospace);
-  font-weight: 500;
-  text-transform: lowercase;
-  letter-spacing: 0.02em;
   color: var(--text);
 }
 

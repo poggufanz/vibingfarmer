@@ -21,18 +21,12 @@
 import { useMemo } from 'react'
 import { MoneyFigure, StatusNotice } from '../pocket/Primitives.jsx'
 import { choosePrimaryMoneyAction } from '../../money/myMoneyModel.js'
+import { formatUtcMs } from './formatUtc.js'
 
 // Same boundary math PlanStage.jsx/StrategyReceipt.jsx already use for a canonical
 // {token,units,decimals} amount -- display-only, never touches the underlying bigint.
 function unitsToDisplay(units, decimals) {
   return Number(BigInt(units)) / 10 ** decimals
-}
-
-// Same ISO-string convention PlanStage.jsx's formatExpiry/StartStage.jsx already use for a real
-// epoch -- deterministic and locale-independent (a `toLocaleString()` render would vary by CI/dev
-// machine timezone and make this component's own tests flaky).
-function formatCheckedAt(checkedAtMs) {
-  return Number.isFinite(checkedAtMs) ? new Date(checkedAtMs).toISOString() : 'Unavailable'
 }
 
 // Fix loop 2, I1: staleness is a property of the model's own freshness triple (freshness.js),
@@ -126,7 +120,11 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
   const unknownCount = unattributedUnknownCount(model)
 
   return (
-    <section className="pc-dominant pc-dominant--owned" aria-labelledby="my-money-hero-heading">
+    <section
+      className="pc-dominant pc-dominant--owned"
+      aria-labelledby="my-money-hero-heading"
+      data-pocket-enter
+    >
       <h2 id="my-money-hero-heading">Your money</h2>
 
       <div className="pc-money-hero">
@@ -162,8 +160,8 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
             <StatusNotice state="danger" title="Action needed">
               <p>
                 {model.problemAgents.length} agent{model.problemAgents.length === 1 ? '' : 's'}{' '}
-                still hold money under a revoked or expired grant. Owner withdrawal is always
-                allowed regardless of scope state.
+                still {model.problemAgents.length === 1 ? 'holds' : 'hold'} money under a revoked or
+                expired grant. Owner withdrawal is always allowed regardless of scope state.
               </p>
             </StatusNotice>
           )}
@@ -189,10 +187,11 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
         </div>
 
         <div className="pc-money-hero-meta">
-          <p>Last checked: {formatCheckedAt(model.checkedAt)}</p>
+          <p>Last checked: {formatUtcMs(model.checkedAt)}</p>
           <p>
-            {model.agentCount != null ? model.agentCount : 'Unavailable'} agent
-            {model.agentCount === 1 ? '' : 's'} confirmed
+            {model.agentCount != null
+              ? `${model.agentCount} agent${model.agentCount === 1 ? '' : 's'} confirmed`
+              : 'Agent count unavailable'}
           </p>
         </div>
       </div>

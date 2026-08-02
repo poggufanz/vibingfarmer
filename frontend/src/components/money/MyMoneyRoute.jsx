@@ -22,7 +22,9 @@
 // already run -- unreachable on a brand-new device with zero local Base state, which is exactly
 // the case this action exists to unblock. It never claims custody exists; clicking it only
 // triggers a real read (ensureBaseOwner + loadIndexedBasePositions in app.jsx), never a guess.
+import { useRef } from 'react'
 import './my-money.css'
+import { usePocketTransition } from '../../design/usePocketTransition.js'
 import { MoneyHero } from './MoneyHero.jsx'
 import { PositionList } from './PositionList.jsx'
 import { AgentTeam } from './AgentTeam.jsx'
@@ -44,19 +46,32 @@ export function MyMoneyRoute({
   onRecoverBase,
   actionPending = false,
 }) {
+  // 2026-08-02 polish (motion pass): one restrained section entrance (the shared
+  // usePocketTransition treatment StartStage already uses -- 0.32s power3.out, y:8, stagger
+  // 0.04, reduced-motion = instant), keyed on the money MODEL STATE so it only replays when the
+  // underlying state genuinely changes (loading -> current -> stale...), never on an interval or
+  // a re-render. Sections opt in via their own root `data-pocket-enter` attributes.
+  const stackRef = useRef(null)
+  usePocketTransition(stackRef, model?.state ?? 'unknown')
+
   return (
     <div className="pc-route pc-my-money-route">
-      <div className="pc-route-stack">
+      <div className="pc-route-stack" ref={stackRef}>
         <h1>My money</h1>
 
         <MoneyHero model={model} onAction={onAction} actionPending={actionPending} />
-        <PositionList agents={agents} unattributed={model?.unattributed} />
+        <PositionList
+          agents={agents}
+          unattributed={model?.unattributed}
+          collectionState={model?.state}
+        />
         <AgentTeam
           agents={agents}
           problemAgents={model?.problemAgents ?? []}
           discovery={discovery}
           account={account}
           onRecoverAgent={onRecoverAgent}
+          collectionState={model?.state}
         />
         <VaultProtection protection={model?.protection} />
         <HowMoneyWorks
@@ -68,12 +83,16 @@ export function MyMoneyRoute({
         />
         <TechnicalMoneyDetails model={model} agents={agents} />
 
-        <section className="pc-money-section" aria-labelledby="recover-base-heading">
+        <section
+          className="pc-money-section"
+          aria-labelledby="recover-base-heading"
+          data-pocket-enter
+        >
           <header>
             <h2 id="recover-base-heading">Recover a Base account</h2>
           </header>
           <p>
-            Settled USDC on Base from a previous device or browser? Check for it here -- this device
+            Settled USDC on Base from a previous device or browser? Check for it here — this device
             has no local Base record yet.
           </p>
           <button

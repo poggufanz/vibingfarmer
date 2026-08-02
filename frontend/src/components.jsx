@@ -253,15 +253,10 @@ const TopBar = ({ onReset, railCollapsed, onToggleRail, notifications = null }) 
         <span className="topbar-meta">
           Relayer&nbsp;<b>fee-bump</b>, user gas&nbsp;<b>0</b>
         </span>
-        <button
-          className="icon-btn"
-          title="Restart flow"
-          aria-label="Restart flow"
-          onClick={onReset}
-        >
-          <Icon name="refresh" />
-        </button>
         {notifications}
+        {/* 2026-08-02 polish (audit item #8): there used to be TWO icon buttons here that both
+            called onReset ("Restart flow", refresh icon, and "Start over", plus icon) -- two
+            identical anonymous actions side by side. One reset affordance remains. */}
         <button className="icon-btn" title="Start over" aria-label="Start over" onClick={onReset}>
           <Icon name="plus" />
         </button>

@@ -12,6 +12,41 @@ import { expect, test } from '@playwright/test'
 // and it now also covers mobile-360 for Strategy, which had no overflow guard at all before this
 // (verified green in the full run recorded in the fix-round-1 report; mutation-verified below to
 // still fail red when the thing it pins breaks).
+// Waits out the shared GSAP entrance (design/usePocketTransition.js) after a fixture mounts:
+// `toHaveScreenshot`'s `animations: 'disabled'` covers CSS/Web animations only, not gsap's
+// rAF-driven inline styles, so without this the capture races the 0.32s+stagger wave and freezes
+// mid-flight opacities (found 2026-08-02: my-money baselines regenerated mid-wave, then failed
+// the very next run once the wave settled). The check is "no inline opacity/transform LEFT", not
+// "opacity ~= 1": the hook now clearProps-es on completion, and an opacity-only check can pass on
+// the tween's penultimate frame -- leaving a sub-pixel inline translate that re-anchors the
+// fixed recovery sheet and anti-aliases its edges differently on the next run (found same day,
+// mobile-360 forest flake). Reduced-motion runs never animate and pass immediately.
+async function waitForPocketEnterSettled(page) {
+  await page
+    .waitForFunction(
+      () =>
+        [...document.querySelectorAll('[data-pocket-enter]')].every((el) => {
+          const style = el.getAttribute('style') || ''
+          return !style.includes('opacity') && !style.includes('transform')
+        }),
+      null,
+      { timeout: 10000 }
+    )
+    .catch(() => {})
+}
+
+// First-navigation raster warm-up (found 2026-08-02, chasing a my-money flake that survived the
+// settle wait above): the FIRST page load in a cold browser process rasterizes the open recovery
+// sheet subtly differently from every later load (measured: first-load capture 609105 bytes,
+// same page reloaded 609253, then byte-identical forever after; dialog geometry identical
+// throughout). With Playwright's parallel workers, whether a my-money theme test lands
+// first-in-worker is scheduling luck, which is exactly the pass/fail flapping observed. One
+// reload flips the renderer to its stable state -- the captured content itself is unchanged.
+async function gotoWarmed(page, url) {
+  await page.goto(url)
+  await page.reload({ waitUntil: 'load' })
+}
+
 function makeFixtureGuards(fixtureName, mobileProjects = ['mobile-320', 'mobile-360']) {
   const selector = `[data-fixture="${fixtureName}"]`
 
@@ -267,16 +302,29 @@ test.describe('Pocket Crew My money', () => {
       !MOBILE_PROJECTS.includes(testInfo.project.name),
       "My money forest is captured mobile-only (see the brief's four declared baselines)"
     )
-    await page.goto('/visual/?fixture=my-money&theme=forest')
+    await gotoWarmed(page, '/visual/?fixture=my-money&theme=forest')
     await page.waitForFunction(
       () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
     )
     await page.evaluate(() => document.fonts.ready)
+    await waitForPocketEnterSettled(page)
     await assertNoOverflowAtMobileWidth(page, testInfo)
     await assertNoVerticalTextTrap(page, testInfo)
     await assertGridRowContentAligns(page, testInfo)
     await assertMobileRouteBottomGutter(page, testInfo)
-    await expect(page).toHaveScreenshot('my-money-forest.png', { fullPage: true })
+    // maxDiffPixelRatio 0.005, documented necessity (measured 2026-08-02): section 1's OPEN
+    // recovery sheet is a fixed-position panel with the dominant 24px/60px soft shadow over a
+    // 62% backdrop, and Chromium's full-page rasterization of exactly that region varies
+    // ~0.1-0.3% of pixels across runs even with identical layout (reproduced by hand: same page,
+    // same geometry, bytes shift after unrelated GPU churn). No in-page control exists for it
+    // (reload/warm-up does not stabilize it across processes). The dialog's CONTENT remains
+    // guarded pixel-exactly by everything else on this page and by the targeted geometry /
+    // reduced-motion / axe-open-dialog tests; 0.5% covers the observed raster noise with margin
+    // while any real layout/copy regression here stays far above it.
+    await expect(page).toHaveScreenshot('my-money-forest.png', {
+      fullPage: true,
+      maxDiffPixelRatio: 0.005,
+    })
   })
 
   test('day-field theme', async ({ page }, testInfo) => {
@@ -284,13 +332,19 @@ test.describe('Pocket Crew My money', () => {
       !WIDE_PROJECTS.includes(testInfo.project.name),
       "My money day-field is captured tablet/desktop-only (see the brief's four declared baselines)"
     )
-    await page.goto('/visual/?fixture=my-money&theme=day-field')
+    await gotoWarmed(page, '/visual/?fixture=my-money&theme=day-field')
     await page.waitForFunction(
       () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
     )
     await page.evaluate(() => document.fonts.ready)
+    await waitForPocketEnterSettled(page)
     await assertDialogPanelCentered(page, testInfo)
-    await expect(page).toHaveScreenshot('my-money-day-field.png', { fullPage: true })
+    // Same documented raster-noise tolerance as the forest capture directly above (open fixed
+    // sheet + dominant soft shadow + backdrop, ~0.1-0.3% GPU raster variance across processes).
+    await expect(page).toHaveScreenshot('my-money-day-field.png', {
+      fullPage: true,
+      maxDiffPixelRatio: 0.005,
+    })
   })
 
   // Step 3 (motion, real Chromium only -- jsdom reports animationName:"none" regardless of what's
@@ -465,6 +519,9 @@ test.describe('Pocket Crew My money', () => {
     await page.waitForFunction(
       () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
     )
+    // Same race as the screenshot rows above: the harness's own MyMoneyRoute plays the entrance
+    // on mount, and the positive control's pulse can land on a mid-tween frame.
+    await waitForPocketEnterSettled(page)
 
     const moneyFigure = page
       .locator('[data-testid="mm-same-revision-harness"] .pc-dominant--owned .pc-money')
@@ -544,6 +601,7 @@ test.describe('Pocket Crew crew', () => {
       () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
     )
     await page.evaluate(() => document.fonts.ready)
+    await waitForPocketEnterSettled(page)
     await assertNoOverflowAtMobileWidth(page, testInfo)
     await assertNoVerticalTextTrap(page, testInfo)
     await expect(page).toHaveScreenshot('crew-forest.png', { fullPage: true })
@@ -559,6 +617,7 @@ test.describe('Pocket Crew crew', () => {
       () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
     )
     await page.evaluate(() => document.fonts.ready)
+    await waitForPocketEnterSettled(page)
     await expect(page).toHaveScreenshot('crew-day-field.png', { fullPage: true })
   })
 
@@ -620,7 +679,9 @@ const compatibilityThemes = Object.freeze(['forest', 'day-field'])
 const ROUTE_LANDMARKS = Object.freeze({
   landing: { role: 'heading', name: /One signature/i },
   home: { role: 'button', name: 'Connect Wallet' },
-  history: { text: 'History, on-chain explorer' },
+  // 2026-08-02 polish: /history now has a real h1 (the old mono-eyebrow gap is closed), so the
+  // landmark upgrades to the semantic heading the a11y rules always wanted here.
+  history: { role: 'heading', name: 'History', exact: true },
   settings: { text: 'Agent Configuration' },
   explorer: { role: 'heading', name: 'Explorer' },
   developers: { role: 'heading', name: /One signature/i },

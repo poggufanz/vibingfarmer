@@ -923,7 +923,7 @@ export function ProtectStage({
               })}
               <p>Each agent signs with its own separate session key.</p>
               <p>Each agent can be stopped on its own, independent of the others.</p>
-              <p>Gas is sponsored -- you pay no XLM for this run.</p>
+              <p>Gas is sponsored — you pay no XLM for this run.</p>
             </div>
           </div>
         )}

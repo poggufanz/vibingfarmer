@@ -17,6 +17,7 @@
 // buttons named "Renew vault protection" on one page is not two real actions, it is one action
 // wired twice).
 import { StatusNotice } from '../pocket/Primitives.jsx'
+import { formatUtcSeconds } from './formatUtc.js'
 
 const STATE_COPY = Object.freeze({
   engaged: {
@@ -41,12 +42,6 @@ const STATE_COPY = Object.freeze({
   },
 })
 
-function formatExpiry(expirySeconds) {
-  return Number.isFinite(expirySeconds)
-    ? new Date(expirySeconds * 1000).toISOString()
-    : 'Unavailable'
-}
-
 export function VaultProtection({ protection }) {
   const copy = STATE_COPY[protection?.state] ?? STATE_COPY.unavailable
   const renewalDue = protection?.urgentRenewal === true
@@ -54,13 +49,17 @@ export function VaultProtection({ protection }) {
   const authorityBlocked = renewalDue && protection?.ownerIsAuthority === false
 
   return (
-    <section className="pc-money-section" aria-labelledby="vault-protection-heading">
+    <section
+      className="pc-money-section"
+      aria-labelledby="vault-protection-heading"
+      data-pocket-enter
+    >
       <header>
         <h2 id="vault-protection-heading">Vault protection</h2>
       </header>
       <div>
         <p>
-          This protection is Vault-wide -- it covers every depositor in the vault, not just your own
+          This protection is vault-wide — it covers every depositor in the vault, not just your own
           funds, and only the vault's configured authority can renew it.
         </p>
 
@@ -68,11 +67,14 @@ export function VaultProtection({ protection }) {
           <p>{copy.body}</p>
         </StatusNotice>
 
-        <p>Configured authority: {protection?.authority || 'Unavailable'}</p>
-        <p>Mandate expiry: {formatExpiry(protection?.mandateExpiry)}</p>
+        <p>
+          Configured authority:{' '}
+          <code className="pc-technical">{protection?.authority || 'Unavailable'}</code>
+        </p>
+        <p>Mandate expiry: {formatUtcSeconds(protection?.mandateExpiry)}</p>
 
         {ownerCanRenew && (
-          <p>Renewal is due -- use the Renew vault protection action above to renew it.</p>
+          <p>Renewal is due — use the Renew vault protection action above to renew it.</p>
         )}
         {authorityBlocked && (
           <p>

@@ -243,6 +243,39 @@
   align-items: end;
 }
 
+/* 2026-08-02 polish (audit item #2): the hero's own figure previously inherited pocket-crew.css's
+ * row-level `.pc-money` (mono, unsized) -- the one number the whole surface exists for rendered at
+ * 16px inside a 300px-min dominant card, leaving a giant void. The contract's money-figure
+ * signature (`.pc-money-figure`, contract :242-250: display font, --pc-type-money, tabular lining
+ * numerals, 720 weight, tight tracking) is scoped HERE, to the hero only: PositionList's row-level
+ * MoneyFigures keep their established mono row treatment. Placeholder words ("Unavailable",
+ * "Loading", "No balance yet") are states, not numbers -- they get the smaller --pc-type-stage
+ * presence in the same display font so an unconfirmed hero still has a focal point without
+ * pretending to be a figure. */
+.pc-money-hero .pc-money {
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-money);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 720;
+  line-height: var(--pc-leading-tight);
+  letter-spacing: -0.055em;
+}
+
+.pc-money-hero .pc-money--loading,
+.pc-money-hero .pc-money--empty,
+.pc-money-hero .pc-money--error,
+.pc-money-hero .pc-money--unknown {
+  display: block;
+  font-size: var(--pc-type-stage);
+  letter-spacing: -0.035em;
+}
+
+.pc-money-hero .pc-money-stale-flag,
+.pc-money-hero .pc-money-freshness {
+  font-size: var(--pc-type-section);
+  letter-spacing: -0.02em;
+}
+
 .pc-money-hero-meta {
   display: grid;
   gap: var(--pc-space-4);
@@ -328,6 +361,21 @@
  * keyword, not a duplicated hex/radius/spacing token, and a no-op for ordinary spaced copy. */
 .pc-my-money-route {
   overflow-wrap: anywhere;
+}
+
+/* 2026-08-02 polish: nothing scoped links on this route before, so the agent-address explorer
+ * links rendered the UA default blue/purple -- an off-token color on a Pocket Crew surface. The
+ * contract/mock treatment: links inherit the surrounding ink and communicate through the
+ * underline, never through a borrowed hue. */
+.pc-my-money-route a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.pc-my-money-route a:hover {
+  text-decoration-thickness: 2px;
 }
 
 /* Tablet. Supporting context moves below the dominant surface (contract :800-831, kept whole). */

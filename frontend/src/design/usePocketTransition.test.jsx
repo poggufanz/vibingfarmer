@@ -89,6 +89,10 @@ describe('usePocketTransition', () => {
       'onStart',
       'onUpdate',
       'overwrite',
+      // 2026-08-02: clearProps is cleanup CONFIG, not an animated property -- it strips the
+      // inline styles at tween end (the modal-re-anchoring fix in usePocketTransition.js), so
+      // the resting DOM carries no gsap residue at all.
+      'clearProps',
     ])
     const animatableKeys = Object.keys(snapshot).filter((k) => !nonMotionKeys.has(k))
     expect(animatableKeys.length).toBeGreaterThan(0)
@@ -114,7 +118,7 @@ describe('usePocketTransition', () => {
     fromSpy.mockRestore()
   })
 
-  it('reduced motion uses gsap.set for the final state and never a tween or timeline', () => {
+  it('reduced motion forces the natural final state instantly, never a tween or timeline', () => {
     setReducedMotion(true)
     const setSpy = vi.spyOn(gsap, 'set')
     const toSpy = vi.spyOn(gsap, 'to')
@@ -129,8 +133,12 @@ describe('usePocketTransition', () => {
     expect(toSpy).not.toHaveBeenCalled()
     expect(fromSpy).not.toHaveBeenCalled()
     expect(timelineSpy).not.toHaveBeenCalled()
+    // 2026-08-02: the reduced-motion path now CLEARS any in-flight inline styles back to the
+    // natural (information-equivalent) state instead of pinning explicit opacity/transform
+    // values -- same instant parity, no gsap residue left on the DOM (see the hook's own
+    // comment for the modal re-anchoring bug that motivated clearProps everywhere).
     const [, vars] = setSpy.mock.calls[0]
-    expect(vars.opacity).toBe(1)
+    expect(vars.clearProps).toBeDefined()
     setSpy.mockRestore()
     toSpy.mockRestore()
     fromSpy.mockRestore()

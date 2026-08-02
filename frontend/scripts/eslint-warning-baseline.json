@@ -577,13 +577,6 @@
     "relativePath": "src/app.jsx",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
-    "message": "'makeAgentId' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/app.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
     "message": "'mapVeniceToStrategy' is assigned a value but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
@@ -1060,14 +1053,14 @@
     "relativePath": "src/components/NavBar.jsx",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
-    "message": "'NavStyle' is defined but never used. Allowed unused vars must match /^_/u.",
+    "message": "'BrandLockup' is defined but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
   {
     "relativePath": "src/components/NavBar.jsx",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
-    "message": "'Wordmark' is defined but never used. Allowed unused vars must match /^_/u.",
+    "message": "'NavStyle' is defined but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
   {

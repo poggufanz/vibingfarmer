@@ -223,11 +223,16 @@ const STYLE = `
 }
 
 /* Not in the contract (no bottom tab bar is specified there) -- this component invents it, same
-   as .bk-prog-*/.pc-standard-form below: built entirely from already-ported tokens (line color,
+   as .bk-prog-* and .pc-standard-form below: built entirely from already-ported tokens (line color,
    spacing, ink/muted, touch target), never a new hex/radius/animation value. Excluded from the
    manifest-driven drift guard (WalletShell.test.jsx) for the same reason .bk-prog-* is: there is no
    contract rule for it to have a counterpart to. Renders as the shell's third grid row (the
-   pc-wallet-shell grid already reserves "auto minmax(0, 1fr) auto" -- this is that third row). */
+   pc-wallet-shell grid already reserves "auto minmax(0, 1fr) auto" -- this is that third row).
+   (2026-08-02 regression note: an earlier revision of this comment separated the two class names
+   with a REAL slash right after the star -- that star-slash sequence closed the comment early and
+   the parser then swallowed the entire .pc-wallet-nav rule below as garbage prelude, leaving the
+   tab bar unstyled (computed display:block) in production. Keep star-slash OUT of every CSS
+   comment in this string.) */
 .pc-wallet-nav {
   display: flex;
   justify-content: space-around;

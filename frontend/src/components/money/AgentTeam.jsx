@@ -32,6 +32,7 @@ import { NetworkBadge } from '../pocket/NetworkIdentity.jsx'
 import { Dialog } from '../pocket/Primitives.jsx'
 import { planFullExit } from '../../money/ownerActions.js'
 import { SOROBAN_DECIMALS } from '../../stellar/config.js'
+import { formatUtcSeconds } from './formatUtc.js'
 
 // Same explorer convention StrategyReceipt.jsx already uses for a Stellar account
 // (StrategyReceipt.jsx:97-99) -- re-declared locally per that file's own sibling-surface rationale
@@ -40,10 +41,14 @@ function explorerAccountUrl(address) {
   return `https://stellar.expert/explorer/testnet/account/${address}`
 }
 
-function formatExpiry(expirySeconds) {
-  return Number.isFinite(expirySeconds) && expirySeconds > 0
-    ? new Date(expirySeconds * 1000).toISOString()
-    : 'Unavailable'
+// Same truncation PositionList.jsx already renders for its own rows (first6…last4) -- the FULL
+// 56-char address used to be the row's visible link text, which made raw technical identity the
+// loudest thing on the row (2026-08-02 polish, audit item #4). The address stays whole in the
+// link's accessible name and is one click away on the explorer page itself.
+function shortAddress(address) {
+  return typeof address === 'string' && address.length > 12
+    ? `${address.slice(0, 6)}…${address.slice(-4)}`
+    : address
 }
 
 function isKnownPositive(amount) {
@@ -147,6 +152,7 @@ export function AgentTeam({
   discovery = null,
   account = null,
   onRecoverAgent,
+  collectionState = null,
 }) {
   const [recoveryAddress, setRecoveryAddress] = useState(null)
   const recoveryTarget = agents.find((a) => a.address === recoveryAddress) ?? null
@@ -155,13 +161,28 @@ export function AgentTeam({
       ? planFullExit({ discovery, position: { agents }, account })
       : null
 
+  // Same authoritative-empty rule as PositionList (2026-08-02 polish): "No agents deployed yet"
+  // is only said once discovery actually finished proving it.
+  const emptyCopy =
+    collectionState === 'disconnected'
+      ? 'Connect a wallet to see your agent team.'
+      : collectionState === 'loading'
+        ? 'Checking your agent team…'
+        : collectionState === 'unavailable' || collectionState === 'partial-discovery'
+          ? 'Your agent team is not fully confirmed yet — nothing confirmed this round.'
+          : 'No agents deployed yet.'
+
   return (
-    <section className="pc-money-section" aria-labelledby="your-agent-team-heading">
+    <section
+      className="pc-money-section"
+      aria-labelledby="your-agent-team-heading"
+      data-pocket-enter
+    >
       <header>
         <h2 id="your-agent-team-heading">Your agent team</h2>
       </header>
       <div>
-        {agents.length === 0 && <p>No agents deployed yet.</p>}
+        {agents.length === 0 && <p>{emptyCopy}</p>}
         <ul className="pc-crew-list">
           {agents.map((agent) => {
             const recoveryNeeded = problemAgents.includes(agent.address)
@@ -176,8 +197,13 @@ export function AgentTeam({
                 <div>
                   <NetworkBadge networkId="stellar-testnet" />
                   <p>
-                    <a href={explorerAccountUrl(agent.address)} target="_blank" rel="noreferrer">
-                      {agent.address}
+                    <a
+                      href={explorerAccountUrl(agent.address)}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`Agent account ${agent.address} on Stellar Expert`}
+                    >
+                      {shortAddress(agent.address)}
                     </a>
                   </p>
                   <p>
@@ -189,7 +215,7 @@ export function AgentTeam({
                   </p>
                   <p>
                     Expires:{' '}
-                    {formatExpiry(
+                    {formatUtcSeconds(
                       agent.scope?.state === 'known' ? agent.scope.value?.expiry : null
                     )}
                   </p>
@@ -248,7 +274,7 @@ export function AgentTeam({
         }
       >
         <p>
-          The balance is not lost -- a full exit can recover it. Owner withdrawal is always allowed
+          The balance is not lost — a full exit can recover it. Owner withdrawal is always allowed
           by the contract, regardless of the current scope state.
         </p>
         {plan?.limitation && <p>{plan.limitation}</p>}

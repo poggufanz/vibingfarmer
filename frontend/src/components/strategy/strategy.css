@@ -408,6 +408,11 @@
   color: var(--pc-muted);
 }
 
+/* Same on-Harvest failure family as the candidate-row override below (audit item #6): 1.76:1. */
+.pc-dominant--decision .pc-section-sub {
+  color: var(--pc-owned-muted);
+}
+
 .pc-candidate-list {
   list-style: none;
   margin: 0 0 var(--pc-space-6);
@@ -475,6 +480,35 @@
 
 .pc-candidate-row[data-eligible='false'] .pc-candidate-badge {
   color: var(--pc-danger);
+}
+
+/* 2026-08-02 polish (audit item #6): the candidate list sits on `.pc-dominant--decision`'s light
+ * Harvest surface, where the dark-canvas calibrations above fail hard -- measured: --pc-muted on
+ * #DFF56C is 1.76:1, --pc-danger on #DFF56C is 2.61:1, and a --pc-harvest dot/badge on the same
+ * Harvest fill is literally invisible (1:1), so the PASSED row lost its marker exactly where the
+ * safety evidence matters. Same fix family as my-money.css's `.pc-dominant--owned` overrides and
+ * this file's own I1 precedent: swap to the on-light pairs (--pc-owned-muted 5.41:1,
+ * --pc-danger-on-light 5.03:1, --pc-harvest-ink 13.18:1 -- all AA on Harvest), scoped to the
+ * decision surface only. */
+.pc-dominant--decision .pc-candidate-dot {
+  background: var(--pc-harvest-ink);
+}
+
+.pc-dominant--decision .pc-candidate-row[data-eligible='false'] .pc-candidate-dot {
+  background: var(--pc-danger-on-light);
+}
+
+.pc-dominant--decision .pc-candidate-chain,
+.pc-dominant--decision .pc-candidate-reason {
+  color: var(--pc-owned-muted);
+}
+
+.pc-dominant--decision .pc-candidate-badge {
+  color: var(--pc-harvest-ink);
+}
+
+.pc-dominant--decision .pc-candidate-row[data-eligible='false'] .pc-candidate-badge {
+  color: var(--pc-danger-on-light);
 }
 
 .pc-ceiling-total {

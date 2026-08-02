@@ -49,7 +49,12 @@ export function CrewLanes({ agents = [], onCancelAgent, actionPending = false })
         {agents.map((agent, index) => {
           const revoked = Boolean(agent?.scope?.value?.revoked)
           return (
-            <li key={agent.address} className="pc-crew-lane" data-revoked={revoked}>
+            <li
+              key={agent.address}
+              className="pc-crew-lane"
+              data-revoked={revoked}
+              data-pocket-enter
+            >
               {/* Fix round 2, F6: `label` renders as a real visible <text> glyph inside the mark
                   body (AgentMark.jsx:143-147), not merely an aria-label -- every other call site
                   (PlanStage.jsx/StartStage.jsx/ProtectStage.jsx) passes a 1-2 char label for

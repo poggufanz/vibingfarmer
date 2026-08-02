@@ -104,7 +104,11 @@ export function TechnicalMoneyDetails({ model, agents = [] }) {
   // toggle, which requires this reference to stay stable across it.
   const graphData = useMemo(() => buildAgentNetworkGraphData(agents), [agents])
   return (
-    <section className="pc-money-section" aria-labelledby="technical-details-heading">
+    <section
+      className="pc-money-section"
+      aria-labelledby="technical-details-heading"
+      data-pocket-enter
+    >
       <header>
         <h2 id="technical-details-heading">Technical details</h2>
       </header>
@@ -136,7 +140,9 @@ export function TechnicalMoneyDetails({ model, agents = [] }) {
 
         {/* Owner decision #19: two raw counts marked .pc-technical individually; the two <pre>
             blocks already stay mono via pocket-crew.css's Foundation-wide `code, pre, .pc-technical`
-            rule with no change needed here. */}
+            rule with no change needed here. 2026-08-02 polish (audit item #16): an EMPTY object
+            used to stringify as a bare `{}` -- a broken-looking artifact even in an expert
+            disclosure -- so empty buckets now say what they mean. */}
         <TechnicalDetails summary="Custody and execution breakdown">
           <p>
             Agent count: <span className="pc-technical">{rawOrUnavailable(model?.agentCount)}</span>
@@ -145,8 +151,16 @@ export function TechnicalMoneyDetails({ model, agents = [] }) {
             Problem agent count:{' '}
             <span className="pc-technical">{rawOrUnavailable(model?.problemAgentCount)}</span>
           </p>
-          <pre>{JSON.stringify(model?.custodyBreakdown ?? {}, null, 2)}</pre>
-          <pre>{JSON.stringify(model?.unattributed ?? {}, null, 2)}</pre>
+          {Object.keys(model?.custodyBreakdown ?? {}).length === 0 ? (
+            <p>No custody breakdown recorded.</p>
+          ) : (
+            <pre>{JSON.stringify(model.custodyBreakdown, null, 2)}</pre>
+          )}
+          {Object.keys(model?.unattributed ?? {}).length === 0 ? (
+            <p>No unattributed balances recorded.</p>
+          ) : (
+            <pre>{JSON.stringify(model.unattributed, null, 2)}</pre>
+          )}
         </TechnicalDetails>
 
         {/* Owner decision #19: the whole raw-fields line is marked .pc-technical (it is entirely

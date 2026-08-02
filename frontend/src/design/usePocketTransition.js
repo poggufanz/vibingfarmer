@@ -48,8 +48,16 @@ export function usePocketTransition(scopeRef, stateKey, options = {}) {
       const targets = gsap.utils.toArray('[data-pocket-enter]', scope)
       if (targets.length === 0) return
 
+      // 2026-08-02 (visual-flake fix): every path below ends with the inline styles CLEARED, not
+      // left in place. A lingering inline `transform` (even translate(0,0)) makes the animated
+      // section the containing block for any position:fixed descendant -- My Money's recovery
+      // Dialog is exactly that, inside AgentTeam's animated section, so the entrance silently
+      // re-anchored the modal off the viewport. It also made baseline screenshots depend on
+      // gsap's cleanup timing. Natural CSS is the identical resting state, so clearing is
+      // pixel-free.
       if (prefersReducedMotion()) {
-        gsap.set(targets, { opacity: 1, x: 0, y: 0, scale: 1 })
+        gsap.killTweensOf(targets)
+        gsap.set(targets, { clearProps: 'opacity,transform,x,y,scale' })
         return
       }
 
@@ -60,6 +68,7 @@ export function usePocketTransition(scopeRef, stateKey, options = {}) {
           ease: EASE,
           yoyo: true,
           repeat: 1,
+          clearProps: 'opacity,transform,x,y,scale',
         })
         return
       }
@@ -70,6 +79,7 @@ export function usePocketTransition(scopeRef, stateKey, options = {}) {
         duration: DURATION,
         ease: EASE,
         stagger: STAGGER,
+        clearProps: 'opacity,transform',
       })
     },
     { scope: scopeRef, dependencies: [stateKey] }

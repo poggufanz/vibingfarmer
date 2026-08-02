@@ -8,9 +8,11 @@
 // This is a ROUTE, so it owns the page's one <h1>; every titled child section below is its own
 // <h2> sibling -- the same flat convention MyMoneyRoute.jsx already uses (each of MoneyHero/
 // PositionList/AgentTeam/etc. owns one <h2>, none nested deeper).
+import { useRef } from 'react'
 import { CrewLanes } from './CrewLanes.jsx'
 import { CrewGuard } from './CrewGuard.jsx'
 import { CrewActivity } from './CrewActivity.jsx'
+import { usePocketTransition } from '../../design/usePocketTransition.js'
 import './crew.css'
 
 // Same boundary math MoneyHero.jsx/PositionList.jsx/AgentTeam.jsx already declare locally for a
@@ -64,6 +66,13 @@ export function CrewRoute({
   const running = keeper?.label === 'healthy'
   const totalText = formatTotal(model?.confirmedTotal)
 
+  // 2026-08-02 polish (motion pass): the same restrained entrance MyMoneyRoute/StartStage share,
+  // keyed on the crew's real size -- it replays only when the crew genuinely gains or loses a
+  // member (or first appears), never on a timer. Lanes opt in per-row in CrewLanes.jsx so they
+  // arrive staggered.
+  const rootRef = useRef(null)
+  usePocketTransition(rootRef, agents.length)
+
   if (!agents.length) {
     return (
       <div className="pc-route pc-crew-route">
@@ -81,8 +90,8 @@ export function CrewRoute({
   }
 
   return (
-    <div className="pc-route pc-crew-route">
-      <header className="pc-route-header">
+    <div className="pc-route pc-crew-route" ref={rootRef}>
+      <header className="pc-route-header" data-pocket-enter>
         <div>
           <h1 className="pc-route-title">The crew, live.</h1>
           <p className="pc-route-sub">
@@ -92,7 +101,7 @@ export function CrewRoute({
         </div>
       </header>
 
-      <div className="pc-crew-stats" role="group" aria-label="Crew status">
+      <div className="pc-crew-stats" role="group" aria-label="Crew status" data-pocket-enter>
         <div className="pc-crew-stat">
           <p className="pc-crew-stat-label">Status</p>
           <p className="pc-crew-stat-value" data-tone={running ? 'good' : 'warn'}>
@@ -117,7 +126,7 @@ export function CrewRoute({
 
       <div className="pc-crew-console">
         <CrewLanes agents={agents} onCancelAgent={onCancelAgent} actionPending={actionPending} />
-        <div className="pc-crew-side">
+        <div className="pc-crew-side" data-pocket-enter>
           <CrewGuard
             protection={model?.protection}
             onRenew={onRenewMandate}

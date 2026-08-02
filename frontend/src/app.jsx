@@ -1392,9 +1392,15 @@ const App = () => {
   const [baseWithdraw, setBaseWithdraw] = useS(null)
   const [baseWithdrawError, setBaseWithdrawError] = useS(null)
 
-  const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') === 'true')
+  // 2026-08-02 polish (audit items #10/#11): for a first-time user the shell used to open with an
+  // icon-ONLY sidebar (labels rendered but opacity-hidden until the toggle was discovered) AND the
+  // legacy right rail OPEN (jargon panels competing with the Pocket Crew route composition --
+  // 2026-07-22 spec §13.1: no persistent right rail beside the current decision). New sessions now
+  // default to labeled navigation and a collapsed rail; both toggles remain, and any explicitly
+  // stored choice still wins (nothing here rewrites an existing preference).
+  const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') !== 'false')
   const [railCollapsed, setRailCollapsed] = useS(
-    () => localStorage.getItem('yv_rail_collapsed') === 'true'
+    () => localStorage.getItem('yv_rail_collapsed') !== 'false'
   )
 
   const toggleSb = () => {

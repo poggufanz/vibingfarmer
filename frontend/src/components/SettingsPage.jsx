@@ -465,6 +465,20 @@ export default function SettingsPage({
       style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
     >
       <div style={{ borderBottom: '1px solid var(--border)', padding: '18px 28px 0' }}>
+        {/* 2026-08-02 polish (audit item #13): this route had no real page heading at all --
+            the first text on screen was a tab strip. One h1 gives the page its identity. */}
+        <h1
+          style={{
+            maxWidth: 820,
+            margin: '0 auto 14px',
+            fontSize: 'clamp(28px, 3.2vw, 40px)',
+            fontWeight: 700,
+            letterSpacing: '-0.035em',
+            lineHeight: 1.12,
+          }}
+        >
+          Settings
+        </h1>
         <div
           style={{
             maxWidth: 820,

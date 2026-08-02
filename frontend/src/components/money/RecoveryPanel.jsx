@@ -110,7 +110,7 @@ export function RecoveryPanel({
       className="pc-money-dialog"
       open={open}
       title="Recovery status"
-      description="Where your money actually is right now, and what -- if anything -- you can do about it."
+      description="Where your money actually is right now, and what — if anything — you can do about it."
       onClose={closeIfSafe}
       actions={
         <>
@@ -189,7 +189,7 @@ export function RecoveryPanel({
           )}
           <p>
             {reconciled == null &&
-              "We haven't reconciled this against the chain yet -- Submit again stays unavailable until we do."}
+              "We haven't reconciled this against the chain yet — Submit again stays unavailable until we do."}
             {reconciled === 'landed' &&
               'This already landed on-chain. Submitting again would duplicate it, so Submit again stays unavailable.'}
             {reconciled === 'not-landed' &&

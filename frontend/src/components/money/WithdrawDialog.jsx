@@ -229,7 +229,7 @@ export function WithdrawDialog({
       className="pc-money-dialog"
       open={open}
       title="Withdraw"
-      description="Review exactly what this withdraws before you confirm -- nothing moves until you do."
+      description="Review exactly what this withdraws before you confirm — nothing moves until you do."
       onClose={closeIfSafe}
       actions={
         <>
@@ -337,13 +337,13 @@ export function WithdrawDialog({
               <ul aria-label="Agents in this exit">
                 {fullPlan.targets.map((t) => (
                   <li key={t.address}>
-                    {shortAddr(t.address)} -- {targetStateLabel(t.state)}
+                    {shortAddr(t.address)} — {targetStateLabel(t.state)}
                   </li>
                 ))}
               </ul>
               <p>
                 If part of this fails partway, we never assume the rest is done or the position is
-                zero -- we recheck the real chain balance before calling it complete, and the parts
+                zero — we recheck the real chain balance before calling it complete, and the parts
                 that already succeeded stay succeeded.
               </p>
             </>
@@ -421,24 +421,24 @@ export function WithdrawDialog({
       {effectiveMode === 'base' && (
         <div>
           <p>
-            This always exits every known Base position in one signature -- a partial Base
-            withdrawal isn't available yet.
+            This always exits every known Base position in one signature — a partial Base withdrawal
+            isn't available yet.
           </p>
           <ul aria-label="Known Base positions">
             {(basePlan?.positions || []).map((p) => (
               <li key={p.pool}>
-                {p.poolName || shortAddr(p.pool)} --{' '}
+                {p.poolName || shortAddr(p.pool)} —{' '}
                 {p.assets != null ? `${(Number(p.assets) / 1e6).toFixed(2)} USDC` : 'Unavailable'}
               </li>
             ))}
           </ul>
           <p>
-            A pool's Base allowlist can be revoked by its owner after you deposited into it -- if
+            A pool's Base allowlist can be revoked by its owner after you deposited into it — if
             that happens, this sweep SKIPS that pool rather than guessing at it. A skipped pool's
             balance is not lost and is not shown as zero; it stays on Base, untouched, until it is
             eligible again.
           </p>
-          <p>One passkey signature. The relay sponsors Base gas -- 0 ETH from you.</p>
+          <p>One passkey signature. The relay sponsors Base gas — 0 ETH from you.</p>
         </div>
       )}
     </Dialog>

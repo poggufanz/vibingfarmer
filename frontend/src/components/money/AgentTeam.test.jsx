@@ -83,7 +83,10 @@ describe('AgentTeam — real stable identity, never list index', () => {
 
   it('renders the real full address as an explorer link', () => {
     render(<AgentTeam agents={[healthyAgent('CAGENT1')]} problemAgents={[]} />)
-    const link = screen.getByRole('link', { name: 'CAGENT1' })
+    // The visible text is the short first6…last4 form (2026-08-02 polish); the FULL address
+    // remains the link's accessible name and its destination.
+    const link = screen.getByRole('link', { name: 'Agent account CAGENT1 on Stellar Expert' })
+    expect(link.textContent).toBe('CAGENT1')
     expect(link.getAttribute('href')).toBe(
       'https://stellar.expert/explorer/testnet/account/CAGENT1'
     )
@@ -161,8 +164,9 @@ describe('AgentTeam — Cap and Expiry', () => {
 
   it('renders the real expiry when the scope is known', () => {
     render(<AgentTeam agents={[healthyAgent('CAGENT1')]} problemAgents={[]} />)
-    // 4102444800 (this fixture's expiry) is exactly 2100-01-01T00:00:00.000Z.
-    expect(screen.getByText(/^Expires: 2100-01-01/)).toBeTruthy()
+    // 4102444800 (this fixture's expiry) is exactly 2100-01-01T00:00:00.000Z, rendered by
+    // formatUtcSeconds as the human UTC form (formatUtc.js's own test pins the exact string).
+    expect(screen.getByText('Expires: 1 Jan 2100, 00:00 UTC')).toBeTruthy()
   })
 
   it('renders Expires: Unavailable when the scope could not be read', () => {
