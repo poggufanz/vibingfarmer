@@ -59,7 +59,8 @@ vi.mock('./stellar/agentDeposit.js', () => ({
 // Router path (default once funding_router is live) — the only path a bridge agent can go
 // through, since deploying one requires the router's kind:Bridge AgentInit, never the legacy
 // per-agent deploy call.
-vi.mock('./stellar/config.js', () => ({
+vi.mock('./stellar/config.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   SOROBAN_TOKEN_ADDRESS: 'CTOKEN',
   SOROBAN_DECIMALS: 7,
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',

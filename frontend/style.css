@@ -100,7 +100,7 @@ textarea {
 /* ---------- App shell ---------- */
 .app {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   height: 100vh;
   background: var(--bg-base);
   gap: 1px;
@@ -147,16 +147,10 @@ textarea {
   font-size: 14px;
   letter-spacing: -0.04em;
   color: var(--text);
-  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   margin: 0 0 24px;
-  transition: border-color var(--duration-fast) ease;
   box-sizing: border-box;
   padding: 0 8px;
-}
-
-.app.sb-extended .sb-logo {
-  border-color: transparent;
 }
 
 .sb-logo img {
@@ -288,6 +282,8 @@ textarea {
   padding: 14px 28px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  position: relative;
+  z-index: 20;
 }
 
 [data-density='compact'] .topbar {
@@ -296,8 +292,29 @@ textarea {
 
 .topbar-left {
   display: flex;
-  align-items: baseline;
-  gap: 14px;
+  align-items: center;
+  gap: 24px;
+}
+
+.topbar .network-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--pc-owned);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.topbar .network-mark {
+  display: block;
+  flex: none;
 }
 
 .brand {
@@ -355,6 +372,133 @@ textarea {
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+.header-wallet {
+  position: relative;
+}
+
+.header-wallet-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--pc-radius-round);
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  list-style: none;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.header-wallet-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.header-wallet-trigger:hover,
+.header-wallet-trigger:focus-visible,
+.header-wallet[open] > .header-wallet-trigger {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--bg-card);
+}
+
+.header-wallet-trigger.is-disconnected {
+  cursor: default;
+  color: var(--text-faint);
+}
+
+.header-wallet-trigger svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.header-wallet-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: none;
+}
+
+.header-wallet-dot.is-active {
+  background: var(--ok);
+}
+
+.header-wallet-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: min(292px, calc(100vw - 24px));
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+.header-wallet-status {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.header-wallet-full-address {
+  margin: 6px 0 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.header-wallet-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.header-wallet-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  font-size: 11px;
+  text-decoration: none;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.header-wallet-action:hover,
+.header-wallet-action:focus-visible {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, currentcolor 8%, var(--bg-elev));
+}
+
+.header-wallet-action svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
 }
 
 .topbar-meta {
@@ -1534,44 +1678,6 @@ textarea {
   letter-spacing: -0.01em;
 }
 
-/* ---------- Right rail ---------- */
-.rail {
-  background: var(--bg-canvas);
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow-y: auto;
-  width: 360px;
-  box-sizing: border-box;
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    border-left-color var(--duration-fast) ease;
-}
-
-.app.rail-collapsed .rail {
-  width: 0px;
-  opacity: 0;
-  border-left-color: transparent;
-  pointer-events: none;
-  overflow: hidden;
-}
-
-[data-density='compact'] .rail {
-  width: 320px;
-}
-
-.rail::-webkit-scrollbar {
-  width: 6px;
-}
-.rail::-webkit-scrollbar-thumb {
-  background: var(--bg-elev);
-  border-radius: var(--pc-radius-round);
-}
-.rail::-webkit-scrollbar-track {
-  background: transparent;
-}
-
 .panel {
   padding: 20px 22px;
   border-bottom: 1px solid var(--border);
@@ -2050,7 +2156,6 @@ textarea {
     animation: none;
   }
   .sidebar,
-  .sb-logo,
   .sb-logo-text,
   .sb-item,
   .sb-label,
@@ -6284,19 +6389,15 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 
 /* ============================================
-   Mobile app shell â€” collapse 3-column grid
-   Desktop is [sidebar | main | rail]. On narrow screens the fixed
-   58px sidebar + 360px rail crush the main column and the rail
-   overflows off-screen. Below 860px we drop to a single column,
-   move the sidebar to a fixed bottom nav (icon-only), and hide the
-   secondary info rail (its alerts stay reachable via the top-bar bell).
+   Mobile app shell
+   Desktop is [sidebar | main]. Below 860px we drop to a single column
+   and move the sidebar to a fixed bottom nav (icon-only).
    Public pages (landing/onboarding/explorer) don't use .app and are
    unaffected.
    ============================================ */
 @media (max-width: 860px) {
   .app,
-  .app.sb-extended,
-  .app.rail-collapsed {
+  .app.sb-extended {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
     height: 100dvh;
@@ -6309,14 +6410,6 @@ details.yv-collapse[open] > summary .yv-caret {
     grid-row: 1;
     grid-column: 1;
     min-height: 0;
-  }
-
-  /* Secondary info rail: hidden on phones to keep the core flow full-width.
-     Force it off regardless of the desktop collapse toggle state. */
-  .rail,
-  .app.rail-collapsed .rail,
-  .app.sb-extended .rail {
-    display: none;
   }
 
   /* Sidebar â†’ bottom navigation bar */
@@ -6398,7 +6491,7 @@ details.yv-collapse[open] > summary .yv-caret {
   .topbar .pc-brand-wordmark {
     display: none;
   }
-  .topbar .pc-network-badge {
+  .topbar .network-badge {
     white-space: nowrap;
   }
   .topbar-right {
@@ -6407,6 +6500,16 @@ details.yv-collapse[open] > summary .yv-caret {
   .topbar .icon-btn {
     width: 44px;
     height: 44px;
+  }
+  .header-wallet-trigger {
+    width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+  .header-wallet-address,
+  .header-wallet-dot {
+    display: none;
   }
 
   .stage {

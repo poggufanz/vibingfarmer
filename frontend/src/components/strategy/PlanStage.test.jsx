@@ -146,6 +146,15 @@ describe('PlanStage — first visit input', () => {
     expect(screen.getByText(/Nothing moves until you review and confirm/)).toBeTruthy()
   })
 
+  it('groups the Base connect and build actions in their own spaced row', () => {
+    const { container } = render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
+    const actions = container.querySelector('.pc-plan-actions')
+    expect(actions.children).toHaveLength(2)
+    expect(actions.contains(screen.getByRole('button', { name: 'Build my plan' }))).toBe(true)
+  })
+
   it('disables submit until an amount and a comfort level are both chosen', () => {
     render(
       <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
@@ -372,6 +381,32 @@ describe('PlanStage — Base availability is consumed, never re-derived', () => 
 })
 
 describe('PlanStage — generation is event-driven, not timer-driven', () => {
+  it('rotates reassuring copy and counts elapsed time while generation is pending', async () => {
+    vi.useFakeTimers()
+    const gen = deferred()
+    const { unmount } = render(
+      <PlanStage
+        vaultTotalShares={FUNDED_VAULT}
+        base={disconnectedBase}
+        onGenerate={vi.fn().mockReturnValue(gen.promise)}
+      />
+    )
+
+    try {
+      await fillAndSubmit({})
+      expect(screen.getByText('Building your plan')).toBeTruthy()
+      expect(screen.getByText('00:00')).toBeTruthy()
+
+      act(() => vi.advanceTimersByTime(3000))
+
+      expect(screen.getByText('Making the strategy work for you')).toBeTruthy()
+      expect(screen.getByText('00:03')).toBeTruthy()
+    } finally {
+      unmount()
+      vi.useRealTimers()
+    }
+  })
+
   it('shows one honest generating message, never a fake simultaneous 3-phase list, when the caller reports no phases', async () => {
     const gen = deferred()
     const onGenerate = vi.fn().mockReturnValue(gen.promise)
@@ -381,6 +416,7 @@ describe('PlanStage — generation is event-driven, not timer-driven', () => {
     await fillAndSubmit({ onGenerate })
 
     expect(screen.getByText('Working on it…')).toBeTruthy()
+    expect(document.querySelector('.pc-plan-building[aria-busy="true"] .think-spin')).toBeTruthy()
     // The old implementation rendered all three as a static list regardless of any real signal --
     // that is exactly what this proves is gone: none of the three phase labels is shown unless
     // the caller actually reported it (see the next test).
@@ -565,10 +601,54 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
-    // risk 'Steady' (low) -> exactly 1 deposit agent.
-    // Owner report item 8: the copy now leads with a decorative (aria-hidden) icon glyph, so the
-    // accessible text is "! Yield unavailable" -- a substring match, not the old bare exact string.
-    expect(screen.getAllByText(/Yield unavailable/)).toHaveLength(1)
+    const note = screen.getByText('Yield unavailable')
+    expect(note.className).toMatch(/pc-plan-yield-note/)
+    expect(note.textContent).not.toContain('!')
+    expect(document.querySelector('.pc-plan-facts').contains(note)).toBe(false)
+  })
+
+  it('keeps the reviewed plan until Change amount is confirmed', async () => {
+    await generateStellarOnlyPlan()
+    fireEvent.click(screen.getByText('Change mind?'))
+    fireEvent.click(screen.getByRole('button', { name: 'Change amount' }))
+    const dialog = screen.getByRole('dialog', { name: 'Change this amount?' })
+    expect(screen.getByRole('button', { name: 'Accept plan' })).toBeTruthy()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep current plan' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Accept plan' })).toBeTruthy()
+
+    fireEvent.click(screen.getByText('Change mind?'))
+    fireEvent.click(screen.getByRole('button', { name: 'Change amount' }))
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Change amount' })
+    )
+    expect(screen.getByLabelText('Amount in USDC').value).toBe('100')
+    expect(screen.getByRole('radio', { name: 'Balanced' }).getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('clears the amount and comfort choice only after Reset plan is confirmed', async () => {
+    await generateStellarOnlyPlan()
+    fireEvent.click(screen.getByText('Change mind?'))
+    fireEvent.click(screen.getByRole('button', { name: 'Reset plan' }))
+    const dialog = screen.getByRole('dialog', { name: 'Reset this plan?' })
+    expect(screen.queryByLabelText('Amount in USDC')).toBeNull()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Reset plan' }))
+    expect(screen.getByLabelText('Amount in USDC').value).toBe('')
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio.getAttribute('aria-checked')).toBe('false')
+    }
+  })
+
+  it('places Accept plan beside a 25% Change mind dropdown', async () => {
+    await generateStellarOnlyPlan()
+    const actions = document.querySelector('.pc-plan-final-actions')
+    expect(actions.firstElementChild).toBe(screen.getByRole('button', { name: 'Accept plan' }))
+    expect(within(actions).getByText('Change mind?')).toBeTruthy()
+    await withRealStylesheet(async () => {
+      expect(getComputedStyle(actions).gridTemplateColumns).toMatch(/3fr.*1fr/)
+    })
   })
 
   it('edits an agent instruction inside Technical details and approves the edited value in one deliberate action', async () => {
@@ -585,6 +665,15 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     // Uint8Array realm -- see PlanStage's hashPlan doc comment); this only proves PlanStage calls
     // whatever hasher it's given with the exact reviewed (post-edit) plan.
     expect(call.fingerprint).toBe(`0xstub${call.plan.agents.length}`)
+  })
+
+  it('hands Protect a Stellar contract address instead of the USDC display symbol', async () => {
+    const { onAcceptPlan } = await generateStellarOnlyPlan()
+    fireEvent.click(screen.getByRole('button', { name: 'Accept plan' }))
+
+    expect(onAcceptPlan.mock.calls[0][0].plan.agents[0].cap.token).toBe(
+      'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
+    )
   })
 
   it('Task 5 regression: plan.review from the generator survives runGeneration onto the plan handed to onAcceptPlan', async () => {
@@ -842,8 +931,8 @@ describe('PlanStage — I4: runId arrives from the caller, never minted internal
     )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
-    const firstMark = document.querySelector('[data-agent-kind="deposit"] svg')
-    const firstFill = firstMark.querySelector('path').getAttribute('fill')
+    const firstMark = document.querySelector('[data-agent-kind="deposit"] .pc-plan-agent-avatar')
+    const firstAvatar = firstMark.getAttribute('src')
     unmount()
 
     render(
@@ -856,12 +945,10 @@ describe('PlanStage — I4: runId arrives from the caller, never minted internal
     )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
-    const secondMark = document.querySelector('[data-agent-kind="deposit"] svg')
-    const secondFill = secondMark.querySelector('path').getAttribute('fill')
+    const secondMark = document.querySelector('[data-agent-kind="deposit"] .pc-plan-agent-avatar')
+    const secondAvatar = secondMark.getAttribute('src')
 
-    // Same runId prop in -> the same allocationId -> the same seeded AgentMark colour. A
-    // Date.now()-minted runId would make this flaky/always-different across two real calls.
-    expect(secondFill).toBe(firstFill)
+    expect(secondAvatar).toBe(firstAvatar)
   })
 })
 
@@ -1104,15 +1191,17 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
     for (const el of details) expect(el.hasAttribute('open')).toBe(false)
   })
 
-  it('item 5: replaces generic "Worker N" labels with crew names, and sizes the avatar to at least 36px', async () => {
+  it('item 5: replaces numbered marks with three distinct crew SVG avatars', async () => {
     await generateThreeWaySplit()
     expect(screen.queryByText(/^Worker \d/)).toBeNull()
     for (const name of CREW_NAMES.slice(0, 3)) expect(screen.getByText(name)).toBeTruthy()
-    const marks = document.querySelectorAll('[data-agent-kind="deposit"] svg.pc-agent-mark')
+    const marks = document.querySelectorAll('[data-agent-kind="deposit"] img.pc-plan-agent-avatar')
     expect(marks.length).toBe(3)
-    for (const svg of marks) {
-      expect(Number(svg.getAttribute('width'))).toBeGreaterThanOrEqual(36)
-      expect(Number(svg.getAttribute('height'))).toBeGreaterThanOrEqual(36)
+    expect(new Set(Array.from(marks, (mark) => mark.getAttribute('src'))).size).toBe(3)
+    for (const mark of marks) {
+      expect(mark.getAttribute('src')).toMatch(/\/brand\/agents\/(sprout|clover|mochi)\.svg$/)
+      expect(Number(mark.getAttribute('width'))).toBeGreaterThanOrEqual(40)
+      expect(Number(mark.getAttribute('height'))).toBeGreaterThanOrEqual(40)
     }
   })
 
@@ -1258,7 +1347,7 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
           }
 
           const row = document.querySelector('.pc-allocation-row')
-          const mark = row.querySelector('svg.pc-agent-mark')
+          const mark = row.querySelector('.pc-plan-agent-avatar')
           const name = row.querySelector('.pc-worker-name')
           const markRect = mark.getBoundingClientRect()
           const nameRect = name.getBoundingClientRect()
@@ -1270,6 +1359,10 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
           const acceptButton = Array.from(document.querySelectorAll('button')).find(
             (b) => b.textContent.trim() === 'Accept plan'
           )
+          const changeMindButton = Array.from(document.querySelectorAll('summary')).find(
+            (summary) => summary.textContent.trim() === 'Change mind?'
+          )
+          const finalActions = document.querySelector('.pc-plan-final-actions')
           const decision = document.querySelector('.pc-dominant--decision')
           const decisionStyle = getComputedStyle(decision)
           const decisionContentWidth =
@@ -1285,6 +1378,8 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
             distanceToName: Math.abs(markCenter - nameCenter),
             distanceToRowCenter: Math.abs(markCenter - rowCenter),
             acceptButtonWidth: acceptButton.getBoundingClientRect().width,
+            changeMindButtonWidth: changeMindButton.getBoundingClientRect().width,
+            finalActionsWidth: finalActions.getBoundingClientRect().width,
             decisionContentWidth,
           }
         })
@@ -1309,8 +1404,8 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
         expect(result.markSize).toBeGreaterThanOrEqual(36)
         expect(result.distanceToName).toBeLessThan(result.distanceToRowCenter)
 
-        // Item 9: full-width, not a shrink-to-content button.
-        expect(result.acceptButtonWidth).toBeGreaterThanOrEqual(result.decisionContentWidth * 0.9)
+        expect(result.finalActionsWidth).toBeGreaterThanOrEqual(result.decisionContentWidth * 0.9)
+        expect(result.acceptButtonWidth / result.changeMindButtonWidth).toBeCloseTo(3, 1)
       } finally {
         await browser.close()
       }
@@ -1464,6 +1559,22 @@ describe('the plan so far aside', () => {
     expect(aside.textContent).toMatch(/blend/i)
     expect(aside.textContent).toMatch(/network fees/i)
     expect(aside.textContent).toMatch(/zero/i)
+  })
+
+  it('places the Vault Advisor directly below the plan summary and opens customization', () => {
+    const onCustomizeSkill = vi.fn()
+    const { container } = renderPlanStage({
+      skillSource: 'user-file',
+      marketLive: {},
+      vaultLive: false,
+      onCustomizeSkill,
+    })
+    const summary = container.querySelector('.pc-plan-so-far')
+    const advisor = container.querySelector('.pc-vault-advisor')
+    expect(summary.nextElementSibling).toBe(advisor)
+    expect(advisor.textContent).toMatch(/custom strategy.*live market.*cached vaults/i)
+    fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
+    expect(onCustomizeSkill).toHaveBeenCalledOnce()
   })
 
   // Pins REAL values (Task 3's review lesson: a test that would also pass against an empty aside

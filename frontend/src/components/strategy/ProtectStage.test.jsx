@@ -398,6 +398,19 @@ describe('ProtectStage — preflight `checking` makes no confirmation claim', ()
 })
 
 describe('ProtectStage — fresh review content (Step 2: friendly + technical copy, same data)', () => {
+  it('presents reviewed crew permissions as one readable surface', async () => {
+    render(<ProtectStage {...baseProps()} />)
+    await checkPermission()
+
+    const lanes = screen.getByRole('list', { name: 'Reviewed crew permissions' })
+    expect(lanes.classList.contains('pc-agent-lanes--review')).toBe(true)
+    expect(within(lanes).getByRole('img', { name: 'Agent 1, planned' }).getAttribute('src')).toBe(
+      '/brand/agents/sprout.svg'
+    )
+    expect(within(lanes).getByText(/Cap per period: 100\.00 USDC/)).toBeTruthy()
+    expect(within(lanes).queryByText(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)).toBeNull()
+  })
+
   it('shows one confirmation, the intended amount, headroom, nominal exposure, duration, and per-agent facts', async () => {
     render(<ProtectStage {...baseProps()} />)
     await checkPermission()
@@ -413,7 +426,7 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     // maxAtRisk: cap 100 USDC * ceil(10800/3600 periods) = 300 USDC (see reviewedAgentInit's comment).
     expect(screen.getByText(/Worst case.*300 USDC/)).toBeTruthy()
     expect(screen.getByText(/Valid for 24 hours/)).toBeTruthy()
-    expect(screen.getByText(/Cap per period: 100 USDC/)).toBeTruthy()
+    expect(screen.getByText(/Cap per period: 100\.00 USDC/)).toBeTruthy()
     expect(screen.getByText(/Expires/)).toBeTruthy()
     expect(screen.getByText(/separate session key/i)).toBeTruthy()
     expect(screen.getByText(/stopped on its own/i)).toBeTruthy()
@@ -562,8 +575,8 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
 
     expect(screen.getByText(/Worst case for agent 1.*300 USDC/)).toBeTruthy()
     expect(screen.getByText(/Worst case for agent 2.*150 Circle USDC/)).toBeTruthy()
-    expect(screen.getByText(/Cap per period: 100 USDC/)).toBeTruthy()
-    expect(screen.getByText(/Cap per period: 50 Circle USDC/)).toBeTruthy()
+    expect(screen.getByText(/Cap per period: 100\.00 USDC/)).toBeTruthy()
+    expect(screen.getByText(/Cap per period: 50\.00 Circle USDC/)).toBeTruthy()
   })
 
   it('lets the user choose the duration preset before checking', async () => {
@@ -1006,6 +1019,22 @@ describe('ProtectStage — only a confirmed result advances; nothing optimistic'
 })
 
 describe('ProtectStage — rejection/failure says "Nothing moved" and offers Retry/Edit', () => {
+  it('separates the failed-state actions and uses stronger borders', async () => {
+    await withRealStylesheet(async () => {
+      const onRequestGrant = vi.fn().mockRejectedValue(new Error('nope'))
+      render(<ProtectStage {...baseProps({ onRequestGrant })} />)
+      await checkPermission()
+      fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
+      await screen.findByText('Nothing moved')
+
+      const failure = document.querySelector('.pc-protect-failure')
+      const actions = failure?.querySelector('.pc-protect-failure-actions')
+      expect(getComputedStyle(failure?.querySelector('.pc-status-notice')).borderTopWidth).toBe('2px')
+      expect(getComputedStyle(actions).gap).toBe('var(--pc-space-3)')
+      expect(getComputedStyle(actions?.querySelector('.pc-button')).borderTopWidth).toBe('2px')
+    })
+  })
+
   it('preserves the plan and review, shows Nothing moved verbatim, and retries the SAME wallet request', async () => {
     const onRequestGrant = vi
       .fn()

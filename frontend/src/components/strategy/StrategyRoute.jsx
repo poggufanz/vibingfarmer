@@ -88,7 +88,7 @@ export function StrategyRoute({
           <h1 className="pc-route-title">Hire a crew, once.</h1>
           <p className="pc-route-sub">
             Three short steps. You sign at the very end, one time, and the limits you set are
-            enforced by the chain — not by us.
+            enforced by the chain not by us.
           </p>
         </div>
         <p className="pc-route-step">

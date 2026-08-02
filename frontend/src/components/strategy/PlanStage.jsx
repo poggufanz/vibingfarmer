@@ -10,10 +10,17 @@
 // `mandateView`/`action`, `mergeFlowHelpers.needsBaseMandateSetup`'s gate). This component only
 // reads `connected`/`healthy`/`mandateView.ready`/`action` off of that -- it never reimplements
 // relayer-health, mandate, or funding rules itself.
-import { useRef, useState } from 'react'
-import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
+import { useEffect, useRef, useState } from 'react'
+import gsap from 'gsap'
+import { useGSAP } from '@gsap/react'
+import {
+  Dialog,
+  MoneyFigure,
+  StatusNotice,
+  TechnicalDetails,
+  VenueTruth,
+} from '../pocket/Primitives.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
-import { AgentMark } from '../pocket/AgentMark.jsx'
 import {
   RISK_PROFILES,
   expandAgentSlots,
@@ -30,7 +37,13 @@ import {
 } from '../../strategy/amountValidation.js'
 import { needsBaseMandateSetup } from '../../mergeFlowHelpers.js'
 import { hashStrategy } from '../../attestation.js'
-import { SOROBAN_DECIMALS } from '../../stellar/config.js'
+import {
+  SOROBAN_DECIMALS,
+  SOROBAN_TOKEN_ADDRESS,
+  STELLAR_USDC_SAC,
+} from '../../stellar/config.js'
+
+gsap.registerPlugin(useGSAP)
 
 const RISK_IDS = Object.keys(RISK_PROFILES) // ['low', 'med', 'high'] -> Steady/Balanced/Adventurous
 
@@ -39,6 +52,18 @@ const GENERATION_PHASES = Object.freeze([
   'Building bounded allocations',
   'Safety review',
 ])
+
+const BUILDING_MESSAGES = Object.freeze([
+  'Building your plan',
+  'Making the strategy work for you',
+  'Balancing risk and opportunity',
+  'Preparing everything for your review',
+])
+
+function formatElapsed(seconds) {
+  const minutes = Math.floor(seconds / 60)
+  return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
+}
 
 // Task 3 (Pocket Crew design alignment) -- quick amount shortcuts under the amount field. Written
 // into the existing amountValue state, nothing else; no new persistence/state.
@@ -143,6 +168,12 @@ function formatShare(amountNumber, risk) {
     : ''
 }
 
+function tokenSymbol(token) {
+  return token === 'USDC' || token === SOROBAN_TOKEN_ADDRESS || token === STELLAR_USDC_SAC
+    ? 'USDC'
+    : token
+}
+
 // Fix loop N -- item 5 (owner report): crew character names, easily editable in one place. No
 // name data exists anywhere else in the model -- planModel.js only ever produces positional
 // "Worker N" labels -- so this is this fix's own addition: one obvious exported constant, not
@@ -150,6 +181,11 @@ function formatShare(amountNumber, risk) {
 // crew flavor only, never an identity claim (AgentMark's own crew-color fill/dedup already keys
 // off the agent's real allocationId, never this list).
 export const CREW_NAMES = Object.freeze(['Sprout', 'Clover', 'Mochi', 'Pepper', 'Juniper', 'Basil'])
+const CREW_AVATARS = Object.freeze([
+  '/brand/agents/sprout.svg',
+  '/brand/agents/clover.svg',
+  '/brand/agents/mochi.svg',
+])
 
 function crewNameFor(index) {
   return CREW_NAMES[index % CREW_NAMES.length]
@@ -194,6 +230,10 @@ export function PlanStage({
   onConnectForBase,
   onSetupBase,
   onRebuildPlan,
+  skillSource = 'default',
+  marketLive = null,
+  vaultLive = null,
+  onCustomizeSkill,
   // Injectable so a test can substitute a plain deterministic stub -- the real hashStrategy
   // shells out to @stellar/stellar-sdk's sha256, which needs a real Node/browser Uint8Array
   // realm; a jsdom test-environment render is otherwise a fine place to exercise everything
@@ -209,10 +249,17 @@ export function PlanStage({
   // the `reportPhase` callback runGeneration hands it; null while nothing real has been observed
   // yet, so we never claim to show progress we can't prove.
   const [generationPhase, setGenerationPhase] = useState(null)
+  const [generationElapsed, setGenerationElapsed] = useState(0)
   const [plan, setPlan] = useState(null)
   const [instructions, setInstructions] = useState({})
+  const [revisionAction, setRevisionAction] = useState(null)
   const submissionRef = useRef(null) // last validated { amountUnits, risk }, reused by retry
   const radioRefs = useRef([]) // roving-tabindex focus targets, one per RISK_IDS entry
+  const buildingRef = useRef(null)
+  const buildingMessageRef = useRef(null)
+  const revisionCancelRef = useRef(null)
+  const revisionMenuRef = useRef(null)
+  const customSkill = skillSource === 'user-local' || skillSource === 'user-file'
 
   const baseConnected = base?.connected === true
   const baseHealthy = base?.healthy === true
@@ -224,6 +271,39 @@ export function PlanStage({
   const showBaseSetup =
     baseConnected && needsBaseMandateSetup({ healthy: base?.healthy, mandateOk: mandateReady })
   const planInvalidated = phase === 'ready' && Boolean(base?.action?.invalidatesPlan)
+  const buildingMessage =
+    BUILDING_MESSAGES[Math.floor(generationElapsed / 3) % BUILDING_MESSAGES.length]
+
+  useEffect(() => {
+    if (phase !== 'generating') return undefined
+    const timer = window.setInterval(() => setGenerationElapsed((elapsed) => elapsed + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [phase])
+
+  useGSAP(
+    () => {
+      if (
+        phase !== 'generating' ||
+        !buildingMessageRef.current ||
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      ) {
+        return
+      }
+      gsap.fromTo(
+        buildingMessageRef.current,
+        { autoAlpha: 0, y: 6 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.36,
+          ease: 'power2.out',
+          clearProps: 'transform,opacity,visibility',
+          overwrite: 'auto',
+        }
+      )
+    },
+    { dependencies: [phase, buildingMessage], scope: buildingRef, revertOnUpdate: true }
+  )
 
   const canSubmit = amountValue.trim() !== '' && Boolean(risk) && phase !== 'generating'
   // Task 3 -- the crew line's own display-only number; never fed back into submissionRef/
@@ -258,7 +338,7 @@ export function PlanStage({
   // reconciliation above.
   const bridgeAgent = plan ? plan.agents.find((a) => a.kind === 'bridge') : null
   const deployedText = plan
-    ? `${sumAllocationCents(depositAgents)} ${plan.amount.token}`
+    ? `${sumAllocationCents(depositAgents)} ${tokenSymbol(depositAgents[0]?.allocation.token ?? plan.amount.token)}`
     : `${formatDollarNumber(amountNumber)} USDC`
   // Fix loop 1 -- Important 3 (review finding): the Blend/Stellar APY may only be applied to
   // money actually going to Blend. Before a plan exists the split isn't known yet, so the typed
@@ -287,6 +367,7 @@ export function PlanStage({
     setPhase('generating')
     setGenerationError(null)
     setGenerationPhase(null)
+    setGenerationElapsed(0)
     try {
       // Fix loop 1 -- I10: a real, caller-driven progress event, never a `speed * ...` timer. A
       // caller that never calls this (every fixture in this file today, until Task 13 wires a
@@ -302,6 +383,8 @@ export function PlanStage({
         risk: submittedRisk,
         source: result.source,
         sourceState: result.sourceState,
+        token: SOROBAN_TOKEN_ADDRESS,
+        bridgeToken: STELLAR_USDC_SAC,
         stellarUnits: result.stellarUnits,
         // A disconnected/ineligible Base leg is dropped here regardless of what the strategist
         // returned -- Base is never silently added after the fact.
@@ -375,6 +458,27 @@ export function PlanStage({
     onRebuildPlan?.()
   }
 
+  function confirmRevision() {
+    const reset = revisionAction === 'reset'
+    setPlan(null)
+    setInstructions({})
+    setGenerationError(null)
+    setFieldError(null)
+    if (reset) {
+      setAmountValue('')
+      setRisk(null)
+      submissionRef.current = null
+    }
+    setRevisionAction(null)
+    setPhase('input')
+    onRebuildPlan?.()
+  }
+
+  function requestRevision(action) {
+    revisionMenuRef.current?.removeAttribute('open')
+    setRevisionAction(action)
+  }
+
   function handleAccept() {
     if (!plan) return
     const reviewed = {
@@ -404,7 +508,7 @@ export function PlanStage({
                 // The field had no placeholder, and its own styling gave it no boundary either, so
                 // an empty Plan stage showed a blank area with a hairline under it and nothing to
                 // say it accepted input. Not a label substitute -- the <label> above stays.
-                placeholder="0.00"
+                placeholder="0"
                 value={amountValue}
                 onChange={(e) => setAmountValue(e.target.value)}
                 // Wave 6 Task 14 (scoped exception, owner-authorized): role="alert" only announces
@@ -470,31 +574,52 @@ export function PlanStage({
 
             <p className="pc-field-help">Nothing moves until you review and confirm.</p>
 
-            {!baseConnected && (
-              <button
-                type="button"
-                className="pc-button pc-button--secondary"
-                onClick={() => onConnectForBase?.()}
-              >
-                {base?.action?.label || 'Connect to check Base testnet'}
-              </button>
-            )}
+            <div className="pc-plan-actions">
+              {!baseConnected && (
+                <button
+                  type="button"
+                  className="pc-button pc-button--secondary"
+                  onClick={() => onConnectForBase?.()}
+                >
+                  {base?.action?.label || 'Connect to check Base testnet'}
+                </button>
+              )}
 
-            <button type="submit" className="pc-button pc-button--primary" disabled={!canSubmit}>
-              Build my plan
-            </button>
+              <button type="submit" className="pc-button pc-button--primary" disabled={!canSubmit}>
+                Build my plan
+              </button>
+            </div>
           </form>
         )}
 
         {phase === 'generating' && (
-          <StatusNotice state="info" title="Building your plan">
-            {/* Fix loop 1 -- I10: a single label that TRANSITIONS in response to the caller's own
+          <div ref={buildingRef} className="pc-plan-building" aria-busy="true">
+            <StatusNotice state="info" title="Your plan is taking shape">
+              <div className="pc-plan-building-copy">
+                <p
+                  ref={buildingMessageRef}
+                  className="pc-plan-building-message"
+                  key={buildingMessage}
+                >
+                  {buildingMessage}
+                </p>
+                <time
+                  className="pc-plan-building-elapsed"
+                  dateTime={`PT${generationElapsed}S`}
+                  aria-label={`Elapsed time ${formatElapsed(generationElapsed)}`}
+                >
+                  {formatElapsed(generationElapsed)}
+                </time>
+              </div>
+              {/* Fix loop 1 -- I10: a single label that TRANSITIONS in response to the caller's own
                 reportPhase events (never a static simultaneous list, never a timer). Nothing
                 claims progress this component cannot actually observe. */}
-            <p>
-              {generationPhase === null ? 'Working on it…' : GENERATION_PHASES[generationPhase]}
-            </p>
-          </StatusNotice>
+              <p className="pc-plan-building-progress">
+                <span className="think-spin" aria-hidden="true" />
+                {generationPhase === null ? 'Working on it…' : GENERATION_PHASES[generationPhase]}
+              </p>
+            </StatusNotice>
+          </div>
         )}
 
         {phase === 'error' && (
@@ -530,7 +655,7 @@ export function PlanStage({
               <MoneyFigure
                 state="current"
                 value={viewModel.total}
-                currency={plan.amount.token}
+                currency={tokenSymbol(plan.amount.token)}
                 freshness={sourceFreshness(plan.sourceState)}
               />
             </div>
@@ -574,19 +699,18 @@ export function PlanStage({
                   )}
                 </p>
                 {depositAgents.length > 0 &&
-                  (stellarYield.state === 'live' ? (
-                    <p>{stellarYield.apy}% APY</p>
-                  ) : (
-                    <p className="pc-field-help">
-                      <span aria-hidden="true">! </span>Yield unavailable
-                    </p>
-                  ))}
+                  stellarYield.state === 'live' && <p>{stellarYield.apy}% APY</p>}
               </div>
+            )}
+
+            {depositAgents.length > 0 && stellarYield.state !== 'live' && (
+              <p className="pc-plan-yield-note">Yield unavailable</p>
             )}
 
             <ul className="pc-allocation-list">
               {viewModel.agents.map((agent, i) => {
                 const isBridge = agent.kind === 'bridge'
+                const planAgent = plan.agents[i]
                 return (
                   <li key={agent.id} className="pc-allocation-row" data-agent-kind={agent.kind}>
                     {/* Item 5 (owner report): at least 36px (was the AgentMark default of 32,
@@ -594,11 +718,12 @@ export function PlanStage({
                         row's own start (see strategy.css) so it lines up with the crew-name line
                         that now leads each row's content instead of centering against the whole,
                         much taller, multi-line row. */}
-                    <AgentMark
-                      identity={agent.id}
-                      state="planned"
-                      size={36}
-                      label={isBridge ? 'B' : String(agent.idx)}
+                    <img
+                      className="pc-plan-agent-avatar"
+                      src={CREW_AVATARS[i % CREW_AVATARS.length]}
+                      alt={`${crewNameFor(i)} agent, planned`}
+                      width="44"
+                      height="44"
                     />
                     <div>
                       <p className="pc-worker-name">{crewNameFor(i)}</p>
@@ -606,7 +731,7 @@ export function PlanStage({
                       <MoneyFigure
                         state="current"
                         value={allocationDisplay[agent.id]}
-                        currency={plan.amount.token}
+                        currency={tokenSymbol(planAgent.allocation.token)}
                       />
                       <p>
                         {/* Fix loop 1 -- I8 (review finding): the grant scope bound the user
@@ -616,14 +741,14 @@ export function PlanStage({
                             cap, not the allocation. Item 3 (owner report): capDisplay is a
                             DISPLAY-only 2dp rounding of that same real cap (buildAmountDisplayMap
                             above), never a different number. */}
-                        Cap {capDisplay[agent.id]} {plan.amount.token}
+                        Cap {capDisplay[agent.id]} {tokenSymbol(planAgent.cap.token)}
                       </p>
                       {isBridge && (
                         <ul>
                           {agent.children.map((child) => (
                             <li key={child.allocationId}>
                               {child.proxyTarget || child.destination}: {child.allocation}{' '}
-                              {plan.amount.token}
+                              {tokenSymbol(planAgent.cap.token)}
                             </li>
                           ))}
                         </ul>
@@ -650,15 +775,38 @@ export function PlanStage({
               })}
             </ul>
 
-            {canAccept && (
-              <button
-                type="button"
-                className="pc-button pc-button--primary pc-accept-plan-button"
-                onClick={handleAccept}
-              >
-                Accept plan
-              </button>
-            )}
+            <div
+              className={`pc-plan-final-actions${canAccept ? '' : ' pc-plan-final-actions--single'}`}
+            >
+              {canAccept && (
+                <button
+                  type="button"
+                  className="pc-button pc-button--primary pc-accept-plan-button"
+                  onClick={handleAccept}
+                >
+                  Accept plan
+                </button>
+              )}
+              <details ref={revisionMenuRef} className="pc-plan-change-menu">
+                <summary className="pc-button pc-button--primary">Change mind?</summary>
+                <div className="pc-plan-change-options">
+                  <button
+                    type="button"
+                    className="pc-button pc-button--secondary"
+                    onClick={() => requestRevision('change')}
+                  >
+                    Change amount
+                  </button>
+                  <button
+                    type="button"
+                    className="pc-button pc-button--secondary pc-plan-reset-button"
+                    onClick={() => requestRevision('reset')}
+                  >
+                    Reset plan
+                  </button>
+                </div>
+              </details>
+            </div>
           </div>
         )}
       </div>
@@ -681,7 +829,7 @@ export function PlanStage({
                 <span className="pc-fact-dot" aria-hidden="true" />
                 <span>Sent to Base</span>
                 <span className="pc-fact-value">
-                  {sumAllocationCents([bridgeAgent])} {plan.amount.token}
+                  {sumAllocationCents([bridgeAgent])} {tokenSymbol(bridgeAgent.allocation.token)}
                 </span>
               </li>
             )}
@@ -716,6 +864,34 @@ export function PlanStage({
             <span>Blend Capital v2</span>
           </p>
         </div>
+
+        <section className="pc-vault-advisor" aria-labelledby="vault-advisor-heading">
+          <div className="pc-vault-advisor-head">
+            <div>
+              <h2 id="vault-advisor-heading" className="pc-aside-title">
+                Vault Advisor Skill
+              </h2>
+              <p className="pc-vault-advisor-status">
+                <span aria-hidden="true" />
+                {customSkill ? 'Custom strategy' : 'Default strategy'}
+              </p>
+            </div>
+            {onCustomizeSkill && (
+              <button
+                type="button"
+                className="pc-button pc-button--secondary pc-vault-advisor-action"
+                onClick={onCustomizeSkill}
+              >
+                Customize
+              </button>
+            )}
+          </div>
+          <p className="pc-vault-advisor-detail">
+            {customSkill ? 'Active, user-defined' : 'Default eligibility and allocation rules'}
+            {marketLive != null && ` · ${marketLive ? 'Live market' : 'Static context'}`}
+            {vaultLive != null && ` · ${vaultLive ? 'Live vaults' : 'Cached vaults'}`}
+          </p>
+        </section>
 
         {/* Fix loop 1 -- M6 (review finding): a bridge-only plan (stellarUnits: 0) has no
             Stellar deposit leg at all -- rendering "Stellar truth" / "0 live venue" beside the
@@ -774,6 +950,39 @@ export function PlanStage({
           </StatusNotice>
         )}
       </aside>
+
+      <Dialog
+        open={revisionAction !== null}
+        title={revisionAction === 'reset' ? 'Reset this plan?' : 'Change this amount?'}
+        description={
+          revisionAction === 'reset'
+            ? 'This clears the reviewed plan and your amount. Building again may use another AI request.'
+            : 'This returns you to the amount form. Building again may use another AI request.'
+        }
+        onClose={() => setRevisionAction(null)}
+        initialFocusRef={revisionCancelRef}
+        actions={
+          <>
+            <button
+              ref={revisionCancelRef}
+              type="button"
+              className="pc-button pc-button--secondary"
+              onClick={() => setRevisionAction(null)}
+            >
+              Keep current plan
+            </button>
+            <button
+              type="button"
+              className="pc-button pc-button--primary"
+              onClick={confirmRevision}
+            >
+              {revisionAction === 'reset' ? 'Reset plan' : 'Change amount'}
+            </button>
+          </>
+        }
+      >
+        <p>No on-chain action has happened yet.</p>
+      </Dialog>
     </div>
   )
 }

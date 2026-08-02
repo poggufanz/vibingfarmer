@@ -78,7 +78,8 @@ vi.mock('./stellar/agentDeposit.js', () => ({
   readTokenBalance: (...a) => readTokenBalanceMock(...a),
 }))
 
-vi.mock('./stellar/config.js', () => ({
+vi.mock('./stellar/config.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   SOROBAN_TOKEN_ADDRESS: 'CTOKEN',
   SOROBAN_DECIMALS: 7,
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',

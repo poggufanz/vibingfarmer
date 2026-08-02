@@ -102,6 +102,10 @@ vi.mock('./stellar/vaultReads.js', () => ({
   readPricePerShare: vi.fn(async () => null),
   readLifeboatState: vi.fn(async () => null),
 }))
+vi.mock('./stellar/lifeboat.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  grantMandate: vi.fn(async () => ({ hash: 'HMANDATE', status: 'SUCCESS' })),
+}))
 vi.mock('./strategy/vaultFactsLive.js', () => ({ primeVaultFacts: vi.fn(async () => {}) }))
 vi.mock('./strategy/councilReview.js', () => ({
   buildCouncilInput: vi.fn(() => ({})),
@@ -162,6 +166,8 @@ import { ensureExitSigner, partialWithdraw } from './stellar/partialWithdraw.js'
 import { getMandateStatus } from './base/relayerClient.js'
 import { baseMandateStorageKey } from './wallet/baseBinding.js'
 import { BASE_POOL_CATALOG } from './config.js'
+import { readLifeboatState } from './stellar/vaultReads.js'
+import { grantMandate } from './stellar/lifeboat.js'
 
 const G = Object.freeze({
   version: 1,
@@ -325,11 +331,48 @@ beforeEach(() => {
     transferHash: 'HTRANSFER',
   })
   getMandateStatus.mockReset().mockResolvedValue(null)
+  readLifeboatState.mockReset().mockResolvedValue(null)
+  grantMandate.mockClear()
 })
 
 afterEach(() => cleanup())
 
 describe('active account application state', () => {
+  it('projects a renewed lifeboat expiry into the mounted money model', async () => {
+    let lifeboat = {
+      derisked: false,
+      mandateExpiry: Math.floor(Date.now() / 1000) - 60,
+      authority: G.address,
+    }
+    const mandateExpiry = Math.floor(Date.now() / 1000) + 86_400
+    readLifeboatState.mockImplementation(async () => lifeboat)
+
+    render(
+      <MemoryRouter
+        initialEntries={['/home']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <App />
+      </MemoryRouter>
+    )
+
+    await waitFor(() =>
+      expect(mountedHarness.moneyRouteProps?.model?.protection.state).toBe('disarmed')
+    )
+
+    lifeboat = { ...lifeboat, mandateExpiry }
+    await act(async () => mountedHarness.moneyRouteProps.onAction('renew-protection'))
+
+    await waitFor(() =>
+      expect(mountedHarness.moneyRouteProps?.model?.protection).toMatchObject({
+        state: 'armed',
+        mandateExpiry,
+        ownerIsAuthority: true,
+      })
+    )
+    expect(grantMandate).toHaveBeenCalledWith({ owner: G.address })
+  })
+
   it('clears old-owner review, receipt, Base and My Money state before installing a switched account', () => {
     const clear = vi.fn()
     const store = createActiveAccountEpochStore({ initial: G, clear })

@@ -90,7 +90,7 @@ describe('CrewRoute', () => {
     renderCrew({
       agents: [agentRow({ amount: { token: 'USDC', units: '1000000000', decimals: 7 } })],
     })
-    expect(screen.getByText(/working for you/i)).toBeTruthy()
+    expect(screen.getByText(/active permissions/i)).toBeTruthy()
     expect(screen.getByText(/1 of 1/)).toBeTruthy()
     expect(screen.getByText(/8\.1%/)).toBeTruthy()
     expect(screen.getByText('250 USDC')).toBeTruthy()

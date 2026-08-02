@@ -52,6 +52,7 @@ function allocationId(runId, kind, key) {
  *   review time, never minted here -- see Task 2's runId ruling).
  * @param {'low'|'med'|'high'} input.risk
  * @param {string} [input.token]
+ * @param {string} [input.bridgeToken]
  * @param {bigint|string} [input.stellarUnits] total Stellar-side units (7dp SAC units)
  * @param {number} [input.stellarDecimals]
  * @param {string} [input.destination] truthful Stellar deposit destination label (venueTruth.js)
@@ -66,6 +67,7 @@ export function expandAgentSlots(input) {
     runId,
     risk,
     token = 'USDC',
+    bridgeToken = token,
     stellarUnits = 0n,
     stellarDecimals = DEFAULT_STELLAR_DECIMALS,
     destination = 'Stellar deposit',
@@ -120,8 +122,8 @@ export function expandAgentSlots(input) {
       allocationId: allocationId(runId, 'bridge', 'base'),
       kind: 'bridge',
       hostNetworkId: STELLAR_NETWORK_ID,
-      allocation: { token, units: bridgeCapUnits.toString(), decimals: stellarDecimals },
-      cap: { token, units: bridgeCapUnits.toString(), decimals: stellarDecimals },
+      allocation: { token: bridgeToken, units: bridgeCapUnits.toString(), decimals: stellarDecimals },
+      cap: { token: bridgeToken, units: bridgeCapUnits.toString(), decimals: stellarDecimals },
       periodSeconds,
       expiry,
       destination: 'Base Sepolia bridge',

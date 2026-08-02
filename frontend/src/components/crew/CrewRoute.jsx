@@ -109,7 +109,7 @@ export function CrewRoute({
           </p>
         </div>
         <div className="pc-crew-stat">
-          <p className="pc-crew-stat-label">Working for you</p>
+          <p className="pc-crew-stat-label">Active permissions</p>
           <p className="pc-crew-stat-value">
             {activeCount} of {agents.length}
           </p>

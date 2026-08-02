@@ -227,13 +227,6 @@
     "relativePath": "src/app.jsx",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
-    "message": "'ActivityPanel' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/app.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
     "message": "'CrewRoute' is defined but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
@@ -318,27 +311,6 @@
     "relativePath": "src/app.jsx",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
-    "message": "'PALETTES' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/app.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'PalettePicker' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/app.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'PermissionPanel' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/app.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
     "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
@@ -396,13 +368,6 @@
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
     "message": "'SkillDrawer' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/app.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'SkillPanel' is defined but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
   {
@@ -480,13 +445,6 @@
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
     "message": "'VaultDetailPage' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/app.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'WalletPanel' is defined but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
   {
@@ -669,13 +627,6 @@
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
     "message": "'NetworkBadge' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/components.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
   {
@@ -1194,27 +1145,6 @@
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
     "message": "'StatBlock' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/components/RightRail.jsx",
-    "ruleId": "no-console",
-    "messageId": "unexpected",
-    "message": "Unexpected console statement.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/components/RightRail.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/components/RightRail.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
   {

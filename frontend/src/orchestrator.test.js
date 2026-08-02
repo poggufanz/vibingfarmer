@@ -38,7 +38,8 @@ vi.mock('./stellar/agentDeposit.js', () => ({
 }))
 // USE_FUNDING_ROUTER false → dispatch takes the LEGACY per-agent deploy/fund path exercised by
 // this whole file. The router (single-signature) path is covered by orchestrator.router.test.js.
-vi.mock('./stellar/config.js', () => ({
+vi.mock('./stellar/config.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   SOROBAN_TOKEN_ADDRESS: 'CTOKEN',
   SOROBAN_DECIMALS: 7,
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',

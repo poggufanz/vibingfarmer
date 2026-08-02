@@ -67,7 +67,6 @@
 import { useState } from 'react'
 import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
-import { AgentMark } from '../pocket/AgentMark.jsx'
 import { PermissionPhaseError } from '../../strategy/permissionError.js'
 import { toPermissionDecisionView } from '../../strategy/reusePreflight.js'
 import { maxAtRisk } from '../../strategy/permissionScope.js'
@@ -76,6 +75,11 @@ import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
 
 const DEFAULT_WALLETS = ['VF Wallet', 'Freighter', 'xBull', 'Albedo']
+const CREW_AVATARS = [
+  '/brand/agents/sprout.svg',
+  '/brand/agents/clover.svg',
+  '/brand/agents/mochi.svg',
+]
 
 // Wave 6 carry (Strategy Tasks 11/13): relocated from the now-deleted GrantPanel.jsx (a demoted
 // legacy card whose default export became dead once app.jsx's production /strategy route stopped
@@ -140,9 +144,8 @@ function formatExpiry(expirySeconds) {
 }
 
 // Fix round 1 -- F2 (review finding): formatExpiry above is PRE-EXISTING and stays untouched --
-// its three call sites (the Rice "As of"/"Expires" lines and the fresh-mode agent-lane "Expires"
-// line) deliberately print the raw machine instant next to a technical fact, and none of those
-// sites were added by Task 6. Task 6's OWN new copy -- the boundary sentence and the ceiling row --
+// its Rice "As of"/"Expires" call sites deliberately print the raw machine instant next to a
+// technical fact. Task 6's OWN new copy -- the boundary sentence and the ceiling row --
 // needs an English-reading value instead, never formatExpiry's ISO-with-milliseconds string. Same
 // Intl.DateTimeFormat technique PlanStage.jsx's own local (unexported) formatExpiry already
 // establishes as precedent in this codebase -- not a new dependency; kept local and minimal here
@@ -679,7 +682,7 @@ export function ProtectStage({
               )}
               <button
                 type="button"
-                className="pc-button pc-button--primary"
+                className="pc-button pc-button--primary pc-protect-check-button"
                 onClick={handleCheckPermission}
                 // Fix round 2, Minor 1 (reviewer finding): `ceilingError` can only ever be
                 // non-null when the ceiling input itself is mounted (`routerVersion === 3` --
@@ -700,7 +703,7 @@ export function ProtectStage({
           )}
 
           {decision && decision.mode === 'fresh' && (
-            <div>
+            <div className="pc-protect-review-summary">
               <p>
                 This needs {decision.confirmationCount} wallet confirmation
                 {decision.confirmationCount === 1 ? '' : 's'}.
@@ -732,7 +735,7 @@ export function ProtectStage({
           )}
 
           {phase === 'review' && decision && decision.mode === 'fresh' && (
-            <>
+            <div className="pc-protect-review-actions">
               <button
                 type="button"
                 className="pc-button pc-button--primary"
@@ -743,11 +746,11 @@ export function ProtectStage({
               <button type="button" className="pc-button pc-button--secondary" onClick={handleEdit}>
                 Edit plan
               </button>
-            </>
+            </div>
           )}
 
           {phase === 'review' && decision && decision.mode === 'reuse' && usableReuse && (
-            <>
+            <div className="pc-protect-review-actions">
               <button
                 type="button"
                 className="pc-button pc-button--primary"
@@ -758,7 +761,7 @@ export function ProtectStage({
               <button type="button" className="pc-button pc-button--secondary" onClick={handleEdit}>
                 Edit plan
               </button>
-            </>
+            </div>
           )}
 
           {phase === 'requesting' && decision?.mode === 'fresh' && (
@@ -783,15 +786,19 @@ export function ProtectStage({
           )}
 
           {phase === 'failed' && (
-            <StatusNotice state="danger" title="Nothing moved">
-              <p>{failureMessage}</p>
-              <button type="button" className="pc-button pc-button--primary" onClick={handleRetry}>
-                Retry
-              </button>
-              <button type="button" className="pc-button pc-button--secondary" onClick={handleEdit}>
-                Edit plan
-              </button>
-            </StatusNotice>
+            <div className="pc-protect-failure">
+              <StatusNotice state="danger" title="Nothing moved">
+                <p>{failureMessage}</p>
+                <div className="pc-protect-failure-actions">
+                  <button type="button" className="pc-button pc-button--primary" onClick={handleRetry}>
+                    Retry
+                  </button>
+                  <button type="button" className="pc-button pc-button--secondary" onClick={handleEdit}>
+                    Edit plan
+                  </button>
+                </div>
+              </StatusNotice>
+            </div>
           )}
         </div>
 
@@ -923,14 +930,17 @@ export function ProtectStage({
               })}
               <p>Each agent signs with its own separate session key.</p>
               <p>Each agent can be stopped on its own, independent of the others.</p>
-              <p>Gas is sponsored — you pay no XLM for this run.</p>
+              <p>Gas is sponsored you pay no XLM for this run.</p>
             </div>
           </div>
         )}
       </div>
 
       {decision && decision.mode === 'fresh' && (
-        <ul className="pc-agent-lanes">
+        <ul
+          className="pc-agent-lanes pc-agent-lanes--review"
+          aria-label="Reviewed crew permissions"
+        >
           {plan.agents.map((planAgent, i) => {
             const reviewed = decision.reviewedAgentInits.find(
               (r) => r.allocationId === planAgent.allocationId
@@ -942,10 +952,12 @@ export function ProtectStage({
                 className="pc-agent-lane"
                 data-agent-kind={planAgent.kind}
               >
-                <AgentMark
-                  identity={planAgent.allocationId}
-                  state="planned"
-                  label={isBridge ? 'B' : String(i + 1)}
+                <img
+                  className="pc-protect-agent-avatar"
+                  src={CREW_AVATARS[i % CREW_AVATARS.length]}
+                  alt={`Agent ${i + 1}, planned`}
+                  width="44"
+                  height="44"
                 />
                 <div>
                   {isBridge ? (
@@ -959,11 +971,11 @@ export function ProtectStage({
                         {/* Fix loop 1 -- I3/C1: label from THIS agent's own reviewed cap token, never
                             plan.amount.token -- a mixed-token plan's second agent can be budgeted in a
                             different Stellar contract than the plan's display token names. */}
-                        Cap per period: {unitsToDisplay(reviewed.cap.units, reviewed.cap.decimals)}{' '}
+                        Cap per period: {perAgentDisplayMap[reviewed.allocationId]}{' '}
                         {tokenSymbol(reviewed.cap.token)}
                       </p>
                       <p>Resets every {periodLabel(reviewed.periodSeconds)}</p>
-                      <p>Expires {formatExpiry(reviewed.expiry)}</p>
+                      <p>Expires {humanExpiry(reviewed.expiry)}</p>
                       <TechnicalDetails summary={`Agent ${i + 1} technical details`}>
                         {/* Owner decision #19: the container no longer defaults to mono (it holds
                             friendly prose just as often, see PlanStage.jsx) -- these three raw

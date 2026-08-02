@@ -83,6 +83,13 @@ const Icon = ({ name, size = 16, className = '' }) => {
         <path d="M10 14L21 3" />
       </>
     ),
+    wallet: (
+      <>
+        <path d="M4 7V5a2 2 0 0 1 2-2h12" />
+        <rect x="3" y="7" width="18" height="14" rx="2" />
+        <path d="M16 13h5" />
+      </>
+    ),
     logout: (
       <>
         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -140,18 +147,6 @@ const Icon = ({ name, size = 16, className = '' }) => {
       <>
         <rect width="18" height="18" x="3" y="3" rx="2" />
         <path d="M9 3v18M17 15l-3-3 3-3" />
-      </>
-    ),
-    panelRightOpen: (
-      <>
-        <rect width="18" height="18" x="3" y="3" rx="2" />
-        <path d="M15 3v18M10 15l-3-3 3-3" />
-      </>
-    ),
-    panelRightClose: (
-      <>
-        <rect width="18" height="18" x="3" y="3" rx="2" />
-        <path d="M15 3v18M7 9l3 3-3 3" />
       </>
     ),
   }
@@ -242,7 +237,17 @@ const Sidebar = ({ extended, onToggle, agentCount = 0 }) => {
 }
 
 /* ---------- Top bar — minimal, no chip soup ---------- */
-const TopBar = ({ onReset, railCollapsed, onToggleRail, notifications = null }) => {
+const TopBar = ({
+  onReset,
+  walletPhase = 'none',
+  walletAddress = '',
+  walletLabel = '',
+  notifications = null,
+}) => {
+  const [copied, setCopied] = React.useState(false)
+  const walletConnected = walletPhase !== 'none' && Boolean(walletAddress)
+  const sessionActive = walletPhase === 'upgraded'
+
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -260,14 +265,60 @@ const TopBar = ({ onReset, railCollapsed, onToggleRail, notifications = null }) 
         <button className="icon-btn" title="Start over" aria-label="Start over" onClick={onReset}>
           <Icon name="plus" />
         </button>
-        <button
-          className="icon-btn"
-          title={railCollapsed ? 'Show Info Panel' : 'Hide Info Panel'}
-          aria-label="Toggle info panel"
-          onClick={onToggleRail}
-        >
-          <Icon name={railCollapsed ? 'panelRightOpen' : 'panelRightClose'} />
-        </button>
+        {walletConnected ? (
+          <details className="header-wallet">
+            <summary
+              className="header-wallet-trigger"
+              aria-label={`Wallet ${walletLabel}`}
+              title={sessionActive ? 'Session keys active' : 'Standard wallet'}
+            >
+              <Icon name="wallet" />
+              <span
+                className={`header-wallet-dot ${sessionActive ? 'is-active' : ''}`}
+                aria-hidden="true"
+              />
+              <span className="header-wallet-address">{walletLabel}</span>
+            </summary>
+            <div className="header-wallet-menu">
+              <p className="header-wallet-status">
+                {sessionActive ? 'Session keys active' : 'Standard wallet'}
+              </p>
+              <p className="header-wallet-full-address">{walletAddress}</p>
+              <div className="header-wallet-actions">
+                <button
+                  type="button"
+                  className="header-wallet-action"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(walletAddress)
+                      setCopied(true)
+                      window.setTimeout(() => setCopied(false), 1200)
+                    } catch {
+                      setCopied(false)
+                    }
+                  }}
+                >
+                  <Icon name={copied ? 'check' : 'copy'} />
+                  {copied ? 'Copied' : 'Copy address'}
+                </button>
+                <a
+                  className="header-wallet-action"
+                  href={`https://stellar.expert/explorer/testnet/account/${walletAddress}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Icon name="external" />
+                  Explorer
+                </a>
+              </div>
+            </div>
+          </details>
+        ) : (
+          <span className="header-wallet-trigger is-disconnected" role="status">
+            <Icon name="wallet" />
+            <span className="header-wallet-address">Not connected</span>
+          </span>
+        )}
       </div>
     </header>
   )

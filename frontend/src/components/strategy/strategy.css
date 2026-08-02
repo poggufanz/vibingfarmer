@@ -277,6 +277,54 @@
   color: var(--pc-muted);
 }
 
+.pc-vault-advisor {
+  display: grid;
+  gap: var(--pc-space-2);
+  padding-top: var(--pc-space-6);
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-vault-advisor-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--pc-space-4);
+}
+
+.pc-vault-advisor-head .pc-aside-title {
+  margin-bottom: var(--pc-space-2);
+}
+
+.pc-vault-advisor-status {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin: 0;
+  font-size: var(--pc-type-body-small);
+  font-weight: 650;
+}
+
+.pc-vault-advisor-status > span {
+  width: var(--pc-space-2);
+  height: var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-focus);
+}
+
+.pc-vault-advisor-detail {
+  margin: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  line-height: 1.5;
+}
+
+.pc-vault-advisor-action {
+  flex: none;
+  min-height: var(--pc-touch-target);
+  padding-inline: var(--pc-space-4);
+  font-size: var(--pc-type-label);
+}
+
 /* Surface hierarchy. These are roles, not a reusable card grid. */
 .pc-dominant {
   position: relative;
@@ -800,6 +848,16 @@
   gap: var(--pc-space-2);
 }
 
+.pc-comfort-group .pc-button {
+  min-height: var(--pc-touch-target);
+  padding-inline: var(--pc-space-4);
+  font-size: var(--pc-type-label);
+}
+
+.pc-amount-presets + .pc-comfort-group {
+  margin-top: var(--pc-space-5);
+}
+
 .pc-field-help,
 .pc-field-error {
   margin: 0;
@@ -810,8 +868,76 @@
   color: var(--pc-muted);
 }
 
+.pc-amount-presets ~ .pc-field-help {
+  margin-bottom: var(--pc-space-4);
+}
+
+.pc-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-4);
+}
+
+.pc-plan-actions .pc-button {
+  min-height: var(--pc-touch-target);
+  padding-inline: var(--pc-space-5);
+  font-size: var(--pc-type-label);
+}
+
 .pc-field-error {
   color: var(--pc-danger);
+}
+
+.pc-plan-building .pc-status-notice {
+  border-width: 2px;
+}
+
+.pc-protect-failure .pc-status-notice,
+.pc-protect-failure .pc-button {
+  border-width: 2px;
+}
+
+.pc-protect-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-4);
+}
+
+.pc-plan-building-copy {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pc-space-4);
+  margin-bottom: var(--pc-space-3);
+}
+
+.pc-plan-building-message {
+  margin: 0;
+  font-weight: 650;
+}
+
+.pc-plan-building-elapsed {
+  min-width: 5ch;
+  color: var(--pc-owned-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-plan-building-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin: 0;
+}
+
+.pc-plan-building-progress .think-spin {
+  width: var(--pc-space-4);
+  height: var(--pc-space-4);
+  margin-left: 0;
+  border-width: 2px;
+  border-color: var(--pc-owned-muted);
+  border-top-color: var(--pc-harvest-ink);
 }
 
 /* Fix loop 1 -- I4/M4: the amount input previously carried only an aria-label (no visible
@@ -850,7 +976,7 @@
 
 .pc-amount-preset {
   min-height: var(--pc-touch-target);
-  padding: 0 var(--pc-space-4);
+  padding: 0 var(--pc-space-3);
   border: 1px solid rgb(23 37 31 / 30%);
   border-radius: var(--pc-radius-round);
   background: transparent;
@@ -885,6 +1011,13 @@
  * -- the locked `.pc-button--primary`/`.pc-dominant--decision` rules above are untouched. */
 .pc-dominant--decision .pc-button--primary {
   background-color: var(--pc-field);
+  color: var(--pc-rice);
+}
+
+.pc-dominant--decision
+  .pc-button--primary:where(:hover, :focus-visible):not(:disabled):not([aria-disabled='true']) {
+  border-color: var(--pc-field);
+  background-color: var(--pc-grove);
   color: var(--pc-rice);
 }
 
@@ -957,6 +1090,9 @@
   align-items: center;
   gap: 7px;
   min-height: 28px;
+  padding-inline: var(--pc-space-3);
+  border: 2px solid currentcolor;
+  border-radius: var(--pc-radius-round);
   color: inherit;
   font-size: var(--pc-type-label);
   font-weight: 620;
@@ -988,6 +1124,64 @@
   margin-bottom: var(--pc-space-4);
 }
 
+.pc-plan-summary-header .pc-money-freshness {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-left: var(--pc-space-2);
+  padding-inline: var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-field);
+  color: var(--pc-rice);
+  font-weight: 700;
+}
+
+.pc-plan-facts .network-badge,
+.pc-agent-lanes--review .network-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  min-height: 32px;
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border: 2px solid var(--pc-field);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-field);
+  color: var(--pc-rice);
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+.pc-plan-facts .network-mark,
+.pc-agent-lanes--review .network-mark {
+  display: block;
+  flex: none;
+  filter: brightness(0) invert(1);
+}
+
+.pc-plan-facts p {
+  margin: 0;
+}
+
+.pc-plan-yield-note {
+  width: fit-content;
+  margin: calc(-1 * var(--pc-space-2)) 0 var(--pc-space-5);
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border-left: 3px solid var(--pc-field);
+  color: var(--pc-owned-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+.pc-dominant--decision .pc-allocation-row {
+  border-bottom-width: 2px;
+  border-bottom-color: rgb(23 37 31 / 38%);
+}
+
+.pc-dominant--decision .pc-technical-details {
+  border-width: 2px;
+  border-color: rgb(23 37 31 / 38%);
+}
+
 /* Item 5 (owner report): the crew avatar previously centered against the WHOLE (tall,
  * multi-line) row via the locked `.pc-allocation-row`'s own `align-items: center` above --
  * floating in the middle of a block far taller than its own header line, reading as unattached to
@@ -995,8 +1189,65 @@
  * leads each row's content, without touching the locked row rule itself (new descendant selector,
  * only affects the mark).
  */
-.pc-allocation-row > .pc-agent-mark {
+.pc-allocation-row > .pc-agent-mark,
+.pc-allocation-row > .pc-plan-agent-avatar {
   align-self: start;
+}
+
+.pc-plan-agent-avatar {
+  display: block;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--pc-radius-control);
+}
+
+.pc-agent-lanes--review {
+  margin-top: var(--pc-space-8);
+  border-radius: var(--pc-radius-dominant);
+  padding: var(--pc-dominant-padding);
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+  box-shadow: var(--pc-shadow-dominant);
+}
+
+.pc-agent-lanes--review .pc-agent-lane {
+  grid-template-columns: auto minmax(0, 1fr);
+  padding-block: var(--pc-space-5);
+  border-bottom-width: 2px;
+  border-bottom-color: rgb(23 37 31 / 38%);
+}
+
+.pc-agent-lanes--review .pc-agent-lane:first-child {
+  padding-top: 0;
+}
+
+.pc-agent-lanes--review .pc-agent-lane:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.pc-agent-lanes--review .pc-agent-lane > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--pc-space-2);
+}
+
+.pc-agent-lanes--review p {
+  margin: 0;
+}
+
+.pc-protect-agent-avatar {
+  display: block;
+  width: 44px;
+  height: 44px;
+  align-self: start;
+  border-radius: var(--pc-radius-control);
+}
+
+.pc-agent-lanes--review .pc-technical-details {
+  margin-top: var(--pc-space-2);
+  border-width: 2px;
+  border-color: rgb(23 37 31 / 38%);
 }
 
 .pc-worker-name {
@@ -1036,8 +1287,93 @@
  * with the card's own money-first scale. */
 .pc-accept-plan-button {
   width: 100%;
-  margin-top: var(--pc-space-6);
+  min-width: 0;
   font-size: var(--pc-type-body);
+}
+
+.pc-plan-final-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+  gap: var(--pc-space-3);
+  align-items: stretch;
+  margin-top: var(--pc-space-6);
+}
+
+.pc-plan-final-actions--single {
+  grid-template-columns: 1fr;
+}
+
+.pc-plan-change-menu {
+  position: relative;
+}
+
+.pc-plan-change-menu > summary {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding-inline: var(--pc-space-2);
+  list-style: none;
+  font-size: var(--pc-type-label);
+  white-space: nowrap;
+}
+
+.pc-plan-change-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pc-plan-change-menu > summary::after {
+  content: '⌄';
+  margin-left: var(--pc-space-2);
+}
+
+.pc-plan-change-options {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--pc-space-2));
+  z-index: 2;
+  display: grid;
+  gap: var(--pc-space-2);
+  min-width: 200px;
+  padding: var(--pc-space-2);
+  border: 2px solid var(--pc-field);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-rice);
+  color: var(--pc-field);
+}
+
+.pc-plan-change-options .pc-button {
+  width: 100%;
+  min-width: 0;
+}
+
+.pc-plan-reset-button {
+  border-width: 2px;
+  border-color: var(--pc-danger-on-light);
+  color: var(--pc-danger-on-light);
+}
+
+.pc-protect-check-button {
+  margin-top: var(--pc-space-4);
+}
+
+.pc-protect-review-summary {
+  display: grid;
+  gap: var(--pc-space-2);
+  margin-bottom: var(--pc-space-5);
+}
+
+.pc-protect-review-summary p {
+  margin: 0;
+}
+
+.pc-protect-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+}
+
+.pc-strategy-layout .pc-dialog-panel {
+  border: 2px solid var(--pc-line-strong);
 }
 
 /* Tablet. Supporting context moves below the dominant surface. */

@@ -53,6 +53,10 @@ const NETWORKS = {
     // live at cutover — spec §7). blendUsdc = the pool's USDC reserve (same SAC as `token`).
     blendPool: 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF',
     blendUsdc: 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU',
+    cctpTokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+    cctpUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    cctpStellarDomain: 27,
+    cctpBaseDomain: 6,
     // Autofarm vault + strategy (vf-autofarm) — strategy-registry-capable wasm. This is the app's
     // LIVE deposit target (see SOROBAN_ACTIVE_VAULT_ADDRESS): shares are exchange-rate priced
     // (price_per_share ≠ 1:1) — convert shares via pps for every USDC display. The relay's
@@ -78,6 +82,10 @@ const NETWORKS = {
     exitRouter: null,
     blendPool: null,
     blendUsdc: null,
+    cctpTokenMessengerMinter: null,
+    cctpUsdcSac: null,
+    cctpStellarDomain: null,
+    cctpBaseDomain: null,
     autofarmVault: null,
     strategy1: null,
     keeper: null,
@@ -97,6 +105,13 @@ const pick = (envKey, field) => {
       `stellar config: ${STELLAR_NETWORK} value for ${field} unfilled (set ${envKey})`
     )
   return v
+}
+
+const pickInteger = (envKey, field) => {
+  const value = Number(pick(envKey, field))
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new Error(`stellar config: ${envKey} must be a non-negative integer`)
+  return value
 }
 
 export const NETWORK_PASSPHRASE = pick('VITE_STELLAR_PASSPHRASE', 'passphrase')
@@ -134,6 +149,16 @@ export const SOROBAN_DECIMALS = 7
 export const TX_TIMEBOUND_SECONDS = 300
 export const SOROBAN_BLEND_POOL_ADDRESS = pick('VITE_SOROBAN_BLEND_POOL_ADDRESS', 'blendPool')
 export const SOROBAN_BLEND_USDC_ADDRESS = pick('VITE_SOROBAN_BLEND_USDC_ADDRESS', 'blendUsdc')
+export const STELLAR_TOKEN_MESSENGER_MINTER = pick(
+  'VITE_STELLAR_TOKEN_MESSENGER_MINTER',
+  'cctpTokenMessengerMinter'
+)
+export const STELLAR_USDC_SAC = pick('VITE_STELLAR_USDC_SAC', 'cctpUsdcSac')
+export const CCTP_STELLAR_DOMAIN = pickInteger(
+  'VITE_CCTP_STELLAR_DOMAIN',
+  'cctpStellarDomain'
+)
+export const CCTP_BASE_DOMAIN = pickInteger('VITE_CCTP_BASE_DOMAIN', 'cctpBaseDomain')
 export const SOROBAN_AUTOFARM_VAULT_ADDRESS = pick(
   'VITE_SOROBAN_AUTOFARM_VAULT_ADDRESS',
   'autofarmVault'

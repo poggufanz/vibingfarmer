@@ -75,14 +75,24 @@ export function classifyLifeboatAutomation({ derisked, mandateExpiry, authority,
   // 3, review loop 1 — this is the exact shape a failed upstream read carries: `derisked: false`,
   // `mandateExpiry: null`, which used to slip past a guard that only fired when BOTH were null).
   if (derisked === true) {
-    return { state: 'engaged', authority: authority ?? null, scope: 'vault-wide' }
+    return {
+      state: 'engaged',
+      authority: authority ?? null,
+      mandateExpiry: mandateExpiry ?? null,
+      scope: 'vault-wide',
+    }
   }
   if (mandateExpiry == null) {
-    return { state: 'unavailable', authority: authority ?? null, scope: 'vault-wide' }
+    return {
+      state: 'unavailable',
+      authority: authority ?? null,
+      mandateExpiry: null,
+      scope: 'vault-wide',
+    }
   }
   const nowS = Math.floor((now ?? Date.now()) / 1000)
   const state = mandateExpiry > nowS ? 'armed' : 'disarmed'
-  return { state, authority: authority ?? null, scope: 'vault-wide' }
+  return { state, authority: authority ?? null, mandateExpiry, scope: 'vault-wide' }
 }
 
 /**

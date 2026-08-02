@@ -210,7 +210,7 @@ describe('Sidebar', () => {
 })
 
 describe('TopBar', () => {
-  const baseProps = { onReset: () => {}, railCollapsed: false, onToggleRail: () => {} }
+  const baseProps = { onReset: () => {} }
 
   it('renders a NetworkBadge with the visible "Stellar testnet" label', () => {
     render(<TopBar {...baseProps} />)
@@ -220,6 +220,56 @@ describe('TopBar', () => {
   it('renders the brand as a BrandLockup', () => {
     const { container } = render(<TopBar {...baseProps} />)
     expect(container.querySelector('.pc-brand-lockup')).toBeTruthy()
+  })
+
+  it('renders the connected wallet account control in the header without an info-rail toggle', () => {
+    const address = `G${'A'.repeat(55)}`
+    const { container } = render(
+      <TopBar
+        {...baseProps}
+        walletPhase="upgraded"
+        walletAddress={address}
+        walletLabel="GAAAAA…AAAA"
+      />
+    )
+    expect(screen.getByText('GAAAAA…AAAA')).toBeTruthy()
+    expect(screen.getByText('Session keys active')).toBeTruthy()
+    expect(container.querySelector('.header-wallet-action[href]').getAttribute('href')).toContain(
+      address
+    )
+    expect(screen.queryByRole('button', { name: /info panel/i })).toBeNull()
+  })
+
+  it('keeps the connected account control inside a 320px header', async () => {
+    const { container } = render(
+      <TopBar
+        {...baseProps}
+        walletPhase="upgraded"
+        walletAddress={`G${'A'.repeat(55)}`}
+        walletLabel="GAAAAA…AAAA"
+      />
+    )
+    const browser = await launchRealChromium()
+    try {
+      const page = await browser.newPage()
+      await page.setViewportSize({ width: 320, height: 800 })
+      await page.setContent(
+        `<!doctype html><html><head><meta charset="utf-8"><style>${LEGACY_STYLESHEET}</style></head>` +
+          `<body><div class="app sb-minimized"><main class="main">${container.innerHTML}</main></div></body></html>`
+      )
+      const metrics = await page.evaluate(() => {
+        const topbar = document.querySelector('.topbar')
+        return {
+          pageWidth: document.documentElement.scrollWidth,
+          topbarWidth: topbar.scrollWidth,
+          topbarClientWidth: topbar.clientWidth,
+        }
+      })
+      expect(metrics.pageWidth).toBe(320)
+      expect(metrics.topbarWidth).toBeLessThanOrEqual(metrics.topbarClientWidth)
+    } finally {
+      await browser.close()
+    }
   })
 
   it('renames the flow-restart icon button so it never collides with the Sidebar\'s "New deposit" navigation label', () => {

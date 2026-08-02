@@ -157,14 +157,6 @@ const EcosystemPage = lazy(() => import('./components/EcosystemPage.jsx'))
 const ReplayPage = lazy(() => import('./components/ReplayPage.jsx'))
 const DevelopersLayout = lazy(() => import('./developers/DevelopersLayout.jsx'))
 import SettingsPage from './components/SettingsPage.jsx'
-import {
-  WalletPanel,
-  PermissionPanel,
-  ActivityPanel,
-  SkillPanel,
-  PalettePicker,
-  PALETTES,
-} from './components/RightRail.jsx'
 import { loadSettings, saveSetting } from './settingsStore.js'
 import { clearUserSkill } from './skillLoader.js'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
@@ -1378,6 +1370,8 @@ const App = () => {
   // keeper events below (keeperLedgerRef), never a second interval.
   const [keeperActivity, setKeeperActivity] = useS([]) // newest-first, capped — feeds KeeperPanel
   const [lifeboatState, setLifeboatState] = useS(null) // {derisked, mandateExpiry, authority} | null
+  const lifeboatStateRef = useR(lifeboatState)
+  lifeboatStateRef.current = lifeboatState
   // My Money Task 13 Part B: `lifeboatActivity` (a second, derisk/resume/mandate-only activity
   // log) and `lifeboatBusy`/`rebalancePulse` (a mandate-grant spinner and a force-graph edge pulse)
   // are removed -- OpsConsole's LifeboatPanel/AgentGraph were their only readers, both retired.
@@ -1392,27 +1386,12 @@ const App = () => {
   const [baseWithdraw, setBaseWithdraw] = useS(null)
   const [baseWithdrawError, setBaseWithdrawError] = useS(null)
 
-  // 2026-08-02 polish (audit items #10/#11): for a first-time user the shell used to open with an
-  // icon-ONLY sidebar (labels rendered but opacity-hidden until the toggle was discovered) AND the
-  // legacy right rail OPEN (jargon panels competing with the Pocket Crew route composition --
-  // 2026-07-22 spec §13.1: no persistent right rail beside the current decision). New sessions now
-  // default to labeled navigation and a collapsed rail; both toggles remain, and any explicitly
-  // stored choice still wins (nothing here rewrites an existing preference).
+  // New sessions default to labeled navigation; the legacy secondary rail no longer exists.
   const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') !== 'false')
-  const [railCollapsed, setRailCollapsed] = useS(
-    () => localStorage.getItem('yv_rail_collapsed') !== 'false'
-  )
 
   const toggleSb = () => {
     setSbExtended((prev) => {
       localStorage.setItem('yv_sb_extended', String(!prev))
-      return !prev
-    })
-  }
-
-  const toggleRail = () => {
-    setRailCollapsed((prev) => {
-      localStorage.setItem('yv_rail_collapsed', String(!prev))
       return !prev
     })
   }
@@ -2649,14 +2628,45 @@ const App = () => {
   const crewDecisions = useM(() => selectCrewDecisions(logs), [logs])
 
   function moneyProtectionSnapshot() {
-    if (!lifeboatState) return null
+    const state = lifeboatStateRef.current
+    if (!state) return null
     return classifyLifeboatAutomation({
+      derisked: state.derisked,
+      mandateExpiry: state.mandateExpiry,
+      authority: state.authority,
+      now: Date.now(),
+    })
+  }
+
+  useE(() => {
+    if (!realAddress || !lifeboatState) return
+    const protection = classifyLifeboatAutomation({
       derisked: lifeboatState.derisked,
       mandateExpiry: lifeboatState.mandateExpiry,
       authority: lifeboatState.authority,
       now: Date.now(),
     })
-  }
+    const cache = moneyCacheRef.current
+    if (
+      cache.protection?.state === protection.state &&
+      cache.protection?.authority === protection.authority &&
+      cache.protection?.mandateExpiry === protection.mandateExpiry
+    )
+      return
+    const nextCache = { ...cache, protection }
+    moneyCacheRef.current = nextCache
+    saveMoneyCache(realAddress, nextCache)
+    setMoneyModel(
+      buildMyMoneyModel({
+        owner: realAddress,
+        discovery: nextCache.discovery ?? null,
+        money: nextCache.money ?? null,
+        protection,
+        cache: nextCache,
+        now: Date.now(),
+      })
+    )
+  }, [lifeboatState, realAddress])
 
   // Read-only refresh: discovery -> money -> model, guarded by guardedMoneyFetch/
   // shouldCommitMoneyFetch so a wallet switch or a newer mutating action (bumped moneyRevisionRef)
@@ -3935,6 +3945,10 @@ const App = () => {
         onConnectForBase={onConnectForBase}
         onSetupBase={onSetupBase}
         onRebuildPlan={onRebuildPlan}
+        skillSource={skillSource}
+        marketLive={marketLive}
+        vaultLive={vaultLive}
+        onCustomizeSkill={() => setSkillDrawerOpen(true)}
         protectProps={{
           owner: realAddress,
           baseMandateView: baseView.mandateView,
@@ -4275,17 +4289,16 @@ const App = () => {
   ).length
 
   return (
-    <div
-      className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'} ${railCollapsed ? 'rail-collapsed' : ''}`}
-    >
+    <div className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'}`}>
       <SkipLink />
       <Sidebar extended={sbExtended} onToggle={toggleSb} agentCount={activeAgentCount} />
       <main id="main-content" className="main" tabIndex={-1}>
         <RouteFocus pathname={location.pathname} />
         <TopBar
           onReset={handleAgain}
-          railCollapsed={railCollapsed}
-          onToggleRail={toggleRail}
+          walletPhase={walletPhase}
+          walletAddress={realAddress}
+          walletLabel={shortAddr(realAddress)}
           notifications={
             <NotificationCenter
               alerts={agentData.alerts}
@@ -4493,23 +4506,6 @@ const App = () => {
           onRetry={handleRetrySubmission}
         />
       </main>
-      <aside className="rail">
-        <WalletPanel phase={walletPhase} address={realAddress} />
-        <PermissionPanel
-          active={permActive}
-          strategy={strategy}
-          onRevoke={handleRevoke}
-          expiresAt={permExpiresAt}
-        />
-        <ActivityPanel logs={logs} />
-        <SkillPanel
-          skillSource={skillSource}
-          marketLive={marketLive}
-          vaultLive={vaultLive}
-          onCustomize={() => setSkillDrawerOpen(true)}
-        />
-      </aside>
-
       <SkillDrawer
         open={skillDrawerOpen}
         onClose={() => setSkillDrawerOpen(false)}
@@ -4548,7 +4544,15 @@ const App = () => {
       {devMode && (
         <TweaksPanel title="Tweaks">
           <TweakSection label="Brand palette" />
-          <PalettePicker value={normalizedTheme} onChange={(v) => setTweak('palette', v)} />
+          <TweakRadio
+            label="Palette"
+            value={normalizedTheme}
+            options={[
+              { value: 'forest', label: 'Forest' },
+              { value: 'day-field', label: 'Day Field' },
+            ]}
+            onChange={(v) => setTweak('palette', v)}
+          />
 
           <TweakSection label="Demo speed" />
           <TweakRadio

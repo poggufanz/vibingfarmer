@@ -9,6 +9,8 @@ import {
 import { normalizeVenue } from './venueTruth.js'
 
 const STELLAR_DESTINATION = normalizeVenue({}).destination
+const DEPOSIT_TOKEN = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
+const BRIDGE_TOKEN = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
 const U = (usdc) => BigInt(Math.round(usdc * 1e7)) // Stellar 7dp base units
 const B = (usdc) => BigInt(Math.round(usdc * 1e6)) // Base 6dp base units
 
@@ -105,6 +107,20 @@ describe('expandAgentSlots', () => {
     expect(bridges).toHaveLength(1)
     expect(deposits.length).toBeLessThanOrEqual(2)
     expect(agents.length).toBeLessThanOrEqual(3)
+  })
+
+  it('keeps deposit and bridge contract addresses distinct in a mixed plan', () => {
+    const agents = expandAgentSlots({
+      runId: 'run-token-addresses',
+      risk: 'high',
+      token: DEPOSIT_TOKEN,
+      bridgeToken: BRIDGE_TOKEN,
+      stellarUnits: U(100),
+      baseAllocations: [baseChild()],
+    })
+
+    expect(agents.find((agent) => agent.kind === 'deposit').cap.token).toBe(DEPOSIT_TOKEN)
+    expect(agents.find((agent) => agent.kind === 'bridge').cap.token).toBe(BRIDGE_TOKEN)
   })
 
   // Required test 5
