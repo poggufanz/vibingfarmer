@@ -64,6 +64,39 @@
 // `.pc-wallet-tab`) for the beginner Home/Activity/Settings navigation model, built entirely from
 // already-ported tokens and excluded from the manifest guard (no contract rule to have a
 // counterpart to), the same treatment `.bk-prog-*` already established below.
+//
+// 2026-08-02 compact density pass (owner-directed): the contract-ported rules keep their verbatim
+// values; the wallet surface's compact sizing (40px controls, 30px balance, 20px h1, tighter
+// gaps/padding, 56px asset rows, 32px token icons, 48px header) ships as a single scoped override
+// block at the end of STYLE -- the same "separate, additional, scoped rules with a comment"
+// convention this file already uses for its other intentional deviations. The same pass adds three
+// more contract-less inventions, excluded from the manifest guard for the usual reason: per-tab
+// stroke icons in the bottom nav (keyed by tab id, mobile-style icon-over-label), a right-aligned
+// amount column for the asset list, and `.pc-visually-hidden` for the new `headingHidden` prop
+// (Home keeps exactly one h1 for the a11y freeze but no longer paints it -- the bottom tab
+// already tells the user where they are).
+
+// Stroke icons for the bottom tab bar, keyed by tab id (unknown ids render label-only). Feather-
+// style 24px viewBox, drawn with currentColor so the tab's own ink/muted/harvest color applies.
+// aria-hidden: the visible label right below already names the destination. NOTE: this block must
+// stay ABOVE `const STYLE` -- WalletShell.test.jsx's manifest drift guard locates the STYLE
+// template literal by the exact marker "backtick + blank line + export function WalletShell", so
+// nothing may sit between the end of STYLE and the component.
+const TAB_ICONS = {
+  home: (
+    <>
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <polyline points="9 22 9 12 15 12 15 22" />
+    </>
+  ),
+  activity: <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />,
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </>
+  ),
+}
 
 const STYLE = `
 .pc-wallet {
@@ -255,7 +288,8 @@ const STYLE = `
   cursor: pointer;
 }
 
-.pc-wallet-tab[aria-current='page'] { color: var(--pc-ink); }
+/* Active tab uses the harvest accent (mobile-wallet convention), not plain ink. */
+.pc-wallet-tab[aria-current='page'] { color: var(--pc-harvest); }
 
 .pc-brand-lockup {
   display: inline-flex;
@@ -506,6 +540,43 @@ svg.vf-token-icon { display: block; overflow: hidden; }
   box-shadow: 0 0 0 5px var(--pc-focus-contrast);
 }
 
+/* 2026-08-02 compact density pass (owner-directed) -- scoped overrides, NOT edits of the ported
+   rules above: every ported value stays byte-identical to the contract and these later,
+   equal-or-higher-specificity rules win the cascade by source order. Redefining
+   --pc-control-height here (48px -> 40px) compacts .pc-button and .pc-input together since both
+   read the same token. */
+.pc-wallet { --pc-control-height: 40px; }
+.pc-wallet-header { min-height: 48px; }
+.pc-wallet-main { gap: var(--pc-space-4); padding: var(--pc-space-4) 18px var(--pc-space-5); }
+.pc-wallet h1 { font-size: 20px; }
+.pc-wallet-balance { font-size: 30px; }
+.pc-row { min-height: 56px; padding-block: var(--pc-space-3); }
+.vf-token-icon { width: 32px; height: 32px; font-size: 10px; }
+
+/* Asset list: the amount column (balance over USD value) right-aligns so the numbers line up
+   across rows; the icon/code/name columns stay left-aligned. Scoped to .pc-asset-list -- .pc-row
+   is shared with the account picker, which has no amount column. */
+.pc-asset-list .pc-row > :last-child { text-align: right; }
+
+/* Bottom nav, mobile-style icon-over-label: slightly smaller label than the ported
+   --pc-type-label, icon box fixed so all three tabs share one geometry. */
+.pc-wallet-tab { font-size: 11px; }
+.pc-wallet-tab svg { display: block; width: 20px; height: 20px; }
+
+/* Standard screen-reader-only pattern: keeps the element in the accessibility tree (the a11y
+   freeze's exactly-one-h1 guard still sees it) while painting nothing. */
+.pc-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 @media (max-width: 359px) {
   .pc-wallet { width: 100vw; min-width: 320px; }
   .pc-wallet-main { padding-inline: 16px; }
@@ -552,6 +623,10 @@ svg.vf-token-icon { display: block; overflow: hidden; }
 
 export function WalletShell({
   heading,
+  // 2026-08-02: when true the h1 still renders (the a11y freeze's exactly-one-h1-per-screen
+  // guard and screen readers keep it) but paints nothing -- WalletHome uses this because the
+  // bottom tab bar already tells the user they are on Home.
+  headingHidden = false,
   children,
   account = null,
   onBack = null,
@@ -562,7 +637,9 @@ export function WalletShell({
   // Home/Activity/Settings -- see WalletHome.jsx/WalletActivity.jsx). Shape: { tabs: [{id,
   // label}], active: id, onNav: fn }. Omitted by every onboarding/account-choice screen (the
   // VFW9 surface this component originally shipped for) -- backward compatible, renders nothing
-  // extra when absent, so none of WalletShell.test.jsx's existing assertions change.
+  // extra when absent, so none of WalletShell.test.jsx's existing assertions change. Tabs whose
+  // id has a TAB_ICONS entry render that stroke icon above the label (2026-08-02 mobile-style
+  // pass); unknown ids stay label-only.
   nav = null,
 }) {
   return (
@@ -594,7 +671,7 @@ export function WalletShell({
               </span>
             </p>
           )}
-          <h1>{heading}</h1>
+          <h1 className={headingHidden ? 'pc-visually-hidden' : undefined}>{heading}</h1>
           {children}
           <p
             role="status"
@@ -615,6 +692,19 @@ export function WalletShell({
                 aria-current={tab.id === nav.active ? 'page' : undefined}
                 onClick={() => nav.onNav(tab.id)}
               >
+                {TAB_ICONS[tab.id] && (
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    {TAB_ICONS[tab.id]}
+                  </svg>
+                )}
                 {tab.label}
               </button>
             ))}

@@ -39,6 +39,23 @@ describe('WalletShell — trust anchor, network text, heading, account chip', ()
     expect(document.querySelectorAll('h1').length).toBe(1)
   })
 
+  // 2026-08-02 compact pass: headingHidden must keep the h1 in the accessibility tree (the
+  // WalletA11y.test.jsx exactly-one-h1 freeze still counts it) while opting out of painting it.
+  it('headingHidden keeps the h1 in the tree but marks it visually hidden', () => {
+    render(
+      <WalletShell heading="Home" headingHidden>
+        content
+      </WalletShell>
+    )
+    const h1 = screen.getByRole('heading', { level: 1, name: 'Home' })
+    expect(h1.className).toBe('pc-visually-hidden')
+  })
+
+  it('renders a visible (unclassed) h1 by default', () => {
+    render(<WalletShell heading="Home">content</WalletShell>)
+    expect(screen.getByRole('heading', { level: 1, name: 'Home' }).className).toBe('')
+  })
+
   it('always shows the literal Stellar testnet network text', () => {
     render(<WalletShell heading="x">content</WalletShell>)
     expect(screen.getByText('Stellar testnet')).toBeTruthy()
@@ -189,8 +206,10 @@ describe('WalletShell — rejection-checklist items 6/7 (source-parse, mutation-
 // somewhere applicable), not exact value equality -- exact values are a separate, harder problem
 // (contractTokens.test.js already owns token values; VF Wallet Task 9 fix loop 1's manual census
 // already covers this file's declared values) and value-diffing would reintroduce false positives
-// for legitimate partial ports (this file only ever renders `<img>` logos, never inline `<svg>`,
-// so `.pc-brand-lockup img, .pc-brand-lockup svg` is satisfied by the `img` half alone). Presence
+// for legitimate partial ports (the brand lockup only ever renders `<img>` logos -- the
+// bottom-nav tab icons added in the 2026-08-02 compact pass are inline `<svg>`, but no manifest
+// entry targets them -- so `.pc-brand-lockup img, .pc-brand-lockup svg` is satisfied by the `img`
+// half alone). Presence
 // is exactly what the two historical bugs needed and didn't have: the font-family and
 // color-scheme rules were not "wrong value," they were ABSENT.
 describe('WalletShell — contract manifest drift guard: every manifest entry has a shipped counterpart (VF Wallet Task 10, Part A1)', () => {
@@ -340,5 +359,30 @@ describe('WalletShell — optional bottom nav (VF Wallet Task 10)', () => {
     fireEvent.click(screen.getByText('Activity'))
     expect(onNav).toHaveBeenCalledTimes(1)
     expect(onNav).toHaveBeenCalledWith('activity')
+  })
+
+  // 2026-08-02 compact pass: known tab ids render a decorative stroke icon above the label.
+  // The icon is aria-hidden and contributes no text, so the label-text assertions above are
+  // unaffected; an unknown id stays label-only (no broken empty icon).
+  it('renders an aria-hidden icon inside each known tab, none for unknown ids', () => {
+    render(
+      <WalletShell
+        heading="x"
+        nav={{
+          tabs: [...TABS, { id: 'mystery', label: 'Mystery' }],
+          active: 'home',
+          onNav: () => {},
+        }}
+      >
+        content
+      </WalletShell>
+    )
+    const bar = screen.getByRole('navigation')
+    for (const label of ['Home', 'Activity', 'Settings']) {
+      const svg = within(bar).getByText(label).querySelector('svg')
+      expect(svg).toBeTruthy()
+      expect(svg.getAttribute('aria-hidden')).toBe('true')
+    }
+    expect(within(bar).getByText('Mystery').querySelector('svg')).toBeNull()
   })
 })

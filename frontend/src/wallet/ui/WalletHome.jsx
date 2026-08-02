@@ -39,6 +39,10 @@ export function WalletHome({
   return (
     <WalletShell
       heading="Home"
+      // 2026-08-02 compact pass: the h1 stays in the a11y tree but paints nothing -- the bottom
+      // tab bar already tells the user they are on Home, and the vertical space goes to the
+      // balance instead.
+      headingHidden
       account={account}
       status={status}
       nav={{ tabs: NAV_TABS, active: 'home', onNav }}
