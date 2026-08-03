@@ -7,6 +7,7 @@
 import { describe, test, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { SkillReviewCard } from './skills.jsx'
+import { baseOwnerStorageKey } from './wallet/baseBinding.js'
 
 afterEach(() => {
   cleanup()
@@ -50,9 +51,24 @@ describe('SkillCard passkey-setup disclosure (ceremony is universal, not VF-wall
     expect(screen.getByText(/one-time passkey setup/i)).toBeTruthy()
   })
 
-  test('hides the note once the ceremony has already run (vf_base_owner recorded), any wallet', () => {
-    localStorage.setItem('vf_base_owner', JSON.stringify({ address: '0xOWNER' }))
+  // VF Wallet Task 6: the disclosure gate reads the owner-scoped v2 record (wallet/baseBinding.js)
+  // now, not the old global vf_base_owner key — that key never recorded WHICH wallet ran the
+  // ceremony, so it could never be checked safely against the currently connected wallet.
+  test('hides the note once the ceremony has already run for THIS connected wallet (owner-scoped v2 record)', () => {
+    localStorage.setItem(
+      baseOwnerStorageKey('GVFWALLET'),
+      JSON.stringify({ version: 2, stellarOwner: 'GVFWALLET', kernelAddress: '0xOWNER' })
+    )
     renderCard('GVFWALLET')
     expect(screen.queryByText(/one-time passkey setup/i)).toBeNull()
+  })
+
+  test('a ceremony recorded for a DIFFERENT wallet still shows the note (no cross-wallet adoption)', () => {
+    localStorage.setItem(
+      baseOwnerStorageKey('GSOMEOTHERWALLET'),
+      JSON.stringify({ version: 2, stellarOwner: 'GSOMEOTHERWALLET', kernelAddress: '0xOWNER' })
+    )
+    renderCard('GVFWALLET')
+    expect(screen.getByText(/one-time passkey setup/i)).toBeTruthy()
   })
 })

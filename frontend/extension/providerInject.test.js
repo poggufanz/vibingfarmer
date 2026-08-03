@@ -96,6 +96,59 @@ describe('createVfWalletProvider', () => {
     await expect(pending).rejects.toMatchObject({ code: -4, message: 'User rejected the request' })
   })
 
+  it('dispatches vfWallet#accountChanged when providerBridge pushes an accountChanged event', () => {
+    const io = loopback()
+    io.listen = (fn) => {
+      io._handler = fn
+    }
+    const dispatchEvent = vi.fn()
+    createVfWalletProvider({ post: io.post, listen: io.listen, dispatchEvent })
+
+    io._handler({
+      source: window,
+      data: { channel: CHANNEL, dir: 'event', event: 'accountChanged', address: 'CNEW' },
+    })
+
+    expect(dispatchEvent).toHaveBeenCalledWith('vfWallet#accountChanged', { address: 'CNEW' })
+  })
+
+  it('accountChanged with no address (revoked/no account) still dispatches, address null', () => {
+    const io = loopback()
+    io.listen = (fn) => {
+      io._handler = fn
+    }
+    const dispatchEvent = vi.fn()
+    createVfWalletProvider({ post: io.post, listen: io.listen, dispatchEvent })
+
+    io._handler({
+      source: window,
+      data: { channel: CHANNEL, dir: 'event', event: 'accountChanged' },
+    })
+
+    expect(dispatchEvent).toHaveBeenCalledWith('vfWallet#accountChanged', { address: null })
+  })
+
+  it('an accountChanged push never resolves/rejects an in-flight call', async () => {
+    const io = loopback()
+    io.listen = (fn) => {
+      io._handler = fn
+    }
+    const provider = createVfWalletProvider({ post: io.post, listen: io.listen })
+    const pending = provider.getAddress()
+    const sent = io.post.mock.calls[0][0]
+
+    io._handler({
+      source: window,
+      data: { channel: CHANNEL, dir: 'event', event: 'accountChanged', address: 'CNEW' },
+    })
+    io._handler({
+      source: window,
+      data: { channel: CHANNEL, dir: 'res', id: sent.id, result: { address: 'CREAL' } },
+    })
+
+    expect(await pending).toEqual({ address: 'CREAL' })
+  })
+
   it('still rejects plain-string errors (legacy shape) without a code', async () => {
     const io = loopback()
     io.listen = (fn) => {

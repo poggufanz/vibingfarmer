@@ -240,7 +240,7 @@ async function main() {
   // ── [3] relayed router.pull — CCTP-USDC moves owner -> bridge agent, 0 popups ───────────────
   done = stage('[3] router.pull(bridgeAgent) — relayed, 0 gas')
   const pull = await runAgentPull({ agentAddress: bridgeAgent, amount: PULL_AMOUNT, sessionKey: bridgeSessionKey, server })
-  if (!pull || (pull.status !== 'SUCCESS' && pull.status !== 'PENDING')) {
+  if (!pull || pull.status !== 'SUCCESS') {
     throw new Error(`pull failed: ${jsonSafe(pull)}`)
   }
   const bridgeAgentUsdc = await pollUntil(

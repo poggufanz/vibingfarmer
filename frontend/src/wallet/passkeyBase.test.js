@@ -146,9 +146,15 @@ describe('createBaseSmartAccount', () => {
       throw new Error('sentinel: stop before signature encoding')
     })
     await expect(
-      signWithRpId('0xdeadbeef', 'vibing-farmer.pages.dev', 84532, [{ id: 'cred-1', type: 'public-key' }], {
-        startAuthenticationImpl,
-      })
+      signWithRpId(
+        '0xdeadbeef',
+        'vibing-farmer.pages.dev',
+        84532,
+        [{ id: 'cred-1', type: 'public-key' }],
+        {
+          startAuthenticationImpl,
+        }
+      )
     ).rejects.toThrow('sentinel')
     expect(captured.rpId).toBe('vibing-farmer.pages.dev')
     expect(captured.userVerification).toBe('required')

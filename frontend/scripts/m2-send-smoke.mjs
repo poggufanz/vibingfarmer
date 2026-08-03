@@ -37,7 +37,6 @@ import {
   xdr,
   hash,
   StrKey,
-  scValToNative,
   BASE_FEE,
   rpc,
 } from '@stellar/stellar-sdk'

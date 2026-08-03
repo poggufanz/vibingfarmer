@@ -8,7 +8,7 @@
 // reaction-time variance; the agentic leg is ONE deterministic value (first
 // block after signal) — no fake distribution for a near-instant action.
 //
-// Aesthetic: matches ExplorerPage — dark canvas, single acid accent, mono stats.
+// Aesthetic: matches ExplorerPage — dark canvas, single accent, mono for raw values only.
 
 import { useEffect, useState } from 'react'
 import NavBar from './NavBar.jsx'
@@ -334,22 +334,12 @@ function ReplayStyle() {
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  background: var(--bg-base, #0e0f0c);
-  color: var(--text, #ecebe1);
-  font-family: var(--font-body, "Geist", system-ui, sans-serif);
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-body);
 }
-.rp-page::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.016) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.016) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 20%, transparent 100%);
-}
+/* Grid-texture ::before removed: a linear-gradient pair masked by a radial-gradient is still
+   a gradient (contract rule 7 bans them outright), and it was decorative, not load-bearing. */
 
 .rp-main {
   position: relative;
@@ -360,58 +350,58 @@ function ReplayStyle() {
 }
 
 /* ---------- header ---------- */
-.rp-header { padding-bottom: clamp(2rem, 5vw, 3.4rem); border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); }
+.rp-header { padding-bottom: clamp(2rem, 5vw, 3.4rem); border-bottom: 1px solid var(--border); }
 .rp-header__top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .rp-title {
-  font-family: var(--font-display, "Geist", sans-serif);
+  font-family: var(--font-display);
   font-weight: 700;
   letter-spacing: -0.04em;
   line-height: 1;
   font-size: clamp(2.6rem, 7vw, 4.6rem);
-  color: var(--text, #ecebe1);
+  color: var(--text);
 }
 .rp-net {
   display: inline-flex;
   align-items: center;
   gap: 0.55ch;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.74rem;
   letter-spacing: 0.04em;
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
 }
 .rp-net__dot {
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--text-faint, #7a7a70);
+  background: var(--text-faint);
 }
 .rp-lede {
   margin-top: 1.1rem;
   max-width: 60ch;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: clamp(0.82rem, 1.1vw, 0.95rem);
   line-height: 1.7;
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
 }
 
 /* ---------- sections ---------- */
-.rp-section { padding: clamp(2.2rem, 5vw, 3.6rem) 0; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); }
+.rp-section { padding: clamp(2.2rem, 5vw, 3.6rem) 0; border-bottom: 1px solid var(--border); }
 .rp-section:last-of-type { border-bottom: none; }
 .rp-section__title {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--accent, #cfff3d);
+  color: var(--accent-text);
   margin-bottom: 0.6rem;
 }
 .rp-section__sub {
   display: block;
   margin: 0 0 1.5rem;
   max-width: 64ch;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.8rem;
   line-height: 1.6;
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
 }
 
 /* ---------- comparison hero cards ---------- */
@@ -423,8 +413,8 @@ function ReplayStyle() {
   margin-bottom: 2rem;
 }
 .rp-hero-card {
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
   padding: 1.5rem 1.3rem;
   display: flex;
   flex-direction: column;
@@ -433,65 +423,58 @@ function ReplayStyle() {
   overflow: hidden;
 }
 .rp-hero-card--manual {
-  background: var(--bg-card, #1a1b16);
+  background: var(--bg-card);
 }
+/* Was a lime linear-gradient fill + outer glow (contract rule 7 bans both). The accent border
+   alone now carries the "this is the highlighted leg" signal. */
 .rp-hero-card--agentic {
-  background: linear-gradient(145deg, rgba(207,255,61,0.06) 0%, var(--bg-card, #1a1b16) 60%);
-  border-color: rgba(207,255,61,0.2);
-  box-shadow: 0 0 40px -8px rgba(207,255,61,0.1);
+  background: var(--bg-card);
+  border-color: var(--accent);
 }
-.rp-hero-card--agentic::before {
-  content: '';
-  position: absolute;
-  top: -40%; right: -30%;
-  width: 180px; height: 180px;
-  background: radial-gradient(circle, rgba(207,255,61,0.08) 0%, transparent 70%);
-  pointer-events: none;
-}
+/* Floating radial-gradient blob (::before) deleted outright — contract rule 7 (no gradients). */
 .rp-hero-tag {
   display: inline-flex;
   align-items: center;
   gap: 0.5ch;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.62rem;
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
 }
 .rp-hero-dot {
   width: 6px; height: 6px; border-radius: 50%;
 }
-.rp-hero-dot--manual { background: var(--text-faint, #56564f); }
+.rp-hero-dot--manual { background: var(--text-faint); }
+/* Outer glow removed (contract rule 7) — the fill alone reads as the active leg. */
 .rp-hero-dot--agentic {
-  background: var(--accent, #cfff3d);
-  box-shadow: 0 0 6px rgba(207,255,61,0.5);
+  background: var(--accent);
 }
 .rp-hero-val {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: clamp(1.8rem, 3.5vw, 2.6rem);
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1;
-  color: var(--text, #ecebe1);
+  color: var(--text);
 }
+/* Gradient TEXT deleted (contract rule 7) — background-clip:text + transparent fill also left
+   the real 'color' unpainted, an accessibility hazard. Plain accent-text ink instead. */
 .rp-hero-card--agentic .rp-hero-val {
-  background: linear-gradient(135deg, var(--accent, #cfff3d), #e8ff8a);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--accent-text);
 }
 .rp-hero-unit {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.06em;
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
 }
 .rp-hero-sub {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.68rem;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
   margin-top: auto;
   padding-top: 0.5rem;
 }
@@ -510,32 +493,36 @@ function ReplayStyle() {
   font-size: 1.4rem;
   line-height: 1;
 }
-.rp-delta.positive .rp-delta-arrow { color: var(--accent, #cfff3d); }
-.rp-delta.negative .rp-delta-arrow { color: #ff6b6b; }
+.rp-delta.positive .rp-delta-arrow { color: var(--accent-text); }
+.rp-delta.negative .rp-delta-arrow { color: var(--danger); }
 .rp-delta-val {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 0.82rem;
   font-weight: 700;
   letter-spacing: -0.01em;
   text-align: center;
 }
-.rp-delta.positive .rp-delta-val { color: var(--accent, #cfff3d); }
-.rp-delta.negative .rp-delta-val { color: #ff6b6b; }
+.rp-delta.positive .rp-delta-val { color: var(--accent-text); }
+.rp-delta.negative .rp-delta-val { color: var(--danger); }
 .rp-delta-pct {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 0.7rem;
   font-weight: 600;
   padding: 0.15rem 0.5rem;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
-.rp-delta.positive .rp-delta-pct { background: rgba(207,255,61,0.1); color: var(--accent, #cfff3d); }
-.rp-delta.negative .rp-delta-pct { background: rgba(255,107,107,0.1); color: #ff6b6b; }
+/* No tint fill on these chips. A 10% wash of the chip's own colour shifts the effective background
+   just far enough toward the text to land the pair at 4.44:1 (Forest) / 4.49:1 (Day Field) --
+   measured, and under the 4.5:1 floor by a hair in both themes. The border already delimits the
+   chip, so dropping the fill is what buys the headroom back rather than nudging a brand colour. */
+.rp-delta.positive .rp-delta-pct { color: var(--accent-text); }
+.rp-delta.negative .rp-delta-pct { color: var(--danger); }
 .rp-delta-label {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.58rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
   text-align: center;
 }
 
@@ -544,9 +531,9 @@ function ReplayStyle() {
   display: flex;
   flex-direction: column;
   gap: 1.6rem;
-  background: rgba(255,255,255,0.015);
-  border: 1px solid var(--border, rgba(255,255,255,0.06));
-  border-radius: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   padding: 1.8rem 1.5rem;
   margin: 1.5rem 0 2rem;
 }
@@ -570,35 +557,35 @@ function ReplayStyle() {
 .rp-row-badge {
   display: inline-flex;
   align-self: flex-start;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.08em;
   padding: 0.25rem 0.55rem;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   line-height: 1;
   margin-bottom: 0.15rem;
 }
 .rp-row-badge--agentic {
-  background: rgba(207,255,61,0.1);
-  color: var(--accent, #cfff3d);
-  border: 1px solid rgba(207,255,61,0.25);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-text);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .rp-row-badge--manual {
-  background: rgba(255,255,255,0.04);
-  color: var(--text-muted, #95958a);
-  border: 1px solid rgba(255,255,255,0.08);
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
 }
 .rp-row-title {
-  font-family: var(--font-display, "Geist", sans-serif);
+  font-family: var(--font-display);
   font-size: 13.5px;
   font-weight: 600;
-  color: var(--text, #ecebe1);
+  color: var(--text);
 }
 .rp-row-desc {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 9.5px;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
 }
 .rp-chart-bar-col {
   position: relative;
@@ -610,13 +597,13 @@ function ReplayStyle() {
   position: relative;
   width: 100%;
   height: 28px;
-  background: rgba(255,255,255,0.02);
-  border-radius: 6px;
-  border: 1px solid var(--border, rgba(255,255,255,0.06));
+  background: var(--bg-elev);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
 }
 .rp-bar {
   height: 100%;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -625,34 +612,35 @@ function ReplayStyle() {
   position: relative;
   z-index: 2;
 }
+/* Fill gradient + outer glow removed (contract rule 7). A flat accent fill still reads as the
+   highlighted leg against the manual bar's neutral fill below. */
 .rp-bar--agentic {
-  background: linear-gradient(90deg, rgba(207,255,61,0.25) 0%, var(--accent, #cfff3d) 100%);
-  border: 1px solid rgba(207,255,61,0.5);
-  box-shadow: 0 0 20px rgba(207,255,61,0.15);
+  background: var(--accent);
+  border: 1px solid var(--accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .rp-bar { transition: none; }
 }
 .rp-bar--manual {
-  background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.12) 100%);
-  border: 1px solid rgba(255,255,255,0.15);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
 }
 .rp-bar-val {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
-  color: #0e0f0c;
+  color: var(--accent-fg);
   white-space: nowrap;
 }
 .rp-bar--manual .rp-bar-val {
-  color: var(--text, #ecebe1);
+  color: var(--text);
 }
 .rp-bar-whisker {
   position: absolute;
   top: 42px;
   height: 2px;
-  background: rgba(255,255,255,0.25);
+  background: var(--border-strong);
   z-index: 1;
 }
 .rp-whisker-cap {
@@ -660,16 +648,16 @@ function ReplayStyle() {
   top: -4px;
   width: 2px;
   height: 10px;
-  background: rgba(255,255,255,0.25);
+  background: var(--border-strong);
 }
 .rp-whisker-cap--left { left: 0; }
 .rp-whisker-cap--right { right: 0; }
 .rp-whisker-label {
   position: absolute;
   top: 8px;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 8px;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
   white-space: nowrap;
 }
 .rp-whisker-label--left { left: 0; transform: translateX(-50%); }
@@ -678,21 +666,21 @@ function ReplayStyle() {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-top: 1px dashed var(--border-strong, rgba(255,255,255,0.13));
+  border-top: 1px dashed var(--border-strong);
   padding-top: 0.8rem;
   margin-top: 0.4rem;
 }
 .rp-axis-tick-val {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
 }
 .rp-axis-tick-title {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 9px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
 }
 
 /* ---------- stats ---------- */
@@ -703,9 +691,9 @@ function ReplayStyle() {
   gap: 0.7rem;
 }
 .rp-stat {
-  border: 1px solid var(--border, rgba(255,255,255,0.06));
-  border-radius: var(--radius-md, 8px);
-  background: var(--bg-card, #1a1b16);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
   padding: 1.3rem 1.1rem;
   display: flex;
   flex-direction: column;
@@ -713,27 +701,28 @@ function ReplayStyle() {
   transition: border-color 200ms ease;
 }
 .rp-stat--manual {
-  border-left: 3px solid rgba(255,255,255,0.1);
+  border-left: 3px solid var(--border);
 }
+/* Gradient fill removed (contract rule 7) — the accent border-left alone is the "agentic" signal. */
 .rp-stat--agentic {
-  border-left: 3px solid var(--accent, #cfff3d);
-  background: linear-gradient(145deg, rgba(207,255,61,0.04) 0%, var(--bg-card, #1a1b16) 50%);
+  border-left: 3px solid var(--accent);
+  background: var(--bg-card);
 }
 .rp-stat__value {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: clamp(1.1rem, 2.2vw, 1.5rem);
   font-weight: 600;
   letter-spacing: -0.02em;
-  color: var(--text, #ecebe1);
+  color: var(--text);
   line-height: 1;
 }
-.rp-stat--agentic .rp-stat__value { color: var(--accent, #cfff3d); }
+.rp-stat--agentic .rp-stat__value { color: var(--accent-text); }
 .rp-stat__label {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.68rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
 }
 
 /* ---------- assumptions ---------- */
@@ -744,49 +733,49 @@ function ReplayStyle() {
   justify-content: space-between;
   gap: 1rem;
   padding: 0.75rem 0;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+  border-bottom: 1px solid var(--border);
 }
 .rp-arow:last-child { border-bottom: none; }
 .rp-arow__k {
   flex-shrink: 0;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
 }
 .rp-arow__v {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 0.82rem;
-  color: var(--text, #ecebe1);
+  color: var(--text);
   text-align: right;
 }
 .rp-disclaimer {
   margin-top: 1.6rem;
   padding: 0.85rem 1.1rem;
-  border-left: 2px solid var(--border-accent, rgba(207,255,61,0.4));
-  font-family: var(--font-mono, monospace);
+  border-left: 2px solid var(--border-accent);
+  font-family: var(--font-body);
   font-size: 0.76rem;
   line-height: 1.6;
-  color: var(--text-faint, #56564f);
-  background: var(--accent-soft, rgba(207,255,61,0.08));
-  border-radius: 0 var(--radius-sm, 4px) var(--radius-sm, 4px) 0;
+  color: var(--text-faint);
+  background: var(--accent-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 /* ---------- empty / loading ---------- */
 .rp-empty {
   margin-top: 1.5rem;
-  border: 1px dashed var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: var(--radius-lg, 14px);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
   padding: 2.2rem 1.5rem;
   text-align: center;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.8rem;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
 }
 .rp-empty code {
-  color: var(--text-muted, #95958a);
-  font-family: var(--font-mono, monospace);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 /* ---------- footer ---------- */
@@ -798,10 +787,10 @@ function ReplayStyle() {
   flex-wrap: wrap;
   margin-top: 3rem;
   padding-top: 1.8rem;
-  border-top: 1px solid var(--border, rgba(255,255,255,0.06));
+  border-top: 1px solid var(--border);
 }
-.rp-foot__mark { font-family: var(--font-mono, monospace); font-size: 0.78rem; color: var(--text-muted, #95958a); }
-.rp-foot__tag { font-family: var(--font-script, "Newsreader", serif); font-style: italic; font-size: 0.95rem; color: var(--text-faint, #56564f); }
+.rp-foot__mark { font-family: var(--font-body); font-size: 0.78rem; color: var(--text-muted); }
+.rp-foot__tag { font-family: var(--font-script); font-style: italic; font-size: 0.95rem; color: var(--text-faint); }
 
 /* ---------- responsive ---------- */
 @media (max-width: 760px) {

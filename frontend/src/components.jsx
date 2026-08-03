@@ -5,6 +5,9 @@ import React from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { getSidebarPath } from './router.js'
 import { t } from './settingsStore.js'
+import { BrandLockup } from './components/pocket/BrandLockup.jsx'
+import { NetworkBadge } from './components/pocket/NetworkIdentity.jsx'
+import { NETWORK_IDS } from './design/networks.js'
 
 /* ---------- Icons (Lucide-style, stroke 1.5) ---------- */
 const Icon = ({ name, size = 16, className = '' }) => {
@@ -80,6 +83,13 @@ const Icon = ({ name, size = 16, className = '' }) => {
         <path d="M10 14L21 3" />
       </>
     ),
+    wallet: (
+      <>
+        <path d="M4 7V5a2 2 0 0 1 2-2h12" />
+        <rect x="3" y="7" width="18" height="14" rx="2" />
+        <path d="M16 13h5" />
+      </>
+    ),
     logout: (
       <>
         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -139,18 +149,6 @@ const Icon = ({ name, size = 16, className = '' }) => {
         <path d="M9 3v18M17 15l-3-3 3-3" />
       </>
     ),
-    panelRightOpen: (
-      <>
-        <rect width="18" height="18" x="3" y="3" rx="2" />
-        <path d="M15 3v18M10 15l-3-3 3-3" />
-      </>
-    ),
-    panelRightClose: (
-      <>
-        <rect width="18" height="18" x="3" y="3" rx="2" />
-        <path d="M15 3v18M7 9l3 3-3 3" />
-      </>
-    ),
   }
   return (
     <svg
@@ -171,15 +169,18 @@ const Icon = ({ name, size = 16, className = '' }) => {
 }
 
 /* ---------- Sidebar (self-contained with React Router) ---------- */
-const Sidebar = ({ extended, onToggle }) => {
+// Task 10 (IA remap): final IA -- /home is My money, /strategy is Put it to work, /agent is
+// The crew (Task 9's live console). `agentCount` badges the crew item with the count of
+// non-revoked agents (app.jsx's own filter); zero renders no badge at all, never a bare "0".
+const Sidebar = ({ extended, onToggle, agentCount = 0 }) => {
   const navigate = useNavigate()
   const location = useLocation()
   const activePath = getSidebarPath(location.pathname)
 
   const items = [
-    { key: 'home', icon: 'home', path: '/home', label: 'Home' },
-    { key: 'vaults', icon: 'grid', path: '/strategy', label: 'Strategy' },
-    { key: 'agent', icon: 'network', path: '/agent', label: 'Dashboard' },
+    { key: 'money', icon: 'home', path: '/home', label: 'My money' },
+    { key: 'strategy', icon: 'grid', path: '/strategy', label: 'Put it to work' },
+    { key: 'crew', icon: 'network', path: '/agent', label: 'The crew' },
     { key: 'history', icon: 'layers', path: '/history', label: 'History' },
     { key: 'developers', icon: 'code', path: '/developers', label: 'Developers' },
     { key: 'settings', icon: 'settings', path: '/settings', label: 'Settings' },
@@ -187,23 +188,38 @@ const Sidebar = ({ extended, onToggle }) => {
 
   return (
     <nav className="sidebar" aria-label="Primary navigation">
-      <div className="sb-logo" title="vibing/farmer">
-        <img src="/vibing_farmer.logo.svg" alt="" style={{ width: 18, height: 18 }} />
-        <span className="sb-logo-text">vibing/farmer</span>
+      <div className="sb-logo">
+        <BrandLockup variant="compact" className="sb-logo-mark" />
+        <span className="sb-logo-text">Vibing Farmer</span>
       </div>
-      {items.map((it) => (
-        <button
-          key={it.key}
-          className={`sb-item ${activePath === it.path ? 'active' : ''}`}
-          title={it.label}
-          aria-label={it.label}
-          aria-current={activePath === it.path ? 'page' : undefined}
-          onClick={() => navigate(it.path)}
-        >
-          <Icon name={it.icon} />
-          <span className="sb-label">{it.label}</span>
-        </button>
-      ))}
+      {items.map((it) => {
+        // Fix round 1, F6: the button's own `aria-label` already wins the accessible-name
+        // computation over any descendant content, so a plain `aria-label` on the child <span>
+        // below was never announced -- and `aria-label` on a role-less <span> isn't
+        // name-from-author in the first place. Fold the count into the BUTTON's own name instead
+        // (Global Constraints override the brief's verbatim markup here: a11y invariants win),
+        // and hide the now-decorative digit from assistive tech with `aria-hidden`.
+        const hasBadge = it.key === 'crew' && agentCount > 0
+        const accessibleLabel = hasBadge ? `${it.label}, ${agentCount} active` : it.label
+        return (
+          <button
+            key={it.key}
+            className={`sb-item ${activePath === it.path ? 'active' : ''}`}
+            title={it.label}
+            aria-label={accessibleLabel}
+            aria-current={activePath === it.path ? 'page' : undefined}
+            onClick={() => navigate(it.path)}
+          >
+            <Icon name={it.icon} />
+            <span className="sb-label">{it.label}</span>
+            {hasBadge && (
+              <span className="sb-badge" aria-hidden="true">
+                {agentCount}
+              </span>
+            )}
+          </button>
+        )
+      })}
       <div className="sb-spacer" style={{ flex: 1 }} />
 
       <button
@@ -222,58 +238,101 @@ const Sidebar = ({ extended, onToggle }) => {
 
 /* ---------- Top bar — minimal, no chip soup ---------- */
 const TopBar = ({
-  walletConnected,
   onReset,
-  railCollapsed,
-  onToggleRail,
+  walletPhase = 'none',
+  walletAddress = '',
+  walletLabel = '',
   notifications = null,
 }) => {
+  const [copied, setCopied] = React.useState(false)
+  const walletConnected = walletPhase !== 'none' && Boolean(walletAddress)
+  const sessionActive = walletPhase === 'upgraded'
+
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <div className="brand">
-          <span className="vibing">vibing</span>
-          <span className="slash">/</span>
-          <span>farmer</span>
-        </div>
-        <span
-          className="brand-net mono"
-          aria-label={`Stellar testnet, wallet ${walletConnected ? 'connected' : 'not connected'}`}
-        >
-          <span className={`dot${walletConnected ? ' live' : ''}`} aria-hidden="true" />
-          Stellar testnet
-        </span>
+        <BrandLockup variant="full" />
+        <NetworkBadge networkId={NETWORK_IDS.STELLAR_TESTNET} />
       </div>
       <div className="topbar-right">
         <span className="topbar-meta">
           Relayer&nbsp;<b>fee-bump</b>, user gas&nbsp;<b>0</b>
         </span>
-        <button
-          className="icon-btn"
-          title="Restart flow"
-          aria-label="Restart flow"
-          onClick={onReset}
-        >
-          <Icon name="refresh" />
-        </button>
         {notifications}
-        <button className="icon-btn" title="New deposit" aria-label="New deposit" onClick={onReset}>
+        {/* 2026-08-02 polish (audit item #8): there used to be TWO icon buttons here that both
+            called onReset ("Restart flow", refresh icon, and "Start over", plus icon) -- two
+            identical anonymous actions side by side. One reset affordance remains. */}
+        <button className="icon-btn" title="Start over" aria-label="Start over" onClick={onReset}>
           <Icon name="plus" />
         </button>
-        <button
-          className="icon-btn"
-          title={railCollapsed ? 'Show Info Panel' : 'Hide Info Panel'}
-          aria-label="Toggle info panel"
-          onClick={onToggleRail}
-        >
-          <Icon name={railCollapsed ? 'panelRightOpen' : 'panelRightClose'} />
-        </button>
+        {walletConnected ? (
+          <details className="header-wallet">
+            <summary
+              className="header-wallet-trigger"
+              aria-label={`Wallet ${walletLabel}`}
+              title={sessionActive ? 'Session keys active' : 'Standard wallet'}
+            >
+              <Icon name="wallet" />
+              <span
+                className={`header-wallet-dot ${sessionActive ? 'is-active' : ''}`}
+                aria-hidden="true"
+              />
+              <span className="header-wallet-address">{walletLabel}</span>
+            </summary>
+            <div className="header-wallet-menu">
+              <p className="header-wallet-status">
+                {sessionActive ? 'Session keys active' : 'Standard wallet'}
+              </p>
+              <p className="header-wallet-full-address">{walletAddress}</p>
+              <div className="header-wallet-actions">
+                <button
+                  type="button"
+                  className="header-wallet-action"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(walletAddress)
+                      setCopied(true)
+                      window.setTimeout(() => setCopied(false), 1200)
+                    } catch {
+                      setCopied(false)
+                    }
+                  }}
+                >
+                  <Icon name={copied ? 'check' : 'copy'} />
+                  {copied ? 'Copied' : 'Copy address'}
+                </button>
+                <a
+                  className="header-wallet-action"
+                  href={`https://stellar.expert/explorer/testnet/account/${walletAddress}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Icon name="external" />
+                  Explorer
+                </a>
+              </div>
+            </div>
+          </details>
+        ) : (
+          <span className="header-wallet-trigger is-disconnected" role="status">
+            <Icon name="wallet" />
+            <span className="header-wallet-address">Not connected</span>
+          </span>
+        )}
       </div>
     </header>
   )
 }
 
-/* ---------- Step rail (subtle numeric, no wizard chrome) ---------- */
+/* ---------- Step rail (subtle numeric, no wizard chrome) ----------
+   Strategy Task 13 (Pocket Crew redesign, Wave 5): STEPS/StepRail are DEMOTED, not deleted. The
+   production `/strategy` route now renders StrategyProgress (components/strategy/StrategyProgress.jsx)
+   + PlanStage/ProtectStage/StartStage instead — app.jsx only mounts StepRail behind its
+   `isDevMode() && stage !== 'strategy'` dev-seam branch, reachable solely via TweaksPanel's
+   `jumpTo` (itself devMode-gated), never on any production code path (`stage` no longer leaves its
+   initial 'strategy' value in production). Kept exported for that dev/test compatibility seam and
+   because components.sidebar.test.jsx and other direct consumers of this file are unaffected by
+   the route-level change. See app.jsx's `/strategy` Route element for the actual gate. */
 const STEPS = [
   { id: 'strategy', label: 'AI Strategy' },
   { id: 'connect', label: 'Connect & Upgrade' },

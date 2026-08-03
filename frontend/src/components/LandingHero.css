@@ -426,7 +426,7 @@
 }
 
 .vf-flow__row.is-active .vf-flow__num {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .vf-flow__row p {
@@ -1177,7 +1177,7 @@
   font-size: clamp(0.72rem, 1.6vw, 0.95rem);
   letter-spacing: 0.42em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .vf-intro__hint {
@@ -1318,7 +1318,7 @@
     transparent 100%
   );
   font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 @media (pointer: fine) {
@@ -1339,7 +1339,7 @@
   display: block;
   font-size: 0.78rem;
   letter-spacing: 0.04em;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .vf-xray-box em {
@@ -1441,7 +1441,7 @@
 }
 
 .vf-flow__row.is-active h3 {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .vf-flow--armed .vf-flow__row.is-seen.is-active {
@@ -1637,6 +1637,19 @@
   height: 1.5em;
   width: auto;
   opacity: 0.75;
+}
+
+/* Stellar mark ships official Black + White finals; swap by live [data-theme]
+   instead of filtering the artwork (the manifest requires no recoloring).
+   Default (Day Field/no attribute) shows Black; Forest shows White. */
+.vf-marquee__logo img.vf-marquee__logo-icon--dark {
+  display: none;
+}
+:root[data-theme='forest'] .vf-marquee__logo img.vf-marquee__logo-icon--dark {
+  display: inline-block;
+}
+:root[data-theme='forest'] .vf-marquee__logo img.vf-marquee__logo-icon--default {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

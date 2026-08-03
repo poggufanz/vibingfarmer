@@ -93,4 +93,34 @@ describe('signAuthEntryString', () => {
     expect(kit.signAuthEntry).toHaveBeenCalledOnce()
     expect(out).toBe(b64) // round-trips back to an equivalent entry
   })
+
+  test('with contractId: signs when the entry is credentialed to that exact contract', async () => {
+    const entry = fakeEntryFor('CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU')
+    const b64 = entry.toXDR('base64')
+    const kit = { signAuthEntry: vi.fn(async (e) => e) }
+
+    const out = await signAuthEntryString({
+      authEntry: b64,
+      contractId: 'CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU',
+      kit,
+    })
+
+    expect(kit.signAuthEntry).toHaveBeenCalledOnce()
+    expect(out).toBe(b64)
+  })
+
+  test('with contractId: fails closed before invoking WebAuthn when the entry is for a different account', async () => {
+    const entry = fakeEntryFor('CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU')
+    const b64 = entry.toXDR('base64')
+    const kit = { signAuthEntry: vi.fn() }
+
+    await expect(
+      signAuthEntryString({
+        authEntry: b64,
+        contractId: 'CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU',
+        kit,
+      })
+    ).rejects.toThrow(/does not match/i)
+    expect(kit.signAuthEntry).not.toHaveBeenCalled()
+  })
 })

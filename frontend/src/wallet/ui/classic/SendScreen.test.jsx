@@ -85,3 +85,62 @@ describe('SendScreen', () => {
     expect(onConfirm).not.toHaveBeenCalled()
   })
 })
+
+// VF Wallet Task 10, Step 2 -- Passkey (C) Send has no real submit path yet (popup.jsx's old
+// passkey send handler only ever built unsigned XDR and said so out loud). Rendering the form for
+// an unsupported account would be a dead button that fails on submit, not a fail-closed UI.
+describe('SendScreen — action availability is model-specific (no dead button for an unsupported account)', () => {
+  it('renders the real form by default (supported, the existing Standard/G path)', () => {
+    render(<SendScreen from="GME" onPreview={vi.fn()} onConfirm={vi.fn()} preview={null} />)
+    expect(screen.getByLabelText(/destination/i)).toBeTruthy()
+  })
+
+  it('renders no form and no submit control when supported is false', () => {
+    const onPreview = vi.fn()
+    render(
+      <SendScreen
+        from="CFAKE"
+        onPreview={onPreview}
+        onConfirm={vi.fn()}
+        preview={null}
+        supported={false}
+      />
+    )
+    expect(screen.queryByLabelText(/destination/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /review/i })).toBeNull()
+    expect(screen.getByText(/not available yet/i)).toBeTruthy()
+    expect(onPreview).not.toHaveBeenCalled()
+  })
+})
+
+// VF Wallet Task 10 fix loop 1 (coordinator follow-up, SendScreen overflow): real-Chromium
+// measurement found the confirm card's full, untruncated destination address forced
+// .pc-wallet-main's shared implicit grid column (header and nav included) to 465.46875px at a 320
+// viewport -- the same mechanism WalletReceive's full address overflow used, fixed the same way
+// (.pc-address-full alongside .pc-technical). jsdom does no layout and cannot re-run that geometry
+// check itself (the same limitation WalletReceive.test.jsx documents for its own guard), so this
+// pins the STRUCTURAL fix instead: the confirm card's destination line must carry
+// .pc-address-full, which is what actually prevents the overflow in a real browser.
+describe('SendScreen — confirm card destination stays within .pc-address-full (VF Wallet Task 10 fix loop 1)', () => {
+  it('applies .pc-address-full alongside .pc-technical to the full destination address', () => {
+    const preview = {
+      confirm: {
+        ops: [
+          {
+            destination: 'GBRPYHILCUFXYVJDXHYQMWZXGWLPKVPMDDIVGXAFTQZTZPMOI4XG3ZC7OX2H',
+            asset: 'XLM',
+            amount: '1',
+          },
+        ],
+        memo: '',
+        fee: 100,
+      },
+      vault: { hit: false },
+    }
+    render(<SendScreen from="GME" onPreview={vi.fn()} onConfirm={vi.fn()} preview={preview} />)
+    const destinationLine = screen.getByText(/^To: G/)
+    expect(destinationLine.className.split(' ')).toEqual(
+      expect.arrayContaining(['pc-technical', 'pc-address-full'])
+    )
+  })
+})

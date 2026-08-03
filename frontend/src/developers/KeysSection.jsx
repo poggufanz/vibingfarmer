@@ -639,7 +639,7 @@ export default function KeysSection({ session }) {
               <button
                 className="btn btn-primary"
                 type="button"
-                style={{ background: 'var(--danger)', color: '#0e0f0c' }}
+                style={{ background: 'var(--danger)', color: 'var(--pc-danger-ink)' }}
                 onClick={onConfirmRevoke}
                 disabled={revoking}
               >

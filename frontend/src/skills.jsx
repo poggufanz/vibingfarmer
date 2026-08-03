@@ -2,9 +2,17 @@
    VIBING FARMER — Skill Review (step 03)
    Human-readable skill cards. No raw JSON shown to user.
    ============================================ */
+// Strategy Task 13 (Pocket Crew redesign, Wave 5): `SkillReviewCard` below is DEMOTED, not
+// deleted. The production `/strategy` route's Plan surface (PlanStage.jsx) approves current agent
+// instructions together with plan acceptance — a separate skill-review step no longer exists on
+// the production path. app.jsx no longer imports `SkillReviewCard` for its production render
+// path; it remains exported only as an explicit development/test compatibility seam (this file's
+// own skills.render.test.jsx tests it directly, and TweaksPanel's devMode-gated `jumpTo` can still
+// reach it), never presented as a user fallback.
 import React, { useState, useMemo } from 'react'
 import SkillDetailModal from './components/SkillDetailModal.jsx'
 import SkillEditModal from './components/SkillEditModal.jsx'
+import { readBaseOwner } from './wallet/baseBinding.js'
 
 /* ---------- Protocol display names ---------- */
 const PROTOCOL_NAMES = {
@@ -87,7 +95,10 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail, connectedAddr
   // VF wallets are NOT exempt (see wallet/passkeyBridge.js: the SDK never durably persists the
   // P-256 pubkey behind a VF passkey credential, so VF reuse as the Base owner key is impossible;
   // ensureBaseOwner runs the same register/login ceremony regardless of wallet type).
-  const needsPasskeySetup = isBase && !localStorage.getItem('vf_base_owner')
+  // VF Wallet Task 6: owner-scoped lookup — a leftover ceremony from a DIFFERENT connected wallet
+  // must not read as "already set up" here (readBaseOwner returns null for both "never set up"
+  // and "no wallet connected yet", so this still fails safely to "needs setup").
+  const needsPasskeySetup = isBase && !readBaseOwner(connectedAddress)
 
   return (
     <div className={`skill-card2 ${isApproved ? 'approved' : 'pending'}`}>
@@ -153,15 +164,15 @@ const DelegationChain = ({ agents }) => {
     fontSize: 12,
     lineHeight: 1.95,
   }
-  const muted = { color: 'var(--text-muted, rgba(41,38,27,.55))' }
+  const muted = { color: 'var(--text-muted)' }
   return (
     <div
       style={{
-        border: '.5px solid var(--line, rgba(0,0,0,.12))',
-        borderRadius: 10,
+        border: '.5px solid var(--line)',
+        borderRadius: 'var(--pc-radius-control)',
         padding: '13px 16px',
         margin: '16px 0 20px',
-        background: 'var(--surface-2, rgba(0,0,0,.02))',
+        background: 'var(--bg-elev)',
       }}
     >
       <div
@@ -180,8 +191,8 @@ const DelegationChain = ({ agents }) => {
           style={{
             fontSize: 10,
             ...muted,
-            border: '.5px solid var(--line, rgba(0,0,0,.12))',
-            borderRadius: 5,
+            border: '.5px solid var(--line)',
+            borderRadius: 'var(--pc-radius-control)',
             padding: '2px 7px',
           }}
         >

@@ -1,6 +1,14 @@
 // frontend/src/strategy/simulation.test.js
 import { describe, it, expect } from 'vitest'
-import { simulatePath, runScenario, SCENARIOS, deriveScenarioParams, runSimulation, allocationsFromStrategy } from './simulation.js'
+import {
+  simulatePath,
+  runScenario,
+  SCENARIOS,
+  deriveScenarioParams,
+  runSimulation,
+  allocationsFromStrategy,
+  hasUnknownYield,
+} from './simulation.js'
 import { makeRng } from './rng.js'
 
 // Minimal hand-built StrategyState — the engine must not depend on buildStrategyState.
@@ -24,7 +32,10 @@ describe('simulatePath', () => {
       { address: '0xA', allocation: 0.5 },
       { address: '0xB', allocation: 0.5 },
     ]
-    const r = simulatePath(allocations, makeState(), flat, makeRng(1), { horizonDays: 365, entryGasUsdc: 0 })
+    const r = simulatePath(allocations, makeState(), flat, makeRng(1), {
+      horizonDays: 365,
+      entryGasUsdc: 0,
+    })
     expect(r.blendedApy).toBe(7.5)
     // 1000 * 7.5% over 365 days, no drift/noise/gas ≈ 75 USDC
     expect(r.netYieldUsdc).toBeCloseTo(75, 0)
@@ -32,20 +43,38 @@ describe('simulatePath', () => {
 
   it('prefers the allocation-carried apy over the universe apy', () => {
     const allocations = [{ address: '0xA', allocation: 1, apy: 20 }]
-    const r = simulatePath(allocations, makeState(), flat, makeRng(1), { horizonDays: 365, entryGasUsdc: 0 })
+    const r = simulatePath(allocations, makeState(), flat, makeRng(1), {
+      horizonDays: 365,
+      entryGasUsdc: 0,
+    })
     expect(r.blendedApy).toBe(20)
   })
 
   it('subtracts a one-time entry gas cost scaled by gasMultiplier', () => {
     const allocations = [{ address: '0xA', allocation: 1 }]
-    const noGas = simulatePath(allocations, makeState(), flat, makeRng(5), { horizonDays: 30, entryGasUsdc: 0 })
-    const withGas = simulatePath(allocations, makeState(), { ...flat, gasMultiplier: 2 }, makeRng(5), { horizonDays: 30, entryGasUsdc: 3 })
+    const noGas = simulatePath(allocations, makeState(), flat, makeRng(5), {
+      horizonDays: 30,
+      entryGasUsdc: 0,
+    })
+    const withGas = simulatePath(
+      allocations,
+      makeState(),
+      { ...flat, gasMultiplier: 2 },
+      makeRng(5),
+      { horizonDays: 30, entryGasUsdc: 3 }
+    )
     expect(+(noGas.netYieldUsdc - withGas.netYieldUsdc).toFixed(2)).toBe(6) // 3 * 2
   })
 
   it('never lets APY go negative under heavy downward drift', () => {
     const allocations = [{ address: '0xA', allocation: 1 }]
-    const r = simulatePath(allocations, makeState(), { name: 'bear', apyDriftPct: -10000, apyVolPct: 0, gasMultiplier: 1 }, makeRng(2), { horizonDays: 30, entryGasUsdc: 0 })
+    const r = simulatePath(
+      allocations,
+      makeState(),
+      { name: 'bear', apyDriftPct: -10000, apyVolPct: 0, gasMultiplier: 1 },
+      makeRng(2),
+      { horizonDays: 30, entryGasUsdc: 0 }
+    )
     expect(r.finalApy).toBeGreaterThanOrEqual(0)
   })
 
@@ -53,8 +82,9 @@ describe('simulatePath', () => {
     const allocations = [{ address: '0xA', allocation: 1 }]
     const opts = { horizonDays: 30, entryGasUsdc: 0.5 }
     const params = { name: 'base', apyDriftPct: 0, apyVolPct: 2, gasMultiplier: 1 }
-    expect(simulatePath(allocations, makeState(), params, makeRng(8), opts).netYieldUsdc)
-      .toBe(simulatePath(allocations, makeState(), params, makeRng(8), opts).netYieldUsdc)
+    expect(simulatePath(allocations, makeState(), params, makeRng(8), opts).netYieldUsdc).toBe(
+      simulatePath(allocations, makeState(), params, makeRng(8), opts).netYieldUsdc
+    )
   })
 })
 
@@ -62,7 +92,12 @@ describe('runScenario', () => {
   const allocations = [{ address: '0xB', allocation: 1, apy: 10 }]
 
   it('returns distribution stats over the requested number of runs', () => {
-    const r = runScenario(allocations, makeState(), SCENARIOS[1], { runs: 200, horizonDays: 30, entryGasUsdc: 0, seed: 1 })
+    const r = runScenario(allocations, makeState(), SCENARIOS[1], {
+      runs: 200,
+      horizonDays: 30,
+      entryGasUsdc: 0,
+      seed: 1,
+    })
     expect(r.name).toBe('base')
     expect(r.runs).toBe(200)
     expect(r.mean).toBeGreaterThan(0)
@@ -135,6 +170,26 @@ describe('allocationsFromStrategy', () => {
   it('returns an empty array for a null strategy', () => {
     expect(allocationsFromStrategy(null)).toEqual([])
   })
+
+  it('preserves an explicit null apy (truthfully unavailable) rather than coercing to 0', () => {
+    const strategy = {
+      total: 100,
+      agents: [{ vault: { addr: '0xA', apy: null }, allocation: 100 }],
+    }
+    expect(allocationsFromStrategy(strategy)).toEqual([
+      { address: '0xA', allocation: 1, apy: null },
+    ])
+  })
+})
+
+describe('hasUnknownYield', () => {
+  const state = { universe: [{ address: '0xA', apy: 5 }] }
+  it('is false when every allocation resolves to a real number', () => {
+    expect(hasUnknownYield([{ address: '0xA', allocation: 1 }], state)).toBe(false)
+  })
+  it('is true when an allocation explicitly carries apy: null', () => {
+    expect(hasUnknownYield([{ address: '0xA', allocation: 1, apy: null }], state)).toBe(true)
+  })
 })
 
 describe('runSimulation', () => {
@@ -149,7 +204,12 @@ describe('runSimulation', () => {
   const allocations = [{ address: '0xB', allocation: 1, apy: 10 }]
 
   it('runs every scenario and reports a probability-weighted expected value', () => {
-    const sim = runSimulation(allocations, makeState(), { runs: 200, horizonDays: 30, seed: 1, context: { turbulence: 'calm', apyTrendPct: 0, gasGwei: 30 } })
+    const sim = runSimulation(allocations, makeState(), {
+      runs: 200,
+      horizonDays: 30,
+      seed: 1,
+      context: { turbulence: 'calm', apyTrendPct: 0, gasGwei: 30 },
+    })
     expect(sim.scenarios.map((s) => s.name)).toEqual(['bull', 'base', 'bear'])
     expect(sim.horizonDays).toBe(30)
     expect(sim.runs).toBe(200)
@@ -164,14 +224,38 @@ describe('runSimulation', () => {
   })
 
   it('is deterministic for a given seed + context', () => {
-    const opts = { runs: 100, horizonDays: 30, seed: 5, context: { turbulence: 'elevated', apyTrendPct: 0.5, gasGwei: 40 } }
-    expect(runSimulation(allocations, makeState(), opts)).toEqual(runSimulation(allocations, makeState(), opts))
+    const opts = {
+      runs: 100,
+      horizonDays: 30,
+      seed: 5,
+      context: { turbulence: 'elevated', apyTrendPct: 0.5, gasGwei: 40 },
+    }
+    expect(runSimulation(allocations, makeState(), opts)).toEqual(
+      runSimulation(allocations, makeState(), opts)
+    )
+  })
+
+  it('reports projection as known when every allocation has a real yield', () => {
+    const sim = runSimulation(allocations, makeState(), { runs: 50, horizonDays: 30, seed: 1 })
+    expect(sim.projection).toEqual({ state: 'known', value: sim.expectedValue })
+  })
+
+  it('reports projection as unavailable when an allocation yield is explicitly null', () => {
+    const unknownAlloc = [{ address: '0xB', allocation: 1, apy: null }]
+    const sim = runSimulation(unknownAlloc, makeState(), { runs: 50, horizonDays: 30, seed: 1 })
+    expect(sim.projection).toEqual({ state: 'unavailable', value: null })
   })
 
   it('a turbulent context lowers the expected value vs calm', () => {
     const base = { runs: 300, horizonDays: 60, seed: 2 }
-    const calm = runSimulation(allocations, makeState(), { ...base, context: { turbulence: 'calm', apyTrendPct: 0, gasGwei: 30 } })
-    const turb = runSimulation(allocations, makeState(), { ...base, context: { turbulence: 'turbulent', apyTrendPct: 0, gasGwei: 30 } })
+    const calm = runSimulation(allocations, makeState(), {
+      ...base,
+      context: { turbulence: 'calm', apyTrendPct: 0, gasGwei: 30 },
+    })
+    const turb = runSimulation(allocations, makeState(), {
+      ...base,
+      context: { turbulence: 'turbulent', apyTrendPct: 0, gasGwei: 30 },
+    })
     expect(calm.expectedValue).toBeGreaterThan(turb.expectedValue)
   })
 })

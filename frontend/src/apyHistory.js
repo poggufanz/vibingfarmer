@@ -22,7 +22,9 @@ export async function fetchApyHistory(poolId) {
   const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
   try {
-    const res = await fetch(`${CHART_ENDPOINT}/${encodeURIComponent(poolId)}`, { signal: controller.signal })
+    const res = await fetch(`${CHART_ENDPOINT}/${encodeURIComponent(poolId)}`, {
+      signal: controller.signal,
+    })
     clearTimeout(timeoutId)
     if (!res.ok) return null
 
@@ -43,8 +45,6 @@ export async function fetchApyHistory(poolId) {
  * @returns {Promise<Object<string, Array>>} map of poolId → history (null entries dropped)
  */
 export async function fetchApyHistoryBatch(poolIds) {
-  const results = await Promise.all(
-    poolIds.map(async (id) => [id, await fetchApyHistory(id)])
-  )
+  const results = await Promise.all(poolIds.map(async (id) => [id, await fetchApyHistory(id)]))
   return Object.fromEntries(results.filter(([, v]) => v !== null))
 }

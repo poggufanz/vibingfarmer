@@ -2,9 +2,10 @@
 
 use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
-use soroban_sdk::{vec, Address, BytesN, Env, IntoVal, Vec};
+use soroban_sdk::xdr::WriteXdr;
+use soroban_sdk::{vec, xdr, Address, Bytes, BytesN, Env, Error, IntoVal, Vec};
 
-use crate::types::{AgentInit, AgentScope, TokenBudget};
+use crate::types::{AgentInit, AgentScope, DataKey, PermissionGrantV3, RouterError, TokenBudget};
 use crate::{FundingRouter, FundingRouterClient};
 
 // The REAL agent_account wasm (built by `stellar contract build`), imported as
@@ -176,6 +177,7 @@ fn pull_rejects_agent_not_deployed_by_factory() {
         period_start: 0,
         expiry: s.env.ledger().timestamp() + 86_400,
         revoked: false,
+        per_execution_max: 100_000_000,
     };
     let fake = s.env.register(
         agentwasm::WASM,
@@ -848,4 +850,680 @@ fn pull_uses_per_agent_token() {
     assert_eq!(t_circle.allowance(&owner, &s.router), 70_000_000);
     assert_eq!(t_farm.balance(&bridge_agent), 0); // untouched — deposit agent's token
     assert_eq!(t_farm.allowance(&owner, &s.router), 100_000_000); // untouched
+}
+
+// --- v3 (Task 4): grant()-deployed (V2) agents stay byte-compatible/untouched — unrestricted
+// per_execution_max relative to cap_per_period, which was already the hardest single-execution
+// ceiling any V2 agent could need. ---
+#[test]
+fn grant_deploys_v2_agents_with_unrestricted_per_execution_max() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let agents = client.grant(
+        &owner,
+        &budgets(&s.env, &s.token, 100_000_000),
+        &1_000,
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)],
+    );
+    let ac = agentwasm::Client::new(&s.env, &agents.get(0).unwrap());
+    assert_eq!(ac.scope_of().per_execution_max, i128::MAX);
+}
+
+// ─────────────────────────── V3: bounded, reusable grant (Task 4) ───────────────────────────
+
+/// One `AgentInit` sharing a common (target, kind, mint_recipient, destination_domain) — every
+/// agent under one V3 permission must share the same scope fingerprint.
+fn v3_init(env: &Env, token: &Address, target: &Address, seed: u8, cap: i128) -> AgentInit {
+    agent_init(env, token, target, seed, cap)
+}
+
+fn signed_pull_v3_auth(
+    env: &Env,
+    router: &Address,
+    agent: &Address,
+    permission_id: &BytesN<32>,
+    execution_id: &BytesN<32>,
+    amount: i128,
+    signature: [u8; 64],
+) -> xdr::SorobanAuthorizationEntry {
+    let invoke = MockAuthInvoke {
+        contract: router,
+        fn_name: "pull_v3",
+        args: (
+            permission_id.clone(),
+            execution_id.clone(),
+            agent.clone(),
+            amount,
+        )
+            .into_val(env),
+        sub_invokes: &[],
+    };
+    let mut entry: xdr::SorobanAuthorizationEntry = MockAuth {
+        address: agent,
+        invoke: &invoke,
+    }
+    .into();
+    let xdr::SorobanCredentials::Address(credentials) = &mut entry.credentials else {
+        unreachable!()
+    };
+    credentials.nonce = 777;
+    credentials.signature_expiration_ledger = 1_000_000;
+    credentials.signature = xdr::ScVal::Bytes(xdr::ScBytes(
+        signature.as_slice().try_into().unwrap(),
+    ));
+    entry
+}
+
+fn pull_v3_auth_payload(env: &Env, entry: &xdr::SorobanAuthorizationEntry) -> [u8; 32] {
+    let xdr::SorobanCredentials::Address(credentials) = &entry.credentials else {
+        unreachable!()
+    };
+    let preimage = xdr::HashIdPreimage::SorobanAuthorization(
+        xdr::HashIdPreimageSorobanAuthorization {
+            network_id: xdr::Hash([9u8; 32]),
+            invocation: entry.root_invocation.clone(),
+            nonce: credentials.nonce,
+            signature_expiration_ledger: credentials.signature_expiration_ledger,
+        },
+    );
+    let bytes = preimage.to_xdr(xdr::Limits::none()).unwrap();
+    env.crypto()
+        .sha256(&Bytes::from_slice(env, bytes.as_slice()))
+        .to_array()
+}
+
+#[test]
+fn grant_v3_creates_bounded_reusable_permission_and_links_agents() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
+
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &500_000_000, &200_000_000, &1_000, &inits);
+
+    assert_eq!(agents.len(), 1);
+    let grant = client.permission_grant(&permission_id).unwrap();
+    assert_eq!(grant.owner, owner);
+    assert_eq!(grant.token, s.token);
+    assert_eq!(grant.mandate_ceiling, 500_000_000);
+    assert_eq!(grant.confirmed_spent, 0);
+    assert_eq!(grant.per_run_max, 200_000_000);
+    assert_eq!(grant.live_until_ledger, 1_000);
+    assert!(!grant.revoked);
+    assert_eq!(client.remaining_budget(&permission_id), 500_000_000);
+
+    // The deployed agent got the whole ceiling as its per_execution_max (only one agent).
+    let ac = agentwasm::Client::new(&s.env, &agents.get(0).unwrap());
+    assert_eq!(ac.scope_of().per_execution_max, 500_000_000);
+    // Approve nested under the owner's single auth entry — one SEP-41 allowance for the whole
+    // permission's lifetime.
+    assert_eq!(
+        TokenClient::new(&s.env, &s.token).allowance(&owner, &s.router),
+        500_000_000
+    );
+}
+
+#[test]
+fn grant_v3_splits_ceiling_across_agents_without_rounding_above_total() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![
+        &s.env,
+        v3_init(&s.env, &s.token, &s.vault, 1, 1_000),
+        v3_init(&s.env, &s.token, &s.vault, 2, 1_000),
+        v3_init(&s.env, &s.token, &s.vault, 3, 1_000),
+    ];
+
+    // 100 / 3 = 33.33 — floor division means each agent gets 33, and the aggregate (99) never
+    // rounds ABOVE the 100 ceiling; the remainder (1) is simply unallocated.
+    let (_permission_id, agents) = client.grant_v3(&owner, &s.token, &100, &100, &1_000, &inits);
+
+    let mut total = 0i128;
+    for agent in agents.iter() {
+        let per_execution_max = agentwasm::Client::new(&s.env, &agent).scope_of().per_execution_max;
+        assert_eq!(per_execution_max, 33);
+        total += per_execution_max;
+    }
+    assert!(total <= 100);
+}
+
+// Split from a single combined test: the "ceiling <= 0" and "per_run_max <= 0" cases must each
+// choose the OTHER value so `per_run_max > mandate_ceiling` (the separate "ceiling below
+// planned" guard) can never independently catch them too — otherwise the assertion holds even
+// with the non-positive-amount check deleted, which is exactly what the earlier version of this
+// test missed (review finding: 2 of its 4 sub-cases were masked by the ordering guard).
+#[test]
+fn grant_v3_rejects_non_positive_mandate_ceiling() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 1_000)];
+
+    // per_run_max <= mandate_ceiling in both cases (both strictly negative, run_max the MORE
+    // negative one) so `per_run_max > mandate_ceiling` is false and cannot mask this check.
+    assert_eq!(
+        client.try_grant_v3(&owner, &s.token, &-100, &-150, &1_000, &inits),
+        Err(Ok(Error::from(RouterError::InvalidAmount)))
+    );
+    assert_eq!(
+        client.try_grant_v3(&owner, &s.token, &-50, &-9_999, &1_000, &inits),
+        Err(Ok(Error::from(RouterError::InvalidAmount)))
+    );
+}
+
+#[test]
+fn grant_v3_rejects_non_positive_per_run_max() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 1_000)];
+
+    // mandate_ceiling stays comfortably positive (1_000) so `per_run_max > mandate_ceiling` is
+    // false for both non-positive run_max values and cannot mask this check either.
+    assert_eq!(
+        client.try_grant_v3(&owner, &s.token, &1_000, &0, &1_000, &inits),
+        Err(Ok(Error::from(RouterError::InvalidAmount)))
+    );
+    assert_eq!(
+        client.try_grant_v3(&owner, &s.token, &1_000, &-1, &1_000, &inits),
+        Err(Ok(Error::from(RouterError::InvalidAmount)))
+    );
+}
+
+#[test]
+fn grant_v3_rejects_ceiling_below_planned() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 1_000)];
+
+    // per_run_max (600) bigger than mandate_ceiling (500) — a single run could never fit within
+    // the lifetime ceiling it was planned against. Both values are positive, so the non-positive
+    // check above can never independently catch this case.
+    assert_eq!(
+        client.try_grant_v3(&owner, &s.token, &500, &600, &1_000, &inits),
+        Err(Ok(Error::from(RouterError::CeilingBelowPlanned)))
+    );
+}
+
+#[test]
+fn grant_v3_rejects_expired_live_until_ledger() {
+    let s = setup();
+    s.env.mock_all_auths();
+    s.env.ledger().with_mut(|li| li.sequence_number = 500);
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 1_000)];
+
+    assert_eq!(
+        client.try_grant_v3(&owner, &s.token, &1_000, &500, &500, &inits),
+        Err(Ok(Error::from(RouterError::InvalidExpiry)))
+    );
+    assert_eq!(
+        client.try_grant_v3(&owner, &s.token, &1_000, &500, &100, &inits),
+        Err(Ok(Error::from(RouterError::InvalidExpiry)))
+    );
+}
+
+// --- Finding 3 (review round 1): real, non-corrupted "wrong token"/"wrong scope" coverage ---
+
+#[test]
+fn grant_v3_rejects_agent_token_mismatch() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let other_admin = Address::generate(&s.env);
+    let other_token = s
+        .env
+        .register_stellar_asset_contract_v2(other_admin)
+        .address();
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    // The permission's token is s.token, but this AgentInit names a DIFFERENT token.
+    let inits = vec![&s.env, v3_init(&s.env, &other_token, &s.vault, 1, 1_000)];
+
+    assert_eq!(
+        client.try_grant_v3(&owner, &s.token, &1_000, &500, &1_000, &inits),
+        Err(Ok(Error::from(RouterError::TokenNotBudgeted)))
+    );
+}
+
+#[test]
+fn grant_v3_rejects_agents_with_divergent_scope() {
+    // A REAL (non-corrupted) way to hit ScopeMismatchV3: two agents in the SAME grant_v3 call
+    // whose (target, kind, mint_recipient, destination_domain) differ — every agent under one
+    // permission must share one scope fingerprint. Caught at GRANT time, before any deploy.
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let other_target = Address::generate(&s.env); // a genuinely different vault/target
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let first = v3_init(&s.env, &s.token, &s.vault, 1, 1_000);
+    let mut second = v3_init(&s.env, &s.token, &s.vault, 2, 1_000);
+    second.target = other_target;
+
+    assert_eq!(
+        client.try_grant_v3(&owner, &s.token, &2_000, &1_000, &1_000, &vec![&s.env, first, second]),
+        Err(Ok(Error::from(RouterError::ScopeMismatchV3)))
+    );
+}
+
+#[test]
+fn pull_v3_moves_funds_and_tracks_confirmed_spent() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &300_000_000, &200_000_000, &1_000, &inits);
+    let agent = agents.get(0).unwrap();
+    let execution_id = BytesN::from_array(&s.env, &[1u8; 32]);
+
+    client.pull_v3(&permission_id, &execution_id, &agent, &120_000_000);
+
+    let t = TokenClient::new(&s.env, &s.token);
+    assert_eq!(t.balance(&agent), 120_000_000);
+    assert_eq!(t.balance(&owner), 380_000_000);
+    assert_eq!(client.permission_grant(&permission_id).unwrap().confirmed_spent, 120_000_000);
+    assert_eq!(client.remaining_budget(&permission_id), 180_000_000);
+}
+
+#[test]
+fn pull_v3_uses_the_deployed_agent_accounts_real_custom_auth() {
+    let s = setup();
+    s.env.ledger().set_network_id([9u8; 32]);
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let mut init = v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000);
+    init.signer = BytesN::from_array(
+        &s.env,
+        &[
+            0x19, 0x7f, 0x6b, 0x23, 0xe1, 0x6c, 0x85, 0x32, 0xc6, 0xab, 0xc8, 0x38, 0xfa,
+            0xcd, 0x5e, 0xa7, 0x89, 0xbe, 0x0c, 0x76, 0xb2, 0x92, 0x03, 0x34, 0x03, 0x9b,
+            0xfa, 0x8b, 0x3d, 0x36, 0x8d, 0x61,
+        ],
+    );
+    let (permission_id, agents) = client.grant_v3(
+        &owner,
+        &s.token,
+        &300_000_000,
+        &200_000_000,
+        &1_000,
+        &vec![&s.env, init],
+    );
+    let agent = agents.get(0).unwrap();
+    let execution_id = BytesN::from_array(&s.env, &[0x44u8; 32]);
+    let auth = signed_pull_v3_auth(
+        &s.env,
+        &s.router,
+        &agent,
+        &permission_id,
+        &execution_id,
+        120_000_000,
+        [
+            199, 6, 121, 41, 99, 180, 109, 194, 3, 62, 46, 67, 91, 169, 89, 78, 94, 97,
+            76, 100, 211, 107, 17, 197, 12, 200, 129, 78, 173, 183, 115, 19, 11, 168,
+            222, 223, 142, 85, 104, 84, 234, 11, 40, 59, 112, 247, 4, 22, 120, 100, 223,
+            139, 100, 80, 59, 56, 165, 26, 134, 220, 32, 209, 237, 5,
+        ],
+    );
+    assert_eq!(
+        pull_v3_auth_payload(&s.env, &auth),
+        [
+            238, 28, 120, 189, 67, 214, 39, 122, 52, 120, 242, 239, 145, 61, 148, 154,
+            243, 177, 132, 195, 29, 9, 240, 40, 102, 196, 199, 255, 219, 39, 209, 116,
+        ]
+    );
+
+    // Arrangement used mocked owner/admin auth. The action below explicitly disables all mocks:
+    // the deployed AgentAccount WASM must verify this ed25519 signature and accept pull_v3.
+    s.env.set_auths(&[auth]);
+    client.pull_v3(&permission_id, &execution_id, &agent, &120_000_000);
+
+    assert_eq!(TokenClient::new(&s.env, &s.token).balance(&agent), 120_000_000);
+}
+
+#[test]
+fn pull_v3_rejects_unlinked_agent() {
+    // The REAL (non-corrupted) "wrong agent" attack shape: two genuine permissions, and a pull
+    // naming an agent that legitimately belongs to the OTHER one.
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits_a = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
+    let (permission_a, _) = client.grant_v3(&owner, &s.token, &300_000_000, &200_000_000, &1_000, &inits_a);
+    let inits_b = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 2, 100_000_000)];
+    let (_permission_b, agents_b) =
+        client.grant_v3(&owner, &s.token, &300_000_000, &200_000_000, &1_000, &inits_b);
+    let execution_id = BytesN::from_array(&s.env, &[2u8; 32]);
+
+    // A totally unknown address.
+    assert_eq!(
+        client.try_pull_v3(&permission_a, &execution_id, &Address::generate(&s.env), &1_000),
+        Err(Ok(Error::from(RouterError::UnknownAgent)))
+    );
+    // An agent that IS linked — but to a DIFFERENT permission.
+    assert_eq!(
+        client.try_pull_v3(&permission_a, &execution_id, &agents_b.get(0).unwrap(), &1_000),
+        Err(Ok(Error::from(RouterError::UnknownAgent)))
+    );
+}
+
+#[test]
+fn pull_v3_rejects_scope_drift_from_recorded_fingerprint() {
+    // Defense-in-depth only: agent_account has no mutator for target/token/kind, and grant_v3
+    // itself validates every agent's scope fingerprint before deploy, so this path is NOT
+    // reachable through any real external call today — only by corrupting the router's OWN
+    // stored record, as done here. Kept to prove the re-check itself is wired correctly; see
+    // `grant_v3_rejects_agents_with_divergent_scope` for the real, non-corrupted "wrong scope"
+    // attack shape (Finding 3, review round 1).
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &300_000_000, &200_000_000, &1_000, &inits);
+    let agent = agents.get(0).unwrap();
+    let execution_id = BytesN::from_array(&s.env, &[3u8; 32]);
+
+    s.env.as_contract(&s.router, || {
+        let key = DataKey::PermissionV3(permission_id.clone());
+        let mut grant: PermissionGrantV3 = s.env.storage().persistent().get(&key).unwrap();
+        grant.scope_id = BytesN::from_array(&s.env, &[0xEE; 32]);
+        s.env.storage().persistent().set(&key, &grant);
+    });
+
+    assert_eq!(
+        client.try_pull_v3(&permission_id, &execution_id, &agent, &1_000),
+        Err(Ok(Error::from(RouterError::ScopeMismatchV3)))
+    );
+    // Nothing moved.
+    assert_eq!(TokenClient::new(&s.env, &s.token).balance(&agent), 0);
+}
+
+#[test]
+fn pull_v3_rejects_amount_above_per_run_max() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &300_000_000, &150_000_000, &1_000, &inits);
+    let agent = agents.get(0).unwrap();
+    let execution_id = BytesN::from_array(&s.env, &[4u8; 32]);
+
+    // 200,000,000 is comfortably under the 300,000,000 mandate_ceiling but strictly above the
+    // 150,000,000 per_run_max.
+    assert_eq!(
+        client.try_pull_v3(&permission_id, &execution_id, &agent, &200_000_000),
+        Err(Ok(Error::from(RouterError::PerRunExceededV3)))
+    );
+    assert_eq!(TokenClient::new(&s.env, &s.token).balance(&agent), 0);
+    assert_eq!(client.permission_grant(&permission_id).unwrap().confirmed_spent, 0);
+}
+
+#[test]
+fn pull_v3_rejects_cumulative_overflow_across_two_pulls() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 300_000_000)];
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &300_000_000, &200_000_000, &1_000, &inits);
+    let agent = agents.get(0).unwrap();
+
+    // Review finding 1 (round 1): grant_v3 only ever approves an allowance == mandate_ceiling, so
+    // the ORIGINAL version of this test could never tell "the router's own cumulative check
+    // fired" apart from "the SEP-41 allowance ran out" — both would reject the second pull. Make
+    // the allowance STRICTLY LARGER than the ceiling so the allowance can never be the blocker;
+    // only `confirmed_spent + amount > mandate_ceiling` can.
+    TokenClient::new(&s.env, &s.token).approve(&owner, &s.router, &1_000_000_000, &1_000);
+
+    // Two individually-valid (<= per_run_max) pulls whose SUM (350,000,000) exceeds the
+    // 300,000,000 mandate_ceiling — no sequence of otherwise-valid pulls can ever overspend it.
+    client.pull_v3(&permission_id, &BytesN::from_array(&s.env, &[5u8; 32]), &agent, &180_000_000);
+    let res = client.try_pull_v3(
+        &permission_id,
+        &BytesN::from_array(&s.env, &[6u8; 32]),
+        &agent,
+        &170_000_000,
+    );
+    assert_eq!(res, Err(Ok(Error::from(RouterError::CeilingExceededV3))));
+
+    let t = TokenClient::new(&s.env, &s.token);
+    assert_eq!(t.balance(&agent), 180_000_000); // only the first pull moved anything
+    // Allowance has ample headroom left — proves it was never what stopped the second pull.
+    assert_eq!(t.allowance(&owner, &s.router), 1_000_000_000 - 180_000_000);
+    assert_eq!(client.permission_grant(&permission_id).unwrap().confirmed_spent, 180_000_000);
+}
+
+#[test]
+fn pull_v3_rejects_revoked_permission() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &300_000_000, &200_000_000, &1_000, &inits);
+    let agent = agents.get(0).unwrap();
+
+    client.revoke_v3(&permission_id);
+    assert!(client.permission_grant(&permission_id).unwrap().revoked);
+
+    assert_eq!(
+        client.try_pull_v3(&permission_id, &BytesN::from_array(&s.env, &[7u8; 32]), &agent, &1_000),
+        Err(Ok(Error::from(RouterError::RevokedV3)))
+    );
+    // Idempotent.
+    client.revoke_v3(&permission_id);
+    assert!(client.permission_grant(&permission_id).unwrap().revoked);
+}
+
+#[test]
+fn pull_v3_rejects_after_live_until_ledger() {
+    let s = setup();
+    s.env.mock_all_auths();
+    s.env.ledger().with_mut(|li| li.sequence_number = 100);
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &300_000_000, &200_000_000, &300, &inits);
+    let agent = agents.get(0).unwrap();
+    client.pull_v3(&permission_id, &BytesN::from_array(&s.env, &[8u8; 32]), &agent, &10_000_000); // live before expiry
+
+    s.env.ledger().with_mut(|li| li.sequence_number = 500);
+
+    assert_eq!(
+        client.try_pull_v3(&permission_id, &BytesN::from_array(&s.env, &[9u8; 32]), &agent, &10_000_000),
+        Err(Ok(Error::from(RouterError::ExpiredV3)))
+    );
+    assert_eq!(TokenClient::new(&s.env, &s.token).balance(&agent), 10_000_000); // unchanged
+}
+
+#[test]
+fn pull_v3_rejects_duplicate_execution_id() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 300_000_000)];
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &300_000_000, &200_000_000, &1_000, &inits);
+    let agent = agents.get(0).unwrap();
+    let execution_id = BytesN::from_array(&s.env, &[10u8; 32]);
+
+    client.pull_v3(&permission_id, &execution_id, &agent, &50_000_000);
+    // Same execution_id again — even though there is still ceiling headroom.
+    assert_eq!(
+        client.try_pull_v3(&permission_id, &execution_id, &agent, &50_000_000),
+        Err(Ok(Error::from(RouterError::DuplicateExecutionV3)))
+    );
+
+    let t = TokenClient::new(&s.env, &s.token);
+    assert_eq!(t.balance(&agent), 50_000_000); // second pull moved nothing
+    assert_eq!(client.permission_grant(&permission_id).unwrap().confirmed_spent, 50_000_000);
+}
+
+#[test]
+fn pull_v3_rejects_non_positive_amount() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &300_000_000, &200_000_000, &1_000, &inits);
+    let agent = agents.get(0).unwrap();
+
+    assert_eq!(
+        client.try_pull_v3(&permission_id, &BytesN::from_array(&s.env, &[11u8; 32]), &agent, &0),
+        Err(Ok(Error::from(RouterError::InvalidAmount)))
+    );
+    assert_eq!(
+        client.try_pull_v3(&permission_id, &BytesN::from_array(&s.env, &[12u8; 32]), &agent, &-5),
+        Err(Ok(Error::from(RouterError::InvalidAmount)))
+    );
+}
+
+#[test]
+fn pull_v3_failed_transfer_does_not_advance_spend_or_mark_execution_used() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 300_000_000)];
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &300_000_000, &200_000_000, &1_000, &inits);
+    let agent = agents.get(0).unwrap();
+    let execution_id = BytesN::from_array(&s.env, &[13u8; 32]);
+
+    // Router-side bookkeeping (mandate_ceiling/per_run_max) would happily allow this pull, but
+    // the owner separately zeroed the UNDERLYING SEP-41 allowance the transfer_from actually
+    // needs — the transfer traps, and the whole invocation (including the spend/replay writes
+    // pull_v3 made before calling transfer_from) rolls back with it.
+    TokenClient::new(&s.env, &s.token).approve(&owner, &s.router, &0, &1_000);
+
+    assert!(client
+        .try_pull_v3(&permission_id, &execution_id, &agent, &50_000_000)
+        .is_err());
+
+    assert_eq!(client.permission_grant(&permission_id).unwrap().confirmed_spent, 0);
+    assert_eq!(TokenClient::new(&s.env, &s.token).balance(&agent), 0);
+    // The execution_id was NOT consumed — a legitimate retry (once the allowance is restored)
+    // must still be able to use it.
+    TokenClient::new(&s.env, &s.token).approve(&owner, &s.router, &300_000_000, &1_000);
+    client.pull_v3(&permission_id, &execution_id, &agent, &50_000_000);
+    assert_eq!(TokenClient::new(&s.env, &s.token).balance(&agent), 50_000_000);
+}
+
+// --- new: `linked_permission` is a public read of the SAME LinkedAgentV3 record `pull_v3`
+// itself checks — proves an agent's permission link from public state instead of a local cache. ---
+#[test]
+fn linked_permission_reflects_v3_agent_link_and_none_otherwise() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
+
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &500_000_000, &200_000_000, &1_000, &inits);
+    let agent = agents.get(0).unwrap();
+
+    assert_eq!(client.linked_permission(&agent), Some(permission_id));
+    // An address nobody ever deployed via grant_v3 has no link.
+    assert_eq!(client.linked_permission(&Address::generate(&s.env)), None);
+    // A V2 grant()-deployed agent lives in a separate namespace — no V3 link either.
+    let v2_agents = client.grant(
+        &owner,
+        &budgets(&s.env, &s.token, 1_000),
+        &1_000,
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 2, 1_000)],
+    );
+    assert_eq!(client.linked_permission(&v2_agents.get(0).unwrap()), None);
+}
+
+// ─────────────────────────── Pinned cross-layer vector for `derive_scope_id` ───────────────────────────
+//
+// CROSS-LAYER CONTRACT: the two byte vectors asserted below are consumed byte-for-byte by the
+// JavaScript mirror in `frontend/src/strategy/permissionGrantV3.js`. That file hand-reproduces
+// `derive_scope_id`'s exact preimage (domain tag || target XDR || token XDR || kind as a
+// big-endian u32 || mint_recipient (32 raw bytes) || destination_domain as a big-endian u32,
+// then sha256) so the browser can independently recompute a permission's scope_id and compare it
+// against on-chain state, instead of trusting its own local cache. If EITHER assertion below ever
+// changes for the SAME inputs — a different hash, a reordered preimage, a changed domain tag —
+// the JS mirror is broken and MUST be updated to match it. This Rust function is the single
+// source of truth for the algorithm; the JS is a hand-written port of it, never the reverse.
+//
+// `target`/`token` are built via `Address::from_str` from FIXED, hardcoded strkeys — never
+// `Address::generate`, which draws from the test env's PRNG and would make this vector unstable
+// across runs (a pinned vector that moves between runs is worthless). This calls the
+// crate-private `derive_scope_id` directly rather than going through `grant_v3` — test.rs is a
+// child module of the crate root so private items are visible to it (`crate::types::{..}` above
+// already relies on the same visibility), and the hash depends only on its own inputs: no token
+// or vault contract needs to actually exist on-chain for this.
+#[test]
+fn scope_id_matches_pinned_cross_layer_vector() {
+    let env = Env::default();
+
+    // Fixed target/token: synthetic 32-byte payloads (raw bytes 0xA0..0xBF and 0xB0..0xCF
+    // respectively) encoded as Stellar contract strkeys — NOT any real deployed contract, just a
+    // stable, reproducible pair of 32-byte identities for the hash to consume.
+    let target = Address::from_str(&env, "CCQKDIVDUSS2NJ5IVGVKXLFNV2X3BMNSWO2LLNVXXC43VO54XW7L65UW");
+    let token = Address::from_str(&env, "CCYLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM6QJS");
+
+    // Vector 1: kind = 0 (deposit) — zero mint_recipient/destination_domain, the values every
+    // deposit-kind AgentInit carries (those two fields are semantically unused for kind 0, but
+    // still part of the hashed preimage either way).
+    let zero = BytesN::from_array(&env, &[0u8; 32]);
+    let scope1 = crate::derive_scope_id(&env, &target, &token, 0, &zero, 0);
+    assert_eq!(
+        scope1.to_array(),
+        [
+            0x77, 0x5a, 0xd5, 0xa5, 0xc5, 0xf2, 0xec, 0x63, 0x82, 0x44, 0x76, 0x26, 0x69, 0x4b,
+            0x4c, 0xa7, 0x5b, 0x25, 0xa2, 0x3d, 0x46, 0x6c, 0xfa, 0x3f, 0xda, 0x50, 0x55, 0x96,
+            0x86, 0x1d, 0x32, 0x02,
+        ]
+    );
+
+    // Vector 2: kind = 1 (bridge) — non-zero mint_recipient AND non-zero destination_domain, so
+    // both bridge-only fields are actually exercised in the preimage (`grant_v3` itself rejects
+    // kind == 1 with either one left at zero, so a real bridge permission always looks like this).
+    let mint_recipient = BytesN::from_array(&env, &[0xCDu8; 32]);
+    let scope2 = crate::derive_scope_id(&env, &target, &token, 1, &mint_recipient, 6);
+    assert_eq!(
+        scope2.to_array(),
+        [
+            0x94, 0xe4, 0x2b, 0x09, 0xc5, 0x13, 0xc8, 0x5d, 0x1d, 0x60, 0x63, 0x38, 0x77, 0xef,
+            0xac, 0x27, 0x5f, 0x52, 0x8c, 0x31, 0x41, 0xa4, 0x27, 0x43, 0xd7, 0x03, 0x15, 0x23,
+            0xf0, 0x49, 0x91, 0xd3,
+        ]
+    );
 }

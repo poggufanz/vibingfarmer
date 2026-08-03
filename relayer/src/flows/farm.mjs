@@ -8,12 +8,29 @@ export function createFarmFlow({ watcher, orchestrator, domains }) {
    * @param {string} params.burnTxHash - the user's already-submitted Stellar deposit_for_burn tx
    * @param {string} params.execId - stable id for idempotency (e.g. derived from burnTxHash)
    * @param {string} params.approval - serialized session approval (SP3 mandate)
-   * @param {{pool:string, amount:bigint, minShares:bigint}[]} params.allocations
+   * @param {{allocationId:string, pool:string, amount:bigint, minShares:bigint,
+   *   reportAmount:{token:string,units:string,decimals:number}, proxyTarget:string}[]} params.allocations
+   * @param {string|null} [params.runId] - My Money's durable per-run identifier; opaque here,
+   *   echoed straight through onto the result so httpRouter.mjs can carry it onto the job record.
+   * @param {string|null} [params.bridgeAgent] - the Stellar bridge-agent address for this run
+   * @param {string|null} [params.grantTxHash] - the funding_router grant tx this run spent from
    */
-  async function farm({ burnTxHash, execId, approval, allocations }) {
+  async function farm({
+    burnTxHash,
+    execId,
+    approval,
+    allocations,
+    runId = null,
+    bridgeAgent = null,
+    grantTxHash = null,
+    onMintConfirmed = null,
+  }) {
     const mintResult = await watcher.relayMint({ sourceDomain: domains.stellar, burnTxHash, execId });
+    if (onMintConfirmed) await onMintConfirmed(mintResult);
+    // dispatchDeposits preserves allocationId and emits custody separately from executionStatus;
+    // the reporter consumes that explicit evidence and never infers custody from fulfilled/rejected.
     const depositResults = await orchestrator.dispatchDeposits(approval, allocations);
-    return { mintResult, depositResults };
+    return { mintResult, depositResults, runId, bridgeAgent, grantTxHash };
   }
 
   return { farm };

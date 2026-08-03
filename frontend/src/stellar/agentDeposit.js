@@ -15,6 +15,11 @@ import {
   NETWORK_PASSPHRASE,
 } from './config.js'
 import { getRelayerAddress, submitViaRelay } from './relay.js'
+// Task 6 chunk C1 -- runAgentDeposit's indeterminate-outcome path, added here to mirror
+// grant.js's runAgentPull (grant.js:844-891). Never existed in this file before this chunk (see
+// this function's own doc comment for the citation).
+import { activeAccountSubmissionUnknown, assertActiveAccountBoundary } from './activeAccount.js'
+import { getActiveAccount } from './walletKit.js'
 
 let _sdk = null
 async function sdk() {
@@ -135,11 +140,38 @@ export async function buildAgentDeposit({
 
 /**
  * Full gasless deposit: resolve the relayer, build + sign, submit via the relay.
- * @param {{agentAddress:string, amount:bigint, sessionKey:object, vault?:string, server?:object}} p
+ *
+ * Task 6 chunk C1 -- indeterminate-outcome path, mirroring `runAgentPull`'s shape exactly
+ * (grant.js:844-891): if the active-account boundary check that FOLLOWS `submitViaRelay` fails
+ * (the connected wallet changed mid-submission), this throws `activeAccountSubmissionUnknown`
+ * rather than returning or masking the relay's own result -- the deposit's outcome is genuinely
+ * unknown (it may have landed under the OLD account before the switch), never reported as either
+ * a clean success or a clean failure. `activeAccount`/`getCurrentActiveAccount`/`signal` are all
+ * optional and additive: an omitted `activeAccount` makes `check()` a no-op (same as before this
+ * chunk), so every existing caller that never passed them is unaffected.
+ * @param {{agentAddress:string, amount:bigint, sessionKey:object, vault?:string, server?:object,
+ *   activeAccount?:object, getCurrentActiveAccount?:Function, signal?:AbortSignal}} p
  * @returns {Promise<{hash:string, status:string, relayer?:string}|null>} null if relay unconfigured
  */
-export async function runAgentDeposit({ agentAddress, amount, sessionKey, vault, server }) {
+export async function runAgentDeposit({
+  agentAddress,
+  amount,
+  sessionKey,
+  vault,
+  server,
+  activeAccount,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
+}) {
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
   const relayer = await getRelayerAddress()
+  check()
   if (!relayer) return null
   const { xdr } = await buildAgentDeposit({
     agentAddress,
@@ -149,7 +181,24 @@ export async function runAgentDeposit({ agentAddress, amount, sessionKey, vault,
     vault,
     server,
   })
-  return submitViaRelay({ xdr })
+  check()
+  let result
+  try {
+    result = await submitViaRelay({ xdr, ...(signal ? { signal } : {}) })
+  } catch (error) {
+    try {
+      check()
+    } catch (cause) {
+      throw activeAccountSubmissionUnknown({ stage: 'deposit', cause, result })
+    }
+    throw error
+  }
+  try {
+    check()
+  } catch (cause) {
+    throw activeAccountSubmissionUnknown({ stage: 'deposit', cause, result })
+  }
+  return result
 }
 
 /** Vault-share balance (i128 base units) of `addr`, or null on RPC failure. */

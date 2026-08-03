@@ -16,6 +16,10 @@ import { fromScVal, symbolScVal, addrScVal } from './scval.js'
 import { SOROBAN_RPC_URL } from './config.js'
 
 const DEPLOYED_TOPIC = 'deployed' // lowercase — see header note
+// Router V3 (Task 4, bounded reusable grant) event topics — same lowercase-snake_case rule as
+// `deployed`: soroban-sdk's #[contractevent] derives the topic from the struct name.
+const GRANTED_V3_TOPIC = 'granted_v3'
+const PULLED_V3_TOPIC = 'pulled_v3'
 // Safety cap on the cursor loop: the probe saw ≤61 pages for a full 7d retention window; 250 is a
 // runaway backstop, not a real bound. ponytail: bump only if retention windows grow past ~15 days.
 const MAX_PAGES = 250
@@ -40,6 +44,84 @@ export function decodeDeployedEvent(rec) {
     const cap = fromScVal(rec.value)?.cap
     if (!agent || cap == null) return null
     return { owner, agent, cap: BigInt(cap), ledger: rec.ledger, txHash: rec.txHash }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Decode one raw getEvents record into a V3 `grant_v3` receipt. Topics: [granted_v3(lowercase),
+ * owner, permission_id]; data ScMap {token, mandate_ceiling, per_run_max, live_until_ledger,
+ * agents}. Returns `null` for any topic that isn't `granted_v3`, or any record that fails to
+ * decode.
+ * @param {{ topic: unknown[], value: unknown, ledger?: number, txHash?: string }} rec
+ * @returns {{ owner: string, permissionId: Buffer, token: string, mandateCeiling: bigint,
+ *   perRunMax: bigint, liveUntilLedger: number, agents: number, ledger?: number,
+ *   txHash?: string } | null}
+ */
+export function decodeGrantedV3Event(rec) {
+  try {
+    if (fromScVal(rec.topic[0]) !== GRANTED_V3_TOPIC) return null
+    const owner = fromScVal(rec.topic[1])
+    const permissionId = fromScVal(rec.topic[2])
+    const data = fromScVal(rec.value) ?? {}
+    const {
+      token,
+      mandate_ceiling: mandateCeiling,
+      per_run_max: perRunMax,
+      live_until_ledger: liveUntilLedger,
+      agents,
+    } = data
+    if (
+      !token ||
+      mandateCeiling == null ||
+      perRunMax == null ||
+      liveUntilLedger == null ||
+      agents == null
+    ) {
+      return null
+    }
+    return {
+      owner,
+      permissionId,
+      token,
+      mandateCeiling: BigInt(mandateCeiling),
+      perRunMax: BigInt(perRunMax),
+      liveUntilLedger: Number(liveUntilLedger),
+      agents: Number(agents),
+      ledger: rec.ledger,
+      txHash: rec.txHash,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Decode one raw getEvents record into a V3 `pull_v3` execution. Topics: [pulled_v3(lowercase),
+ * owner, permission_id]; data ScMap {agent, execution_id, amount}. Returns `null` for any topic
+ * that isn't `pulled_v3`, or any record that fails to decode.
+ * @param {{ topic: unknown[], value: unknown, ledger?: number, txHash?: string }} rec
+ * @returns {{ owner: string, permissionId: Buffer, agent: string, executionId: Buffer,
+ *   amount: bigint, ledger?: number, txHash?: string } | null}
+ */
+export function decodePulledV3Event(rec) {
+  try {
+    if (fromScVal(rec.topic[0]) !== PULLED_V3_TOPIC) return null
+    const owner = fromScVal(rec.topic[1])
+    const permissionId = fromScVal(rec.topic[2])
+    const data = fromScVal(rec.value) ?? {}
+    const { agent, execution_id: executionId, amount } = data
+    if (!agent || executionId == null || amount == null) return null
+    return {
+      owner,
+      permissionId,
+      agent,
+      executionId,
+      amount: BigInt(amount),
+      ledger: rec.ledger,
+      txHash: rec.txHash,
+    }
   } catch {
     return null
   }

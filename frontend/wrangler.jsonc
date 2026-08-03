@@ -34,7 +34,18 @@
     "SOROBAN_ROUTER_ADDRESSES": "CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE,CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5",
     "SOROBAN_AGENT_WASM_HASHES": "1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1,d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba",
     "SOROBAN_TOKEN_MESSENGER_ADDRESS": "CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP",
-    "VF_HOME_DOMAIN": "vibing-farmer.pages.dev"
+    // exit_router for the one-popup full-exit sweep (VF Wallet Task 5 relay allowlist) — unset
+    // would fail-close sweep relaying; exit.js's per-agent owner_withdraw rollback stays direct.
+    "SOROBAN_EXIT_ROUTER_ADDRESS": "CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J",
+    "VF_HOME_DOMAIN": "vibing-farmer.pages.dev",
+    // Agent index historical backfill (Task 4, scripts/agent-index/backfill-legacy-agents.mjs) —
+    // non-secret labels only, pinned into every committed agent_backfill_audits row's evidence
+    // for provenance. PROVIDER_ID always wins; OLDEST_LEDGER is the documented archival-floor
+    // FALLBACK used only when the provider's own getHealth() doesn't report oldestLedger. The
+    // archival RPC URL itself is a secret/binding (AGENT_INDEX_ARCHIVAL_RPC_URL,
+    // .dev.vars.example / `wrangler pages secret put`), never here.
+    "AGENT_INDEX_ARCHIVAL_PROVIDER_ID": "unset",
+    "AGENT_INDEX_ARCHIVAL_OLDEST_LEDGER": "1"
   },
   "env": {
     // Preview (branch) deployments — CORS is exact-match, no wildcard, so only
@@ -59,7 +70,10 @@
         "SOROBAN_ROUTER_ADDRESSES": "CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE,CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5",
         "SOROBAN_AGENT_WASM_HASHES": "1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1,d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba",
         "SOROBAN_TOKEN_MESSENGER_ADDRESS": "CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP",
-        "VF_HOME_DOMAIN": "dev.vibing-farmer.pages.dev"
+        "SOROBAN_EXIT_ROUTER_ADDRESS": "CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J",
+        "VF_HOME_DOMAIN": "dev.vibing-farmer.pages.dev",
+        "AGENT_INDEX_ARCHIVAL_PROVIDER_ID": "unset",
+        "AGENT_INDEX_ARCHIVAL_OLDEST_LEDGER": "1"
       }
     }
   }

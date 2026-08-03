@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { render, screen, within, cleanup } from '@testing-library/react'
+import { render, screen, within, cleanup, fireEvent } from '@testing-library/react'
 import OpsConsole from './OpsConsole.jsx'
 
 vi.mock('../../agents.jsx', () => ({
   AgentGraph: () => <div data-testid="agent-graph" />,
   DecisionLogPanel: () => <div data-testid="decision-log" />,
 }))
-vi.mock('../WithdrawModal.jsx', () => ({ default: () => <div /> }))
+vi.mock('../WithdrawModal.jsx', () => ({
+  default: ({ activeAccount }) => (
+    <div data-testid="withdraw-capability">{activeAccount?.connectorId || 'missing'}</div>
+  ),
+}))
 
 afterEach(cleanup)
 
@@ -20,6 +24,14 @@ const props = {
   vaultMeta: { [VAULT.toLowerCase()]: { apy: 8.2, protocol: 'blend-autofarm' } },
   lastUpdated: NOW,
   userAddress: 'GUSER',
+  activeAccount: {
+    version: 1,
+    kind: 'G',
+    address: 'GUSER',
+    networkPassphrase: 'Test SDF Network ; September 2015',
+    connectorId: 'freighter',
+    epoch: 4,
+  },
   withdrawEnabled: true,
   onWithdrawSuccess: () => {},
   onNewStrategy: () => {},
@@ -88,5 +100,10 @@ describe('OpsConsole', () => {
   it('loop null renders monitor as stopped without crashing', () => {
     render(<OpsConsole {...props} loop={null} />)
     expect(screen.getByText('Loop stopped')).toBeTruthy()
+  })
+  it('passes the active-account capability through to the withdrawal boundary', () => {
+    render(<OpsConsole {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
+    expect(screen.getByTestId('withdraw-capability').textContent).toBe('freighter')
   })
 })

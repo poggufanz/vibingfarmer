@@ -3,8 +3,17 @@ import { describe, it, expect } from 'vitest'
 import { mergePass, trigramCosine, MERGE_CFG } from './merge.js'
 
 const rule = (over) => ({
-  id: 'r', role: 'yield', category: 'strategy', text: 't',
-  helpful: 0, harmful: 0, evals: 0, status: 'active', origin: 'grown', createdAt: 1, ...over,
+  id: 'r',
+  role: 'yield',
+  category: 'strategy',
+  text: 't',
+  helpful: 0,
+  harmful: 0,
+  evals: 0,
+  status: 'active',
+  origin: 'grown',
+  createdAt: 1,
+  ...over,
 })
 
 describe('trigramCosine', () => {
@@ -18,8 +27,22 @@ describe('trigramCosine', () => {
 describe('mergePass', () => {
   it('merges near-duplicate same-role rules: oldest id, summed counters', () => {
     const out = mergePass([
-      rule({ id: 'old', text: 'Avoid deposits when gas is very high', helpful: 2, harmful: 1, evals: 3, createdAt: 1 }),
-      rule({ id: 'new', text: 'Avoid deposits when gas is very high now', helpful: 3, harmful: 0, evals: 3, createdAt: 9 }),
+      rule({
+        id: 'old',
+        text: 'Avoid deposits when gas is very high',
+        helpful: 2,
+        harmful: 1,
+        evals: 3,
+        createdAt: 1,
+      }),
+      rule({
+        id: 'new',
+        text: 'Avoid deposits when gas is very high now',
+        helpful: 3,
+        harmful: 0,
+        evals: 3,
+        createdAt: 9,
+      }),
     ])
     expect(out.length).toBe(1)
     expect(out[0].id).toBe('old')
@@ -38,8 +61,18 @@ describe('mergePass', () => {
 
   it('a seed+grown collision keeps the seed origin', () => {
     const out = mergePass([
-      rule({ id: 'seed-1', origin: 'seed', text: 'Gas cost is small relative to yield', createdAt: 1 }),
-      rule({ id: 'grown-1', origin: 'grown', text: 'Gas cost is small relative to the yield', createdAt: 9 }),
+      rule({
+        id: 'seed-1',
+        origin: 'seed',
+        text: 'Gas cost is small relative to yield',
+        createdAt: 1,
+      }),
+      rule({
+        id: 'grown-1',
+        origin: 'grown',
+        text: 'Gas cost is small relative to the yield',
+        createdAt: 9,
+      }),
     ])
     expect(out.length).toBe(1)
     expect(out[0].origin).toBe('seed')

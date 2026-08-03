@@ -17,7 +17,7 @@ export default function Gauge({ value, max, segments = 12 }) {
           style={{
             width: 6,
             height: 10,
-            borderRadius: 1,
+            borderRadius: 'var(--pc-radius-control)',
             background:
               i < on ? 'var(--warn)' : 'color-mix(in srgb, var(--text-faint) 25%, transparent)',
           }}

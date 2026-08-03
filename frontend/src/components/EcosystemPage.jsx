@@ -1,6 +1,6 @@
 // EcosystemPage.jsx
 // Public tech-stack + partner page for Vibing Farmer.
-// Aesthetic: dark terminal, acid accent, monospace labels.
+// Aesthetic: dark terminal, single accent, mono for raw values only.
 // Same pattern as ExplorerPage: fixed scroll container, inherited CSS-var tokens.
 
 import { useRef, useEffect } from 'react'
@@ -52,7 +52,8 @@ const ARCH_NODES = [
     label: 'User Wallet',
     sub: 'VF Wallet / Freighter',
     icon: 'W',
-    color: '#ecebe1',
+    // Was a retired-palette ink literal, frozen to the dark theme. --text follows both.
+    color: 'var(--text)',
   },
   {
     id: 'ai',
@@ -70,7 +71,8 @@ const ARCH_NODES = [
     label: 'Funding Router',
     sub: 'One sign: budget + expiry',
     icon: 'FR',
-    color: '#cfff3d',
+    // Current Harvest/accent hex -- was a retired-branding lime value (see legacyPocketStyle.test.js).
+    color: '#dff56c',
     hero: true,
   },
   {
@@ -144,7 +146,9 @@ function ArchNode({ node }) {
         height={h}
         rx={rx}
         className="arch-card"
-        style={{ stroke: node.hero ? 'rgba(207,255,61,0.4)' : undefined }}
+        style={{
+          stroke: node.hero ? 'color-mix(in srgb, var(--accent) 40%, transparent)' : undefined,
+        }}
       />
       {/* icon circle */}
       <circle
@@ -285,10 +289,18 @@ function EcoCard({ item }) {
     <article className="eco-card eco-card--brand">
       <span className="eco-card__logo" aria-hidden="true">
         {item.icon ? (
-          <img src={item.icon} alt="" loading="lazy" />
+          <img
+            src={item.icon}
+            alt=""
+            loading="lazy"
+            className={item.iconDark ? 'eco-card__logo-icon--default' : undefined}
+          />
         ) : (
           <span className="eco-card__mark">{initials(item.name)}</span>
         )}
+        {item.iconDark ? (
+          <img src={item.iconDark} alt="" loading="lazy" className="eco-card__logo-icon--dark" />
+        ) : null}
       </span>
       <h3 className="eco-card__name">{item.name}</h3>
     </article>
@@ -437,24 +449,13 @@ function EcoStyle() {
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  background: var(--bg-base, #0e0f0c);
-  color: var(--text, #ecebe1);
-  font-family: var(--font-body, "Geist", system-ui, sans-serif);
-  --eco-accent: var(--accent, #cfff3d);
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-body);
+  --eco-accent: var(--accent);
 }
-/* Faint grid texture - same atmosphere as hero / explorer. */
-.eco-page::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.016) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.016) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 20%, transparent 100%);
-}
+/* Grid-texture ::before removed: a linear-gradient pair masked by a radial-gradient is still
+   a gradient (contract rule 7 bans them outright), and it was decorative, not load-bearing. */
 
 .eco-main {
   position: relative;
@@ -467,38 +468,38 @@ function EcoStyle() {
 /* ---------- header ---------- */
 .eco-header {
   padding-bottom: clamp(2rem, 5vw, 3.4rem);
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+  border-bottom: 1px solid var(--border);
 }
 .eco-title {
-  font-family: var(--font-display, "Geist", sans-serif);
+  font-family: var(--font-display);
   font-weight: 700;
   letter-spacing: -0.04em;
   line-height: 1;
   font-size: clamp(2.6rem, 7vw, 4.6rem);
-  color: var(--text, #ecebe1);
+  color: var(--text);
 }
 .eco-lede {
   margin-top: 1.1rem;
   max-width: 62ch;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: clamp(0.82rem, 1.1vw, 0.95rem);
   line-height: 1.7;
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
 }
 
 /* ---------- sections ---------- */
 .eco-section {
   padding: clamp(2.2rem, 5vw, 3.6rem) 0;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+  border-bottom: 1px solid var(--border);
 }
 .eco-section--cta { border-bottom: none; }
 .eco-section__title {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--eco-accent);
+  color: var(--accent-text);
   margin-bottom: 1.5rem;
 }
 
@@ -509,9 +510,9 @@ function EcoStyle() {
   gap: 0.7rem;
 }
 .eco-card {
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: var(--radius-lg, 14px);
-  background: var(--bg-card, #1a1b16);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
   transition: transform 220ms cubic-bezier(0.16,1,0.3,1),
               border-color 220ms ease, box-shadow 220ms ease;
 }
@@ -525,7 +526,7 @@ function EcoStyle() {
   text-align: center;
 }
 .eco-card:hover {
-  border-color: var(--border-accent, rgba(207,255,61,0.4));
+  border-color: var(--border-accent);
 }
 .eco-card__logo {
   display: inline-grid;
@@ -537,26 +538,40 @@ function EcoStyle() {
   width: auto;
   /* each logo carries its own official brand color — shown at full strength, not tinted. */
 }
+/* Stellar ships official Black + White finals; swap by live [data-theme] instead of
+   filtering the artwork (no recoloring). Default (Day Field/no attribute) shows Black;
+   Forest (this page's default card background is dark) shows White. */
+.eco-card__logo img.eco-card__logo-icon--dark {
+  display: none;
+}
+:root[data-theme='forest'] .eco-card__logo img.eco-card__logo-icon--dark {
+  display: inline-block;
+}
+:root[data-theme='forest'] .eco-card__logo img.eco-card__logo-icon--default {
+  display: none;
+}
 .eco-card__mark {
   display: inline-grid;
   place-items: center;
   width: 40px;
   height: 40px;
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: var(--radius-sm, 4px);
-  background: var(--bg-elev, #22231d);
-  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  /* Not mono: an identity monogram (initials fallback for a missing logo), same role and
+     font as AgentMark's '.pc-agent-mark-label' — a name, not a raw value. */
+  font-family: var(--font-body);
   font-size: 0.82rem;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: var(--text, #ecebe1);
+  color: var(--text);
 }
 .eco-card__name {
-  font-family: var(--font-display, "Geist", sans-serif);
+  font-family: var(--font-display);
   font-weight: 600;
   font-size: clamp(0.9rem, 1.4vw, 1.05rem);
   letter-spacing: -0.015em;
-  color: var(--text, #ecebe1);
+  color: var(--text);
   margin: 0;
 }
 
@@ -570,37 +585,38 @@ function EcoStyle() {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: var(--radius-lg, 14px);
-  background: var(--bg-card, #1a1b16);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
   padding: 1.1rem 1rem;
   text-decoration: none;
   transition: border-color 200ms ease, transform 200ms cubic-bezier(0.16,1,0.3,1);
 }
 .eco-std:hover {
-  border-color: var(--border-accent, rgba(207,255,61,0.4));
+  border-color: var(--border-accent);
 }
 .eco-std:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 2px; }
+/* Mono: a spec/standard identifier ("SEP-41", "x402"), not prose — same class as a version string. */
 .eco-std__id {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 0.9rem;
   font-weight: 700;
   letter-spacing: -0.01em;
-  color: var(--eco-accent);
+  color: var(--accent-text);
   line-height: 1;
 }
 .eco-std__desc {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.68rem;
   line-height: 1.45;
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
   flex-grow: 1;
 }
 .eco-std__view {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.64rem;
   letter-spacing: 0.04em;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
   display: inline-flex;
   align-items: center;
   gap: 0.3ch;
@@ -628,42 +644,46 @@ function EcoStyle() {
   margin: 0 auto;
 }
 .arch-card {
-  fill: var(--bg-card, #1a1b16);
-  stroke: var(--border-strong, rgba(255,255,255,0.13));
+  fill: var(--bg-card);
+  stroke: var(--border-strong);
   stroke-width: 1;
   transition: stroke 200ms ease;
 }
 .arch-node:hover .arch-card {
-  stroke: rgba(207,255,61,0.4);
+  stroke: color-mix(in srgb, var(--accent) 40%, transparent);
 }
+/* Was a blurred lime stroke behind the hero node (feGaussianBlur filter) -- an outer glow,
+   contract rule 7. ArchNode.jsx still renders the <rect className="arch-glow"> (a JSX/markup
+   change is out of scope for this pass), so it's hidden here rather than left to paint with
+   the SVG fill default (black) once its fill/stroke/filter declarations are gone. The accent
+   stroke on .arch-card already marks the hero node without any glow. */
 .arch-glow {
-  fill: none;
-  stroke: rgba(207,255,61,0.15);
-  stroke-width: 2;
-  filter: url(#arch-glow-f);
+  display: none;
 }
 .arch-icon-bg {
   stroke-width: 1;
 }
+/* Not mono: a 1-3 letter node monogram, same role as AgentMark's identity label
+   ('.pc-agent-mark-label'), which is also font-sans, not mono. */
 .arch-icon-text {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 .arch-label {
-  font-family: var(--font-display, "Geist", sans-serif);
+  font-family: var(--font-display);
   font-size: 11.5px;
   font-weight: 600;
-  fill: var(--text, #ecebe1);
+  fill: var(--text);
 }
 .arch-sublabel {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 8.5px;
-  fill: var(--text-faint, #56564f);
+  fill: var(--text-faint);
 }
 .arch-line {
-  stroke: rgba(255,255,255,0.12);
+  stroke: var(--border-strong);
   stroke-width: 1;
   stroke-dasharray: 6 4;
   stroke-dashoffset: 0;
@@ -673,29 +693,29 @@ function EcoStyle() {
   to { stroke-dashoffset: -40; }
 }
 .arch-arrow {
-  fill: rgba(255,255,255,0.2);
+  fill: var(--border-strong);
 }
 .arch-edge-bg {
-  fill: var(--bg-base, #0e0f0c);
-  stroke: var(--border, rgba(255,255,255,0.06));
+  fill: var(--bg-base);
+  stroke: var(--border);
   stroke-width: 0.5;
 }
 .arch-edge-label {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 8px;
   letter-spacing: 0.03em;
-  fill: var(--text-muted, #95958a);
+  fill: var(--text-muted);
 }
 .arch-gas-bg {
-  fill: rgba(207,255,61,0.06);
-  stroke: rgba(207,255,61,0.2);
+  fill: color-mix(in srgb, var(--accent) 6%, transparent);
+  stroke: color-mix(in srgb, var(--accent) 20%, transparent);
   stroke-width: 0.5;
 }
 .arch-gas-text {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 8.5px;
   font-weight: 600;
-  fill: var(--eco-accent);
+  fill: var(--accent-text);
   letter-spacing: 0.03em;
 }
 
@@ -707,29 +727,30 @@ function EcoStyle() {
   gap: 1.2rem;
   text-align: center;
   padding: clamp(2rem, 6vw, 4rem) clamp(1rem, 4vw, 2rem);
-  background: radial-gradient(120% 80% at 50% 100%, rgba(207,255,61,0.07), transparent 60%);
-  border-radius: var(--radius-xl, 18px);
+  /* Radial-gradient glow removed (contract rule 7) -- accent-soft is the flat, themed panel fill. */
+  background: var(--accent-soft);
+  border-radius: var(--radius-xl);
 }
 .eco-cta__heading {
-  font-family: var(--font-display, "Geist", sans-serif);
+  font-family: var(--font-display);
   font-weight: 700;
   letter-spacing: -0.035em;
   line-height: 1;
   font-size: clamp(2.2rem, 5.5vw, 4.2rem);
-  color: var(--text, #ecebe1);
+  color: var(--text);
   margin: 0;
 }
 .eco-cta__tagline {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: clamp(0.84rem, 1.2vw, 0.98rem);
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
   margin: 0;
 }
 .eco-cta__tagline em {
-  font-family: var(--font-script, "Newsreader", serif);
+  font-family: var(--font-script);
   font-style: italic;
   font-weight: 500;
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
 }
 .eco-cta__row {
   display: flex;
@@ -740,13 +761,13 @@ function EcoStyle() {
   margin-top: 0.4rem;
 }
 .eco-btn-primary {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-weight: 600;
   font-size: 0.96rem;
   letter-spacing: 0.01em;
   padding: 0.9rem 2rem;
-  border-radius: var(--radius-lg, 14px);
-  color: var(--accent-fg, #0e0f0c);
+  border-radius: var(--radius-lg);
+  color: var(--accent-fg);
   background: var(--eco-accent);
   border: none;
   cursor: pointer;
@@ -761,15 +782,15 @@ function EcoStyle() {
 .eco-btn-primary:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 3px; }
 
 .eco-btn-ghost {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-weight: 500;
   font-size: 0.96rem;
   letter-spacing: 0.01em;
   padding: 0.9rem 2rem;
-  border-radius: var(--radius-lg, 14px);
-  color: var(--text-muted, #95958a);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
   background: transparent;
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
+  border: 1px solid var(--border-strong);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -780,17 +801,20 @@ function EcoStyle() {
 }
 .eco-btn-ghost span { transition: transform 200ms cubic-bezier(0.16,1,0.3,1); }
 .eco-btn-ghost:hover {
-  border-color: var(--border-accent, rgba(207,255,61,0.4));
-  color: var(--text, #ecebe1);
+  border-color: var(--border-accent);
+  color: var(--text);
 }
 .eco-btn-ghost:active { transform: scale(0.97); }
 .eco-btn-ghost:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 2px; }
 
 @media (hover: hover) and (pointer: fine) {
-  .eco-card:hover { transform: translateY(-2px); box-shadow: 0 8px 32px -8px rgba(0,0,0,0.55); }
+  /* Was a custom drop shadow; offsets aren't 0 0 so this was elevation, not glow -- reuse the
+     canonical elevation token instead of a one-off shadow. */
+  .eco-card:hover { transform: translateY(-2px); box-shadow: var(--pc-shadow-support); }
   .eco-extlink:hover span { transform: translate(2px, -2px); }
   .eco-std:hover { transform: translateY(-2px); }
-  .eco-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 40px 2px rgba(207,255,61,0.38); }
+  /* Outer glow removed (contract rule 7) -- the lift + accent fill already signal hover. */
+  .eco-btn-primary:hover { transform: translateY(-2px); }
   .eco-btn-primary:hover span { transform: translateX(4px); }
   .eco-btn-primary:active { transform: scale(0.97); }
   .eco-btn-ghost:hover { transform: translateY(-1px); }
@@ -828,18 +852,18 @@ function EcoStyle() {
   flex-wrap: wrap;
   margin-top: 3rem;
   padding-top: 1.8rem;
-  border-top: 1px solid var(--border, rgba(255,255,255,0.06));
+  border-top: 1px solid var(--border);
 }
 .eco-foot__mark {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.78rem;
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
 }
 .eco-foot__tag {
-  font-family: var(--font-script, "Newsreader", serif);
+  font-family: var(--font-script);
   font-style: italic;
   font-size: 0.95rem;
-  color: var(--text-faint, #56564f);
+  color: var(--text-faint);
 }
 
 /* ---------- responsive ---------- */

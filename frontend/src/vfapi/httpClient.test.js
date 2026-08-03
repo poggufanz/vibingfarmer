@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { makeVfClient } from './httpClient.js'
+import { RelaySubmissionUnknownError } from '../stellar/relay.js'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -30,5 +31,34 @@ describe('makeVfClient', () => {
     )
     const c = makeVfClient({ apiKey: 'vf_test_k' })
     await expect(c.scan({ target: 'G' })).rejects.toThrow('Out of scope')
+  })
+
+  it('types an unknown submit body before generic HTTP handling without changing other endpoints', async () => {
+    const body = {
+      submission: 'unknown',
+      error: 'reconcile this hash',
+      hash: 'HKNOWN',
+      status: 'PENDING',
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }))
+    )
+    const c = makeVfClient({ apiKey: 'vf_test_k' })
+
+    let error
+    try {
+      await c.submit('XDR')
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).toBeInstanceOf(RelaySubmissionUnknownError)
+    expect(error).toMatchObject({
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+      httpStatus: 200,
+      result: { hash: 'HKNOWN', status: 'PENDING' },
+    })
+    await expect(c.scan({ target: 'G' })).resolves.toEqual(body)
   })
 })

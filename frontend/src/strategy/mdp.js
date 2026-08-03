@@ -198,20 +198,32 @@ const TURBULENCE_MULTIPLIER = { calm: 1, elevated: 1.3, turbulent: 1.8 }
 /**
  * Project the reward of a strategy BEFORE execution. FinRL reward = delta portfolio
  * value; here we project it as risk-adjusted expected yield on deployed capital.
- * @param {Array<{address:string, allocation:number, expected_apy?:number, apy?:number, risk_tier?:string, drawdown?:number}>} allocations weights sum to 1.0
+ *
+ * Yield is nullable: an allocation may explicitly carry `expected_apy: null` / `apy: null` for a
+ * venue truthfully reporting no live yield (venueTruth.js's Base custody proxies, or any Stellar
+ * venue before a live feed exists). Such an allocation contributes 0 to `blendedApy` /
+ * `projectedAnnualUsdc` / `riskAdjustedScore` exactly as it always has — those numeric fields stay
+ * unchanged so every existing out-of-scope consumer (council.js, councilReview.js, monitorLoop.js)
+ * keeps working. `projection` is the ADDITIVE, truthful signal: whenever any required yield is
+ * unknown, it reports `{state:'unavailable', value:null}` instead of letting a UI read the
+ * numeric 0 as "confirmed zero return."
+ * @param {Array<{address:string, allocation:number, expected_apy?:number|null, apy?:number|null, risk_tier?:string, drawdown?:number}>} allocations weights sum to 1.0
  * @param {Object} state StrategyState
- * @returns {{ blendedApy:number, riskPenalty:number, riskAdjustedScore:number, projectedAnnualUsdc:number, turbulence:string }}
+ * @returns {{ blendedApy:number, riskPenalty:number, riskAdjustedScore:number, projectedAnnualUsdc:number, turbulence:string, projection:{state:'known'|'unavailable', value:number|null} }}
  */
 export function scoreReward(allocations, state) {
   const byAddr = new Map(state.universe.map((v) => [v.address.toLowerCase(), v]))
   let blended = 0
   let drawWeighted = 0
   let riskWeighted = 0
+  let hasUnknownYield = false
   ;(allocations || []).forEach((a) => {
     const obs = byAddr.get(String(a.address).toLowerCase()) || {}
     const w = Number(a.allocation) || 0
-    const apy =
-      Number(a.expected_apy != null ? a.expected_apy : a.apy != null ? a.apy : obs.apy) || 0
+    const rawApy =
+      a.expected_apy !== undefined ? a.expected_apy : a.apy !== undefined ? a.apy : obs.apy
+    if (rawApy == null) hasUnknownYield = true
+    const apy = Number(rawApy) || 0
     const draw = Math.abs(Number(a.drawdown != null ? a.drawdown : obs.drawdown) || 0)
     blended += w * apy
     drawWeighted += w * draw
@@ -221,10 +233,14 @@ export function scoreReward(allocations, state) {
   const riskPenalty = +(drawWeighted * turbMult).toFixed(2)
   const riskAdjustedScore = +(blended / (riskWeighted || 1)).toFixed(2)
   const projectedAnnualUsdc = +((blended / 100) * (state.capital.amountUsdc || 0)).toFixed(2)
+  const projection = hasUnknownYield
+    ? { state: 'unavailable', value: null }
+    : { state: 'known', value: projectedAnnualUsdc }
   return {
     blendedApy: +blended.toFixed(2),
     riskPenalty,
     riskAdjustedScore,
+    projection,
     projectedAnnualUsdc,
     turbulence: state.market.turbulence,
   }

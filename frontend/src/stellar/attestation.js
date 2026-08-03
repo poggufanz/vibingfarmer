@@ -7,8 +7,10 @@ import { signTxXdr } from './walletKit.js'
 import { SOROBAN_ATTESTATION_ADDRESS } from './config.js'
 
 /**
- * Attest a strategy hash on-chain. Returns { hash, status } on success, or null
- * when the relay is unconfigured/unreachable. Never throws on relay failure.
+ * Attest a strategy hash on-chain. Returns { hash, status } on success, or null only when the relay
+ * explicitly proves it is unconfigured before submission. Relay refusal and post-submit ambiguity
+ * propagate (including `VF_SUBMISSION_UNKNOWN`); the higher non-blocking strategy wrapper catches
+ * those errors.
  * @param {{ attester: string, strategyHash: string, label?: string, server?: object }} p
  * @returns {Promise<{ hash: string, status: string, relayer?: string } | null>}
  */

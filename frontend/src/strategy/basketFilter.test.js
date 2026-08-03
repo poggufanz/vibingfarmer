@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { filterBasket } from './basketFilter.js'
+import { filterBasket, computeBasket } from './basketFilter.js'
 
 const agent = (id, protocol, allocation) => ({ id, allocation, vault: { protocol, addr: 'C...' } })
 const V = (eligible) => ({ eligible })
@@ -32,5 +32,30 @@ describe('filterBasket', () => {
     })
     expect(r.survivors.find((s) => s.id === 'w1').allocationFraction).toBeCloseTo(0.75, 6)
     expect(r.survivors.reduce((a, s) => a + s.allocationFraction, 0)).toBeCloseTo(1.0, 6)
+  })
+})
+
+describe('computeBasket', () => {
+  it('drops a single contradictory venue record fail-closed instead of crashing the whole basket', () => {
+    // chain:'base' paired with a real Stellar-shaped address — venueDisclosure/normalizeVenue
+    // refuses to guess and throws. That must sink only THIS agent's verdict, not the whole call.
+    const contradictory = {
+      id: 'w-bad',
+      allocation: 50,
+      vault: {
+        protocol: 'morpho-blue', // distinct slug from the healthy agent below
+        chain: 'base',
+        addr: 'CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77',
+      },
+    }
+    const healthy = agent('w-ok', 'aave-v3', 50)
+    expect(() => computeBasket([contradictory, healthy])).not.toThrow()
+    const { verdictBySlug, survivors, dropped } = computeBasket([contradictory, healthy])
+    // the contradictory agent's own verdict is ineligible (fail-closed), never crashes the batch
+    expect(verdictBySlug['morpho-blue'].eligible).toBe(false)
+    expect(dropped.some((d) => d.agent.id === 'w-bad')).toBe(true)
+    expect(survivors.some((s) => s.id === 'w-bad')).toBe(false)
+    // the healthy agent, sharing nothing with the bad record, is unaffected
+    expect(survivors.some((s) => s.id === 'w-ok')).toBe(true)
   })
 })

@@ -1,9 +1,21 @@
 /* ============================================
    VIBING FARMER — screens (multi-agent edition)
    ============================================ */
+// Strategy Task 13 (Pocket Crew redesign, Wave 5): InputScreen, ThinkingCard, ConnectCard,
+// PermissionCard, and SuccessCard below are DEMOTED, not deleted. The production `/strategy`
+// route now generates plans and moves funds through PlanStage/ProtectStage/StartStage
+// (frontend/src/components/strategy/) — real strategist calls, real preflight/grant, real
+// orchestrator dispatch, no `speed * ...` timers, no optimistic permission state. app.jsx no
+// longer imports these five for its production render path; they remain exported only for the
+// dev/test compatibility seam (TweaksPanel's devMode-gated `jumpTo`) — never presented as a user
+// fallback. `shortAddr` is unrelated and stays a live, shared export (used throughout app.jsx's
+// orchestrator/activity-log/keeper cluster).
 import React, { useState, useEffect } from 'react'
 import { Icon } from './components.jsx'
 import { loadSettings, t } from './settingsStore.js'
+import { readTotalShares } from './stellar/vaultReads.js'
+import { validateAmountInput, validateExecutionAllocations } from './strategy/amountValidation.js'
+import { expandAgentSlots } from './strategy/planModel.js'
 
 const shortAddr = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '')
 
@@ -20,6 +32,41 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
   const { language: lang } = loadSettings()
   const valid = Number(amount) > 0 && risk
   const [prefill, setPrefill] = useState(null)
+  const [checking, setChecking] = useState(false)
+  const [checkError, setCheckError] = useState(null)
+
+  // Nothing moves until the amount + risk are actually executable: read the vault's real
+  // on-chain supply, validate the typed amount against it, then validate the 1/2/3-slot plan
+  // that risk level would produce -- ONLY then hand off to the caller's onSubmit (which starts
+  // strategy generation). An unknown vault-state read is retryable, never assumed either way.
+  const handleSubmit = async () => {
+    if (!valid || checking) return
+    setCheckError(null)
+    setChecking(true)
+    try {
+      const vaultTotalShares = await readTotalShares()
+      const amountResult = validateAmountInput({ value: amount, risk, vaultTotalShares })
+      if (!amountResult.ok) {
+        setCheckError(amountResult.message)
+        return
+      }
+      const plan = { agents: expandAgentSlots({ risk, stellarUnits: amountResult.units }) }
+      const planResult = validateExecutionAllocations({ plan, vaultTotalShares })
+      if (!planResult.ok) {
+        setCheckError(planResult.message)
+        return
+      }
+      onSubmit()
+    } catch {
+      // readTotalShares never throws (it resolves null on RPC failure, handled above via
+      // VAULT_STATE_UNKNOWN); a throw here is an unexpected bug in the plan-shaping code, not a
+      // vault-state problem -- an honest generic message, not a false claim about the vault.
+      setCheckError('Something went wrong checking your plan. Try again.')
+    } finally {
+      setChecking(false)
+    }
+  }
+
   useEffect(() => {
     const protocol = sessionStorage.getItem('yv_prefill_protocol')
     const name = sessionStorage.getItem('yv_prefill_name')
@@ -41,7 +88,7 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
             gap: 8,
             background: 'rgba(255,255,255,.04)',
             border: '1px solid var(--border)',
-            borderRadius: 6,
+            borderRadius: 'var(--pc-radius-control)',
             padding: '9px 14px',
             marginBottom: 16,
             fontFamily: 'var(--font-mono)',
@@ -103,11 +150,22 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
       </div>
 
       <div className="action-row">
-        <div className="foot-note">Live market data. One signature comes next.</div>
-        <button className="btn btn-primary btn-lg" disabled={!valid} onClick={onSubmit}>
-          Continue
+        <div className="foot-note">
+          Nothing moves until you review and confirm. Live market data. One signature comes next.
+        </div>
+        <button
+          className="btn btn-primary btn-lg"
+          disabled={!valid || checking}
+          onClick={handleSubmit}
+        >
+          {checking ? 'Checking…' : 'Continue'}
         </button>
       </div>
+      {checkError && (
+        <div role="alert" style={{ color: 'var(--danger)', fontSize: 11, marginTop: 10 }}>
+          {checkError}
+        </div>
+      )}
     </section>
   )
 }
@@ -317,7 +375,7 @@ const UpgradedCallout = ({ onDone }) => (
           className="mono"
           style={{
             fontSize: 11,
-            color: 'var(--accent)',
+            color: 'var(--accent-text)',
             letterSpacing: '-0.01em',
             marginBottom: 8,
           }}
@@ -574,7 +632,7 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
         </div>
         <div className="success-num-cell">
           <span className="label">Estimated monthly yield</span>
-          <span className="figure tnum" style={{ color: 'var(--accent)' }}>
+          <span className="figure tnum" style={{ color: 'var(--accent-text)' }}>
             +{monthly}
             <span className="unit">USDC</span>
           </span>

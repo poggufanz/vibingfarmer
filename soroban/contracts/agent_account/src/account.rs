@@ -9,6 +9,7 @@ use crate::{AgentAccount, AgentAccountArgs, AgentAccountClient};
 
 const DEPOSIT_FN: Symbol = symbol_short!("deposit");
 const PULL_FN: Symbol = symbol_short!("pull");
+const PULL_V3_FN: Symbol = symbol_short!("pull_v3");
 const TTL_THRESHOLD: u32 = 17_280; // ~1 day at 5s ledgers
 const TTL_EXTEND: u32 = 518_400; // ~30 days
 // Pinned CCTP v2 `deposit_for_burn` args (kind=1 / Bridge scopes) — proven live values.
@@ -43,7 +44,7 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
     let router: Option<Address> = env.storage().instance().get(&DataKey::Router);
 
     // Validate every context; reject anything not a scoped deposit or a funding
-    // `pull` on the deploying router.
+    // `pull`/`pull_v3` on the deploying router.
     for ctx in contexts.iter() {
         let cc = match ctx {
             Context::Contract(cc) => cc,
@@ -54,7 +55,7 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
         // funding is bounded by the owner's SEP-41 allowance at the token level.
         if let Some(ref r) = router {
             if cc.contract == *r {
-                if cc.fn_name != PULL_FN {
+                if cc.fn_name != PULL_FN && cc.fn_name != PULL_V3_FN {
                     return Err(AccountError::FnNotAllowed);
                 }
                 continue;
@@ -76,6 +77,13 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
                 .map_err(|_| AccountError::InvalidAmount)?;
             if amount <= 0 {
                 return Err(AccountError::InvalidAmount);
+            }
+            // v4: a single execution above per_execution_max is rejected even when the rolling
+            // cumulative cap_per_period still has headroom — checked BEFORE the cumulative
+            // accumulation so a too-large single deposit never partially counts against the
+            // period.
+            if amount > scope.per_execution_max {
+                return Err(AccountError::PerExecutionMaxExceeded);
             }
             let new_spent = scope
                 .spent_in_period
@@ -108,6 +116,12 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
                 .map_err(|_| AccountError::InvalidAmount)?;
             if amount <= 0 {
                 return Err(AccountError::InvalidAmount);
+            }
+            // v4: same single-execution cap as the deposit branch, checked before the
+            // bridge-arg validation so an oversized burn never reaches the cumulative
+            // accumulation either.
+            if amount > scope.per_execution_max {
+                return Err(AccountError::PerExecutionMaxExceeded);
             }
             let domain: u32 = cc
                 .args

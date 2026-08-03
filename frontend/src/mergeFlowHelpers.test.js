@@ -1,5 +1,7 @@
 // frontend/src/mergeFlowHelpers.test.js — applyBaseLegOutcome: honest status lines + the
-// dashboard-marker backup write (loadBasePositions gates on these exact localStorage keys).
+// dashboard owner-record backup write (dashboardPositions.js/skills.jsx/HistoryPanel.jsx/app.jsx
+// all gate on the owner-scoped v2 record now — the legacy vf_base_owner*  keys are dual-write
+// only, see applyBaseLegOutcome's own doc comment).
 import { describe, it, expect, vi } from 'vitest'
 import {
   applyBaseLegOutcome,
@@ -9,7 +11,12 @@ import {
   readStoredBaseMandate,
   checkStoredBaseMandate,
   needsBaseMandateSetup,
+  resolveBaseAvailability,
+  baseMandateProbeAllocation,
+  baseMandateRequiresReview,
 } from './mergeFlowHelpers.js'
+import { toBaseMandateView } from './strategy/baseMandateView.js'
+import { readBaseMandate, readBaseOwner } from './wallet/baseBinding.js'
 
 function fakeStorage(initial = {}) {
   const m = new Map(Object.entries(initial))
@@ -20,24 +27,55 @@ function fakeStorage(initial = {}) {
   }
 }
 
-describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically by a run)', () => {
-  const okDeps = () => ({
-    ensureBaseOwner: vi.fn().mockResolvedValue({
-      address: '0x0000000000000000000000000000000000000AA1',
-      kernelAccount: {},
-      publicClient: {},
-      passkeyValidator: {},
-      ownerMode: 'ceremony',
-    }),
-    createMandate: vi.fn().mockResolvedValue({
-      serializedApproval: 'APPROVAL',
-      sessionKeyAddress: '0xSESSION',
-      sessionPrivateKey: '0xPRIV',
-      expiry: 9999999999,
-    }),
-    postMandate: vi.fn().mockResolvedValue({ ok: true }),
-  })
+const okDeps = () => ({
+  ensureBaseOwner: vi.fn().mockResolvedValue({
+    address: '0x0000000000000000000000000000000000000AA1',
+    kernelAccount: {},
+    publicClient: {},
+    passkeyValidator: {},
+    ownerMode: 'ceremony',
+  }),
+  createMandate: vi.fn().mockResolvedValue({
+    serializedApproval: 'APPROVAL',
+    sessionKeyAddress: '0xSESSION',
+    sessionPrivateKey: '0xPRIV',
+    expiry: 9999999999,
+  }),
+  postMandate: vi.fn().mockResolvedValue({ ok: true }),
+})
 
+const activeEvidence = (overrides = {}) => ({
+  version: 2,
+  status: 'active',
+  reasonCodes: [],
+  expected: { chainId: 84532 },
+  observed: {
+    blockNumber: '101',
+    blockHash: '0xblock',
+    blockTime: Date.now(),
+    implementation: '0ximpl',
+    permission: { digest: 'permission-digest' },
+    preparedCallDigest: 'prepared-call-digest',
+  },
+  checks: {
+    chain: true,
+    owner: true,
+    kernel: true,
+    session: true,
+    permission: true,
+    policy: true,
+    binding: true,
+    origin: true,
+    implementation: true,
+    allocation: true,
+    freshness: true,
+    reconstruction: true,
+    prepared: true,
+  },
+  ...overrides,
+})
+
+describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically by a run)', () => {
   it('happy path: owner -> mandate -> register -> writes vf_base_mandate, never the private key', async () => {
     const deps = okDeps()
     const storage = fakeStorage()
@@ -85,13 +123,200 @@ describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically
   it('gate recheck: checkStoredBaseMandate flips to true once the fresh mandate is written (the affordance clears itself)', async () => {
     const deps = okDeps()
     const storage = fakeStorage()
-    const getMandateStatus = vi.fn().mockResolvedValue({ valid: true })
+    const getMandateStatus = vi.fn().mockResolvedValue(activeEvidence())
     // Before setup: nothing stored, gate stays closed.
-    expect(await checkStoredBaseMandate({ getMandateStatus, storage })()).toBe(false)
+    expect(
+      await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' })()
+    ).toBe(false)
     await setupBaseMandate({ connectedAddress: 'GUSER', deps: { ...deps, storage } })
     // After setup: the relayer confirms the just-written mandate, gate opens.
-    expect(await checkStoredBaseMandate({ getMandateStatus, storage })()).toBe(true)
-    expect(getMandateStatus).toHaveBeenCalledWith('APPROVAL')
+    expect(
+      await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' })()
+    ).toBe(true)
+    expect(getMandateStatus).toHaveBeenCalledWith('APPROVAL', {
+      stellarOwner: 'GUSER',
+      kernelAddress: '0x0000000000000000000000000000000000000AA1',
+      allocation: baseMandateProbeAllocation(),
+    })
+  })
+
+  it('writes an owner-scoped BaseMandateRecordV2 beside the legacy vf_base_mandate key', async () => {
+    const deps = okDeps()
+    const storage = fakeStorage()
+    await setupBaseMandate({ connectedAddress: 'GUSER', deps: { ...deps, storage } })
+    const v2 = readBaseMandate('GUSER', storage)
+    expect(v2).toMatchObject({
+      version: 2,
+      stellarOwner: 'GUSER',
+      kernelAddress: '0x0000000000000000000000000000000000000AA1',
+      serializedApproval: 'APPROVAL',
+      sessionKeyAddress: '0xSESSION',
+      expiresAt: 9999999999,
+      status: 'active',
+    })
+    // A different owner never sees this record.
+    expect(readBaseMandate('SOMEONE_ELSE', storage)).toBeNull()
+  })
+})
+
+describe('checkStoredBaseMandate — owner-scoped gating (VF Wallet Task 6)', () => {
+  // Strategy Task 13 (decision log #22, obligation D): the unscoped `{getMandateStatus, storage}`
+  // legacy path this test locked is DELETED — checkStoredBaseMandate now requires `stellarOwner`.
+  // Deleted in the same commit as the migration, never before it.
+
+  it('a mandate set up for owner A is not visible to owner B (no silent adoption on wallet switch)', async () => {
+    const deps = okDeps()
+    const storage = fakeStorage()
+    const getMandateStatus = vi.fn().mockResolvedValue(activeEvidence())
+    await setupBaseMandate({ connectedAddress: 'GOWNERA', deps: { ...deps, storage } })
+    expect(
+      await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GOWNERB' })()
+    ).toBe(false)
+    expect(getMandateStatus).not.toHaveBeenCalled()
+  })
+})
+
+// Strategy Task 13 (decision log #22, obligation D): the whole
+// 'resolveBaseAvailability — legacy overload stays live (VF Wallet Task 6 hard gate)' describe
+// block (the `{checkHealth, checkMandate, checkFunding}` shape and its dispatch branch) is
+// DELETED — app.jsx's Base preflight now calls the canonical `{mandate, connection, health}`
+// contract directly (see the describe block below, and app.jsx's `resolveBaseForPlan`). Deleted
+// in the same commit as the migration, never before it.
+
+describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy Task 9)', () => {
+  const now = Math.floor(Date.now() / 1000)
+  const connection = {
+    connected: true,
+    stellarOwner: 'GUSER',
+    kernelAddress: '0x0000000000000000000000000000000000000AA1',
+    relayerOrigin: 'https://relayer.example',
+  }
+  const mandate = {
+    version: 2,
+    stellarOwner: 'GUSER',
+    kernelAddress: '0x0000000000000000000000000000000000000aa1',
+    sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
+    relayerOrigin: 'https://relayer.example',
+    expiresAt: now + 3600,
+    status: 'active',
+    bindingId: 'binding-1',
+    bindingHash: '0xhash',
+    reasonCodes: [],
+    expected: { chainId: 84532 },
+    observed: {
+      blockNumber: '101',
+      blockHash: '0xblock',
+      blockTime: Date.now(),
+      implementation: '0ximpl',
+      permission: { digest: 'permission-digest' },
+      preparedCallDigest: 'prepared-call-digest',
+    },
+    checks: {
+      chain: true,
+      owner: true,
+      kernel: true,
+      session: true,
+      permission: true,
+      policy: true,
+      binding: true,
+      origin: true,
+      implementation: true,
+      allocation: true,
+      freshness: true,
+      reconstruction: true,
+      prepared: true,
+    },
+  }
+
+  it('offers Base only when the connected, active record and relayer health are all valid', async () => {
+    const result = resolveBaseAvailability({ mandate, connection, health: true })
+
+    expect(result.mandateView).toEqual(toBaseMandateView({ mandate, ...connection }))
+    expect(await result.baseAvailable).toBe(true)
+    expect(result.action).toBeNull()
+  })
+
+  it('requires an explicit connected state before a matching mandate can be ready', async () => {
+    const { connected, ...connectionWithoutState } = connection
+    const result = resolveBaseAvailability({
+      mandate,
+      connection: connectionWithoutState,
+      health: true,
+    })
+
+    expect(await result.baseAvailable).toBe(false)
+    expect(result.mandateView.status).toBe('unavailable')
+    expect(result.mandateView.ready).toBe(false)
+    expect(result.action).toEqual({
+      label: 'Connect to check Base testnet',
+      invalidatesPlan: false,
+    })
+  })
+
+  it('keeps a disconnected first plan Stellar-only and offers connection instead of Base', async () => {
+    const result = resolveBaseAvailability({
+      mandate,
+      connection: {
+        stellarOwner: null,
+        kernelAddress: null,
+        relayerOrigin: null,
+        connected: false,
+      },
+      health: true,
+    })
+
+    expect(await result.baseAvailable).toBe(false)
+    expect(result.mandateView.status).toBe('unavailable')
+    expect(result.action).toEqual({
+      label: 'Connect to check Base testnet',
+      invalidatesPlan: false,
+    })
+  })
+
+  it('returns Rebuild plan after setup instead of inserting Base into a reviewed plan', async () => {
+    const result = resolveBaseAvailability({
+      mandate,
+      connection: { ...connection, setupSucceeded: true },
+      health: true,
+    })
+
+    expect(await result.baseAvailable).toBe(true)
+    expect(result.action).toEqual({ label: 'Rebuild plan', invalidatesPlan: true })
+  })
+
+  it('fails closed for a relayer outage, malformed active record, or missing expected relayer origin', async () => {
+    for (const input of [
+      { mandate, connection, health: false },
+      { mandate: { ...mandate, sessionKeyAddress: null }, connection, health: true },
+      { mandate, connection: { ...connection, relayerOrigin: null }, health: true },
+    ]) {
+      expect(await resolveBaseAvailability(input).baseAvailable).toBe(false)
+    }
+  })
+})
+
+describe('Base mandate evidence review helpers', () => {
+  it('builds a canonical read-only catalog probe', () => {
+    expect(baseMandateProbeAllocation({ runId: 'run-9' })).toMatchObject({
+      allocationId: expect.stringMatching(/^run-9:bridge:/),
+      amount: { token: 'USDC', units: '1', decimals: 6 },
+      minShares: '0',
+    })
+  })
+
+  it('requires review for a material evidence change or any non-verified status', () => {
+    const previous = activeEvidence()
+    expect(baseMandateRequiresReview(previous, activeEvidence())).toBe(false)
+    expect(baseMandateRequiresReview(null, activeEvidence())).toBe(true)
+    expect(baseMandateRequiresReview(previous, activeEvidence({ status: 'revoked' }))).toBe(true)
+    expect(
+      baseMandateRequiresReview(
+        previous,
+        activeEvidence({
+          observed: { ...previous.observed, permission: { digest: 'changed' } },
+        })
+      )
+    ).toBe(true)
   })
 })
 
@@ -163,6 +388,58 @@ describe('applyBaseLegOutcome', () => {
     expect(out.event).toBe('OrchestratorPlanned')
     expect(out.meta).toContain('settling')
     expect(out.meta).not.toContain('deposited on Base')
+  })
+
+  // VF Wallet Task 6 re-review fix: dashboardPositions.js/skills.jsx/HistoryPanel.jsx/app.jsx's
+  // withdraw guard all gate on the v2 owner record now, not the legacy keys — this backup must
+  // restore THAT, or a wiped/corrupt v2 record at settle time reproduces the 2026-07-19 incident
+  // one layer down (deposited position invisible on the dashboard).
+  it('given stellarOwner, restores the v2 owner record when it was missing at settle time', () => {
+    const storage = fakeStorage()
+    applyBaseLegOutcome(
+      { success: true, jobId: 'j1', finalStatus: 'done', baseAccount: '0x66fe' },
+      { storage, stellarOwner: 'GUSER' }
+    )
+    expect(readBaseOwner('GUSER', storage)).toMatchObject({
+      version: 2,
+      stellarOwner: 'GUSER',
+      kernelAddress: '0x66fe',
+    })
+  })
+
+  it('given stellarOwner, restores the v2 owner record when it was corrupt at settle time', () => {
+    const storage = fakeStorage({ 'vf_base_owner_v2:GUSER': '{not valid json' })
+    applyBaseLegOutcome(
+      { success: true, jobId: 'j1', finalStatus: 'done', baseAccount: '0x66fe' },
+      { storage, stellarOwner: 'GUSER' }
+    )
+    expect(readBaseOwner('GUSER', storage).kernelAddress).toBe('0x66fe')
+  })
+
+  it('given stellarOwner, an existing v2 record keeps its passkeyName/createdAt (kernelAddress + updatedAt refresh)', () => {
+    const storage = fakeStorage()
+    applyBaseLegOutcome(
+      { success: true, jobId: 'j0', finalStatus: 'done', baseAccount: '0xOLD' },
+      { storage, stellarOwner: 'GUSER' }
+    )
+    const first = readBaseOwner('GUSER', storage)
+    applyBaseLegOutcome(
+      { success: true, jobId: 'j1', finalStatus: 'done', baseAccount: '0x66fe' },
+      { storage, stellarOwner: 'GUSER' }
+    )
+    const second = readBaseOwner('GUSER', storage)
+    expect(second.kernelAddress).toBe('0x66fe')
+    expect(second.createdAt).toBe(first.createdAt)
+  })
+
+  it('without stellarOwner, writes only the legacy keys (no crash, no v2 write) — pre-migration callers still work', () => {
+    const storage = fakeStorage()
+    applyBaseLegOutcome(
+      { success: true, jobId: 'j1', finalStatus: 'done', baseAccount: '0x66fe' },
+      { storage }
+    )
+    expect(storage.dump()['vf_base_owner_address']).toBe('0x66fe')
+    expect(Object.keys(storage.dump()).some((k) => k.startsWith('vf_base_owner_v2:'))).toBe(false)
   })
 })
 

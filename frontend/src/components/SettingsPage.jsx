@@ -18,8 +18,10 @@ import {
   clearAllHistory,
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
-import AutoExitSettings from './AutoExitSettings.jsx'
+import LegacyAutoExitCleanup from './settings/LegacyAutoExitCleanup.jsx'
 import { getTokenUsageHistory, clearTokenUsageHistory } from '../strategist.js'
+import { BrandLockup } from './pocket/BrandLockup.jsx'
+import { CreditsAbout } from './pocket/CreditsAbout.jsx'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 const eyebrow = {
@@ -38,7 +40,7 @@ const card = {
 const miniBtn = {
   appearance: 'none',
   border: '.5px solid var(--border-strong)',
-  borderRadius: 5,
+  borderRadius: 'var(--pc-radius-control)',
   background: 'rgba(255,255,255,.06)',
   color: 'inherit',
   font: 'inherit',
@@ -50,7 +52,7 @@ const dangerBtn = { ...miniBtn, borderColor: 'var(--danger)', color: 'var(--dang
 const inputStyle = {
   background: 'var(--bg-input)',
   border: '1px solid var(--border-strong)',
-  borderRadius: 6,
+  borderRadius: 'var(--pc-radius-control)',
   color: 'inherit',
   font: 'inherit',
   fontSize: 12,
@@ -62,7 +64,6 @@ const TABS = [
   { id: 'agent', label: 'Agent' },
   { id: 'strategy', label: 'Strategy' },
   { id: 'alerts', label: 'Alerts' },
-  { id: 'auto-exit', label: 'Auto-Exit' },
   { id: 'wallet', label: 'Wallet' },
   { id: 'data', label: 'Data & Privacy' },
   { id: 'about', label: 'About' },
@@ -126,7 +127,7 @@ const Toggle = ({ on, onChange, onLabel = 'ON', offLabel = 'OFF' }) => (
     style={{
       display: 'inline-flex',
       border: '1px solid var(--border-strong)',
-      borderRadius: 6,
+      borderRadius: 'var(--pc-radius-control)',
       overflow: 'hidden',
       fontFamily: 'var(--font-mono)',
       fontSize: 11,
@@ -205,7 +206,7 @@ const Check = ({ on, onChange, label }) => (
       style={{
         width: 16,
         height: 16,
-        borderRadius: 4,
+        borderRadius: 'var(--pc-radius-control)',
         border: '1px solid var(--border-strong)',
         background: on ? 'var(--accent)' : 'transparent',
         color: 'var(--accent-fg)',
@@ -464,6 +465,20 @@ export default function SettingsPage({
       style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
     >
       <div style={{ borderBottom: '1px solid var(--border)', padding: '18px 28px 0' }}>
+        {/* 2026-08-02 polish (audit item #13): this route had no real page heading at all --
+            the first text on screen was a tab strip. One h1 gives the page its identity. */}
+        <h1
+          style={{
+            maxWidth: 820,
+            margin: '0 auto 14px',
+            fontSize: 'clamp(28px, 3.2vw, 40px)',
+            fontWeight: 700,
+            letterSpacing: '-0.035em',
+            lineHeight: 1.12,
+          }}
+        >
+          Settings
+        </h1>
         <div
           style={{
             maxWidth: 820,
@@ -911,8 +926,6 @@ export default function SettingsPage({
             </Section>
           )}
 
-          {tab === 'auto-exit' && <AutoExitSettings realAddress={userAddress} addLog={addLog} />}
-
           {/* ── SECTION 4: Wallet & Network ── */}
           {tab === 'wallet' && (
             <Section title="Wallet & Network">
@@ -1113,7 +1126,7 @@ export default function SettingsPage({
                   }}
                 >
                   <span>Total Tokens Used</span>
-                  <span className="mono" style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                  <span className="mono" style={{ color: 'var(--accent-text)', fontWeight: 600 }}>
                     {telemetryStats.total}
                   </span>
                 </div>
@@ -1127,7 +1140,7 @@ export default function SettingsPage({
                         maxHeight: 120,
                         overflowY: 'auto',
                         border: '1px solid var(--border)',
-                        borderRadius: 4,
+                        borderRadius: 'var(--pc-radius-control)',
                         padding: '6px 8px',
                         background: 'rgba(0,0,0,0.1)',
                       }}
@@ -1169,6 +1182,11 @@ export default function SettingsPage({
                 </button>
               </div>
               <Divider />
+              <SubLabel>Legacy auto-exit data</SubLabel>
+              <div style={{ marginTop: 4 }}>
+                <LegacyAutoExitCleanup addLog={addLog} />
+              </div>
+              <Divider />
               <SubLabel>Privacy Notes</SubLabel>
               {[
                 'API keys for Venice, DeepSeek, and Tavily stay in this tab and are cleared when it closes.',
@@ -1204,17 +1222,13 @@ export default function SettingsPage({
           {/* ── SECTION 6: About ── */}
           {tab === 'about' && (
             <Section title="About">
-              <div className="brand" style={{ fontSize: 18 }}>
-                <span>vibing</span>
-                <span className="slash">/</span>
-                <span className="vibing">farmer</span>
-              </div>
+              <BrandLockup variant="full" />
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
                 Autonomous DeFi yield farming agent
               </div>
               <div style={{ marginTop: 12 }}>
                 {[
-                  ['Version', '1.13.2'],
+                  ['Version', import.meta.env.VITE_APP_VERSION],
                   ['Network', 'Stellar testnet'],
                   ['Contracts', 'Verified on Sourcify'],
                 ].map(([k, v]) => (
@@ -1263,6 +1277,8 @@ export default function SettingsPage({
                   </a>
                 )}
               </div>
+              <Divider />
+              <CreditsAbout />
             </Section>
           )}
         </div>

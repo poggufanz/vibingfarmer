@@ -4,6 +4,7 @@ import { installChromeMock } from './testUtils.js'
 import { createClassicWallet, importFromSecret, withSecret } from './classicAccount.js'
 import { getWallet, decryptSecret } from './vault.js'
 import { isUnlocked, lock } from './session.js'
+import { ACTIVE_ACCOUNT_KEY, resolveActiveAccount } from './activeAccount.js'
 
 beforeEach(() => {
   installChromeMock()
@@ -71,10 +72,13 @@ describe('classicAccount', () => {
       pendingBackup: true,
     })
 
-    // Exactly one storage.local.set call for the whole create — proves the record and
-    // the backup gate land together, closing the creation-time race (flagless record
-    // persisted while the mnemonic is lost between two separate saves).
-    expect(setSpy).toHaveBeenCalledTimes(1)
+    // Exactly one storage.local.set call touches the wallet record (vf_classic_wallets) — proves
+    // the record and the backup gate land together, closing the creation-time race (flagless
+    // record persisted while the mnemonic is lost between two separate saves). A SEPARATE call
+    // also lands the active-account pointer (vf_active_account_v1, Task 1) — an additive key
+    // that plays no part in the mnemonic/flag race this guards against.
+    const walletRecordCalls = setSpy.mock.calls.filter(([arg]) => 'vf_classic_wallets' in arg)
+    expect(walletRecordCalls).toHaveLength(1)
 
     const rec = await getWallet(publicKey)
     expect(rec.needsBackup).toBe(true)
@@ -91,5 +95,50 @@ describe('classicAccount', () => {
     const rec = await getWallet(publicKey)
     expect(rec.needsBackup).toBeUndefined()
     expect(rec.mnemonicBlob).toBeUndefined()
+  })
+
+  it('createClassicWallet writes the exact new ActiveAccount (kind G) — the account just created', async () => {
+    const { publicKey } = await createClassicWallet({ label: 'Main', password: 'pw12pw12pw12' })
+    const active = (await globalThis.chrome.storage.local.get(ACTIVE_ACCOUNT_KEY))[
+      ACTIVE_ACCOUNT_KEY
+    ]
+    expect(active).toMatchObject({ kind: 'G', address: publicKey, signer: 'classic-ed25519' })
+    const resolved = await resolveActiveAccount({ storageLocal: globalThis.chrome.storage.local })
+    expect(resolved).toEqual({ status: 'ready', account: active })
+  })
+
+  it('importFromSecret writes the exact new ActiveAccount (kind G) — the account just restored', async () => {
+    const { publicKey } = await importFromSecret({
+      secret: 'SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMN',
+      password: 'pw12pw12pw12',
+      label: 'Imp',
+    })
+    const active = (await globalThis.chrome.storage.local.get(ACTIVE_ACCOUNT_KEY))[
+      ACTIVE_ACCOUNT_KEY
+    ]
+    expect(active).toMatchObject({ kind: 'G', address: publicKey })
+  })
+
+  it('withSecret({ expectedPublicKey }) fails closed when the unlocked session belongs to a different account', async () => {
+    await importFromSecret({
+      secret: 'SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMN',
+      password: 'pw12pw12pw12',
+      label: 'Imp',
+    })
+    await expect(
+      withSecret(async () => 'should not run', { expectedPublicKey: 'GSOMEOTHERACCOUNTENTIRELY' })
+    ).rejects.toThrow(/locked/)
+  })
+
+  it('withSecret({ expectedPublicKey }) proceeds when the unlocked session matches', async () => {
+    const { publicKey } = await importFromSecret({
+      secret: 'SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMN',
+      password: 'pw12pw12pw12',
+      label: 'Imp',
+    })
+    const sig = await withSecret(async (kp) => kp.sign(Buffer.from('hi')), {
+      expectedPublicKey: publicKey,
+    })
+    expect(sig).toBeDefined()
   })
 })

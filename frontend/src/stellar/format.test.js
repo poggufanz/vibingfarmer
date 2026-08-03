@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import * as format from './format.js'
 
-const { toDisplay, toBaseUnits } = format
+const { toDisplay, toBaseUnits, decimalToUnits } = format
 
 describe('format (7-dp)', () => {
   it('renders 1e7 base units as 1', () => {
@@ -15,6 +15,12 @@ describe('format (7-dp)', () => {
   it('converts a human USDC amount to 7-dp base units', () => {
     expect(toBaseUnits(1).toString()).toBe('10000000')
     expect(toBaseUnits(100).toString()).toBe('1000000000')
+  })
+
+  it('converts a whale-sized amount to exact 7-dp base units (beyond safe float precision)', () => {
+    // 123456789.1234567 * 1e7 exceeds Number.MAX_SAFE_INTEGER as a float product; decimal-string
+    // arithmetic must still land on the exact bigint (never Number * 10**decimals).
+    expect(toBaseUnits('123456789.1234567')).toBe(1234567891234567n)
   })
 
   it('derives a six-decimal CCTP target and a divisible Stellar burn while retaining seventh-decimal dust', () => {
@@ -49,5 +55,31 @@ describe('format (7-dp)', () => {
     for (const amount of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, Number.MAX_SAFE_INTEGER]) {
       expect(() => format.deriveCctpTransferUnits(amount)).toThrow(/finite positive safe/i)
     }
+  })
+})
+
+describe('decimalToUnits', () => {
+  it('parses a plain decimal string to exact bigint base units', () => {
+    expect(decimalToUnits('0.1', 7)).toEqual({ ok: true, units: 1_000_000n })
+    expect(decimalToUnits('12.5', 6)).toEqual({ ok: true, units: 12_500_000n })
+    expect(decimalToUnits('-5', 7)).toEqual({ ok: true, units: -50_000_000n })
+  })
+
+  it('rounds half-up beyond the requested precision by default', () => {
+    expect(decimalToUnits('1.00000005', 7)).toEqual({ ok: true, units: 10_000_001n })
+    expect(decimalToUnits('1.00000004', 7)).toEqual({ ok: true, units: 10_000_000n })
+  })
+
+  it('strict mode rejects extra fractional digits instead of rounding', () => {
+    expect(decimalToUnits('1.12345678', 7, { strict: true })).toEqual({
+      ok: false,
+      code: 'TOO_PRECISE',
+    })
+  })
+
+  it('rejects empty, exponent-notation, and non-decimal input', () => {
+    expect(decimalToUnits('', 7)).toEqual({ ok: false, code: 'EMPTY' })
+    expect(decimalToUnits('1e5', 7)).toEqual({ ok: false, code: 'INVALID_FORMAT' })
+    expect(decimalToUnits('NaN', 7)).toEqual({ ok: false, code: 'INVALID_FORMAT' })
   })
 })

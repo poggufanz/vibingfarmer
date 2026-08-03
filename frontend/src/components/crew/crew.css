@@ -1,0 +1,393 @@
+/* frontend/src/components/crew/crew.css
+   Task 9 (Pocket Crew design alignment). Token-only (--pc-* from src/design/pocket-crew.css) --
+   no hex literals, no new dependencies.
+
+   Fix round 1, F1: `.pc-route`/`.pc-route-header`/`.pc-route-title`/`.pc-route-sub`/`.pc-button`*
+   are ported byte-identical from strategy.css (:90-96,108-130,698-738; my-money.css carries its
+   own equivalent copies too) rather than assumed-shared. `my-money.css:59-60` says this in so many
+   words: "pocket-crew.css does not define `.pc-route`/`.pc-route-stack`; only strategy.css has
+   ported them so far, and this route must not depend on that file being loaded." `app.jsx:112-145`
+   already lazy-loads routes, so this file cannot assume any sibling route's stylesheet is present
+   in the bundle -- it carries its own copy, same as every other route does for every other route.
+   `.pc-money`/`.pc-money--unknown` are Foundation primitives (Primitives.jsx's own CSS, loaded
+   wherever MoneyFigure itself is used) and are not ported here since they belong to that shared
+   component, not to a route surface. */
+
+/* Route shell -- verbatim copy of strategy.css:90-96/108-130 (byte-identical; do not diverge). */
+.pc-route {
+  display: grid;
+  gap: var(--pc-route-gap);
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  margin-inline: auto;
+  padding: var(--pc-route-gutter);
+}
+.pc-route-header {
+  display: grid;
+  grid-template-columns: minmax(0, 760px) minmax(180px, 1fr);
+  gap: var(--pc-space-8);
+  align-items: end;
+}
+.pc-route-title {
+  max-width: 15ch;
+  margin: 0 0 var(--pc-space-3);
+  font-size: var(--pc-type-page);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+.pc-route-sub {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--pc-muted);
+  text-wrap: pretty;
+}
+
+/* Controls -- verbatim copy of strategy.css:698-738/my-money.css:92-135 (byte-identical). */
+.pc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: max-content;
+  min-height: var(--pc-control-height);
+  padding: 0 var(--pc-space-6);
+  border: 1px solid transparent;
+  border-radius: var(--pc-radius-control);
+  font-size: var(--pc-type-body-small);
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform var(--pc-duration-fast) var(--pc-ease-standard),
+    background-color var(--pc-duration-fast) var(--pc-ease-standard),
+    border-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+.pc-button--primary {
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+.pc-button--secondary {
+  border-color: var(--pc-line-strong);
+  background: transparent;
+  color: currentcolor;
+}
+.pc-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+.pc-button:disabled,
+.pc-button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.pc-crew-route {
+  display: grid;
+  gap: clamp(28px, 4vw, 44px);
+}
+
+.pc-crew-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--pc-line);
+}
+.pc-crew-stat-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--pc-faint);
+}
+.pc-crew-stat-value {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+/* Task 12 fix round 1, F2: `var(--pc-harvest)` as a bare foreground text color measured 1.02:1
+ * on the day-field canvas (#DFF56C on #E9EEE8) -- effectively invisible; --pc-harvest is a FIXED
+ * brand color across both themes (pocket-crew.css: "Brand identity is unchanged in light mode"),
+ * calibrated only for use as a FILL with --pc-harvest-ink text on top (see the harvestInk/harvest
+ * contrast.js pair), never as bare text on --pc-canvas. `--pc-focus` is the existing token that
+ * already resolves the way `--pc-danger` (ALARM ONLY's own color, same slot) does: forest =
+ * var(--pc-harvest) (byte-identical to what was here -- zero forest regression, verified by
+ * re-running the forest baselines unchanged), day-field = var(--pc-field) (near-black, 13.52:1 on
+ * --pc-canvas). Measured before/after in the fix-round-1 report. */
+.pc-crew-stat-value[data-tone='good'] {
+  color: var(--pc-focus);
+}
+.pc-crew-stat-value[data-tone='warn'] {
+  color: var(--pc-warning);
+}
+
+.pc-crew-console {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: clamp(24px, 4vw, 48px);
+  align-items: start;
+}
+
+/* Fix round 1, F2: `pc-crew-side` (the guard + activity column, CrewRoute.jsx) had no rule at
+   all -- the guard card and CrewActivity stacked with zero gap between them. */
+.pc-crew-side {
+  display: grid;
+  gap: var(--pc-space-6);
+  align-content: start;
+}
+
+/* Lanes */
+.pc-crew-lanes-section {
+  display: grid;
+  gap: 12px;
+}
+.pc-crew-lanes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pc-crew-lane {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  min-height: 76px;
+  padding-block: 14px;
+  border-bottom: 1px solid var(--pc-line);
+}
+.pc-crew-lane[data-revoked='true'] {
+  opacity: 0.55;
+}
+.pc-crew-lane-address {
+  margin: 0;
+  font-family: var(--pc-font-mono);
+  font-size: 14px;
+}
+.pc-crew-lane-note {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--pc-faint);
+}
+.pc-crew-lane-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* Emergency guard */
+.pc-crew-guard {
+  border: 1px solid var(--pc-line);
+  border-radius: 16px;
+  padding: 20px;
+  background: var(--pc-canvas);
+}
+.pc-crew-guard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pc-crew-guard-head .pc-crew-stat-label {
+  margin: 0;
+}
+/* Task 12 fix round 1, F2: same `--pc-harvest`-as-bare-text defect as `.pc-crew-stat-value[data-
+ * tone='good']` above (see that rule's own comment for the measured contrast and why `--pc-focus`
+ * is the correct existing token) -- this is the ARMED badge the reviewer's F2 finding named
+ * directly. `data-guard-phase='lapsed'`/`='unknown'` below already override this with
+ * `--pc-danger`/`--pc-faint`, both of which are correctly per-theme-calibrated; only the base
+ * (ARMED) rule had the bug. */
+.pc-crew-guard-state {
+  font-family: var(--pc-font-mono);
+  font-size: 12px;
+  color: var(--pc-focus);
+}
+/* Fix round 1, F3: third `data-guard-phase='unknown'` hook alongside the existing armed/lapsed
+   pair -- a failed protection read gets its own neutral (never alarming, never confident) color. */
+.pc-crew-guard[data-guard-phase='lapsed'] .pc-crew-guard-state {
+  color: var(--pc-danger);
+}
+.pc-crew-guard[data-guard-phase='unknown'] .pc-crew-guard-state {
+  color: var(--pc-faint);
+}
+.pc-crew-radar {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  margin: 16px auto;
+  border-radius: 999px;
+  border: 1px solid var(--pc-line);
+  overflow: hidden;
+}
+.pc-crew-radar-ring {
+  position: absolute;
+  inset: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--pc-line);
+}
+.pc-crew-radar-ring--inner {
+  inset: 52px;
+}
+.pc-crew-radar-sweep {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 50%;
+  transform-origin: top center;
+  background: var(--pc-harvest);
+  opacity: 0.85;
+  animation: pc-crew-sweep 5.5s linear infinite;
+}
+.pc-crew-guard[data-guard-phase='lapsed'] .pc-crew-radar-sweep {
+  background: var(--pc-danger);
+}
+.pc-crew-guard[data-guard-phase='unknown'] .pc-crew-radar-sweep {
+  background: var(--pc-muted);
+}
+.pc-crew-radar-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 999px;
+  background: var(--pc-harvest);
+}
+.pc-crew-guard-clock {
+  margin: 8px 0 16px;
+  font-size: 28px;
+  font-weight: 720;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.pc-crew-guard-renew {
+  width: 100%;
+}
+/* Final-review fix, F1: honest alternative for every visitor who is not the vault's configured
+ * authority -- same 13px/--pc-faint convention `.pc-crew-empty-note` below already uses (this
+ * file has no --pc-type-* tokens, brief-verbatim precedent). */
+.pc-crew-guard-renew-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--pc-faint);
+}
+@keyframes pc-crew-sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pc-crew-radar-sweep {
+    animation: none;
+    transform: rotate(45deg);
+  }
+}
+
+/* Activity: keeper feed + decision log */
+.pc-crew-activity {
+  display: grid;
+  gap: 24px;
+}
+.pc-crew-keeper-list,
+.pc-crew-decision-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.pc-crew-keeper-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--pc-line);
+}
+.pc-crew-keeper-time {
+  font-family: var(--pc-font-mono);
+  font-size: 12px;
+  color: var(--pc-faint);
+  white-space: nowrap;
+}
+.pc-crew-decision-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--pc-line);
+}
+.pc-crew-decision-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--pc-muted);
+}
+.pc-crew-decision-row[data-tone='kept'] .pc-crew-decision-dot {
+  background: var(--pc-harvest);
+}
+.pc-crew-decision-row[data-tone='watch'] .pc-crew-decision-dot {
+  background: var(--pc-warning);
+}
+.pc-crew-decision-row[data-tone='rejected'] .pc-crew-decision-dot {
+  background: var(--pc-danger);
+}
+.pc-crew-decision-title {
+  margin: 0;
+  font-weight: 650;
+}
+.pc-crew-decision-detail {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--pc-faint);
+}
+.pc-crew-decision-time {
+  font-family: var(--pc-font-mono);
+  font-size: 12px;
+  color: var(--pc-faint);
+  white-space: nowrap;
+}
+.pc-crew-empty-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--pc-faint);
+}
+
+@media (max-width: 1023px) {
+  .pc-crew-console {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pc-crew-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 767px) {
+  .pc-crew-stats {
+    grid-template-columns: 1fr;
+  }
+
+  /* Task 12 (visual harness fixtures) fix, found via the crew fixture's own
+   * assertNoVerticalTextTrap guard (pocket-crew.visual.spec.js) at mobile-320/360: `.pc-route-
+   * header` is ported from strategy.css (this file's own header comment, :5-11) but that port only
+   * copied the DESKTOP `grid-template-columns: minmax(0,760px) minmax(180px,1fr)` declaration
+   * (:24-29 above), never strategy.css's own `@media (max-width: 767px) { .pc-route-header {
+   * grid-template-columns: 1fr } }` collapse (strategy.css:1014-1021). CrewRoute.jsx's header
+   * (unlike StrategyRoute.jsx's, which always fills column 2 with its own `.pc-route-step`) has
+   * only ONE child -- the empty second column still reserved its 180px minimum track width
+   * regardless, squeezing `.pc-route-title`/`.pc-route-sub` down to a real, confirmed 76px column
+   * on every phone-width visit to `/agent`, not merely a harness artifact. Completes the port
+   * verbatim (strategy.css's own rule, same property/value) rather than inventing a new one.
+   * Verified by mutation: reverted this rule, re-ran the crew fixture's forest-theme test, got RED
+   * (`vertical text trap` at width 76, e.g. `.pc-route-sub` 76x260); restored it, GREEN again.
+   */
+  .pc-route-header {
+    grid-template-columns: 1fr;
+    gap: var(--pc-space-6);
+  }
+}

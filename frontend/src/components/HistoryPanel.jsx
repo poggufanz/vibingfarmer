@@ -1,7 +1,10 @@
 /* ============================================
    VIBING FARMER — History (Etherscan-style explorer)
    Stellar rows: localStorage via history.js.
-   Base rows: Blockscout tokentx for vf_base_owner_address (on-chain, not clearable).
+   Base rows: Blockscout tokentx for the connected wallet's Base kernel address (on-chain, not
+   clearable) — VF Wallet Task 6: owner-scoped BaseOwnerRecordV2 (wallet/baseBinding.js), not the
+   old global vf_base_owner_address key, so a different connected wallet never inherits another
+   wallet's Base history.
    ============================================ */
 import React, { useState, useEffect } from 'react'
 import { Icon } from '../components.jsx'
@@ -9,6 +12,7 @@ import { getTransactions, getStrategies, getReasoningLog, clearAllHistory } from
 import { loadSettings } from '../settingsStore.js'
 import { useNavigateTo } from '../router.js'
 import { fetchBaseHistory } from '../base/baseHistory.js'
+import { readBaseOwner } from '../wallet/baseBinding.js'
 
 const BASE_EXPLORER_TX = 'https://base-sepolia.blockscout.com/tx/'
 
@@ -41,7 +45,7 @@ const TABS = [
   { id: 'reasoning', label: 'AI Reasoning' },
 ]
 
-const Empty = ({ what }) => <div className="history-empty mono">No {what} yet.</div>
+const Empty = ({ what }) => <div className="history-empty">No {what} yet.</div>
 
 /* ---------- Transactions (Etherscan-like table) ---------- */
 const TxList = ({ rows }) => {
@@ -79,7 +83,7 @@ const TxList = ({ rows }) => {
               {short(r.txHash)}
             </span>
             <span className="tx-vault">
-              {isWithdraw ? `Withdrew ← ${r.vaultName}` : `Deposited → ${r.vaultName}`}
+              {isWithdraw ? `Withdrew from ${r.vaultName}` : `Deposited to ${r.vaultName}`}
               <span className="tx-sub mono">
                 {[
                   r.protocol,
@@ -224,7 +228,7 @@ const ReasonList = ({ rows }) => {
   )
 }
 
-const HistoryPanel = () => {
+const HistoryPanel = ({ connectedAddress }) => {
   const [tab, setTab] = useState('transactions')
   const [nonce, setNonce] = useState(0) // bump to re-read local history after clear
   const [data, setData] = useState({ transactions: [], strategies: [], reasoning: [] })
@@ -247,7 +251,7 @@ const HistoryPanel = () => {
   // shown or after Clear (nonce) so post-farm visits still get a fresh read without app-level state.
   useEffect(() => {
     if (tab !== 'base') return
-    const account = localStorage.getItem('vf_base_owner_address')
+    const account = readBaseOwner(connectedAddress)?.kernelAddress || null
     setBaseAccount(account)
     if (!account) {
       setBaseRows([])
@@ -265,7 +269,7 @@ const HistoryPanel = () => {
     return () => {
       dead = true
     }
-  }, [tab, nonce])
+  }, [tab, nonce, connectedAddress])
 
   const handleTabChange = (newTab) => {
     setTab(newTab)
@@ -300,12 +304,23 @@ const HistoryPanel = () => {
   return (
     <section className="history-page enter">
       <div className="history-head">
-        <div className="eyebrow">
-          <span>History, on-chain explorer</span>
+        {/* 2026-08-02 polish (audit item #12): the route previously had NO real heading (a tiny
+            mono "History, on-chain explorer" eyebrow), a "0" count pill on every tab, and a
+            full-width destructive Clear-all over an EMPTY list. Now: one real h1, counts only
+            when non-zero, Clear-all only when there is local Stellar history to clear. */}
+        <div>
+          <h1 className="history-title">History</h1>
+          <p className="history-intro">Every recorded move and decision, newest first.</p>
         </div>
-        <button className="perm-revoke" onClick={onClear} title="Clears Stellar local history only">
-          Clear all
-        </button>
+        {counts.transactions + counts.strategies + counts.reasoning > 0 && (
+          <button
+            className="perm-revoke"
+            onClick={onClear}
+            title="Clears Stellar local history only"
+          >
+            Clear all
+          </button>
+        )}
       </div>
 
       <div className="history-tabs">
@@ -320,9 +335,9 @@ const HistoryPanel = () => {
               <span className="history-tab-count" aria-label="loading">
                 …
               </span>
-            ) : (
+            ) : counts[t.id] > 0 ? (
               <span className="history-tab-count">{counts[t.id]}</span>
-            )}
+            ) : null}
           </button>
         ))}
       </div>

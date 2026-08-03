@@ -7,6 +7,51 @@ import { isVfWallet, ensureBaseOwner as defaultEnsureBaseOwner } from './wallet/
 import { createMandate as defaultCreateMandate } from './wallet/mandate.js'
 import { postMandate as defaultPostMandate } from './base/relayerClient.js'
 import { BASE_POOL_CATALOG } from './config.js'
+import {
+  baseOwnerStorageKey,
+  baseMandateStorageKey,
+  readBaseOwner,
+  readBaseMandate,
+  validateBaseMandate,
+} from './wallet/baseBinding.js'
+import { toBaseMandateView } from './strategy/baseMandateView.js'
+import {
+  isVerifiedBaseMandateStatus,
+  materialBaseMandateStatusChange,
+  toMandateStatusAllocation,
+} from './base/mandateStatus.js'
+
+export function baseMandateProbeAllocation({ runId = 'catalog-probe' } = {}) {
+  const pool = BASE_POOL_CATALOG[0]
+  if (!pool) throw new Error('Base pool catalog is empty')
+  return toMandateStatusAllocation({
+    allocationId: `${runId}:bridge:${pool.proxyTarget}`,
+    poolAddress: pool.address,
+    units: 1n,
+    minShares: 0n,
+  })
+}
+
+export function baseMandateRequiresReview(previous, next) {
+  return (
+    !isVerifiedBaseMandateStatus(previous) ||
+    !isVerifiedBaseMandateStatus(next) ||
+    materialBaseMandateStatusChange(previous, next)
+  )
+}
+
+export function baseMandateAllocationsForPlan(plan) {
+  const bridge = plan?.agents?.find((agent) => agent.kind === 'bridge')
+  if (!bridge) return []
+  return (bridge.children || []).map((child) =>
+    toMandateStatusAllocation({
+      allocationId: child.allocationId,
+      poolAddress: child.address,
+      units: BigInt(child.allocation.units),
+      minShares: 0n,
+    })
+  )
+}
 
 // One place that decides what the strategy step tells the strategist about Base. Returns the
 // combined-check PROMISE (not its resolved value) so the ~3s relayer probe (and the optional
@@ -23,18 +68,37 @@ import { BASE_POOL_CATALOG } from './config.js'
 // Design (docs/superpowers/specs/2026-07-21-grant-covers-burn-design.md §4-5): mandate setup is
 // its OWN per-window ceremony (a chip + 1-tap renew, not part of a run) — a run NEVER creates a
 // mandate on demand, so "nothing stored yet" gates Base off exactly like an invalid one.
-export function resolveBaseAvailability({ checkHealth, checkMandate, checkFunding }) {
+//
+// Strategy Task 13 (Pocket Crew redesign, decision log #22, obligation D): the legacy
+// `{checkHealth, checkMandate, checkFunding}` overload (and its dispatch branch here) is DELETED
+// -- app.jsx's Base preflight now calls the `{mandate, connection, health}` contract below
+// directly (see app.jsx's `resolveBaseForPlan`). The regression tests that locked the legacy shape
+// alive (app.strategy.merge.test.jsx) are deleted in the same commit as this migration, never
+// before it -- see that file's own history for the removed `describe` blocks.
+export function resolveBaseAvailability(input) {
+  const { mandate, connection = {}, health } = input
+  const connected = connection.connected === true
+  const boundMandateView = toBaseMandateView({ mandate, ...connection })
+  // A matching local record is not evidence that this browser is currently connected. Preserve
+  // the raw mandate for the supplied adapter, but keep the canonical availability view closed.
+  const mandateView = connected
+    ? boundMandateView
+    : { ...boundMandateView, status: 'unavailable', ready: false }
   const baseAvailable = (async () => {
     try {
-      if (!(await checkHealth())) return false
-      if (checkMandate && !(await checkMandate())) return false
-      if (checkFunding && !(await checkFunding())) return false
-      return true
+      const healthy = await (typeof health === 'function' ? health() : health)
+      return connected && healthy === true && mandateView.ready
     } catch {
       return false
     }
   })()
-  return { baseAvailable }
+  const action =
+    connection.setupSucceeded === true
+      ? { label: 'Rebuild plan', invalidatesPlan: true }
+      : !connected
+        ? { label: 'Connect to check Base testnet', invalidatesPlan: false }
+        : null
+  return { baseAvailable, mandateView, action }
 }
 
 // Drives app.jsx's "Activate Base (1 tap)" affordance: worth showing only when the 1-tap ceremony
@@ -80,17 +144,36 @@ export function readStoredBaseMandate(storage) {
 /**
  * `checkMandate` factory for resolveBaseAvailability. INVERTED from the first draft per the design
  * spec: mandate setup is its own per-window ceremony, never something a run performs — so "nothing
- * stored yet" is exactly as gating as a stored-and-invalid one. true only for a stored mandate the
- * relayer confirms is still valid.
- * @param {{getMandateStatus: (approval:string) => Promise<{valid:boolean}>, storage?: object}} p
+ * stored yet" is exactly as gating as a stored-and-invalid one. true only for a stored mandate,
+ * BOUND to the current stellarOwner, the relayer also confirms is still active.
+ *
+ * Strategy Task 13 (decision log #22, obligation D): the second preserved legacy overload (the
+ * unscoped `{getMandateStatus, storage}` shape with no `stellarOwner`, which read the bare global
+ * `vf_base_mandate` key) is DELETED — every app.jsx call site already passed `stellarOwner`, so
+ * removing the branch changes nothing observable in production. Its locking test (in
+ * app.strategy.merge.test.jsx) is deleted in the same commit.
+ * @param {{getMandateStatus: Function, storage?: object, stellarOwner: string}} p
  * @returns {() => Promise<boolean>}
  */
-export function checkStoredBaseMandate({ getMandateStatus, storage } = {}) {
+export function checkStoredBaseMandate({
+  getMandateStatus,
+  storage,
+  stellarOwner,
+  allocation = baseMandateProbeAllocation(),
+}) {
   return async () => {
-    const stored = readStoredBaseMandate(storage)
-    if (!stored) return false
-    const status = await getMandateStatus(stored.serializedApproval)
-    return !!status?.valid
+    const record = readBaseMandate(stellarOwner, storage)
+    if (validateBaseMandate(record, { stellarOwner }) !== 'active') return false
+    try {
+      const status = await getMandateStatus(record.serializedApproval, {
+        stellarOwner,
+        kernelAddress: record.kernelAddress,
+        allocation,
+      })
+      return isVerifiedBaseMandateStatus(status)
+    } catch {
+      return false
+    }
   }
 }
 
@@ -121,10 +204,13 @@ export async function setupBaseMandate({ connectedAddress, deps = {} }) {
     pools: BASE_POOL_CATALOG.map((p) => ({ pool: p.address, cap: MANDATE_SETUP_CAP_UNITS })),
     expiry,
   })
-  await postMandate({
+  const posted = await postMandate({
     serializedApproval: mandate.serializedApproval,
     sessionPrivateKey: mandate.sessionPrivateKey, // crosses the wire exactly once, then dropped
-    expiry: mandate.expiry,
+    sessionKeyAddress: mandate.sessionKeyAddress,
+    expiresAt: mandate.expiry,
+    stellarOwner: connectedAddress,
+    kernelAddress: owner.address,
   })
   // NON-secret metadata only (binding constraint: NEVER the private key) — same write shape the
   // run path's old (now-removed) ceremony branch used.
@@ -136,6 +222,28 @@ export async function setupBaseMandate({ connectedAddress, deps = {} }) {
         sessionKeyAddress: mandate.sessionKeyAddress,
         kernelAddress: owner.address,
         expiry: mandate.expiry,
+      })
+    )
+    // Owner-scoped v2 mandate record (VF Wallet Task 6) — dual-written beside the legacy global
+    // key above. baseLeg.js's dispatch-time re-check reads this one; orchestrator.js's grant-time
+    // read still goes through readStoredBaseMandate/the legacy key (untouched — not this task's
+    // file). relayerOrigin/bindingId/bindingHash come from the relayer's response when it
+    // supplies them (Task 7 migrates the server); default to null rather than a value we didn't
+    // actually observe.
+    storage.setItem(
+      baseMandateStorageKey(connectedAddress),
+      JSON.stringify({
+        version: 2,
+        stellarOwner: connectedAddress,
+        kernelAddress: owner.address,
+        serializedApproval: mandate.serializedApproval,
+        sessionKeyAddress: mandate.sessionKeyAddress,
+        relayerOrigin: posted?.relayerOrigin ?? null,
+        expiresAt: mandate.expiry,
+        status: 'active',
+        bindingId: posted?.bindingId ?? null,
+        bindingHash: posted?.bindingHash ?? null,
+        createdAt: Math.floor(Date.now() / 1000),
       })
     )
   }
@@ -256,7 +364,7 @@ export function mapBaseLegEvent(evName, data = {}) {
         memory: {
           status: 'running',
           title: 'Relayer dispatched',
-          meta: `Job ${data.jobId}: attest → mint → deposit`,
+          meta: `Job ${data.jobId}: attest to mint to deposit`,
         },
       }
     case 'farm-completed':
@@ -307,15 +415,19 @@ export function mapBaseLegEvent(evName, data = {}) {
   }
 }
 
-// One place that turns the settled Base leg summary into the dashboard's owner-address write
-// plus an HONEST log line. finalStatus is pollFarmStatus's last word: 'done' = deposits landed,
-// 'error' = relay failed AFTER the burn (funds are minted/recoverable on Base — never imply
-// they're gone), anything else = polling gave up while the job was still settling. The old
+// One place that turns the settled Base leg summary into the dashboard's owner-record backup
+// write plus an HONEST log line. finalStatus is pollFarmStatus's last word: 'done' = deposits
+// landed, 'error' = relay failed AFTER the burn (funds are minted/recoverable on Base — never
+// imply they're gone), anything else = polling gave up while the job was still settling. The old
 // message claimed "deposited" for every success:true leg, which lied whenever polling timed out.
-// The localStorage write mirrors passkeyBridge's own persist (same keys the dashboard's
-// loadBasePositions gates on) — proven live 2026-07-19: a run whose markers were missing left a
-// fully-deposited position invisible in the UI with no code path to ever show it.
-export function applyBaseLegOutcome(baseLeg, { storage } = {}) {
+//
+// VF Wallet Task 6 re-review fix: the legacy vf_base_owner/vf_base_owner_address write below is
+// dual-write only now — every real reader (dashboardPositions.js, skills.jsx, HistoryPanel.jsx,
+// app.jsx's withdraw guard) gates on the owner-scoped v2 record instead. Passing `stellarOwner`
+// ALSO restores/refreshes that v2 record here, so a wiped/corrupt v2 record at settle time can't
+// leave a fully-deposited position invisible on the dashboard — the exact 2026-07-19 incident
+// this function exists to prevent, just one storage layer down from where it was proven live.
+export function applyBaseLegOutcome(baseLeg, { storage, stellarOwner } = {}) {
   if (!baseLeg) return null
   if (!baseLeg.success) {
     return {
@@ -330,6 +442,21 @@ export function applyBaseLegOutcome(baseLeg, { storage } = {}) {
       store.setItem('vf_base_owner', JSON.stringify({ mode: 'ceremony' }))
     }
     store.setItem('vf_base_owner_address', baseLeg.baseAccount)
+    if (stellarOwner) {
+      const existing = readBaseOwner(stellarOwner, store)
+      const now = Date.now()
+      store.setItem(
+        baseOwnerStorageKey(stellarOwner),
+        JSON.stringify({
+          version: 2,
+          stellarOwner,
+          kernelAddress: baseLeg.baseAccount,
+          passkeyName: existing?.passkeyName ?? null,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        })
+      )
+    }
   }
   if (baseLeg.finalStatus === 'done') {
     return {

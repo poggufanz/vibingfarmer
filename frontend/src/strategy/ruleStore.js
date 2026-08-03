@@ -14,7 +14,9 @@ function read() {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) || '{}')
     if (v && typeof v === 'object' && Array.isArray(v.rules)) return v
-  } catch { /* fall through */ }
+  } catch {
+    /* fall through */
+  }
   return { rules: [], legacyFolded: false }
 }
 
@@ -69,7 +71,8 @@ export function upsertSeeds(seeds = SEED_RULES) {
     const doc = read()
     const have = new Set(doc.rules.map((r) => r.id))
     for (const s of seeds) {
-      if (!have.has(s.id)) doc.rules.push(newRecord({ ...s, status: 'active', helpful: 0, harmful: 0 }))
+      if (!have.has(s.id))
+        doc.rules.push(newRecord({ ...s, status: 'active', helpful: 0, harmful: 0 }))
     }
     if (!doc.legacyFolded) foldLegacy(doc)
     write(doc)
@@ -82,7 +85,11 @@ export function upsertSeeds(seeds = SEED_RULES) {
 function foldLegacy(doc) {
   doc.legacyFolded = true
   let legacy
-  try { legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || '{}') } catch { return }
+  try {
+    legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || '{}')
+  } catch {
+    return
+  }
   if (!legacy || typeof legacy !== 'object') return
   for (const r of doc.rules) {
     const c = legacy[r.id]
@@ -97,13 +104,19 @@ function foldLegacy(doc) {
 export function retireRule(id) {
   const doc = read()
   const r = doc.rules.find((x) => x.id === id)
-  if (r) { r.status = 'retired'; write(doc) }
+  if (r) {
+    r.status = 'retired'
+    write(doc)
+  }
 }
 
 export function deleteRule(id) {
   const doc = read()
   const next = doc.rules.filter((r) => r.id !== id)
-  if (next.length !== doc.rules.length) { doc.rules = next; write(doc) }
+  if (next.length !== doc.rules.length) {
+    doc.rules = next
+    write(doc)
+  }
 }
 
 export function replaceAll(rules) {
@@ -113,7 +126,11 @@ export function replaceAll(rules) {
 }
 
 export function clearPlaybook() {
-  try { localStorage.removeItem(KEY) } catch { /* ignore */ }
+  try {
+    localStorage.removeItem(KEY)
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Bump a rule's counter. kind = 'helpful' | 'harmful'. Bumps evals. Never throws. */

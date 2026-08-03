@@ -7,7 +7,7 @@
 // `AA23 reverted duplicate permissionHash` (zd_sponsorUserOperation 400) on the 2nd pool.
 
 import { encodeFunctionData } from 'viem';
-import { reconstructSessionClient } from './session.mjs';
+import { reconstructSessionClient, MAX_CALL_CAP_UNITS } from './session.mjs';
 
 export const YIELD_ROUTER_ABI = [{
   type: 'function', name: 'deposit', stateMutability: 'nonpayable',
@@ -50,6 +50,17 @@ export function createOrchestrator(config) {
    * @param {{pool:string, amount:bigint, minShares:bigint}[]} allocations
    */
   async function dispatchDeposits(approval, allocations) {
+    // VF Wallet Task 7 (defense in depth): this is the point where sessionPrivateKey actually
+    // gets used — reject the whole call, before the session client is even reconstructed, if any
+    // allocation is over the per-call cap. httpRouter.mjs's own pre-dispatch validateMandateBinding
+    // check is the primary gate; this is the last line of defense should some other caller ever
+    // reach this function directly. Per-call, not cumulative — checked against each allocation's
+    // own amount, nothing is summed across allocations or across calls.
+    const overCap = allocations.find((a) => a.amount > MAX_CALL_CAP_UNITS);
+    if (overCap) {
+      throw new Error(`allocation for ${overCap.pool} exceeds the ${MAX_CALL_CAP_UNITS} per-call cap`);
+    }
+
     const kernelClient = await reconstructSessionClientFn({
       chain, rpcUrl, bundlerRpcUrl, approval, sessionPrivateKey,
     });
@@ -73,12 +84,24 @@ export function createOrchestrator(config) {
         const success = receipt?.success === true || receipt?.receipt?.status === 'success';
         if (!success) throw new Error(`deposit into ${allocation.pool} was mined but did not succeed`);
         results.push({
+          allocationId: allocation.allocationId,
           pool: allocation.pool,
           status: 'fulfilled',
           value: { pool: allocation.pool, userOpHash, txHash: receipt?.receipt?.transactionHash },
+          executionStatus: 'deposited',
+          custody: { location: 'base-proxy' },
+          txHash: receipt?.receipt?.transactionHash ?? null,
         });
       } catch (reason) {
-        results.push({ pool: allocation.pool, status: 'rejected', reason });
+        results.push({
+          allocationId: allocation.allocationId,
+          pool: allocation.pool,
+          status: 'rejected',
+          reason,
+          executionStatus: 'held',
+          custody: { location: 'agent' },
+          txHash: null,
+        });
       }
     }
     return results;

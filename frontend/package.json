@@ -8,16 +8,25 @@
     "build": "vite build",
     "postbuild": "node scripts/assert-no-dev-dispatch.mjs",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --exclude=\"e2e/**\"",
     "lint": "eslint .",
+    "lint:ci": "node scripts/check-eslint-warning-baseline.mjs",
+    "lint:warnings:update": "node scripts/check-eslint-warning-baseline.mjs --update",
     "format": "prettier --write \"src/**/*.{js,jsx,css}\" \"api/**/*.js\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,css}\" \"api/**/*.js\"",
     "pages:dev": "npm run build && wrangler pages dev",
     "pages:deploy": "npm run build && wrangler pages deploy",
-    "build:ext": "vite build -c extension/vite.config.extension.js"
+    "build:ext": "vite build -c extension/vite.config.extension.js",
+    "brand:build": "node scripts/build-brand-assets.mjs",
+    "brand:check": "node scripts/check-brand-assets.mjs",
+    "manifest:check": "node scripts/generate-wallet-contract-manifest.mjs --check",
+    "test:visual": "playwright test"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^2.3.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/newsreader": "^5.3.0",
     "@gsap/react": "^2.1.2",
     "@scure/bip39": "1.3.0",
     "@solana/kit": "^5.5.1",
@@ -43,6 +52,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.61.1",
+    "@resvg/resvg-js": "^2.6.2",
     "@testing-library/react": "16.3.2",
     "@vitest/coverage-v8": "^2.1.9",
     "eslint": "^9.39.4",
@@ -53,6 +64,7 @@
     "prettier": "^3.8.4",
     "tsx": "^4.22.4",
     "vitest": "^2.1.9",
+    "vitest-axe": "^0.1.0",
     "wrangler": "^4.0.0"
   }
 }

@@ -38,7 +38,7 @@ const metricCard = {
 const pillBtn = {
   appearance: 'none',
   border: '.5px solid rgba(255,255,255,.18)',
-  borderRadius: 5,
+  borderRadius: 'var(--pc-radius-control)',
   background: 'rgba(255,255,255,.06)',
   color: 'inherit',
   font: 'inherit',

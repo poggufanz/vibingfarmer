@@ -4,6 +4,7 @@ import { HORIZON_URL } from '../stellar/config.js'
 import { generate24, keypairFromMnemonic, keypairFromSecret } from './classicKeypair.js'
 import { encryptSecret, saveWallet, decryptWithKey } from './vault.js'
 import { unlock, getUnlocked, lock } from './session.js'
+import { selectActiveAccount, NETWORK } from './activeAccount.js'
 
 let _horizon
 export function horizonServer() {
@@ -16,6 +17,17 @@ async function persistAndUnlock({ keypair, label, password, extra = {} }) {
   const blob = await encryptSecret(keypair.secret(), password)
   await saveWallet({ label, publicKey, blob, createdAt: Date.now(), ...extra })
   await unlock(publicKey, password)
+  // Create/import is exactly the "creation/import/restore selects only the account just
+  // created/restored" deliberate switch (activeAccount.js) — chrome.storage.local only; MV3
+  // service workers have no window, and this module is also used from plain-web contexts
+  // (no chrome at all), so both are guarded the same way account.js already guards its own
+  // chrome.storage.local mirror write.
+  if (typeof chrome !== 'undefined' && globalThis.chrome.storage?.local) {
+    await selectActiveAccount({
+      accountId: `${NETWORK}:${publicKey}`,
+      storageLocal: globalThis.chrome.storage.local,
+    })
+  }
   return publicKey
 }
 
@@ -52,9 +64,15 @@ export async function unlockWallet(publicKey, password) {
 }
 
 // Reconstruct secret -> keypair -> run fn -> wipe. Secret bytes never persisted.
-export async function withSecret(fn) {
+// expectedPublicKey (optional): an unlocked session for a DIFFERENT G-address must never sign on
+// behalf of the caller's intended account — a stale/foreign session fails closed here rather than
+// silently signing as whoever happens to be unlocked (see activeAccount.js).
+export async function withSecret(fn, { expectedPublicKey } = {}) {
   const u = await getUnlocked()
   if (!u) throw new Error('locked')
+  if (expectedPublicKey && u.publicKey !== expectedPublicKey) {
+    throw new Error('locked: unlocked session does not match the active account')
+  }
   let secret = null
   let bytes = null
   try {

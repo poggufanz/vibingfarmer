@@ -3,8 +3,17 @@ import { describe, it, expect } from 'vitest'
 import { prunePass, PRUNE_CFG } from './prune.js'
 
 const rule = (over) => ({
-  id: 'r', role: 'yield', category: 'strategy', text: 't',
-  helpful: 0, harmful: 0, evals: 0, status: 'active', origin: 'grown', createdAt: 1, ...over,
+  id: 'r',
+  role: 'yield',
+  category: 'strategy',
+  text: 't',
+  helpful: 0,
+  harmful: 0,
+  evals: 0,
+  status: 'active',
+  origin: 'grown',
+  createdAt: 1,
+  ...over,
 })
 
 describe('prunePass', () => {
@@ -31,12 +40,17 @@ describe('prunePass', () => {
   })
 
   it('reactivates a retired rule that recovered (helpful >= harmful)', () => {
-    const out = prunePass([rule({ origin: 'seed', status: 'retired', helpful: 5, harmful: 4, evals: 9 })])
+    const out = prunePass([
+      rule({ origin: 'seed', status: 'retired', helpful: 5, harmful: 4, evals: 9 }),
+    ])
     expect(out[0].status).toBe('active')
   })
 
   it('respects custom config', () => {
-    const out = prunePass([rule({ helpful: 0, harmful: 3, evals: 3 })], { MIN_EVALS: 2, HARM_RATIO: 2 })
+    const out = prunePass([rule({ helpful: 0, harmful: 3, evals: 3 })], {
+      MIN_EVALS: 2,
+      HARM_RATIO: 2,
+    })
     expect(out.length).toBe(0)
   })
 

@@ -1,8 +1,30 @@
+// frontend/src/wallet/ui/classic/ImportScreen.jsx
+// VF Wallet Task 9. Recomposed onto the shared WalletShell/pc-* primitives -- dropped the
+// gradient icon box and inline styles. The secret/mnemonic textarea keeps `.pc-technical`
+// (monospace): that field holds real secret/technical data, which the contract's own base rule
+// (`code, pre, .pc-technical`) reserves monospace for -- unlike the surrounding prose, which uses
+// the body font throughout (checklist item 5: no friendly copy in monospace). Import wiring
+// (classifyImport / importFromSecret / importFromMnemonic via controller.js's doImport) is
+// untouched -- only the markup changed.
+//
+// VF Wallet Task 11: `heading` is an optional override (default text unchanged, so every existing
+// caller -- WalletOnboarding's pre-wallet "Restore a Standard wallet" flow -- is unaffected). This
+// exact component is also reused, unchanged otherwise, inside WalletAdvanced.jsx's "recovery/import
+// tools appropriate to account model" section for a classic wallet that already exists on this
+// device, where "restore" means "replace the wallet on this device," a materially different
+// consequence from onboarding's blank-slate case -- the caller supplies a heading that says so
+// (WalletAdvanced.jsx also renders its own surrounding replace-warning paragraph; this component
+// stays context-agnostic and does not duplicate that copy itself).
 import { useState } from 'react'
 import { classifyImport } from './importValidate.js'
 import { HonestyLabels } from '../HonestyLabels.jsx'
 
-export default function ImportScreen({ onImport, busy, error }) {
+export default function ImportScreen({
+  onImport,
+  busy,
+  error,
+  heading = 'Restore from a secret key or recovery phrase',
+}) {
   const [input, setInput] = useState('')
   const [pw, setPw] = useState('')
   const [label, setLabel] = useState('Imported')
@@ -10,56 +32,14 @@ export default function ImportScreen({ onImport, busy, error }) {
   const ok = cls.kind !== 'invalid' && pw.length >= 12
 
   return (
-    <div className="vf-screen vf-import">
-      <div
-        style={{
-          textAlign: 'center',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '6px',
-        }}
-      >
-        <div
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 14,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-card) 100%)',
-            border: '1px solid var(--border-strong)',
-            marginBottom: 4,
-            boxShadow: '0 4px 16px rgba(0,0,0,.25)',
-          }}
-        >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="var(--accent)"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="21 15 16 10 11 15"></polyline>
-            <line x1="16" y1="10" x2="16" y2="22"></line>
-            <path d="M18 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4"></path>
-          </svg>
-        </div>
-        <h2 style={{ margin: 0 }}>Import wallet</h2>
-        <p className="vf-hint" style={{ textAlign: 'center', margin: 0 }}>
-          Restore using a secret key or recovery phrase.
-        </p>
-      </div>
-
+    <div className="pc-standard-form" data-testid="standard-import">
+      <h2>{heading}</h2>
       <HonestyLabels scope="global" />
-
-      <label>
-        Secret key or recovery phrase
+      <div className="pc-field">
+        <label htmlFor="wallet-import-secret">Secret key or recovery phrase</label>
         <textarea
+          id="wallet-import-secret"
+          className="pc-input pc-technical"
           rows={3}
           spellCheck={false}
           autoComplete="off"
@@ -67,50 +47,41 @@ export default function ImportScreen({ onImport, busy, error }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />
-      </label>
-      {input.trim() && cls.kind === 'invalid' && <p className="vf-error">{cls.error}</p>}
-      {cls.kind !== 'invalid' && (
-        <p
-          className="vf-hint"
-          style={{
-            color: 'var(--ok)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            fontWeight: '500',
-          }}
-        >
-          Detected format: {cls.kind}
-        </p>
-      )}
+      </div>
+      {input.trim() && cls.kind === 'invalid' && <p className="pc-field-error">{cls.error}</p>}
+      {cls.kind !== 'invalid' && <p className="pc-field-help">Detected format: {cls.kind}</p>}
 
-      <label>
-        Wallet label
+      <div className="pc-field">
+        <label htmlFor="wallet-import-label">Wallet label</label>
         <input
+          id="wallet-import-label"
+          className="pc-input"
           placeholder="Example: Imported"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
         />
-      </label>
+      </div>
 
-      <label>
-        Password
+      <div className="pc-field">
+        <label htmlFor="wallet-import-password">Password</label>
         <input
+          id="wallet-import-password"
+          className="pc-input"
           type="password"
           autoComplete="new-password"
           placeholder="12+ characters to encrypt keys"
           value={pw}
           onChange={(e) => setPw(e.target.value)}
         />
-      </label>
+      </div>
 
-      {error && <p className="vf-error">{error}</p>}
+      {error && <p className="pc-field-error">{error}</p>}
 
       <button
-        className="vf-btn primary"
+        type="button"
+        className="pc-button pc-button--primary"
         disabled={busy || !ok}
         onClick={() => onImport(cls.normalized, pw, label)}
-        style={{ marginTop: 8 }}
       >
         {busy ? 'Importing…' : 'Import wallet'}
       </button>

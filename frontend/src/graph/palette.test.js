@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest'
+import { contrastRatio } from '../design/contrast.js'
+import { THEMES } from '../design/theme.js'
 import {
   GRAPH_COLOR,
+  GRAPH_COLOR_LIGHT,
   GROUP_BASE,
+  GROUP_BASE_LIGHT,
   NODE_R,
   hexToNum,
   paletteFor,
@@ -23,16 +27,54 @@ const exec = {
 }
 
 describe('hexToNum', () => {
-  it('converts #cfff3d to 0xcfff3d', () => {
-    expect(hexToNum('#cfff3d')).toBe(0xcfff3d)
+  it('converts #DFF56C to 0xdff56c', () => {
+    expect(hexToNum('#DFF56C')).toBe(0xdff56c)
   })
 })
 
 describe('paletteFor', () => {
   it('switches state palette by theme', () => {
     expect(paletteFor(false).state).toBe(GRAPH_COLOR)
-    expect(paletteFor(true).state.running).toBe('#b07a1a')
-    expect(paletteFor(false).line).toBe('#3a3a32')
+    expect(paletteFor(true).state).toBe(GRAPH_COLOR_LIGHT)
+    expect(paletteFor('bone-paper').state).toBe(GRAPH_COLOR_LIGHT)
+    expect(paletteFor('acid-yield').state).toBe(GRAPH_COLOR)
+    expect(paletteFor(false).line).toBe(GRAPH_COLOR.skipped)
+    expect(paletteFor(true).line).toBe(GRAPH_COLOR_LIGHT.skipped)
+    expect(paletteFor(true).current).toBe('#17251F')
+  })
+})
+
+describe('graph palette collisions and contrast (spec review finding 3)', () => {
+  it('never lets the graph line color go hardcoded/theme-blind again', () => {
+    expect(paletteFor(true).line).not.toBe(paletteFor(false).line)
+  })
+
+  it('keeps the Forest skipped/line color at or above the 3:1 graphical threshold on both surfaces', () => {
+    expect(contrastRatio(GRAPH_COLOR.skipped, THEMES.forest.canvas)).toBeGreaterThanOrEqual(3)
+    expect(contrastRatio(GRAPH_COLOR.skipped, THEMES.forest.workspace)).toBeGreaterThanOrEqual(3)
+  })
+
+  it('keeps skipped visually distinct from idle in every theme', () => {
+    expect(GRAPH_COLOR.skipped).not.toBe(GRAPH_COLOR.idle)
+    expect(GRAPH_COLOR_LIGHT.skipped).not.toBe(GRAPH_COLOR_LIGHT.idle)
+  })
+
+  it('never lets an idle orchestrator/vault look like a running/confirmed/failed node', () => {
+    ;[
+      [GROUP_BASE, GRAPH_COLOR],
+      [GROUP_BASE_LIGHT, GRAPH_COLOR_LIGHT],
+    ].forEach(([group, state]) => {
+      ;['orchestrator', 'vault'].forEach((kind) => {
+        expect(group[kind]).not.toBe(state.running)
+        expect(group[kind]).not.toBe(state.confirmed)
+        expect(group[kind]).not.toBe(state.failed)
+      })
+    })
+  })
+
+  it('keeps the keeper and pool group colors distinct', () => {
+    expect(GROUP_BASE.pool).not.toBe(GROUP_BASE.keeper)
+    expect(GROUP_BASE_LIGHT.pool).not.toBe(GROUP_BASE_LIGHT.keeper)
   })
 })
 

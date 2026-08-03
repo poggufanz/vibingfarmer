@@ -64,6 +64,14 @@ export function decodeKeeperEvent(rec) {
     if (!KNOWN_TOPICS.includes(topic)) return null
     const data = fromScVal(rec.value)
     const base = { ledger: rec.ledger, txHash: rec.txHash }
+    // Pocket Crew "My money" Task 8: the RPC's own `ledgerClosedAt` (ISO8601, real ledger close
+    // time — see @stellar/stellar-sdk's BaseEventResponse) is the ONLY source for `closedAt`.
+    // Reading a historical event now must never stamp it with `Date.now()` — that would present
+    // an old compound/rebalance as fresh evidence the keeper is healthy right this second. Added
+    // only when parseable, so a record without it (every existing keeperEvents.test.js fixture)
+    // decodes to the exact same shape as before this change.
+    const closedAt = rec.ledgerClosedAt != null ? Date.parse(rec.ledgerClosedAt) : NaN
+    if (Number.isFinite(closedAt)) base.closedAt = closedAt
     if (topic === COMPOUND_TOPIC) {
       return {
         ...base,

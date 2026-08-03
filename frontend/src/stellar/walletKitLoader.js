@@ -13,11 +13,14 @@ let _kit = null
 
 /**
  * Initialize (once) and return the Stellar Wallets Kit handle.
- * @returns {Promise<object>} object exposing authModal/getAddress/signTransaction
+ * @returns {Promise<{client:object, getSelectedModule:Function, events:object}>} the kit event
+ * source plus a live selected-module accessor. Security-sensitive callers use the module itself
+ * for fresh address/network reads; the kit's cached address is display-only.
  */
 export async function loadKit() {
   if (_kit) return _kit
-  const { StellarWalletsKit, SwkAppDarkTheme } = await import('@creit.tech/stellar-wallets-kit')
+  const { StellarWalletsKit, SwkAppDarkTheme, KitEventType } =
+    await import('@creit.tech/stellar-wallets-kit')
   const { FreighterModule } = await import('@creit.tech/stellar-wallets-kit/modules/freighter')
   const { xBullModule } = await import('@creit.tech/stellar-wallets-kit/modules/xbull')
   const { AlbedoModule } = await import('@creit.tech/stellar-wallets-kit/modules/albedo')
@@ -29,6 +32,14 @@ export async function loadKit() {
     // file imports @creit.tech/stellar-wallets-kit" rule from the header comment above.
     modules: [new VfWalletModule(), new FreighterModule(), new xBullModule(), new AlbedoModule()],
   })
-  _kit = StellarWalletsKit
+  _kit = Object.freeze({
+    client: StellarWalletsKit,
+    getSelectedModule: () => StellarWalletsKit.selectedModule,
+    events: Object.freeze({
+      STATE_UPDATED: KitEventType.STATE_UPDATED,
+      WALLET_SELECTED: KitEventType.WALLET_SELECTED,
+      DISCONNECT: KitEventType.DISCONNECT,
+    }),
+  })
   return _kit
 }

@@ -10,10 +10,56 @@ import { createWatcher } from './cctp/watcher.mjs';
 import { createOrchestrator } from './base/orchestrator.mjs';
 import { createFarmFlow } from './flows/farm.mjs';
 import { createRelayerRouter } from './httpRouter.mjs';
-import { createMandateStore } from './mandateStore.mjs';
+import { createMandateStoreV2 } from './mandateStore.mjs';
 import { createSqliteStores } from './sqliteStores.mjs';
+import { startAssociationOutboxWorker } from './associationOutbox.mjs';
+import {
+  BASE_SEPOLIA_POOL_TARGETS,
+  createAgentIndexReporter,
+} from './agentIndexReporter.mjs';
 
 const MANDATE_SWEEP_MS = 10 * 60 * 1000; // evict expired session keys every 10 min
+
+export function runtimeServerConfig(config) {
+  return {
+    relayerOrigin: config.publicOrigin,
+    reporterEndpoint: config.reporter.url,
+    reporterSchema: config.reporter.schema,
+    reporterSecret: config.runtime.reporterSecret,
+    proxyKey: config.runtime.proxyKey,
+    sanitizeErrors: !config.runtime.debugErrors,
+    publicRuntime: config.publicRuntime,
+  };
+}
+
+export async function verifyRelayerReadiness({ sqlite, reporter }) {
+  if (!sqlite?.probe || !reporter?.probe) throw new Error('relayer durable readiness is not configured');
+  const local = await sqlite.probe();
+  if (local?.writable !== true) throw new Error('relayer SQLite store is not writable');
+  const remote = await reporter.probe();
+  if (
+    remote?.ready !== true
+    || remote?.schemaVersion !== 1
+    || remote?.stores?.executionReceipts !== true
+    || remote?.stores?.baseChildIntents !== true
+  ) {
+    throw new Error('agent index reporter schema/store is not ready');
+  }
+  return { writable: true, reporterSchema: remote.schemaVersion };
+}
+
+export async function startVerifiedRelayer({
+  verifyReadiness,
+  resumeFarmJobs,
+  startWorker,
+  openListener,
+}) {
+  await verifyReadiness();
+  await resumeFarmJobs();
+  const worker = startWorker();
+  const server = openListener();
+  return { worker, server };
+}
 
 /** Shared-secret gate between the Cloudflare proxy and this relayer. Empty key = open (local dev). */
 export function withProxyKeyAuth(handler, key) {
@@ -35,9 +81,10 @@ export function withProxyKeyAuth(handler, key) {
 
 /**
  * @param {ReturnType<typeof import('./config.mjs').loadConfig>} config
- * @returns {{ handler: Function, listen: (port: number) => import('node:http').Server }}
+ * @returns {{ handler: Function, listen: (port: number) => Promise<import('node:http').Server> }}
  */
 export function createRelayerServer(config) {
+  const runtimeConfig = runtimeServerConfig(config);
   // When RELAYER_DB_PATH is set, sqlite backs the idempotency store + jobs + mandates so a restart
   // loses nothing (session keys still die at their 1h TTL either way). Build BEFORE createWatcher so
   // the watcher gets the sqlite-backed idempotency store rather than the file store.
@@ -45,9 +92,25 @@ export function createRelayerServer(config) {
   if (sqlite) config = { ...config, store: sqlite.store };
   const watcher = createWatcher(config);
   const jobs = sqlite ? sqlite.jobs : new Map();
-  // serializedApproval -> sessionPrivateKey. Memory (or sqlite when RELAYER_DB_PATH is set) — never
-  // logged. TTL store (not a bare Map) so session keys don't linger past the mandate's lifetime.
-  const mandates = sqlite ? sqlite.mandates : createMandateStore();
+  // VF Wallet Task 7: owner/kernel-bound mandate store, keyed on (approval, stellarOwner,
+  // kernelAddress) together — never logged, never returned to a caller. Memory (or sqlite when
+  // RELAYER_DB_PATH is set) — TTL so session keys don't linger past the mandate's lifetime. The
+  // legacy approval-only store (mandateStore.mjs's createMandateStore / sqliteStores.mjs's
+  // `mandates` table) is deliberately no longer wired in here at all: any row still sitting there
+  // stays untouched for rollback, but this server never reads or writes it again.
+  const mandatesV2 = sqlite ? sqlite.mandatesV2 : createMandateStoreV2();
+  // This server's own public origin, compared against every stored mandate's relayerOrigin on
+  // every operation (httpRouter.mjs's Step 2 "compare relayer origin to server configuration").
+  // Unset = local dev, no compare performed — same "empty = open" posture as RELAYER_PROXY_KEY
+  // below. Also what every /mandate + /mandate/valid response reports as `relayerOrigin`, so the
+  // client (frontend/src/wallet/baseBinding.js) can start enforcing it.
+  const relayerOrigin = runtimeConfig.relayerOrigin;
+  const agentIndexReporter = createAgentIndexReporter({
+    endpoint: runtimeConfig.reporterEndpoint,
+    secret: runtimeConfig.reporterSecret,
+    schemaVersion: runtimeConfig.reporterSchema,
+  });
+  const associationOutbox = sqlite?.associationOutbox ?? null;
 
   // Per-request: each /farm call brings its own ephemeral session key, so the orchestrator (and
   // the kernel client it reconstructs) is built fresh per key rather than shared/cached.
@@ -77,26 +140,50 @@ export function createRelayerServer(config) {
   // The Cloudflare Pages proxy (functions/api/vf-cross) sends x-vf-relayer-key on every request;
   // the VM is otherwise tunnel-only, so this shared secret is what makes the tunnel non-open.
   // Empty key = local dev (no gate).
-  const handler = withProxyKeyAuth(
-    createRelayerRouter({
+  const router = createRelayerRouter({
       buildFarm,
       relayUnwindMint,
       jobs,
-      mandates,
+      mandatesV2,
       genId: randomUUID,
-      sanitizeErrors: process.env.RELAYER_DEBUG_ERRORS !== '1',
-    }),
-    process.env.RELAYER_PROXY_KEY || '',
+      usdcAddress: config.base.usdcAddress,
+      yieldRouterAddress: config.base.yieldRouterAddress,
+      relayerOrigin,
+      sanitizeErrors: runtimeConfig.sanitizeErrors,
+      networkId: 'stellar-testnet',
+      poolTargets: BASE_SEPOLIA_POOL_TARGETS,
+      agentIndexReporter,
+      associationOutbox,
+      farmExecutions: sqlite?.farmExecutions ?? null,
+      publicRuntime: runtimeConfig.publicRuntime,
+    });
+  const handler = withProxyKeyAuth(
+    router,
+    runtimeConfig.proxyKey,
   );
 
-  function listen(port) {
-    const server = createServer(handler);
-    server.listen(port);
+  async function listen(port) {
+    const production = config.mode === 'production' || config.mode === 'staging';
+    const started = await startVerifiedRelayer({
+      verifyReadiness: production
+        ? () => verifyRelayerReadiness({ sqlite, reporter: agentIndexReporter })
+        : async () => ({ writable: Boolean(sqlite), reporterSchema: runtimeConfig.reporterSchema }),
+      resumeFarmJobs: () => router.resumeFarmJobs(),
+      startWorker: () => (associationOutbox
+        ? startAssociationOutboxWorker({ outbox: associationOutbox, reporter: agentIndexReporter })
+        : null),
+      openListener: () => {
+        const server = createServer(handler);
+        server.listen(port);
+        return server;
+      },
+    });
     // Periodically drop expired session keys so they don't wait for a matching /farm to be evicted.
-    const sweep = setInterval(() => mandates.sweep(), MANDATE_SWEEP_MS);
+    const sweep = setInterval(() => mandatesV2.sweep(), MANDATE_SWEEP_MS);
     sweep.unref?.(); // never keep the process alive just for the sweep
-    server.on('close', () => clearInterval(sweep));
-    return server;
+    started.server.on('close', () => clearInterval(sweep));
+    started.server.on('close', () => started.worker?.stop());
+    return started.server;
   }
 
   return { handler, listen };

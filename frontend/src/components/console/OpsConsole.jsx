@@ -38,6 +38,7 @@ export default function OpsConsole({
   vaultMeta = {},
   lastUpdated = null,
   userAddress = null,
+  activeAccount = null,
   withdrawEnabled = true,
   onWithdrawSuccess,
   onNewStrategy,
@@ -111,6 +112,7 @@ export default function OpsConsole({
         lastUpdated={lastUpdated}
         nowMs={now}
         userAddress={userAddress}
+        activeAccount={activeAccount}
         scopes={scopes}
         withdrawEnabled={withdrawEnabled}
         onWithdrawSuccess={onWithdrawSuccess}

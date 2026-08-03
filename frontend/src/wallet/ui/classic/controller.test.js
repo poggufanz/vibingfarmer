@@ -137,6 +137,18 @@ describe('classic controller', () => {
     expect(b.unlocked).toBe(true)
   })
 
+  it("bootstrap reports unlocked:false when a DIFFERENT account's session happens to be unlocked (session bound to address, Task 1)", async () => {
+    const { publicKey } = await doCreate('Main', 'pw12pw12pw12')
+    await confirmBackup(publicKey)
+    await doLock()
+    // Simulate a stale/foreign session cached under some other G-address.
+    await globalThis.chrome.storage.session.set({
+      vf_classic_session: { publicKey: 'GSOMEOTHERWALLETENTIRELY', jwk: {} },
+    })
+    const b = await bootstrap()
+    expect(b.unlocked).toBe(false)
+  })
+
   it('refreshHome reports unfunded when the account has no balances yet', async () => {
     readBalances.mockResolvedValueOnce(null)
     const r = await refreshHome('GXXXX')

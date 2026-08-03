@@ -21,17 +21,21 @@ export function toAuthorizeArgs(scope) {
   return [
     // agent_account v3 renamed AgentScope.vault -> target; both generations are live on
     // testnet, so a caller may hand this a scope carrying either field.
-    scope.agent, scope.target ?? scope.vault, scope.token,
-    scope.capPerPeriod,                  // already bigint (asserted) — no re-wrap, preserves identity
+    scope.agent,
+    scope.target ?? scope.vault,
+    scope.token,
+    scope.capPerPeriod, // already bigint (asserted) — no re-wrap, preserves identity
     Number(scope.periodDuration),
-    Number(scope.expiry),                // uint40 — Number is correct (safe past year 2106); do NOT
-                                         // "fix" to BigInt: it would encode fine but diverge from periodDuration's type
+    Number(scope.expiry), // uint40 — Number is correct (safe past year 2106); do NOT
+    // "fix" to BigInt: it would encode fine but diverge from periodDuration's type
   ]
 }
 
 export function maxAtRisk(scope) {
   assertScope(scope)
-  const periods = Math.ceil((Number(scope.expiry) - Number(scope.nowSec)) / Number(scope.periodDuration))
+  const periods = Math.ceil(
+    (Number(scope.expiry) - Number(scope.nowSec)) / Number(scope.periodDuration)
+  )
   return scope.capPerPeriod * BigInt(Math.max(periods, 1))
 }
 
@@ -42,7 +46,7 @@ export function toSummary(scope) {
     // agent_account v3 renamed AgentScope.vault -> target; both generations are live on testnet.
     vault: scope.target ?? scope.vault,
     token: scope.token,
-    capPerPeriod: scope.capPerPeriod,    // bigint — same value, same type as the on-chain arg
+    capPerPeriod: scope.capPerPeriod, // bigint — same value, same type as the on-chain arg
     periodDuration: Number(scope.periodDuration),
     expiry: Number(scope.expiry),
     maxAtRisk: maxAtRisk(scope),

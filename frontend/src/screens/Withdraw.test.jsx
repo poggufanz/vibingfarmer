@@ -32,8 +32,20 @@ const baseProps = {
   ownerKernelAccount: { address: '0xOWNER' },
   publicClient: {},
   positions: [
-    { pool: '0xAAAA', poolName: 'Aave v3 USDC', shares: 100n, assets: 2_000_000n, minAssets: 1_990_000n },
-    { pool: '0xBBBB', poolName: 'Moonwell USDC', shares: 200n, assets: 3_000_000n, minAssets: 2_985_000n },
+    {
+      pool: '0xAAAA',
+      poolName: 'Aave v3 USDC',
+      shares: 100n,
+      assets: 2_000_000n,
+      minAssets: 1_990_000n,
+    },
+    {
+      pool: '0xBBBB',
+      poolName: 'Moonwell USDC',
+      shares: 200n,
+      assets: 3_000_000n,
+      minAssets: 2_985_000n,
+    },
   ],
   idleUsdc: 500_000n,
   stellarRecipient: 'GRECIPIENTOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO',

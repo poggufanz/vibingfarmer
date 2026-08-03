@@ -1,0 +1,3593 @@
+[
+  {
+    "relativePath": "e2e/vf-wallet.visual.spec.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AddAssetScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ApproveOverlay' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Eyebrow' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HistoryScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HomeScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HonestyLabels' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Popup' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ReceiveScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SendScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Shell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletActivity' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletAdvanced' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletHome' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletOnboarding' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletReceive' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletSettings' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "extension/popup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'e' is defined but never used.",
+    "count": 2
+  },
+  {
+    "relativePath": "src/agents.decisionlog.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'DecisionLogPanel' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/agents.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CouncilPanel' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/agents.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'DebatePanel' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/agents.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/agents.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/agents.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'RouteArrowMark' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/agents.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SimulationPanel' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/agents.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'latestReason' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/agents/agentController.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.activeAccount.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'App' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.activeAccount.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MemoryRouter' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.activeAccount.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 10
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CrewRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'DevelopersLayout' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'EcosystemPage' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ExplorerPage' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HistoryPanel' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'LandingHero' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MemoryModal' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MyMoneyRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Navigate' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NotificationCenter' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'OnboardingFlow' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'RecoveryPanel' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ReplayPage' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Route' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'RouteFocus' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Routes' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SettingsPage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Sidebar' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SkillDrawer' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SkipLink' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StopAccessDialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Suspense' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TopBar' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TweakRadio' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TweakSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TweaksPanel' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TxDetailPage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VENICE_TIMEOUT_MS' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VaultDetailPage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Withdraw' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WithdrawDialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'addr' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'baseMandateError' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'baseWithdrawError' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'connectError' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'council' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'eligibility' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'furthest' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'handleWithdrawSuccess' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'loopPhase' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'loopTick' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'mapVeniceToStrategy' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'paletteIsLight' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'readContract' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'scopes' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'setCouncilRetry' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'setDebateResult' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'setDevApiKey' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'settingUpBaseMandate' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'simulation' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'skillStates' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/app.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'speed' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/attestation.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BrandLockup' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components.sidebar.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MemoryRouter' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components.sidebar.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components.sidebar.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Sidebar' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components.sidebar.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TopBar' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/AgentActionPreview.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/AgentActionPreview.jsx",
+    "ruleId": "react-hooks/exhaustive-deps",
+    "messageId": null,
+    "message": "React Hook useEffect has a missing dependency: 'onCancel'. Either include it or remove the dependency array. If 'onCancel' changes too often, find the parent component that defines it and wrap that definition in useCallback.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/AlertCard.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/AlertCard.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AlertCard' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/EcosystemPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ArchDiagram' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/EcosystemPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ArchEdge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/EcosystemPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ArchNode' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/EcosystemPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'EcoCard' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/EcosystemPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'EcoStyle' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/EcosystemPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NavBar' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/EcosystemPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StandardBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ExplorerPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AttestationsTable' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ExplorerPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ContractCard' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ExplorerPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ExplorerStyle' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ExplorerPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NavBar' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ExplorerPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatBlock' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ExplorerPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TypeBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/HistoryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BaseList' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/HistoryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Empty' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/HistoryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/HistoryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/HistoryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ReasonList' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/HistoryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StratList' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/HistoryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TxList' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingFx.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Cursor' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingFx.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'IntroGate' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingFx.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'LandingHero' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingFx.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MemoryRouter' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BoundsSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CapitalPath' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'EcosystemBand' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'FinalSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'FlowSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Hero' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HonestySection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'IntelligenceSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'LandingFx' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NavBar' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ObservabilitySection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ProblemSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ProductImage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ProofStrip' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'RelaySection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Reveal' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'YieldSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'motion' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'LandingHero' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MemoryRouter' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/LandingHero.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Player' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/NavBar.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BrandLockup' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/NavBar.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NavStyle' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/NotificationCenter.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AgentActionPreview' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/NotificationCenter.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AlertCard' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/NotificationCenter.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/NotificationCenter.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/NotificationCenter.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'positions' is assigned a value but never used. Allowed unused args must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/NotificationCenter.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'settings' is assigned a value but never used. Allowed unused args must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/NotificationCenter.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'userAddress' is defined but never used. Allowed unused args must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/OnboardingFlow.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ApyValue' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/OnboardingFlow.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HowItWorksScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/OnboardingFlow.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/OnboardingFlow.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ValueScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/OnboardingFlow.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'YieldLine' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ReplayPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AssumptionRow' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ReplayPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CHART_W' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ReplayPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ComparisonHero' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ReplayPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NavBar' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ReplayPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'OutcomeBarChart' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ReplayPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ReplayStyle' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/ReplayPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatBlock' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ApiKeyField' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BrandLockup' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Check' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ContractRow' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CreditsAbout' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Divider' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'LegacyAutoExitCleanup' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Num' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Radio' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Row' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Section' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SubLabel' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Toggle' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'e' is defined but never used.",
+    "count": 4
+  },
+  {
+    "relativePath": "src/components/SignatureMark.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SkillDetailModal.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SkillDetailModal.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SkillDetailModal.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Row' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SkillDrawer.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SkillDrawer.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SkillEditModal.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/SkillEditModal.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/TxDetailPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/VaultDetailPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/WithdrawModal.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/WithdrawModal.jsx",
+    "ruleId": "react-hooks/exhaustive-deps",
+    "messageId": null,
+    "message": "React Hook useEffect has missing dependencies: 'agentAddresses', 'agentInfo', and 'vault.address'. Either include them or remove the dependency array.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/WithdrawModal.jsx",
+    "ruleId": "react-hooks/exhaustive-deps",
+    "messageId": null,
+    "message": "React Hook useEffect has missing dependencies: 'commitIfCurrent', 'onClose', 'status', 'userAddress', and 'vault.address'. Either include them or remove the dependency array. If 'onClose' changes too often, find the parent component that defines it and wrap that definition in useCallback.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/WithdrawModal.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/WithdrawModal.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WithdrawModal' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/CommandStrip.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CommandStrip' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/CouncilZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'DecisionLogPanel' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/CouncilZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ZoneFrame' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/CouncilZone.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CouncilZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/KeeperZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Dial' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/KeeperZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ZoneFrame' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/KeeperZone.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'KeeperZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/LifeboatZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Radar' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/LifeboatZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ZoneFrame' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/LifeboatZone.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'LifeboatZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/MandateZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Gauge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/MandateZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Pager' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/MandateZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ZoneFrame' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/MandateZone.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MandateZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/MonitorZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Ekg' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/MonitorZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ZoneFrame' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/MonitorZone.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MonitorZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/OpsConsole.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CommandStrip' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/OpsConsole.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CouncilZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/OpsConsole.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'KeeperZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/OpsConsole.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'LifeboatZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/OpsConsole.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MandateZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/OpsConsole.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MonitorZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/OpsConsole.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'PositionsZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/OpsConsole.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SwarmZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/OpsConsole.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'OpsConsole' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/Pager.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Pager' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/PositionsZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WithdrawModal' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/PositionsZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ZoneFrame' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/PositionsZone.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'PositionsZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/SwarmZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AgentGraph' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/SwarmZone.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ZoneFrame' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/SwarmZone.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SwarmZone' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/ZoneFrame.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ZoneFrame' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/instruments/instruments.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Dial' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/instruments/instruments.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Ekg' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/instruments/instruments.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Gauge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/console/instruments/instruments.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Radar' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/crew/CrewGuard.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CrewGuard' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/crew/CrewLanes.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AgentMark' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/crew/CrewLanes.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyFigure' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/crew/CrewRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CrewActivity' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/crew/CrewRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CrewGuard' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/crew/CrewRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CrewLanes' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/crew/CrewRoute.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CrewRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/AgentTeam.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AgentMark' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/AgentTeam.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Dialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/AgentTeam.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/AgentTeam.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AgentTeam' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/HowMoneyWorks.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VenueTruth' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MoneyHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyFigure' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MoneyHero.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatusNotice' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MoneyHero.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyHero' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MyMoneyRoute.a11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MyMoneyRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MyMoneyRoute.a11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatusNotice' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MyMoneyRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AgentTeam' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MyMoneyRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HowMoneyWorks' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MyMoneyRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyHero' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MyMoneyRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'PositionList' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MyMoneyRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TechnicalMoneyDetails' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MyMoneyRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VaultProtection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/MyMoneyRoute.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MyMoneyRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/PositionList.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyFigure' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/PositionList.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/PositionList.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/PositionList.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VenueTruth' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/PositionList.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'PositionList' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/RecoveryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AmountLine' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/RecoveryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Dialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/RecoveryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyFigure' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/RecoveryPanel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatusNotice' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/RecoveryPanel.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Dialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/RecoveryPanel.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'RecoveryPanel' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/StopAccessDialog.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Dialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/StopAccessDialog.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatusNotice' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/StopAccessDialog.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StopAccessDialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/TechnicalMoneyDetails.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'PixiSwarmGraph' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/TechnicalMoneyDetails.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Suspense' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/TechnicalMoneyDetails.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TechnicalDetails' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/TechnicalMoneyDetails.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TechnicalMoneyDetails' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/VaultProtection.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatusNotice' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/WithdrawDialog.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Dialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/money/WithdrawDialog.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WithdrawDialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/AgentMark.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AgentMark' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/AgentMark.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BrandLockup' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/BrandLockup.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BrandLockup' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/CreditsAbout.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/CreditsAbout.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CreditsAbout' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/NetworkIdentity.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'FallbackMark' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/NetworkIdentity.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/NetworkIdentity.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/Primitives.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/Primitives.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Tag' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/Primitives.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Dialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/Primitives.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'DialogHarness' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/Primitives.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyFigure' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/Primitives.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ReRenderHarness' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/Primitives.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StageShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/Primitives.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatusNotice' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/Primitives.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TechnicalDetails' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/Primitives.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VenueTruth' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/RouteFocus.jsx",
+    "ruleId": null,
+    "messageId": null,
+    "message": "Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps').",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/RouteFocus.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'FreshShell' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/RouteFocus.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'LazyPage' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 2
+  },
+  {
+    "relativePath": "src/components/pocket/RouteFocus.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'RouteFocus' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/RouteFocus.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Shell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/RouteFocus.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SkipLink' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/RouteFocus.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Suspense' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/RouteFocus.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'fresh' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/pocket/foundationA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'FoundationFixture' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/settings/LegacyAutoExitCleanup.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Dialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/settings/LegacyAutoExitCleanup.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'LegacyAutoExitCleanup' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Dialog' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyFigure' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'RouteArrowMark' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatusNotice' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TechnicalDetails' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VenueTruth' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'PlanStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/ProtectStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyFigure' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/ProtectStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/ProtectStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/ProtectStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatusNotice' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/ProtectStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TechnicalDetails' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/ProtectStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VenueTruth' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/ProtectStage.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ProtectStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StartStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AgentMark' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StartStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StartStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StartStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatusNotice' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StartStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyReceipt' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StartStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TechnicalDetails' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StartStage.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StartStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyProgress.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyProgress' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyReceipt.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyFigure' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyReceipt.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StatusNotice' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyReceipt.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TechnicalDetails' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyReceipt.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyReceipt' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'PlanStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ProtectStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StartStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyRoute.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyProgress' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyRoute.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BRIDGE_TOKEN_ADDR' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyRoute.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'OWNER' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/StrategyRoute.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/strategyA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BrokenTwoHeadings' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/strategyA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'FakeDisclosure' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/strategyA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'PlanStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/strategyA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StartStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/strategyA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyProgress' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/strategyA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyReceipt' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/strategyA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/defiLlama.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 5
+  },
+  {
+    "relativePath": "src/design/usePocketTransition.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Harness' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/CodeBlock.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CheckIcon' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/CodeBlock.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CopyIcon' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/CodeBlock.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CodeBlock' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'DocsSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'KeysSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NavLink' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Navigate' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'OverviewSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Route' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Routes' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'UsageSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'DevelopersLayout' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MemoryRouter' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Route' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DevelopersLayout.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Routes' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DocsSection.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CodeBlock' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/DocsSection.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'DocsSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/KeysSection.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CodeBlock' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/KeysSection.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'KeysSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/OverviewSection.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Link' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/OverviewSection.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MemoryRouter' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/OverviewSection.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'OverviewSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/developers/UsageSection.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'UsageSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/graph/PixiSwarmGraph.jsx",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/graph/PixiSwarmGraph.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/graph/PixiSwarmGraph.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StaticGraphFallback' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/graph/PixiSwarmGraph.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'PixiSwarmGraph' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/graph/PixiSwarmGraph.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/history.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'App' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BrowserRouter' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/marketSearch.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 3
+  },
+  {
+    "relativePath": "src/mergeFlowHelpers.test.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'connected' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/money/riskWatchStore.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/onramp/OnRampButton.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'OnRampButton' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/orchestrator.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'index' is defined but never used. Allowed unused args must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/screens.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/screens.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MmPermissionModal' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/screens.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'UpgradedCallout' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/screens/Farm.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Farm' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/screens/Withdraw.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Withdraw' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/skillLoader.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 4
+  },
+  {
+    "relativePath": "src/skillLoader.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'_' is defined but never used.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/skills.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'DelegationChain' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/skills.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/skills.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SkillCard' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/skills.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SkillDetailModal' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/skills.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SkillEditModal' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/skills.render.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SkillReviewCard' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/stellar/events.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 19
+  },
+  {
+    "relativePath": "src/stellar/events.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SOROBAN_FUNDING_ROUTER_ADDRESS' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/stellar/scopeRehydrate.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategist.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 16
+  },
+  {
+    "relativePath": "src/strategist.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'fetchDeFiLlamaVaults' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategist.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'riskLevel' is defined but never used. Allowed unused args must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/autoExit/exitKey.test.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'vi' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/councilMonitor.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'hardStopGate' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/curator.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/cycleJournal.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 2
+  },
+  {
+    "relativePath": "src/strategy/decisionLog.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 3
+  },
+  {
+    "relativePath": "src/strategy/dispatchSummary.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'branch' is defined but never used. Allowed unused args must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/dispatchSummary.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'status' is defined but never used. Allowed unused args must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/mdp.test.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'RISK_RANK' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/reflector.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/ruleStore.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 4
+  },
+  {
+    "relativePath": "src/strategy/strategyJourney.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AMOUNT_UNITS' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/strategyJourney.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Harness' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/strategyJourney.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'PlanStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/strategyJourney.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ProtectStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/strategyJourney.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StartStage' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/strategyJourney.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyProgress' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/strategyJourney.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'runId' is assigned a value but never used. Allowed unused args must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/vaultFacts.test.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SNAPSHOT' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/vaultFactsLive.test.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'url' is defined but never used. Allowed unused args must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/tweaks-panel.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Icon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/ui.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'STEP_IDS' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/mandate.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'kernelAccount' is defined but never used. Allowed unused args must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/passkey.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'b64urlToBytes' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/AccountPicker.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AccountPicker' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/ApproveOverlay.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ApproveOverlay' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/HonestyLabels.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HonestyLabels' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BrokenTwoHeadings' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletActivity' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletAdvanced' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletHome' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletOnboarding' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletSettings' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletA11y.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletActivity.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HistoryScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletActivity.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletActivity.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletActivity' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletAdvanced.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ApproveOverlay' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletAdvanced.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HonestyLabels' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletAdvanced.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ImportScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletAdvanced.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletAdvanced.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletAdvanced' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletHome.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HomeScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletHome.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletHome.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletHome' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletOnboarding.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AccountPicker' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletOnboarding.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BackupScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletOnboarding.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CreateScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletOnboarding.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HonestyLabels' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletOnboarding.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ImportScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletOnboarding.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'OnboardingScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletOnboarding.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'UnlockScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletOnboarding.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletOnboarding.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletOnboarding' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletReceive.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ReceiveScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletReceive.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletReceive.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletReceive' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletSettings.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HonestyLabels' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletSettings.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SettingsScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletSettings.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletSettings.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StandardSettingsWithResetOpen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletSettings.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletSettings' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/WalletShell.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/AddAssetScreen.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AddAssetInShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/AddAssetScreen.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AddAssetScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/AddAssetScreen.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletShell' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/BackupScreen.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HonestyLabels' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/BackupScreen.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BackupScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/CreateScreen.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HonestyLabels' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/HomeScreen.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TokenIcon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/HomeScreen.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HomeScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/ImportScreen.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'HonestyLabels' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/ImportScreen.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ImportScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/SendScreen.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'ApproveOverlay' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/SendScreen.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SendScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/SettingsScreen.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'SettingsScreen' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/controller.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'mnemonicBlob' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/wallet/ui/classic/tokenIcons.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TokenIcon' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AgentMark' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'App' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'AutopilotSection' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'BrandLockup' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CrewFixture' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'CrewRoute' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneyFigure' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MoneySameRevisionHarness' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MyMoneyFixture' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'MyMoneyRoute' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkBadge' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'NetworkRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Section' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyFixture' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'StrategyRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'Suspense' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'TechnicalDetails' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VenueTruth' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VfWalletApprovalFixture' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VfWalletHomeFixture' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VfwApprovalCard' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'VfwCeremonyCard' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletActivity' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletAdvanced' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletHome' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletOnboarding' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "visual/main.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'WalletSettings' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  }
+]

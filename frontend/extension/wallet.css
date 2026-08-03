@@ -1,0 +1,541 @@
+/*
+ * VF WALLET -- Pocket Crew tokens and primitives (Wallet Task 8)
+ *
+ * MV3 pages cannot import the web app's global stylesheet (frontend/src/design/pocket-crew.css)
+ * -- each extension page is its own isolated document with no shared load. This file and its
+ * sibling approval.css are therefore each a COMPLETE, self-sufficient copy of the relevant slice
+ * of the visual contract, not a partial that depends on the other. Tokens, hex values, radii,
+ * spacing, type scale, and motion below are copied VERBATIM from the visual contract -- never
+ * re-derived, never approximated. A locked value here must never be changed without owner
+ * approval; if this file and the contract ever disagree, the contract wins.
+ *
+ * popup.html does not load this file (fix loop 1 reverted the link -- popup.jsx still renders
+ * the full legacy "Acid Yield" system inside #root: entry animations on every screen and a
+ * gradient, infinitely-animated primary button, both of which this contract forbids, so wiring
+ * this file underneath it would have shipped a page that fails the visual contract while
+ * claiming Pocket Crew framing it hadn't earned). This file stays ready -- tokens, primitives,
+ * and the .pc-wallet shell -- for the wallet surface tasks that migrate popup.jsx onto it, so
+ * that migration has one token source to land on instead of inventing one mid-task.
+ *
+ * No @layer: not currently loaded by any page, so there is no cascade to arbitrate today. Once
+ * popup.html links this file again post-migration, revisit -- the replacement for popup.jsx must
+ * not inject a second, unlayered stylesheet without @layer coordination.
+ */
+
+:root,
+:root[data-theme='forest'] {
+  color-scheme: dark;
+
+  /* Fixed brand colors. Do not approximate or replace these hex values. */
+  --pc-field: #17251f;
+  --pc-grove: #20342b;
+  --pc-harvest: #dff56c;
+  --pc-rice: #f2f5ef;
+  --pc-danger: #e26e67;
+
+  /* Forest semantic pairs. */
+  --pc-canvas: var(--pc-field);
+  --pc-workspace: var(--pc-grove);
+  --pc-owned: var(--pc-rice);
+  --pc-ink: var(--pc-rice);
+  --pc-muted: #a8b5ad;
+  --pc-faint: #8c9b93;
+  --pc-owned-ink: var(--pc-field);
+  --pc-owned-muted: #536159;
+  --pc-harvest-ink: var(--pc-field);
+  --pc-danger-ink: var(--pc-field);
+  --pc-danger-on-light: #a8403c;
+  --pc-warning: #e8a33d;
+  --pc-focus: var(--pc-harvest);
+  --pc-focus-contrast: var(--pc-field);
+  --pc-line: rgb(242 245 239 / 16%);
+  --pc-line-strong: #8c9b93;
+  --pc-overlay: rgb(7 15 11 / 62%);
+  --pc-shadow-color: rgb(7 15 11 / 28%);
+}
+
+:root[data-theme='day-field'] {
+  color-scheme: light;
+
+  /* Brand identity is unchanged in light mode. */
+  --pc-field: #17251f;
+  --pc-grove: #20342b;
+  --pc-harvest: #dff56c;
+  --pc-rice: #f2f5ef;
+  --pc-danger: #a8403c;
+
+  /* Day Field semantic pairs. */
+  --pc-canvas: #e9eee8;
+  --pc-workspace: #f7f9f5;
+  --pc-owned: var(--pc-rice);
+  --pc-ink: var(--pc-field);
+  --pc-muted: #536159;
+  --pc-faint: #5f6c65;
+  --pc-owned-ink: var(--pc-field);
+  --pc-owned-muted: #536159;
+  --pc-harvest-ink: var(--pc-field);
+  --pc-danger-ink: var(--pc-rice);
+  --pc-danger-on-light: #a8403c;
+  --pc-warning: #8a5a00;
+  --pc-focus: var(--pc-field);
+  --pc-focus-contrast: var(--pc-rice);
+  --pc-line: rgb(23 37 31 / 16%);
+  --pc-line-strong: #5f6c65;
+  --pc-overlay: rgb(23 37 31 / 48%);
+  --pc-shadow-color: rgb(23 37 31 / 16%);
+}
+
+:root {
+  /* System/Geist fallback, local only: the extension does not bundle the Fontsource files the
+     web app imports (frontend/src/main.jsx) -- shipping them here would be unrequested weight in
+     an already-cold MV3 popup load. 'Geist Variable'/'Geist' simply fall through to system-ui
+     unless the OS happens to have them installed; nothing is ever fetched over the network. */
+  --pc-font-display: 'Geist Variable', 'Geist', system-ui, sans-serif;
+  --pc-font-body: 'Geist Variable', 'Geist', system-ui, sans-serif;
+  --pc-font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
+  --pc-font-wordmark: 'Newsreader Variable', 'Newsreader', Georgia, serif;
+
+  /* 4px spacing grid. Avoid one-off spacing values in route CSS. */
+  --pc-space-1: 4px;
+  --pc-space-2: 8px;
+  --pc-space-3: 12px;
+  --pc-space-4: 16px;
+  --pc-space-5: 20px;
+  --pc-space-6: 24px;
+  --pc-space-8: 32px;
+  --pc-space-10: 40px;
+  --pc-space-12: 48px;
+  --pc-space-16: 64px;
+  --pc-space-20: 80px;
+
+  /* Shape lock: controls 12px, supporting surfaces 16px, dominant surfaces 24px. */
+  --pc-radius-control: 12px;
+  --pc-radius-support: 16px;
+  --pc-radius-dominant: 24px;
+  --pc-radius-round: 999px;
+
+  /* Shell and route geometry (unused by the 360px wallet shell below, kept so this file stays a
+     verbatim, complete copy of the contract's root token block rather than a hand-trimmed one). */
+  --pc-sidebar-width: 248px;
+  --pc-topbar-height: 64px;
+  --pc-shell-max: 1240px;
+  --pc-route-gutter: clamp(20px, 4vw, 48px);
+  --pc-route-gap: clamp(32px, 5vw, 64px);
+  --pc-dominant-padding: clamp(24px, 4vw, 48px);
+  --pc-control-height: 48px;
+  --pc-touch-target: 44px;
+
+  /* Type scale. Money and page headings stay large without becoming marketing-hero type. */
+  --pc-type-money: clamp(48px, 7vw, 76px);
+  --pc-type-page: clamp(34px, 4.4vw, 52px);
+  --pc-type-stage: clamp(28px, 3.2vw, 40px);
+  --pc-type-section: clamp(21px, 2vw, 28px);
+  --pc-type-body: 16px;
+  --pc-type-body-small: 14px;
+  --pc-type-label: 13px;
+  --pc-type-technical: 12px;
+  --pc-leading-tight: 1.05;
+  --pc-leading-title: 1.12;
+  --pc-leading-body: 1.55;
+
+  /* Tinted, restrained elevation. No outer glow. */
+  --pc-shadow-support: 0 8px 24px var(--pc-shadow-color);
+  --pc-shadow-dominant: 0 24px 60px var(--pc-shadow-color);
+
+  /* Motion contract shared by CSS and GSAP adapters. */
+  --pc-duration-fast: 120ms;
+  --pc-duration-base: 220ms;
+  --pc-duration-enter: 320ms;
+  --pc-stagger: 40ms;
+  --pc-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --pc-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Documented layer scale. Do not invent arbitrary z-index values. */
+  --pc-z-base: 0;
+  --pc-z-sticky: 20;
+  --pc-z-popover: 40;
+  --pc-z-overlay: 80;
+  --pc-z-dialog: 90;
+  --pc-z-skip-link: 100;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--pc-canvas);
+}
+
+body {
+  margin: 0;
+  color: var(--pc-ink);
+  font-family: var(--pc-font-body);
+  font-size: var(--pc-type-body);
+  line-height: var(--pc-leading-body);
+  text-rendering: optimizelegibility;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1,
+h2,
+h3,
+button,
+input,
+select,
+textarea {
+  font-family: var(--pc-font-body);
+}
+
+h1 {
+  max-width: 15ch;
+  margin-bottom: var(--pc-space-4);
+  font-size: var(--pc-type-page);
+  font-weight: 700;
+  line-height: var(--pc-leading-title);
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+h2 {
+  margin-bottom: var(--pc-space-3);
+  font-size: var(--pc-type-section);
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+p {
+  max-width: 64ch;
+}
+
+code,
+pre,
+.pc-technical {
+  font-family: var(--pc-font-mono);
+  font-size: var(--pc-type-technical);
+}
+
+.pc-wordmark {
+  font-family: var(--pc-font-wordmark);
+}
+
+.pc-money-figure,
+[data-pocket-money] {
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-money);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 720;
+  line-height: var(--pc-leading-tight);
+  letter-spacing: -0.055em;
+}
+
+/* Controls. Buttons are soft rectangles, not pills. Pills are reserved for compact metadata. */
+.pc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: max-content;
+  min-height: var(--pc-control-height);
+  padding: 0 var(--pc-space-6);
+  border: 1px solid transparent;
+  border-radius: var(--pc-radius-control);
+  font-size: var(--pc-type-body-small);
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform var(--pc-duration-fast) var(--pc-ease-standard),
+    background-color var(--pc-duration-fast) var(--pc-ease-standard),
+    border-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.pc-button--primary {
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-button--secondary {
+  border-color: var(--pc-line-strong);
+  background: transparent;
+  color: currentcolor;
+}
+
+.pc-button--danger {
+  border-color: var(--pc-danger);
+  background: transparent;
+  color: var(--pc-danger);
+}
+
+.pc-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+
+.pc-button:disabled,
+.pc-button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.pc-field {
+  display: grid;
+  gap: var(--pc-space-2);
+}
+
+.pc-field > label {
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+.pc-input {
+  width: 100%;
+  min-height: var(--pc-control-height);
+  border: 1px solid var(--pc-line-strong);
+  border-radius: var(--pc-radius-control);
+  padding: 0 var(--pc-space-4);
+  background: transparent;
+  color: currentcolor;
+  font-size: var(--pc-type-body);
+}
+
+.pc-field-help,
+.pc-field-error {
+  margin: 0;
+  font-size: var(--pc-type-label);
+}
+
+.pc-field-help {
+  color: var(--pc-muted);
+}
+
+.pc-field-error {
+  color: var(--pc-danger);
+}
+
+:where(a, button, input, select, textarea, summary):focus-visible {
+  outline: 3px solid var(--pc-focus);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--pc-focus-contrast);
+}
+
+/* Product and ecosystem identity. */
+.pc-brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  color: currentcolor;
+}
+
+.pc-brand-lockup img,
+.pc-brand-lockup svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+
+.pc-brand-lockup--compact img,
+.pc-brand-lockup--compact svg {
+  width: 20px;
+  height: 20px;
+}
+
+.pc-network-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  color: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+.pc-network-badge img,
+.pc-network-badge svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  object-fit: contain;
+}
+
+.pc-network-badge--compact img,
+.pc-network-badge--compact svg {
+  width: 14px;
+  height: 14px;
+}
+
+.pc-network-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-2);
+}
+
+.pc-agent-mark {
+  width: 36px;
+  height: 36px;
+  flex: none;
+}
+
+.pc-agent-mark--hero {
+  width: 52px;
+  height: 52px;
+}
+
+/* VF Wallet: same system, extension-specific density and explicit security hierarchy. */
+.pc-wallet {
+  width: 360px;
+  min-height: 560px;
+  overflow-x: clip;
+  background: var(--pc-canvas);
+  color: var(--pc-ink);
+  font-family: var(--pc-font-body);
+}
+
+.pc-wallet-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 560px;
+}
+
+.pc-wallet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 56px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--pc-line);
+}
+
+.pc-wallet-main {
+  display: grid;
+  align-content: start;
+  gap: var(--pc-space-6);
+  padding: 20px 18px 24px;
+}
+
+.pc-wallet h1 {
+  max-width: 12ch;
+  margin-bottom: var(--pc-space-3);
+  font-size: 28px;
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+}
+
+.pc-wallet-balance {
+  font-size: 44px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 720;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.pc-wallet-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--pc-space-3);
+}
+
+.pc-wallet-actions .pc-button,
+.pc-wallet-approval-actions .pc-button {
+  width: 100%;
+}
+
+.pc-wallet-origin {
+  display: grid;
+  gap: var(--pc-space-2);
+  border-top: 1px solid var(--pc-line);
+  border-bottom: 1px solid var(--pc-line);
+  padding-block: var(--pc-space-4);
+}
+
+.pc-wallet-consequence {
+  border-radius: var(--pc-radius-support);
+  padding: var(--pc-space-5);
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+}
+
+.pc-wallet-approval-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: var(--pc-space-3);
+}
+
+.pc-wallet-critical,
+[data-pocket-critical] {
+  animation: none !important;
+  transition:
+    border-color var(--pc-duration-fast) var(--pc-ease-standard),
+    background-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+/* Motion hooks. GSAP implementation uses duration .32, y 8, stagger .04, power2.out.
+   It may animate only opacity, x, y, and scale within the local component scope. */
+[data-pocket-enter] {
+  will-change: auto;
+}
+
+[data-pocket-value-changed] {
+  transition: opacity 180ms var(--pc-ease-standard);
+}
+
+/* Mobile. The 360px popup viewport matches this query, so these overrides are live here, not
+   dead weight copied from a desktop-only breakpoint. */
+@media (max-width: 767px) {
+  :root {
+    --pc-route-gutter: 16px;
+    --pc-route-gap: 36px;
+    --pc-dominant-padding: 24px;
+    --pc-type-money: clamp(44px, 15vw, 60px);
+    --pc-type-page: clamp(32px, 10vw, 42px);
+  }
+}
+
+@media (max-width: 359px) {
+  .pc-wallet {
+    width: 100vw;
+    min-width: 320px;
+  }
+
+  .pc-wallet-main {
+    padding-inline: 16px;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  :where(button, [role='button'], a[href], summary, input, select, textarea) {
+    min-height: var(--pc-touch-target);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+}

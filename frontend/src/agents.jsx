@@ -3,12 +3,25 @@
    Graph rendering lives in src/graph/ (PixiJS "Living Current" scene);
    this file keeps strategy/exec-state UI: tiles, memory modal, cards.
    ============================================ */
+// Strategy Task 13 (Pocket Crew redesign, Wave 5): `StrategyCard` and `ExecuteCard` below
+// (with StrategyCard's internal CouncilPanel/DebatePanel/SimulationPanel) are DEMOTED, not
+// deleted — the production `/strategy` route renders PlanStage/StartStage instead. app.jsx no
+// longer imports either for its production render path; both remain exported only for the
+// dev/test compatibility seam (TweaksPanel's devMode-gated `jumpTo`). Everything else this file
+// exports stays live and shared, unaffected by that change: `MemoryModal` (mounted at app-shell
+// level, keyed on `openAgentId`), `DecisionLogPanel` (consumed by
+// components/console/CouncilZone.jsx), `buildAutofarmGraphData`/`rebalancePulseKey` (the `/agent`
+// OpsConsole force-graph), and `buildStrategy`/`makeInitialExecState` (the execution-state
+// contract the orchestrator/keeper machinery depends on).
 import React, { useEffect as useEAg, useRef as useRAg, useState as useSAg } from 'react'
 import { PixiSwarmGraph } from './graph/PixiSwarmGraph.jsx'
 import { Icon } from './components.jsx'
 import { shortAddr } from './screens.jsx'
+import { RouteArrowMark } from './components/pocket/NetworkIdentity.jsx'
 import { VAULT_CATALOG } from './config.js'
 import { buildStrategyState, scoreReward, riskCeiling } from './strategy/mdp.js'
+import { normalizeStrategyPlan, buildStrategyViewModel } from './strategy/planModel.js'
+import { toBaseUnits } from './stellar/format.js'
 import {
   STEP_IDS,
   STEP_LABELS,
@@ -22,53 +35,54 @@ const displayLabel = (value, fallback = '') =>
     .replace(/^./, (c) => c.toUpperCase())
 
 /* ---------- Strategy data — generated per-flow ---------- */
-// Derived from VAULT_CATALOG so addresses stay in sync with config automatically.
-const ROLES = [
-  'Conservative, lending',
-  'Balanced, liquidity provision',
-  'Aggressive, leveraged yield',
-]
-const AGENT_PROTOCOLS = VAULT_CATALOG.slice(0, 3).map((v, i) => ({
-  name: v.name,
-  protocol: v.protocol,
-  apy: String(v.apy),
-  drawdown: v.drawdown,
-  risk: v.risk,
-  addr: v.address,
-  role: ROLES[i],
-}))
+// Derived from VAULT_CATALOG so addresses stay in sync with config automatically. Only ONE real
+// Stellar venue exists (Strategy Task 1's truthful catalog) — kept only for its display fields
+// (name/protocol/apy/risk), never treated as several distinct venues to fill crew slots with.
+const STELLAR_VENUE = VAULT_CATALOG[0]
+const AGENT_PROTOCOLS = STELLAR_VENUE
+  ? [
+      {
+        name: STELLAR_VENUE.name,
+        protocol: STELLAR_VENUE.protocol,
+        apy: String(STELLAR_VENUE.apy),
+        drawdown: STELLAR_VENUE.drawdown,
+        risk: STELLAR_VENUE.risk,
+        addr: STELLAR_VENUE.address,
+        role: 'Conservative, lending',
+      },
+    ]
+  : []
 
+// Offline/no-AI fallback strategy: one truthful destination allocation (100% to the sole live
+// Stellar venue — this deterministic path never assumes Base availability) followed by real crew
+// expansion via RISK_PROFILES (strategy/planModel.js). Replaces the old per-risk splitMap, which
+// hand-indexed into AGENT_PROTOCOLS[1]/[2] — vaults that stopped existing once the catalog stopped
+// pretending to hold several distinct venues (Task 1), and would throw on 'med'/'high' risk.
 const buildStrategy = (amount, risk) => {
   const total = Number(amount) || 100
-  // Allocation profile per risk
-  const splitMap = {
-    low: [{ pct: 1.0, agents: 1 }],
-    med: [
-      { pct: 0.6, agents: 1 },
-      { pct: 0.4, agents: 1 },
-    ],
-    high: [
-      { pct: 0.4, agents: 1 },
-      { pct: 0.35, agents: 1 },
-      { pct: 0.25, agents: 1 },
-    ],
-  }
-  const config = splitMap[risk] || splitMap.low
-  const agents = config.map((c, i) => {
-    const proto = AGENT_PROTOCOLS[i]
-    const allocation = +(total * c.pct).toFixed(2)
-    return {
-      id: `worker-${i + 1}`,
-      idx: String(i + 1).padStart(2, '0'),
-      name: `Worker ${i + 1}, ${proto.role.split(', ')[0]}`,
-      role: proto.role,
-      allocation,
-      skillName: 'yield_vault_deposit',
-      vault: proto,
-    }
+  const plan = normalizeStrategyPlan({
+    runId: `offline-${Date.now()}`,
+    source: 'fallback',
+    sourceState: 'deterministic',
+    risk,
+    stellarUnits: toBaseUnits(total),
+    destination: STELLAR_VENUE?.destination || STELLAR_VENUE?.name,
   })
+  const vm = buildStrategyViewModel({
+    plan,
+    stellarVenue: {
+      name: STELLAR_VENUE?.name,
+      protocol: STELLAR_VENUE?.protocol,
+      apy: STELLAR_VENUE?.apy,
+      drawdown: STELLAR_VENUE?.drawdown,
+      risk: STELLAR_VENUE?.risk,
+      address: STELLAR_VENUE?.address,
+      role: 'Conservative, lending',
+    },
+  })
+  const agents = vm.agents
   const blendedApy = agents.reduce(
-    (acc, a, i) => acc + Number(a.vault.apy) * (a.allocation / total),
+    (acc, a) => acc + Number(a.vault.apy || 0) * (a.allocation / total),
     0
   )
   // Formal MDP reward for the offline fallback strategy (no AI / no live market).
@@ -82,7 +96,7 @@ const buildStrategy = (amount, risk) => {
   const fallbackAllocations = agents.map((a) => ({
     address: a.vault.addr || a.vault.address,
     allocation: a.allocation / total,
-    apy: Number(a.vault.apy),
+    apy: a.vault.apy != null ? Number(a.vault.apy) : null,
     risk_tier: a.vault.risk,
   }))
   const reward = scoreReward(fallbackAllocations, mdpFullState)
@@ -291,7 +305,7 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
 const SCENARIO_META = {
   bull: { label: 'Bull', tone: 'var(--ok)' },
   base: { label: 'Base', tone: 'var(--text)' },
-  bear: { label: 'Bear', tone: 'var(--warn, #c87)' },
+  bear: { label: 'Bear', tone: 'var(--warn)' },
 }
 
 /* ============================================
@@ -308,8 +322,8 @@ const COUNCIL_ROLE_META = {
 }
 const COUNCIL_SIGNAL_TONE = {
   DEPOSIT: 'var(--ok)',
-  HOLD: 'var(--warn, #c87)',
-  WITHDRAW: 'var(--bad, #ff7479)',
+  HOLD: 'var(--warn)',
+  WITHDRAW: 'var(--danger)',
 }
 const COUNCIL_SIGNAL_PLAIN = {
   DEPOSIT: 'Go',
@@ -392,7 +406,7 @@ const CouncilPanel = ({ council, onRetry }) => {
             <div className="council-hero-main">
               <span
                 className="council-hero-mark"
-                style={{ color: keep ? 'var(--ok)' : 'var(--warn, #c87)' }}
+                style={{ color: keep ? 'var(--ok)' : 'var(--warn)' }}
                 aria-hidden="true"
               >
                 {keep ? <Icon name="check" size={15} /> : <span className="ui-dot" />}
@@ -500,7 +514,7 @@ const CouncilPanel = ({ council, onRetry }) => {
 const SimulationPanel = ({ simulation }) => {
   if (!simulation || !simulation.scenarios?.length) return null
   const { scenarios, expectedValue, probProfit, horizonDays, runs, context } = simulation
-  const evTone = expectedValue >= 0 ? 'var(--ok)' : 'var(--warn, #c87)'
+  const evTone = expectedValue >= 0 ? 'var(--ok)' : 'var(--warn)'
   const fmt = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}`
   return (
     <div className="sim-panel">
@@ -536,7 +550,7 @@ const SimulationPanel = ({ simulation }) => {
                     <span style={{ color: meta.tone }}>{meta.label}</span>
                     <span
                       className="tnum"
-                      style={{ color: s.mean >= 0 ? 'var(--ok)' : 'var(--warn, #c87)' }}
+                      style={{ color: s.mean >= 0 ? 'var(--ok)' : 'var(--warn)' }}
                     >
                       {fmt(s.mean)}
                     </span>
@@ -599,7 +613,7 @@ const DebatePanel = ({ debateResult }) => {
         <div className="council-hero-main">
           <span
             className="council-hero-mark"
-            style={{ color: keep ? 'var(--ok)' : 'var(--warn, #c87)' }}
+            style={{ color: keep ? 'var(--ok)' : 'var(--warn)' }}
             aria-hidden="true"
           >
             {keep ? <Icon name="check" size={15} /> : <span className="ui-dot" />}
@@ -618,7 +632,7 @@ const DebatePanel = ({ debateResult }) => {
         </div>
         <div className="council-vote mono">
           {proposer && (
-            <span className="council-vote-chip" style={{ color: 'var(--warn, #c90)' }}>
+            <span className="council-vote-chip" style={{ color: 'var(--warn)' }}>
               Plan {Math.round((proposer.confidence || 0) * 100)}%
             </span>
           )}
@@ -626,8 +640,7 @@ const DebatePanel = ({ debateResult }) => {
             <span
               className="council-vote-chip"
               style={{
-                color:
-                  riskCompliance.compliancePass === false ? 'var(--bad, #ff7479)' : 'var(--ok)',
+                color: riskCompliance.compliancePass === false ? 'var(--danger)' : 'var(--ok)',
               }}
             >
               Risk {riskCompliance.compliancePass === false ? 'fail' : 'pass'}
@@ -892,7 +905,7 @@ const StrategyCard = ({
                       href={attestation.explorerUrl}
                       target="_blank"
                       rel="noreferrer"
-                      style={{ marginLeft: 'auto', color: 'var(--accent)' }}
+                      style={{ marginLeft: 'auto', color: 'var(--accent-text)' }}
                     >
                       View on-chain
                     </a>
@@ -1006,7 +1019,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
               : 'Workers deposit in parallel. You already signed the budget once; no more popups.'}
           </p>
           {!allDone && stalled && (
-            <div className="exec-live-status mono" style={{ color: 'var(--danger, #e5484d)' }}>
+            <div className="exec-live-status mono" style={{ color: 'var(--danger)' }}>
               <span>
                 {failedCount} failed, {fmtCountdown(elapsedMs)} elapsed, open a card for details
               </span>
@@ -1176,7 +1189,7 @@ const LoopStatusPanel = ({
             fontSize: '11px',
             fontFamily: 'var(--font-mono)',
             borderColor: 'var(--border-strong)',
-            color: 'var(--accent)',
+            color: 'var(--accent-text)',
             display: 'flex',
             alignItems: 'center',
             gap: 6,
@@ -1243,12 +1256,11 @@ const LoopStatusPanel = ({
         }
         .vf-flowchart-node.active {
           border-color: var(--accent);
-          background: rgba(207, 255, 61, 0.03);
-          box-shadow: 0 0 10px rgba(207, 255, 61, 0.1);
+          background: color-mix(in srgb, var(--accent) 3%, transparent);
         }
         .vf-flowchart-node.active-done {
           border-color: var(--accent);
-          background: rgba(207, 255, 61, 0.01);
+          background: color-mix(in srgb, var(--accent) 1%, transparent);
           opacity: 0.8;
         }
         .vf-flowchart-node.highlighted-ok {
@@ -1272,7 +1284,7 @@ const LoopStatusPanel = ({
           margin-bottom: 2px;
           color: var(--text-faint);
         }
-        .active .vf-node-icon { color: var(--accent); }
+        .active .vf-node-icon { color: var(--accent-text); }
         .highlighted-ok .vf-node-icon { color: var(--ok); }
         .highlighted-warn .vf-node-icon { color: var(--warn); }
         .highlighted-danger .vf-node-icon { color: var(--danger); }
@@ -1290,7 +1302,7 @@ const LoopStatusPanel = ({
           user-select: none;
         }
         .vf-flowchart-arrow.active {
-          color: var(--accent);
+          color: var(--accent-text);
           text-shadow: 0 0 4px var(--accent);
           animation: pulse-arrow 1.5s ease-in-out infinite;
         }
@@ -1305,7 +1317,7 @@ const LoopStatusPanel = ({
           height: 14px;
         }
         .vf-flowchart-branch-line.active {
-          color: var(--accent);
+          color: var(--accent-text);
         }
         .vf-flowchart-exit-node {
           display: flex;
@@ -1387,7 +1399,6 @@ const LoopStatusPanel = ({
         }
         .decision-log-trigger:hover {
           border-color: var(--accent) !important;
-          box-shadow: 0 0 10px rgba(207, 255, 61, 0.15) !important;
         }
       `}</style>
 
@@ -1446,7 +1457,7 @@ const LoopStatusPanel = ({
           className={`vf-flowchart-arrow ${running && (phase === 'gate' || activeIdx > 1) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 2 }}
         >
-          →
+          <RouteArrowMark px="1em" />
         </div>
 
         {/* Stage 2: Gate Check */}
@@ -1477,7 +1488,7 @@ const LoopStatusPanel = ({
           className={`vf-flowchart-arrow ${running && activeIdx > 1 && latestVerdict !== 'gated' && (phase === 'simulate' || activeIdx > 2) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 4 }}
         >
-          →
+          <RouteArrowMark px="1em" />
         </div>
 
         {/* Stage 3: Simulate */}
@@ -1509,7 +1520,7 @@ const LoopStatusPanel = ({
           className={`vf-flowchart-arrow ${running && activeIdx > 2 && latestVerdict !== 'gated' && (phase === 'council' || activeIdx > 3) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 6 }}
         >
-          →
+          <RouteArrowMark px="1em" />
         </div>
 
         {/* Stage 4: AI Council */}
@@ -1543,7 +1554,7 @@ const LoopStatusPanel = ({
           className={`vf-flowchart-arrow ${running && activeIdx > 3 && !['gated', 'discard'].includes(latestVerdict) && (phase === 'execute' || activeIdx > 4) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 8 }}
         >
-          →
+          <RouteArrowMark px="1em" />
         </div>
 
         {/* Stage 5: Execute */}
@@ -1574,7 +1585,7 @@ const LoopStatusPanel = ({
           className={`vf-flowchart-arrow ${running && activeIdx > 4 && latestVerdict === 'keep' && (phase === 'reflect' || activeIdx > 5) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 10 }}
         >
-          →
+          <RouteArrowMark px="1em" />
         </div>
 
         {/* Stage 6: Reflect */}

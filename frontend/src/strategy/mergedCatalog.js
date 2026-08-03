@@ -3,6 +3,7 @@
 // answers. Health probe = GET /status/health-probe on the vf-cross proxy — a LIVE relayer
 // returns 404 {"error":"unknown jobId"}; an unconfigured proxy returns 503; a dead tunnel 502.
 import { VAULT_CATALOG, BASE_POOL_CATALOG } from '../config.js'
+import { normalizeVenue, VENUE_KINDS } from './venueTruth.js'
 
 const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cross'
 
@@ -23,11 +24,17 @@ export async function checkRelayerHealth({
   }
 }
 
+// Truth is stamped AFTER the raw fields are spread, so it always wins — a fetched record's own
+// `protocol`/`venueKind`/`apy` claim can never overwrite where funds actually execute or what
+// yield is actually live (see venueTruth.js). `liveVaults` (e.g. a DeFiLlama fetch) is explicitly
+// stamped venueKind:'stellar-live' here regardless of what protocol string it carries — every
+// Stellar-side record in this catalog executes on the one Autofarm vault, full stop.
+const stampVenue = (raw, venueKind) => ({ ...raw, ...normalizeVenue({ ...raw, venueKind }) })
+
 export function buildMergedCatalog({ baseAvailable, liveVaults = null }) {
-  const stellar = (liveVaults && liveVaults.length > 0 ? liveVaults : VAULT_CATALOG).map((v) => ({
-    ...v,
-    chain: 'stellar',
-  }))
+  const stellarSource = liveVaults && liveVaults.length > 0 ? liveVaults : VAULT_CATALOG
+  const stellar = stellarSource.map((v) => stampVenue(v, VENUE_KINDS.STELLAR_LIVE))
   if (!baseAvailable) return stellar
-  return [...stellar, ...BASE_POOL_CATALOG.map((p) => ({ ...p, chain: 'base' }))]
+  const base = BASE_POOL_CATALOG.map((p) => stampVenue(p, VENUE_KINDS.BASE_CUSTODY_PROXY))
+  return [...stellar, ...base]
 }

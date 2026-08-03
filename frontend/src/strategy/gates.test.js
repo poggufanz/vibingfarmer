@@ -1,7 +1,13 @@
 // frontend/src/strategy/gates.test.js
 import { describe, it, expect } from 'vitest'
 import {
-  turbulenceGate, gasGate, capitalGate, universeGate, drawdownGate, evaluateGates, OFFENSIVE_KINDS,
+  turbulenceGate,
+  gasGate,
+  capitalGate,
+  universeGate,
+  drawdownGate,
+  evaluateGates,
+  OFFENSIVE_KINDS,
 } from './gates.js'
 
 // Minimal hand-built StrategyState — gates must not depend on buildStrategyState.
@@ -23,12 +29,18 @@ const harvest = { kind: 'harvest' }
 
 describe('turbulenceGate', () => {
   it('blocks an offensive idea in a turbulent market', () => {
-    const r = turbulenceGate(makeState({ market: { turbulence: 'turbulent', signals: [] } }), deposit)
+    const r = turbulenceGate(
+      makeState({ market: { turbulence: 'turbulent', signals: [] } }),
+      deposit
+    )
     expect(r.passed).toBe(false)
     expect(r.id).toBe('turbulence')
   })
   it('lets a defensive idea (harvest) through even when turbulent', () => {
-    const r = turbulenceGate(makeState({ market: { turbulence: 'turbulent', signals: [] } }), harvest)
+    const r = turbulenceGate(
+      makeState({ market: { turbulence: 'turbulent', signals: [] } }),
+      harvest
+    )
     expect(r.passed).toBe(true)
   })
   it('passes offensive ideas when calm', () => {
@@ -38,12 +50,18 @@ describe('turbulenceGate', () => {
 
 describe('gasGate', () => {
   it('blocks an offensive idea when a gas-spike signal is present', () => {
-    const r = gasGate(makeState({ market: { turbulence: 'calm', signals: ['gas-spike'] } }), rebalance)
+    const r = gasGate(
+      makeState({ market: { turbulence: 'calm', signals: ['gas-spike'] } }),
+      rebalance
+    )
     expect(r.passed).toBe(false)
     expect(r.id).toBe('gas')
   })
   it('passes defensive ideas during a gas spike', () => {
-    const r = gasGate(makeState({ market: { turbulence: 'calm', signals: ['gas-spike'] } }), harvest)
+    const r = gasGate(
+      makeState({ market: { turbulence: 'calm', signals: ['gas-spike'] } }),
+      harvest
+    )
     expect(r.passed).toBe(true)
   })
   it('passes when no gas-spike signal', () => {
@@ -58,7 +76,9 @@ describe('capitalGate', () => {
     expect(r.id).toBe('capital')
   })
   it('passes defensive ideas regardless of capital', () => {
-    expect(capitalGate(makeState({ capital: { amountUsdc: 0, heldUsdc: 0 } }), harvest).passed).toBe(true)
+    expect(
+      capitalGate(makeState({ capital: { amountUsdc: 0, heldUsdc: 0 } }), harvest).passed
+    ).toBe(true)
   })
 })
 
@@ -101,14 +121,20 @@ describe('evaluateGates', () => {
     expect(r.results).toHaveLength(5)
   })
   it('fails fast on turbulence before reaching later gates', () => {
-    const state = makeState({ market: { turbulence: 'turbulent', signals: ['gas-spike'] }, capital: { amountUsdc: 0, heldUsdc: 0 } })
+    const state = makeState({
+      market: { turbulence: 'turbulent', signals: ['gas-spike'] },
+      capital: { amountUsdc: 0, heldUsdc: 0 },
+    })
     const r = evaluateGates(state, deposit)
     expect(r.passed).toBe(false)
     expect(r.blockedBy).toBe('turbulence') // first gate in order wins
     expect(typeof r.reason).toBe('string')
   })
   it('always passes a defensive idea (only-sell-allowed analog)', () => {
-    const state = makeState({ market: { turbulence: 'turbulent', signals: ['gas-spike'] }, capital: { amountUsdc: 0, heldUsdc: 0 } })
+    const state = makeState({
+      market: { turbulence: 'turbulent', signals: ['gas-spike'] },
+      capital: { amountUsdc: 0, heldUsdc: 0 },
+    })
     expect(evaluateGates(state, harvest).passed).toBe(true)
   })
   it('exposes the offensive kinds it guards', () => {

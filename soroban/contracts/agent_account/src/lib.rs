@@ -8,7 +8,7 @@ mod test;
 pub mod types;
 pub mod vault_client;
 
-use types::{AccountError, AgentScope, DataKey};
+use types::{AccountError, AgentScope, DataKey, AGENT_ACCOUNT_GENERATION};
 use vault_client::VaultClient;
 
 // Allowance lives this many ledgers (~30 days at 5s) — long enough to outlast any session scope.
@@ -74,7 +74,7 @@ impl AgentAccount {
     /// scope; `signer` = the ephemeral ed25519 session pubkey the worker signs with.
     /// `router` = the funding_router factory that deployed this agent (`None` for
     /// legacy direct deploys). When set, the session key may additionally authorize
-    /// `pull` on that router — funding is bounded by the owner's SEP-41 allowance to
+    /// `pull` or `pull_v3` on that router — funding is bounded by the owner's SEP-41 allowance to
     /// the router at the token level, never by (nor counted against) the deposit cap.
     /// The constructor also self-approves the vault to pull up to `cap_per_period` of
     /// the asset, so the deployed vault's `transfer_from(spender=vault, from=agent)`
@@ -141,6 +141,13 @@ impl AgentAccount {
             .get(&DataKey::Owner)
             .ok_or(AccountError::NotInit)?;
         owner.require_auth();
+        // Exit sweeps ONLY ever reach the owner itself. Checked immediately after loading the
+        // stored owner and BEFORE any mutation (the revoked flip below) or external call
+        // (redeem/transfer) — an otherwise fully owner-authorized call naming a foreign `to`
+        // must leave shares, balances, revoked state, and allowance untouched.
+        if to != owner {
+            return Err(AccountError::NotOwner);
+        }
 
         let mut scope: AgentScope = env
             .storage()
@@ -266,7 +273,11 @@ impl AgentAccount {
         env.storage().instance().get(&DataKey::Router)
     }
 
+    /// Generation constant (`AGENT_ACCOUNT_GENERATION`) this crate currently builds — 4 adds
+    /// `AgentScope.per_execution_max` on top of the v3 bridge-scope fields. Lets an on-chain
+    /// probe (and the frontend agent-creator manifest) tell fresh generation-4 agents apart from
+    /// the fresh-only V1-V3 ones without guessing from a wasm hash.
     pub fn version(_env: Env) -> u32 {
-        2
+        AGENT_ACCOUNT_GENERATION
     }
 }

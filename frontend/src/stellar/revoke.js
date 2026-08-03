@@ -2,10 +2,18 @@
 // whose __check_auth actually enforces the scope — flipping scope.revoked and clearing the
 // vault allowance on-chain. The UI subscribes to live agent_revoked events to confirm
 // (AgentAccount emits the same topic/shape the Registry's metadata mirror uses).
-import { buildInvokeTx, submitUserTx, rpcServer } from './client.js'
+import { buildInvokeTx, rpcServer } from './client.js'
+import { assertActiveAccountBoundary, assertActiveOwner } from './activeAccount.js'
+import { getActiveAccount, signReviewedTransaction } from './walletKit.js'
 import { signTxXdr } from './walletKit.js'
 import { pollEvents } from './events.js'
 import { symbolScVal } from './scval.js'
+import { getRelayerAddress } from './relay.js'
+import {
+  resolveOwnerTxModel,
+  submitOwnerAuthorizedTx,
+  signOwnerAuthEntry,
+} from './ownerAuthorization.js'
 
 // agent_revoked now fires from each per-run AgentAccount contract (not the Registry), so we
 // poll by TOPIC across all contracts — the agents' fresh addresses are never in the indexer's
@@ -13,21 +21,85 @@ import { symbolScVal } from './scval.js'
 const AGENT_REVOKED_TOPIC = symbolScVal('agent_revoked').toXDR('base64')
 
 /**
- * Revoke an agent — user-signed AgentAccount.revoke() on the agent contract itself. One user tx,
- * submitted directly (NOT via the gasless relay) so the kill switch still works when the relayer
- * is down — that independence is what backs the "user can revoke any time" guarantee.
- * @param {{ owner: string, agent: string }} p
+ * Revoke an agent — owner-authorized AgentAccount.revoke() on the agent contract itself, routed
+ * through OwnerAuthorizationV1. A classic G owner signs the envelope and submits DIRECTLY (never
+ * via the gasless relay) so the kill switch still works when the relayer is down — that
+ * independence is what backs the "user can revoke any time" guarantee. A passkey C owner can
+ * never source that envelope at all, so it signs a Soroban auth entry on a relayer-sourced tx and
+ * submits relay-only (see ownerAuthorization.js). `activeAccount` defaults to a classic G owner,
+ * so every existing caller is unaffected.
+ * @param {{ owner: string, agent: string, activeAccount?:{kind:'G'|'C', address:string},
+ *          getRelayerAddress?:Function, kit?:object, server?:object }} p
  * @returns {Promise<{ hash: string, status: string }>}
  */
-export async function revokeAgentOnChain({ owner, agent }) {
-  const { xdr } = await buildInvokeTx({
-    source: owner,
+export async function revokeAgentOnChain({
+  owner,
+  agent,
+  activeAccount = { kind: 'G', address: owner },
+  getRelayerAddress: getRelayer = getRelayerAddress,
+  kit,
+  server,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
+}) {
+  assertActiveOwner({ owner, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
+  const model = await resolveOwnerTxModel({
+    owner,
+    activeAccount,
+    getRelayerAddress: getRelayer,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
+  const built = await buildInvokeTx({
+    source: model.source,
     contract: agent,
     method: 'revoke',
     args: [],
+    server,
   })
-  const signed = await signTxXdr(xdr)
-  return submitUserTx({ signedXdr: signed })
+  check()
+  const result = await submitOwnerAuthorizedTx({
+    model,
+    build: async () => built,
+    sign:
+      model.kind === 'G'
+        ? async () =>
+            activeAccount?.version === 1
+              ? signReviewedTransaction({
+                  xdr: built.xdr,
+                  activeAccount,
+                  reviewedTxHash: built.tx.hash().toString('hex'),
+                  getCurrentActiveAccount,
+                  signal,
+                })
+              : signTxXdr(built.xdr)
+        : async () =>
+            signOwnerAuthEntry({
+              tx: built.tx,
+              contractId: model.contractId,
+              server,
+              kit,
+              activeAccount,
+              getCurrentActiveAccount,
+              signal,
+            }),
+    server,
+    label: 'revoke',
+    classicSubmission: 'direct',
+    activeAccount,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
+  return { hash: result.hash, status: result.status }
 }
 
 /**

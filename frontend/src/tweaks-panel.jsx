@@ -52,8 +52,8 @@ const __TWEAKS_STYLE = `
   .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
     max-height:calc(100vh - 32px);display:flex;flex-direction:column;
     transform:scale(var(--dc-inv-zoom,1));transform-origin:bottom right;
-    background:var(--bg-card,#1a1b16);color:var(--text,#ecebe1);
-    border:1px solid var(--border-strong,rgba(255,255,255,.13));border-radius:14px;
+    background:var(--bg-card);color:var(--text);
+    border:1px solid var(--border-strong);border-radius:14px;
     box-shadow:none;
     font:11.5px/1.4 var(--font-body,Geist,system-ui,sans-serif);overflow:hidden}
   .twk-hd{display:flex;align-items:center;justify-content:space-between;

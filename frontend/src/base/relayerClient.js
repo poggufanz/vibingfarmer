@@ -7,11 +7,25 @@
 // catch-all pattern (frontend/functions/api/vf/[[path]].js -> frontend/api/vf/_router.js). If
 // SP2 lands a different path or response shape, only this file's URL-building and response
 // parsing need to change — crossChainFarm.js and the screens never construct URLs themselves.
-import { toBaseChainUnits } from './config.js'
+import { toBaseChainUnits, BASE_USDC_DECIMALS } from './config.js'
+import { BASE_POOL_CATALOG } from '../config.js'
+import { normalizeBaseMandateStatus, publicBaseMandateEvidence } from './mandateStatus.js'
 
 const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cross'
 const DEFAULT_POLL_INTERVAL_MS = 3000
 const DEFAULT_MAX_TRIES = 40 // ~2 minutes at the default interval
+
+// Fix loop 2, Fix 2b: the set of proxy targets a canonical `${runId}:bridge:${proxyTarget}`
+// allocationId may end in — the same vocabulary relayer/src/httpRouter.mjs:246-262 resolves via
+// its own pool-address lookup. `frontend/src/crossChainFarm.js`'s pre-burn guard (Fix 2a) already
+// does the full pool-address-bound resolution for every real caller (both screens/Farm.jsx and
+// baseLeg.js dispatch through runFarmFlow, never postFarm directly), so this client-seam check is
+// deliberately the lighter of the two: it rejects a non-canonical SHAPE (e.g. the array-index
+// suffix `run-42:bridge:0` orchestrator.js:1060 can produce) without re-deriving proxyTarget from
+// `a.pool` — preserving this module's existing "an explicit reviewed allocationId is forwarded
+// verbatim" contract for callers that legitimately don't have a pool-catalog entry to check
+// against yet.
+const KNOWN_BASE_PROXY_TARGETS = new Set(BASE_POOL_CATALOG.map((entry) => entry.proxyTarget))
 
 /**
  * Convert strategist display allocations to exact Base USDC units once, using largest remainder.
@@ -131,17 +145,55 @@ function serializeAllocations(allocations) {
   }))
 }
 
+// VF Wallet Task 6 wire envelope: wraps the already-quantized/serialized allocation (still
+// computed by quantizeAllocations/serializeAllocations above, untouched — this is a precision-
+// critical path with its own dedicated test coverage) into the binding plan's cross-boundary
+// shape `{allocationId, poolAddress, amount:{token,units,decimals}}`. minShares rides along as an
+// extra field (not in the plan's example, but dropping it would silently remove the live-quoted
+// slippage floor baseLeg.js computes per pool — see base/quotes.js).
+function toWireAllocations(allocations, runId) {
+  return serializeAllocations(allocations).map((a) => {
+    if (typeof a.allocationId !== 'string' || !a.allocationId) {
+      throw new Error('every farm allocation requires its reviewed allocationId')
+    }
+    if (runId) {
+      const prefix = `${runId}:bridge:`
+      const proxyTarget = a.allocationId.startsWith(prefix)
+        ? a.allocationId.slice(prefix.length)
+        : null
+      if (!proxyTarget || !KNOWN_BASE_PROXY_TARGETS.has(proxyTarget)) {
+        throw new Error(
+          'allocationId does not match the reviewed run and a known Base proxy target'
+        )
+      }
+    }
+    return {
+      allocationId: a.allocationId,
+      poolAddress: a.pool,
+      amount: { token: 'USDC', units: a.amount, decimals: BASE_USDC_DECIMALS },
+      minShares: a.minShares,
+    }
+  })
+}
+
 /**
- * Dispatch the farm flow: relay the Stellar burn (forward CCTP) then fan out session-key
- * deposits across `allocations`. Returns immediately with a job id to poll.
- * @param {{ burnTxHash: string, sourceDomain: number, serializedApproval: string, allocations: Array<object>, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
- * @returns {Promise<{ jobId: string }>}
+ * Durably commit the immutable Base child intent before the browser is allowed to burn.
+ * Returns only after the relayer has validated D1's authenticated 201 acknowledgement.
+ * stellarOwner/kernelAddress bind the dispatch to the
+ * owner it was mandated for; bridgeAgent/runId/grantTxHash default to null when the caller
+ * doesn't have them yet (both are threaded through by baseLeg.js/crossChainFarm.js when known).
+ * @param {{ sourceDomain: number, serializedApproval: string, stellarOwner?: string, kernelAddress?: string, bridgeAgent?: string, runId?: string, grantTxHash?: string, allocations: Array<object>, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
+ * @returns {Promise<{ jobId: string, acknowledged: true, schemaVersion: 1 }>}
  */
 export async function postFarm({
-  burnTxHash,
   sourceDomain,
   serializedApproval,
   allocations,
+  stellarOwner = null,
+  kernelAddress = null,
+  bridgeAgent = null,
+  runId = null,
+  grantTxHash = null,
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
@@ -150,13 +202,58 @@ export async function postFarm({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      burnTxHash,
       sourceDomain,
       serializedApproval,
-      allocations: serializeAllocations(allocations),
+      stellarOwner,
+      kernelAddress,
+      bridgeAgent,
+      runId,
+      grantTxHash,
+      allocations: toWireAllocations(allocations, runId),
     }),
   })
   if (!res.ok) throw new Error(`farm dispatch failed (${res.status})`)
+  if (res.status !== 201) throw new Error(`farm intent expected 201, got ${res.status}`)
+  let acknowledgement
+  try {
+    acknowledgement = await res.json()
+  } catch (error) {
+    throw new Error('farm intent acknowledgement is malformed', { cause: error })
+  }
+  if (acknowledgement?.acknowledged !== true || typeof acknowledgement?.jobId !== 'string') {
+    throw new Error('farm intent acknowledgement is malformed')
+  }
+  if (acknowledgement.schemaVersion !== 1) throw new Error('farm intent schema mismatch')
+  return acknowledgement
+}
+
+/**
+ * Attach the observed Stellar burn to a previously queued farm job. The relayer revalidates the
+ * exact mandate approval/owner/kernel/binding before it starts execution; session key material is
+ * deliberately absent from this transition.
+ */
+export async function postFarmAttach({
+  jobId,
+  burnTxHash,
+  serializedApproval,
+  stellarOwner,
+  kernelAddress,
+  baseUrl = DEFAULT_BASE_URL,
+  deps = {},
+}) {
+  const { fetchImpl = fetch } = deps
+  const res = await fetchImpl(`${baseUrl}/farm/attach`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jobId,
+      burnTxHash,
+      serializedApproval,
+      stellarOwner,
+      kernelAddress,
+    }),
+  })
+  if (!res.ok) throw new Error(`farm burn attach failed (${res.status})`)
   return res.json()
 }
 
@@ -190,17 +287,21 @@ export async function pollFarmStatus({
  * subsequent farm requests reference the mandate by `serializedApproval` alone, so the session
  * private key crosses the wire exactly one time per mandate, not once per farm dispatch. The
  * relayer stores it in-memory keyed by `serializedApproval` (see relayer/src/httpRouter.mjs).
- * `expiry` (unix seconds) sets how long the relayer will honor it — baseLeg.js requests a 7-day
- * window (MANDATE_WINDOW_SECONDS) so a repeat run can reuse it via getMandateStatus below instead
- * of repeating the wallet ceremony every time.
+ * `expiresAt` (unix seconds) sets how long the relayer will honor it — baseLeg.js requests a
+ * 7-day window (MANDATE_WINDOW_SECONDS) so a repeat run can reuse it via getMandateStatus below
+ * instead of repeating the wallet ceremony every time. stellarOwner/kernelAddress bind the
+ * registration to the owner it was minted for (VF Wallet Task 6).
  * Never log `sessionPrivateKey` — this function only ever passes it through to the request body.
- * @param {{ serializedApproval: string, sessionPrivateKey: string, expiry: number, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
+ * @param {{ serializedApproval: string, sessionPrivateKey: string, sessionKeyAddress?: string, expiresAt: number, stellarOwner?: string, kernelAddress?: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
  * @returns {Promise<{ ok: boolean }>}
  */
 export async function postMandate({
   serializedApproval,
   sessionPrivateKey,
-  expiry,
+  sessionKeyAddress,
+  expiresAt,
+  stellarOwner,
+  kernelAddress,
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
@@ -208,7 +309,14 @@ export async function postMandate({
   const res = await fetchImpl(`${baseUrl}/mandate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ serializedApproval, sessionPrivateKey, expiry }),
+    body: JSON.stringify({
+      serializedApproval,
+      sessionPrivateKey,
+      sessionKeyAddress,
+      expiresAt,
+      stellarOwner,
+      kernelAddress,
+    }),
   })
   if (!res.ok) throw new Error(`mandate registration failed (${res.status})`)
   return res.json()
@@ -216,21 +324,47 @@ export async function postMandate({
 
 /**
  * Check whether a previously-registered mandate is still reusable, WITHOUT ever getting the
- * session key back — the relayer's GET /mandate/valid only ever answers {valid, expiresAt}. Lets
- * baseLeg.js skip the owner ceremony + a fresh mandate mint on a repeat run.
+ * session key back. Lets baseLeg.js skip the owner ceremony + a fresh mandate mint on a repeat
+ * run. stellarOwner/kernelAddress (VF Wallet Task 6) travel with the request so the relayer can
+ * confirm the binding, not just that the approval blob itself is unexpired somewhere.
  * @param {string} serializedApproval
- * @param {{ baseUrl?: string, deps?: { fetchImpl?: Function } }} [p]
- * @returns {Promise<{ valid: boolean, expiresAt?: number }>}
+ * @param {{ stellarOwner?: string, kernelAddress?: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} [p]
+ * @returns {Promise<import('../wallet/baseBinding.js').BaseMandateStatusV2>}
  */
 export async function getMandateStatus(
   serializedApproval,
-  { baseUrl = DEFAULT_BASE_URL, deps = {} } = {}
+  { stellarOwner, kernelAddress, allocation, baseUrl = DEFAULT_BASE_URL, deps = {} } = {}
 ) {
   const { fetchImpl = fetch } = deps
-  const res = await fetchImpl(
-    `${baseUrl}/mandate/valid?approval=${encodeURIComponent(serializedApproval)}`
-  )
+  let qs = `approval=${encodeURIComponent(serializedApproval)}`
+  if (stellarOwner) qs += `&stellarOwner=${encodeURIComponent(stellarOwner)}`
+  if (kernelAddress) qs += `&kernelAddress=${encodeURIComponent(kernelAddress)}`
+  if (allocation) qs += `&allocation=${encodeURIComponent(JSON.stringify(allocation))}`
+  const res = await fetchImpl(`${baseUrl}/mandate/valid?${qs}`, { cache: 'no-store' })
   if (!res.ok) throw new Error(`mandate status check failed (${res.status})`)
+  return publicBaseMandateEvidence(normalizeBaseMandateStatus(await res.json()))
+}
+
+/**
+ * Revoke a registered mandate. stellarOwner/kernelAddress let the relayer authenticate the revoke
+ * against the binding it stored at registration time rather than trusting the approval blob alone.
+ * @param {{ serializedApproval: string, stellarOwner?: string, kernelAddress?: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
+ * @returns {Promise<{ ok: boolean }>}
+ */
+export async function postMandateRevoke({
+  serializedApproval,
+  stellarOwner,
+  kernelAddress,
+  baseUrl = DEFAULT_BASE_URL,
+  deps = {},
+}) {
+  const { fetchImpl = fetch } = deps
+  const res = await fetchImpl(`${baseUrl}/mandate/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ serializedApproval, stellarOwner, kernelAddress }),
+  })
+  if (!res.ok) throw new Error(`mandate revoke failed (${res.status})`)
   return res.json()
 }
 

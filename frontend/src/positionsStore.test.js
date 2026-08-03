@@ -1,10 +1,12 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   mergePositions,
   applyChainPositions,
   reconcilePositionsFromChain,
-  pickPositionsAgents,
-  pickVaultAgents,
+  pickVaultAgentsForExit,
+  pickDisplayAgents,
+  pickRecoverableVaultAgents,
+  buildBulkExitTarget,
 } from './positionsStore.js'
 import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
 
@@ -13,11 +15,22 @@ vi.mock('./stellar/vaultReads.js', () => ({ readPricePerShare: vi.fn() }))
 import { readVaultShares } from './stellar/agentDeposit.js'
 import { readPricePerShare } from './stellar/vaultReads.js'
 
+// These two mocks are shared module-level state across every describe block below (vi.mock is
+// per-file, not per-describe). Without a file-level clear, one test's call count/resolved value
+// can leak into the next depending on execution order — this already caused one false failure
+// (a test asserting `not.toHaveBeenCalled()` only passed because it happened to manually clear
+// first). Clearing before EVERY test removes the ordering dependency; mockClear() resets calls/
+// results only, never the mockResolvedValue/mockImplementation a test sets up afterward.
+beforeEach(() => {
+  readVaultShares.mockClear()
+  readPricePerShare.mockClear()
+})
+
 describe('reconcilePositionsFromChain (autofarm pps conversion)', () => {
   it('converts the share balance to asset units via price_per_share', async () => {
     readVaultShares.mockResolvedValue(100_0000000n) // 100 shares (7-dp)
     readPricePerShare.mockResolvedValue(10_500_000n) // pps = 1.05
-    const out = await reconcilePositionsFromChain('GOWNER')
+    const out = await reconcilePositionsFromChain('GOWNER', { agents: ['CAGENT1'] })
     const pos = out[SOROBAN_ACTIVE_VAULT_ADDRESS]
     expect(pos.balance).toBe('1050000000') // 105 USDC in base units
     expect(pos.shares).toBe('1000000000')
@@ -26,54 +39,160 @@ describe('reconcilePositionsFromChain (autofarm pps conversion)', () => {
   it('returns null (keep cached snapshot) when the pps read fails', async () => {
     readVaultShares.mockResolvedValue(100_0000000n)
     readPricePerShare.mockResolvedValue(null)
-    expect(await reconcilePositionsFromChain('GOWNER')).toBeNull()
+    expect(await reconcilePositionsFromChain('GOWNER', { agents: ['CAGENT1'] })).toBeNull()
   })
 
   it('skips the pps read entirely for a zero share balance', async () => {
     readVaultShares.mockResolvedValue(0n)
     readPricePerShare.mockResolvedValue(null) // would fail — must not be consulted
-    const out = await reconcilePositionsFromChain('GOWNER')
+    const out = await reconcilePositionsFromChain('GOWNER', { agents: ['CAGENT1'] })
     expect(out[SOROBAN_ACTIVE_VAULT_ADDRESS].balance).toBe('0')
   })
 })
 
-describe('pickPositionsAgents (read the fresh per-run agents, not the demo agent)', () => {
-  it('reads the deployed non-revoked agents on a real run', () => {
-    const scopes = [
-      { agent: 'GA_ONE', revoked: false },
-      { agent: 'GA_TWO', revoked: false },
-      { agent: 'GA_GONE', revoked: true },
-    ]
-    expect(pickPositionsAgents(scopes, undefined)).toEqual(['GA_ONE', 'GA_TWO'])
+describe('reconcilePositionsFromChain (explicit agent list, no demo-agent default)', () => {
+  it('requires an explicit agent list — no agents means null, never a demo-agent guess', async () => {
+    expect(await reconcilePositionsFromChain('GOWNER')).toBeNull()
+    expect(await reconcilePositionsFromChain('GOWNER', {})).toBeNull()
+    expect(await reconcilePositionsFromChain('GOWNER', { agents: [] })).toBeNull()
+    expect(readVaultShares).not.toHaveBeenCalled()
   })
 
-  it('returns undefined (keep reconcile default) before scopes rehydrate', () => {
-    expect(pickPositionsAgents([], undefined)).toBeUndefined()
-    expect(pickPositionsAgents([{ agent: 'GA_X', revoked: true }], undefined)).toBeUndefined()
+  it('never imports SOROBAN_DEMO_AGENT (no address for reconcile to fall back on)', async () => {
+    const src = await import('node:fs/promises').then((fs) =>
+      fs.readFile(new URL('./positionsStore.js', import.meta.url), 'utf8')
+    )
+    expect(src).not.toMatch(/import\s*\{[^}]*SOROBAN_DEMO_AGENT/)
   })
 
-  it('view-as override wins over deployed agents', () => {
-    expect(pickPositionsAgents([{ agent: 'GA_ONE' }], 'GVIEWAS')).toEqual(['GVIEWAS'])
+  it('reports per-agent read status alongside the position sum', async () => {
+    readVaultShares.mockImplementation(async (agent) => (agent === 'CGOOD' ? 100_0000000n : null))
+    readPricePerShare.mockResolvedValue(10_000_000n) // pps = 1.0
+    const out = await reconcilePositionsFromChain('GOWNER', { agents: ['CGOOD', 'CFAIL'] })
+    expect(out.agentStatus).toEqual([
+      { agent: 'CGOOD', status: 'ok' },
+      { agent: 'CFAIL', status: 'failed' },
+    ])
+    // The status list is a non-enumerable side channel — it must not corrupt the plain vault map
+    // shape existing callers (app.jsx) iterate with Object.keys/Object.entries/spread.
+    expect(Object.keys(out)).toEqual([SOROBAN_ACTIVE_VAULT_ADDRESS])
+    expect(JSON.stringify(out)).not.toMatch(/agentStatus/)
   })
 })
 
-describe('pickVaultAgents (which agents an exit must sweep)', () => {
+describe('pickDisplayAgents / pickRecoverableVaultAgents / buildBulkExitTarget (discovery-driven)', () => {
+  const VAULT = SOROBAN_ACTIVE_VAULT_ADDRESS
+
+  it('includes active, expired, revoked, and revoked-but-funded agents', () => {
+    const discovery = {
+      status: 'partial',
+      agents: [
+        { address: 'CACTIVE', kind: 'deposit', vault: VAULT, revoked: false, expiry: 9e9 },
+        { address: 'CEXPIRED', kind: 'deposit', vault: VAULT, revoked: false, expiry: 1 },
+        { address: 'CREVOKED', kind: 'deposit', vault: VAULT, revoked: true, expiry: 9e9 },
+      ],
+    }
+    expect(pickRecoverableVaultAgents(discovery, { vault: VAULT }).sort()).toEqual(
+      ['CACTIVE', 'CEXPIRED', 'CREVOKED'].sort()
+    )
+  })
+
+  it('excludes bridge-kind memberships — they never hold Stellar vault shares', () => {
+    const discovery = {
+      status: 'partial',
+      agents: [
+        { address: 'CDEPOSIT', kind: 'deposit', vault: VAULT },
+        { address: 'CBRIDGE', kind: 'bridge', vault: VAULT },
+      ],
+    }
+    expect(pickRecoverableVaultAgents(discovery, { vault: VAULT })).toEqual(['CDEPOSIT'])
+  })
+
+  it('keeps a row whose vault is unknown rather than dropping a possibly-funded agent', () => {
+    const discovery = {
+      status: 'partial',
+      agents: [{ address: 'CUNKNOWN', kind: 'deposit', vault: null }],
+    }
+    expect(pickRecoverableVaultAgents(discovery, { vault: VAULT })).toEqual(['CUNKNOWN'])
+  })
+
+  it('excludes a row proven scoped to a different vault', () => {
+    const discovery = {
+      status: 'partial',
+      agents: [{ address: 'COTHER', kind: 'deposit', vault: 'COTHERVAULT' }],
+    }
+    expect(pickRecoverableVaultAgents(discovery, { vault: VAULT })).toEqual([])
+  })
+
+  it('never substitutes a demo/view-as address for an empty result', () => {
+    expect(
+      pickRecoverableVaultAgents({ status: 'complete', agents: [] }, { vault: VAULT })
+    ).toEqual([])
+    expect(pickRecoverableVaultAgents(null, { vault: VAULT })).toEqual([])
+  })
+
+  it('bulk exit is { kind: "all" } only when discovery is complete', () => {
+    const discovery = {
+      status: 'complete',
+      agents: [{ address: 'CAGENT1', kind: 'deposit', vault: VAULT }],
+    }
+    expect(buildBulkExitTarget(discovery, { vault: VAULT })).toEqual({
+      kind: 'all',
+      agents: ['CAGENT1'],
+    })
+  })
+
+  it('bulk exit is { kind: "known-only" } for partial or unavailable discovery, never claiming completeness', () => {
+    const partial = {
+      status: 'partial',
+      agents: [{ address: 'CAGENT1', kind: 'deposit', vault: VAULT }],
+    }
+    expect(buildBulkExitTarget(partial, { vault: VAULT })).toEqual({
+      kind: 'known-only',
+      agents: ['CAGENT1'],
+    })
+    const unavailable = { status: 'unavailable', agents: [] }
+    expect(buildBulkExitTarget(unavailable, { vault: VAULT })).toEqual({
+      kind: 'known-only',
+      agents: [],
+    })
+  })
+
+  it('pickDisplayAgents returns the enriched rows (not just addresses) for the same candidate set', () => {
+    const row = { address: 'CAGENT1', kind: 'deposit', vault: VAULT, association: 'unknown' }
+    const discovery = { status: 'partial', agents: [row] }
+    expect(pickDisplayAgents(discovery, { vault: VAULT })).toEqual([row])
+  })
+})
+
+// My Money Task 13 Part B item 5: pickPositionsAgents (and its 3 tests above this line) is
+// DELETED -- app.jsx's own `positionsAgents` (its one remaining caller) migrated to
+// `pickRecoverableVaultAgents` below.
+//
+// Wave 6 carry (My Money Task 6, carried through Task 13 Part B, Item 4c): renamed to
+// `pickVaultAgentsForExit` and the revoked-filter deleted (see positionsStore.js's own comment on
+// why it stays scopes-shaped rather than migrating to `pickRecoverableVaultAgents`: PositionsZone.jsx
+// holds `scopes`, not an OwnerDiscoveryV1 envelope). The "skips revoked agents" test below used to
+// assert the identical defect `pickPositionsAgents`/`pickRecoverableVaultAgents` were both fixed
+// for -- a revoked-but-funded agent is exactly the one a sweep must not skip -- so it is now a
+// positive "includes" assertion instead, matching the discovery-shaped picker's own test above.
+describe('pickVaultAgentsForExit (which agents an exit must sweep)', () => {
   const V = 'CVAULT1'
 
-  it('returns every non-revoked agent pinned to that vault', () => {
+  it('returns every agent pinned to that vault', () => {
     const scopes = [
       { agent: 'CA_ONE', vault: V, revoked: false },
       { agent: 'CA_TWO', vault: V, revoked: false },
     ]
-    expect(pickVaultAgents(scopes, V)).toEqual(['CA_ONE', 'CA_TWO'])
+    expect(pickVaultAgentsForExit(scopes, V)).toEqual(['CA_ONE', 'CA_TWO'])
   })
 
-  it('skips revoked agents — their allowance is already cleared', () => {
+  it('includes a revoked-but-possibly-funded agent -- the exit-enumeration rule forbids dropping it', () => {
     const scopes = [
       { agent: 'CA_ONE', vault: V, revoked: true },
       { agent: 'CA_TWO', vault: V, revoked: false },
     ]
-    expect(pickVaultAgents(scopes, V)).toEqual(['CA_TWO'])
+    expect(pickVaultAgentsForExit(scopes, V).sort()).toEqual(['CA_ONE', 'CA_TWO'].sort())
   })
 
   it('skips agents scoped to a different vault', () => {
@@ -81,11 +200,13 @@ describe('pickVaultAgents (which agents an exit must sweep)', () => {
       { agent: 'CA_ONE', vault: 'COTHER', revoked: false },
       { agent: 'CA_TWO', vault: V, revoked: false },
     ]
-    expect(pickVaultAgents(scopes, V)).toEqual(['CA_TWO'])
+    expect(pickVaultAgentsForExit(scopes, V)).toEqual(['CA_TWO'])
   })
 
   it('matches vault addresses case-insensitively', () => {
-    expect(pickVaultAgents([{ agent: 'CA_ONE', vault: 'cvault1' }], 'CVAULT1')).toEqual(['CA_ONE'])
+    expect(pickVaultAgentsForExit([{ agent: 'CA_ONE', vault: 'cvault1' }], 'CVAULT1')).toEqual([
+      'CA_ONE',
+    ])
   })
 
   it('dedupes a repeated agent so it is never swept twice', () => {
@@ -93,13 +214,13 @@ describe('pickVaultAgents (which agents an exit must sweep)', () => {
       { agent: 'CA_ONE', vault: V },
       { agent: 'CA_ONE', vault: V },
     ]
-    expect(pickVaultAgents(scopes, V)).toEqual(['CA_ONE'])
+    expect(pickVaultAgentsForExit(scopes, V)).toEqual(['CA_ONE'])
   })
 
   it('returns [] rather than guessing — never a demo-agent fallback', () => {
-    expect(pickVaultAgents([], V)).toEqual([])
-    expect(pickVaultAgents(null, V)).toEqual([])
-    expect(pickVaultAgents([{ agent: 'CA_ONE', vault: V }], '')).toEqual([])
+    expect(pickVaultAgentsForExit([], V)).toEqual([])
+    expect(pickVaultAgentsForExit(null, V)).toEqual([])
+    expect(pickVaultAgentsForExit([{ agent: 'CA_ONE', vault: V }], '')).toEqual([])
   })
 })
 

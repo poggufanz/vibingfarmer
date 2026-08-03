@@ -167,7 +167,12 @@ describe('decodeKeeperEvent - upgrade timelock topics', () => {
   })
 
   it('skips a malformed vault_upgrade_scheduled record instead of throwing', () => {
-    const rec = fakeRecord({ type: 'vault_upgrade_scheduled', fields: null, ledger: 108, pagingToken: '0011' })
+    const rec = fakeRecord({
+      type: 'vault_upgrade_scheduled',
+      fields: null,
+      ledger: 108,
+      pagingToken: '0011',
+    })
     expect(() => decodeKeeperEvent(rec)).not.toThrow()
     expect(decodeKeeperEvent(rec)).toBeNull()
   })

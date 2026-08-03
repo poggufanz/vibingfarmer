@@ -2,6 +2,7 @@
 // decommissioned 2026-06-21, so all chain addresses now live in stellar/config.js. This file holds
 // only chain-agnostic app config plus the AI advisor's vault universe.
 import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
+import { NETWORK_IDS } from './design/networks.js'
 
 // APIs
 export const VENICE_BASE_URL = 'https://api.venice.ai/api/v1'
@@ -17,61 +18,30 @@ export const DEEPSEEK_MODEL = 'deepseek-v4-flash'
 // Server-side AI proxy — key stays on the server (see api/ai.js). No secret in client.
 export const AI_PROXY_URL = '/api/ai'
 
-// Vault catalog — enriched metadata so the AI advisor can reason, not just split. Each entry's
-// `address` is the on-chain execution target: the single deployed Soroban yield vault. The demo's
-// multi-vault universe (Aave/Morpho/Pendle/Fluid as reference protocols) all execute on that one
-// vault — the metadata (apy/risk/yield_source) is what the advisor reasons over.
+// Vault catalog — the truthful execution universe (Strategy Task 1, Pocket Crew Wave 1). There is
+// exactly ONE live Stellar venue: this product's own Autofarm vault, which supplies USDC into
+// Blend Capital v2 for real testnet lending yield. Earlier revisions of this file presented four
+// reference "personas" (Aave/Morpho/Pendle/Fluid) as if each were a distinct Stellar venue, when
+// all four actually executed on this same address — that was the fake-persona problem this catalog
+// now removes. `apy` below is a static/expected figure (still read by out-of-scope UI surfaces
+// this task does not touch) — it must never be read as current/live yield; only
+// `strategy/venueTruth.js`'s `venueYield`/`isLiveYieldVenue` guards decide that, and they never
+// trust this flat field (see venueTruth.js's normalizeYield).
 export const VAULT_CATALOG = [
   {
-    name: 'Aave v3 USDC',
-    protocol: 'aave-v3',
+    name: 'Vibing Farmer Autofarm',
+    protocol: 'blend-usdc',
     address: SOROBAN_ACTIVE_VAULT_ADDRESS,
+    venueKind: 'stellar-live',
+    networkId: NETWORK_IDS.STELLAR_TESTNET,
+    destination: 'Autofarm Vault to Blend Capital v2',
     apy: 4.8,
     risk: 'low',
     yield_source: 'lending',
     drawdown: '-1.2',
     min_capital: 100,
     description:
-      'Overcollateralized pooled lending. Battle-tested, highest TVL in DeFi. Best for principal preservation.',
-    chain: 'stellar',
-  },
-  {
-    name: 'Morpho Blue USDC',
-    protocol: 'morpho-blue',
-    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
-    apy: 6.1,
-    risk: 'medium',
-    yield_source: 'curated',
-    drawdown: '-2.8',
-    min_capital: 500,
-    description:
-      'Curator-managed isolated lending markets. Better yield than Aave, curator-dependent risk.',
-    chain: 'stellar',
-  },
-  {
-    name: 'Pendle PT-USDC',
-    protocol: 'pendle-v2',
-    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
-    apy: 9.4,
-    risk: 'high',
-    yield_source: 'structured',
-    drawdown: '-6.5',
-    min_capital: 1000,
-    description:
-      'Fixed-rate yield via zero-coupon bond mechanics. Hold to maturity or face AMM exit loss.',
-    chain: 'stellar',
-  },
-  {
-    name: 'Fluid USDC',
-    protocol: 'fluid',
-    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
-    apy: 5.2,
-    risk: 'high',
-    yield_source: 'hybrid',
-    drawdown: '-4.1',
-    min_capital: 2000,
-    description:
-      'Unified lending + DEX architecture. Highest capital efficiency, highest architectural risk.',
+      "The product's own Autofarm vault. Deposits supply USDC into Blend Capital v2 on Stellar testnet — the only Stellar execution venue this app uses.",
     chain: 'stellar',
   },
 ]
@@ -90,56 +60,56 @@ function requireBasePoolAddress(name, value) {
   return value
 }
 
+// Custody-only proxies: the Base Sepolia leg never carries protocol yield (there is no live
+// Aave/Morpho/Moonwell position behind these pools, only our own MockERC4626 wrapper over CCTP
+// USDC). `proxyTarget` names the mainnet protocol a future real integration is PLANNED to use —
+// a label only, never an execution or yield claim (see strategy/venueTruth.js's normalizeVenue,
+// which forces `yield: {state:'none', apy:null}` for every base-custody-proxy record regardless
+// of any apy this file — or a caller — might otherwise supply).
 export const BASE_POOL_CATALOG = [
   {
     name: 'Aave v3 USDC (Base)',
-    protocol: 'aave-v3',
+    protocol: 'vf-erc4626-proxy',
+    proxyTarget: 'aave-v3',
     factSlug: 'aave-v3-base',
     address: requireBasePoolAddress(
       'BASE_POOL_1_ADDRESS',
       import.meta.env?.VITE_BASE_POOL_1_ADDRESS || '0x389250872044368759D3db5C09b2706A6628d4e0'
     ),
-    apy: 5.1,
+    venueKind: 'base-custody-proxy',
+    networkId: NETWORK_IDS.BASE_SEPOLIA,
     risk: 'low',
-    yield_source: 'lending',
-    drawdown: '-1.0',
     min_capital: 50,
-    description:
-      'Overcollateralized pooled lending on Base. Deepest liquidity of the Base pool set.',
     chain: 'base',
   },
   {
     name: 'Morpho Blue USDC (Base)',
-    protocol: 'morpho-blue',
+    protocol: 'vf-erc4626-proxy',
+    proxyTarget: 'morpho-blue',
     factSlug: 'morpho-blue-base',
     address: requireBasePoolAddress(
       'BASE_POOL_2_ADDRESS',
       import.meta.env?.VITE_BASE_POOL_2_ADDRESS || '0x5E843A639F0555E2A6669601621befC887Bdb479'
     ),
-    apy: 6.8,
+    venueKind: 'base-custody-proxy',
+    networkId: NETWORK_IDS.BASE_SEPOLIA,
     risk: 'medium',
-    yield_source: 'curated',
-    drawdown: '-2.5',
     min_capital: 50,
-    description:
-      'Curator-managed isolated lending markets on Base. Better yield, curator-dependent risk.',
     chain: 'base',
   },
   {
     name: 'Moonwell USDC (Base)',
-    protocol: 'moonwell',
+    protocol: 'vf-erc4626-proxy',
+    proxyTarget: 'moonwell',
     factSlug: 'moonwell-base',
     address: requireBasePoolAddress(
       'BASE_POOL_3_ADDRESS',
       import.meta.env?.VITE_BASE_POOL_3_ADDRESS || '0xadD3c1A75c7Cef2516b51750959BD829a4AD4761'
     ),
-    apy: 7.4,
+    venueKind: 'base-custody-proxy',
+    networkId: NETWORK_IDS.BASE_SEPOLIA,
     risk: 'medium',
-    yield_source: 'lending',
-    drawdown: '-3.0',
     min_capital: 50,
-    description:
-      'Base-native money market. Deep Base-ecosystem integration, newer than Aave/Compound.',
     chain: 'base',
   },
 ]

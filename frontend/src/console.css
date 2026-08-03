@@ -343,7 +343,7 @@
   font-size: clamp(24px, 3vw, 34px);
   font-weight: 500;
   letter-spacing: -0.03em;
-  color: var(--accent);
+  color: var(--accent-text);
   line-height: 1;
 }
 .strip-unit {

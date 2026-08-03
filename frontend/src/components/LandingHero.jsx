@@ -227,7 +227,7 @@ function Hero({ onStart, reduceMotion }) {
           <em>fee-bump sponsor · allowlisted ops only</em>
         </div>
         <div className="vf-xray-box vf-xray-box--vault">
-          <span>vault.deposit → Blend v2</span>
+          <span>vault.deposit to Blend v2</span>
           <em>real testnet lending, not a mock drip</em>
         </div>
         <div className="vf-xray-tag">X-RAY // the machine under the marketing</div>
@@ -514,7 +514,14 @@ function HonestySection() {
 export const ECOSYSTEM = [
   // Soroban is Stellar's own smart-contract platform (same ecosystem, not a separate one) —
   // named together on one card, as the retired PARTNERS list already did.
-  { name: 'Stellar / Soroban', icon: '/logos/stellar.svg' },
+  // Official SDF mark ships Black + White finals; Black is illegible on the Forest canvas
+  // (near-black-on-near-black), so EcosystemBand swaps to White under Forest via CSS —
+  // no recoloring of the official artwork, just picking the SDF-approved variant per theme.
+  {
+    name: 'Stellar / Soroban',
+    icon: '/brand/networks/stellar.svg',
+    iconDark: '/brand/networks/stellar-white.svg',
+  },
   { name: 'Blend Capital', icon: '/logos/blend.svg' },
   { name: 'Base', icon: '/logos/base.svg' },
   { name: 'Circle CCTP', icon: '/logos/circle.svg' },
@@ -528,7 +535,22 @@ function EcosystemBand() {
     <span className="vf-marquee__seq" key={key}>
       {ECOSYSTEM.map((item) => (
         <span className="vf-marquee__logo" key={item.name}>
-          {item.icon ? <img src={item.icon} alt="" loading="lazy" /> : null}
+          {item.icon ? (
+            <img
+              src={item.icon}
+              alt=""
+              loading="lazy"
+              className={item.iconDark ? 'vf-marquee__logo-icon--default' : undefined}
+            />
+          ) : null}
+          {item.iconDark ? (
+            <img
+              src={item.iconDark}
+              alt=""
+              loading="lazy"
+              className="vf-marquee__logo-icon--dark"
+            />
+          ) : null}
           {item.name}
         </span>
       ))}

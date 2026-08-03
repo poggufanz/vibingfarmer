@@ -4,26 +4,28 @@ import { Keypair, Account } from '@stellar/stellar-sdk'
 import { isKnownVault, buildPaymentXdr, previewSend, sendPayment } from './send.js'
 import { decodeForConfirm } from './clearSign.js'
 import { VAULT_CATALOG } from '../config.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/config.js'
 import { eligibility } from '../vfapi/client.js'
 import { getVfApiKey } from './vfKey.js'
 import { makeVfClient } from '../vfapi/httpClient.js'
 
-// The real catalog's demo entries all point at the single deployed Soroban vault (a C-address),
-// which is not a valid classic-payment destination (Operation.payment only accepts G/M ed25519
-// account IDs). Swap entry 0's address for a valid G-address so "send a payment to a known vault"
-// scenarios can actually build a real, signable classic transaction — name/protocol stay real.
+// The catalog's one real venue points at the single deployed Soroban vault (a C-address), which
+// is not a valid classic-payment destination (Operation.payment only accepts G/M ed25519 account
+// IDs). Two destination-address SHAPES stand in for that SAME venue below, not two venues: a
+// classic stand-in (a valid G-address, so "send a payment to a known vault" scenarios can build a
+// real, signable classic transaction — name/protocol stay real) and the venue's own real, un-mocked
+// C-address (kept so the "gate step 5" regression further down can prove previewSend's known-vault
+// branch also fires for a genuine Soroban address, looked up by that real address, not by position).
 // NOTE: the replacement address is a literal (not an outer const) because vi.mock factories are
 // hoisted above the rest of the module — referencing an outer binding here throws a ReferenceError.
 vi.mock('../config.js', async (importOriginal) => {
   const actual = await importOriginal()
+  const [liveVenue] = actual.VAULT_CATALOG
   return {
     ...actual,
     VAULT_CATALOG: [
-      {
-        ...actual.VAULT_CATALOG[0],
-        address: 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6',
-      },
-      ...actual.VAULT_CATALOG.slice(1),
+      { ...liveVenue, address: 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6' },
+      liveVenue,
     ],
   }
 })
@@ -160,9 +162,10 @@ describe('previewSend', () => {
   it('does not throw for the REAL catalog C-address vault (gate step 5 regression)', async () => {
     eligibility.mockResolvedValueOnce({ allow: true, reasons: [] })
     const horizon = stubHorizon()
-    // entry 1+ keep the real Soroban C-address (the file-level mock only swaps entry 0);
-    // Operation.payment would throw "destination is invalid" on it if previewSend built the XDR
-    const cVault = VAULT_CATALOG[1]
+    // The catalog's single live venue, found by its real (un-mocked) Soroban C-address rather
+    // than by array position — Operation.payment would throw "destination is invalid" on it if
+    // previewSend built the XDR for this address.
+    const cVault = VAULT_CATALOG.find((v) => v.address === SOROBAN_ACTIVE_VAULT_ADDRESS)
 
     const result = await previewSend({
       from: FROM,

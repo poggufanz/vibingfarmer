@@ -2,35 +2,42 @@
    VIBING FARMER — App (multi-agent + real Web3)
    Design state machine wired to real wallet.js / strategist.js / orchestrator.js
    ============================================ */
-import React, { useState as useS, useEffect as useE, useRef as useR, useMemo as useM } from 'react'
+import React, {
+  useState as useS,
+  useEffect as useE,
+  useRef as useR,
+  useMemo as useM,
+  useReducer as useRed,
+} from 'react'
 import { lazy, Suspense } from 'react'
 import { isDevMode } from './devFlag.js'
 
-import { Icon, Sidebar, TopBar, StepRail, STEPS } from './components.jsx'
-import {
-  InputScreen,
-  ThinkingCard,
-  ConnectCard,
-  PermissionCard,
-  SuccessCard,
-  shortAddr,
-} from './screens.jsx'
-import { SkillReviewCard } from './skills.jsx'
-import {
-  StrategyCard,
-  ExecuteCard,
-  MemoryModal,
-  DecisionLogPanel,
-  buildAutofarmGraphData,
-  rebalancePulseKey,
-  buildStrategy,
-  makeInitialExecState,
-} from './agents.jsx'
+import { Icon, Sidebar, TopBar, STEPS } from './components.jsx'
+// Strategy Task 13 (Pocket Crew redesign, Wave 5) — the production `/strategy` route.
+//
+// Fix loop 1 (I1, Strategy Task 13 review): this used to duplicate StrategyRoute.jsx's
+// `.pc-route`/`.pc-route-stack` + StrategyProgress wrapper markup verbatim in a local
+// `renderStrategyRoute()`, because StrategyRoute.jsx was outside Task 13's authorized file list
+// and only wired the Plan branch. The owner has since authorized StrategyRoute.jsx as a scoped
+// exception (now wiring Plan/Protect/Start), so app.jsx renders `<StrategyRoute>` instead of
+// keeping its own copy — one wrapper definition, not two that can drift.
+import { StrategyRoute } from './components/strategy/StrategyRoute.jsx'
+import { strategyFlowReducer, initialStrategyFlowState } from './strategy/flowState.js'
+import { preflightPermission, toPermissionDecisionView } from './strategy/reusePreflight.js'
+import { PermissionPhaseError } from './strategy/permissionError.js'
+import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
+import { buildStrategyViewModel } from './strategy/planModel.js'
+import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from './stellar/grant.js'
+import { RouteFocus, SkipLink } from './components/pocket/RouteFocus.jsx'
+import { resolveDocumentTitle } from './appShellTitle.js'
+import { shortAddr } from './screens.jsx'
+import { MemoryModal, makeInitialExecState } from './agents.jsx'
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel.jsx'
+import { applyTheme, isLightTheme, normalizeTheme } from './design/theme.js'
 
 import {
-  connectWallet,
-  getUserAddress,
+  connectActiveAccount,
+  onActiveAccountChange,
   revokeAgentOnChain,
   subscribeAgentRevoked,
 } from './stellar/index.js'
@@ -42,58 +49,55 @@ import {
   discoverAgentsFromVault,
 } from './stellar/events.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
-import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
-import { makeAgentId } from './worker.js'
+import {
+  readRecoveryReceipt,
+  requestRecoveryAction,
+  resolveRecoveryCredential,
+} from './strategy/recoveryClient.js'
+import { projectRecoveryReceipt } from './strategy/receiptProjection.js'
 import { readContract } from './stellar/client.js'
-import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
+import { VAULT_CATALOG, VENICE_TIMEOUT_MS, BASE_POOL_CATALOG } from './config.js'
 import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_RPC_URL,
   SOROBAN_AUTOFARM_VAULT_ADDRESS,
-  SOROBAN_STRATEGY_1_ADDRESS,
-  SOROBAN_BLEND_POOL_ADDRESS,
-  SOROBAN_KEEPER_ADDRESS,
   SOROBAN_DECIMALS,
-  USE_FUNDING_ROUTER,
 } from './stellar/config.js'
-import GrantPanel from './components/GrantPanel.jsx'
-import { revokeGrant } from './stellar/grant.js'
 import { fetchKeeperEvents } from './stellar/keeperEvents.js'
 import { rehydrateScopes } from './stellar/scopeRehydrate.js'
-import {
-  readPricePerShare,
-  readStrategies,
-  readSupplyAprBps,
-  readLifeboatState,
-} from './stellar/vaultReads.js'
+import { readPricePerShare, readLifeboatState, readTotalShares } from './stellar/vaultReads.js'
 import { grantMandate } from './stellar/lifeboat.js'
 import { signWithTimeout } from './stellar/agentSetup.js'
 import {
   resolveBaseAvailability,
-  checkStoredBaseMandate,
   checkCircleUsdcFunding,
-  needsBaseMandateSetup,
   setupBaseMandate,
   buildBaseLegContext,
   applyBaseLegOutcome,
   mapBaseLegEvent,
-  pollBaseLegUntilSettled,
+  baseMandateProbeAllocation,
+  baseMandateAllocationsForPlan,
+  baseMandateRequiresReview,
 } from './mergeFlowHelpers.js'
 import { getMandateStatus } from './base/relayerClient.js'
+import { readBaseOwner, baseOwnerStorageKey, readBaseMandate } from './wallet/baseBinding.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'
-import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
-import { evaluateExit } from './strategy/autoExit/engine.js'
-import { runAutonomousExit } from './agents/exitExecutor.js'
+import {
+  STELLAR_USDC_SAC,
+  STELLAR_TOKEN_MESSENGER_MINTER,
+  CCTP_BASE_DOMAIN,
+  ZERO32,
+  evmAddrToBytes32,
+} from './stellar/cctpBurn.js'
 import {
   loadPersistedPositions,
   persistPositions,
   loadDeployedAgents,
   saveDeployedAgents,
   reconcilePositionsFromChain,
-  pickPositionsAgents,
-  pickVaultAgents,
+  pickRecoverableVaultAgents,
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
@@ -114,26 +118,45 @@ import {
   onAgentEvent,
   withdrawAllFromVault,
 } from './agents/agentController.js'
-const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
 const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
-import { loadBasePositions } from './base/dashboardPositions.js'
+import { loadDeviceBasePositions, loadIndexedBasePositions } from './base/dashboardPositions.js'
 import { readIdleUsdc } from './base/readPositions.js'
-import HomePage from './components/HomePage.jsx'
+// Task 10 (IA remap) — HomePage is retired; `/home` now mounts MyMoneyRoute directly (the one
+// portfolio authority), and `/agent` becomes the crew's own live console below.
+// My Money Task 13 (Pocket Crew redesign, Wave 5) — the production My money route. Replaces
+// OpsConsole (retired from every production route below; its files stay for rollback/tests, see
+// this task's report for the bundle-scan proof that no production route imports console.css).
+import { MyMoneyRoute } from './components/money/MyMoneyRoute.jsx'
+import { WithdrawDialog } from './components/money/WithdrawDialog.jsx'
+import { StopAccessDialog } from './components/money/StopAccessDialog.jsx'
+import { RecoveryPanel } from './components/money/RecoveryPanel.jsx'
+import { CrewRoute } from './components/crew/CrewRoute.jsx'
+import { selectCrewDecisions } from './components/crew/selectCrewDecisions.js'
+import { discoverOwnerScopes } from './stellar/ownerDiscovery.js'
+import { readOwnerMoney, aggregateOwnerPositions } from './money/readOwnerMoney.js'
+import { buildMyMoneyModel } from './money/myMoneyModel.js'
+// planFullExit/planPartialExit/planRevoke are NOT called here -- AgentTeam.jsx/WithdrawDialog.jsx/
+// StopAccessDialog.jsx already compute the plan and hand it back via onConfirmFull/onConfirmPartial/
+// onConfirmRevoke/onRecoverAgent; this controller only ever EXECUTES a plan it's given and
+// reconciles the aftermath.
+import { reconcileOwnerAction } from './money/ownerActions.js'
+import {
+  classifyKeeperAutomation,
+  classifyStrategyConfiguration,
+  classifyLifeboatAutomation,
+  describeRiskWatchProvenance,
+} from './money/automationEvidence.js'
+import { nextReconciliationToken, isReconciliationCurrent } from './money/freshness.js'
+import { sweepAgents } from './stellar/exit.js'
+import { ensureExitSigner, partialWithdraw } from './stellar/partialWithdraw.js'
+import { assertCurrentActiveAccount } from './stellar/activeAccount.js'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
 const EcosystemPage = lazy(() => import('./components/EcosystemPage.jsx'))
 const ReplayPage = lazy(() => import('./components/ReplayPage.jsx'))
 const DevelopersLayout = lazy(() => import('./developers/DevelopersLayout.jsx'))
 import SettingsPage from './components/SettingsPage.jsx'
-import {
-  WalletPanel,
-  PermissionPanel,
-  ActivityPanel,
-  SkillPanel,
-  PalettePicker,
-  PALETTES,
-} from './components/RightRail.jsx'
 import { loadSettings, saveSetting } from './settingsStore.js'
 import { clearUserSkill } from './skillLoader.js'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
@@ -149,12 +172,12 @@ import { primeVaultFacts } from './strategy/vaultFactsLive.js'
 import { councilVerdict } from './strategy/council.js'
 import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
-import { saveCycle, getCycles, getJournalSummary } from './strategy/cycleJournal.js'
+import { saveCycle } from './strategy/cycleJournal.js'
 import { computeBasket, slugFor } from './strategy/basketFilter.js'
-import { mintToken } from './strategy/eligibilityGate.js'
+import { buildEligibilityReview } from './strategy/eligibilityReview.js'
 import { buildEligibilitySentence, vaultEligibilityLabel } from './strategy/eligibilitySentence.js'
 import { SNAPSHOT } from './strategy/vaultFacts.js'
-import { recordDecision, getDecisions, getDecisionSummary } from './strategy/decisionLog.js'
+import { recordDecision } from './strategy/decisionLog.js'
 import {
   resolveCouncilConflict,
   councilSpecialistVerdict,
@@ -172,19 +195,6 @@ import {
 import { councilOutcome } from './strategy/outcome.js'
 import { proposeRule } from './strategy/curator.js'
 import { upsertSeeds, getRules, addRule, replaceAll } from './strategy/ruleStore.js'
-
-// vf-autofarm: strategy address → { label, poolAddress, poolLabel } for the KeeperPanel APR
-// display + the force-graph's strategy→pool edge. Static because the vault contract exposes no
-// strategy→pool lookup and only ONE strategy is live today (Task 1 spike found a self-deployed
-// second pool can't reach Active status on testnet — see
-// docs/superpowers/plans/2026-07-03-vf-autofarm-progress.md). Extend this map when strategy #2 ships.
-const AUTOFARM_STRATEGY_META = {
-  [SOROBAN_STRATEGY_1_ADDRESS]: {
-    label: 'Strategy 1',
-    poolAddress: SOROBAN_BLEND_POOL_ADDRESS,
-    poolLabel: 'TestnetV2 pool',
-  },
-}
 
 /* ---------- Background agent settings (localStorage: yv_agent_settings) ---------- */
 const AGENT_SETTINGS_DEFAULTS = {
@@ -258,7 +268,7 @@ const sendPushNotification = async (ev, passedSettings) => {
     detail = `${ev.vaultName}, +${ev.totalGainUsdc} USDC reinvested, price/share ${ev.pricePerShare}. No action needed.`
   } else if (ev.kind === 'rebalance_executed') {
     title = 'Keeper rebalanced'
-    detail = `${ev.vaultName}, ${ev.fromLabel} → ${ev.toLabel}, ${ev.amountUsdc} USDC moved. No action needed.`
+    detail = `${ev.vaultName}, ${ev.fromLabel} to ${ev.toLabel}, ${ev.amountUsdc} USDC moved. No action needed.`
   }
 
   const messageText = `*${title}*\n\n${detail}\n\n_Time: ${new Date(ev.timestamp || Date.now()).toLocaleString()}_`
@@ -302,7 +312,7 @@ const sendPushNotification = async (ev, passedSettings) => {
 
 /* ---------- Helpers ---------- */
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/ {
-  palette: 'acid-yield',
+  palette: 'forest',
   density: 'comfortable',
   speed: 'medium',
 } /*EDITMODE-END*/
@@ -418,10 +428,679 @@ const buildActiveVaults = (positions, strategy) => {
     .filter((v) => v.protocol)
 }
 
+/* ---------- My Money Task 13: pure money-controller helpers ----------
+ * Exported for direct unit testing (app.money.test.jsx) — same convention as
+ * mergeFlowHelpers.js/app.strategy.merge.test.jsx: extract the logic that actually needs
+ * adversarial proof (race conditions, cache assembly, projection) into plain functions app.jsx's
+ * own effects/handlers call, rather than trying to render the whole stateful App in a test. None
+ * of these touch React state, a wallet, or a secret — they only ever see {kind,address} account
+ * shapes and the same read-only envelopes ownerDiscovery.js/readOwnerMoney.js already produce. */
+
+const moneyCacheKey = (owner) => `yv_my_money_cache_${String(owner).toLowerCase()}`
+
+/** Restore the last-known {money, discovery, protection} cache for `owner` (sync, instant) —
+ * same convention as positionsStore.js's loadPersistedPositions. */
+/**
+ * A tiny owner-state gate used by the React controller and its async callbacks. Installing a
+ * replacement clears every owner-scoped surface before exposing the next immutable capability.
+ */
+export function createActiveAccountEpochStore({ initial = null, clear = () => {} } = {}) {
+  let active = initial
+  return {
+    current: () => active,
+    capture: () => active,
+    assertCurrent: (captured) => assertCurrentActiveAccount({ captured, current: active }),
+    install(next) {
+      if (active) clear(active)
+      active = next || null
+      return active
+    },
+  }
+}
+
+/** One orchestration's cancellation + render gate. Stale callbacks are dropped; custody code can
+ * call assertCurrent() to stop the underlying async pipeline at its next boundary. */
+export function createEpochBoundRun({ captured, getCurrent, onEvent = () => {} }) {
+  const controller = new AbortController()
+  const assertCurrent = () => {
+    if (controller.signal.aborted)
+      throw Object.assign(new Error('The active wallet account changed.'), {
+        code: 'ACTIVE_ACCOUNT_CHANGED',
+      })
+    return assertCurrentActiveAccount({ captured, current: getCurrent() })
+  }
+  const commit = (callback) => {
+    try {
+      assertCurrent()
+    } catch {
+      return false
+    }
+    callback()
+    return true
+  }
+  return {
+    signal: controller.signal,
+    assertCurrent,
+    cancel: () => controller.abort(),
+    commit,
+    onEvent: (...args) => commit(() => onEvent(...args)),
+  }
+}
+
+/** Account-epoch-scoped constructor input for the raw recovery orchestrator. Keeping this guard at
+ * the App boundary prevents a late recorder callback from reaching React even if an internal
+ * orchestrator event source is added later without its own account assertion. */
+export function createAccountScopedRecoveryConfig({ captured, getCurrent, onEvent, sessionId }) {
+  const epochRun = createEpochBoundRun({ captured, getCurrent, onEvent })
+  return {
+    user: captured.address,
+    activeAccount: captured,
+    getCurrentActiveAccount: getCurrent,
+    sessionId,
+    signal: epochRun.signal,
+    onEvent: epochRun.onEvent,
+  }
+}
+
+/**
+ * Recoverable Stellar rows are reconstructed only from the confirmed address vector and the same
+ * ordered top-level plan that produced it. Base parents/children are intentionally absent: their
+ * current result evidence is display-only until a durable Base receipt producer exists.
+ */
+export function buildRecoveryAllocationMappings({
+  plan,
+  confirmedPermission,
+  reviewedPermission,
+  owner,
+}) {
+  const agents = Array.isArray(plan?.agents) ? plan.agents : []
+  const addresses = confirmedPermission?.agentAddresses
+  if (
+    !owner ||
+    !plan?.runId ||
+    !Array.isArray(addresses) ||
+    addresses.length !== agents.length ||
+    addresses.some((address) => typeof address !== 'string' || address.length === 0)
+  ) {
+    throw new Error('The confirmed agent address order is incomplete for recovery.')
+  }
+  if (
+    reviewedPermission?.mode &&
+    confirmedPermission?.mode &&
+    reviewedPermission.mode !== confirmedPermission.mode
+  ) {
+    throw new Error('The reviewed permission mode does not match confirmed recovery evidence.')
+  }
+  const reviewedRows =
+    reviewedPermission?.version === 3 ? reviewedPermission.executions : reviewedPermission?.agents
+  const mappings = new Map()
+  agents.forEach((agent, index) => {
+    if (agent?.kind === 'bridge') return
+    const agentAddress = addresses[index]
+    if (Array.isArray(reviewedRows)) {
+      const reviewed = reviewedRows.find((row) => row?.allocationId === agent.allocationId)
+      if (
+        reviewedPermission?.mode === 'reuse' &&
+        (!reviewed || reviewed.agentAddress !== agentAddress)
+      ) {
+        throw new Error(`Reviewed agent evidence disagrees for ${agent.allocationId}.`)
+      }
+    }
+    // Orchestrator workers execute `agent.cap.units` verbatim (buildFreshWorkers/
+    // buildReuseWorkers); recovery must journal and call the identical amount source.
+    const amount = agent?.cap
+    if (
+      !amount ||
+      typeof amount.token !== 'string' ||
+      typeof amount.units !== 'string' ||
+      !/^\d+$/.test(amount.units) ||
+      !Number.isInteger(amount.decimals) ||
+      amount.decimals < 0
+    ) {
+      throw new Error(`Recovery amount is malformed for ${agent?.allocationId || 'allocation'}.`)
+    }
+    mappings.set(agent.allocationId, {
+      networkId: 'stellar-testnet',
+      owner,
+      executionId: `${plan.runId}:exec:${agent.allocationId}`,
+      allocationId: agent.allocationId,
+      childId: null,
+      runId: plan.runId,
+      agentAddress,
+      amount: { token: amount.token, units: amount.units, decimals: amount.decimals },
+    })
+  })
+  return mappings
+}
+
+const RECOVERY_MANUAL_REVIEW_CODES = new Set([
+  'RECOVERY_POLL_TX_HASH_REQUIRED',
+  'RECOVERY_POLL_SHARE_BASELINE_REQUIRED',
+])
+
+function canonicalRecoveryValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalRecoveryValue)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalRecoveryValue(value[key])])
+    )
+  }
+  return value
+}
+
+function sameRecoveryReceipt(left, right) {
+  return (
+    JSON.stringify(canonicalRecoveryValue(left)) === JSON.stringify(canonicalRecoveryValue(right))
+  )
+}
+
+function latestRealRecoveryAttempt(receipt, phase) {
+  const attempts = Array.isArray(receipt?.attempts) ? receipt.attempts : []
+  for (let index = attempts.length - 1; index >= 0; index -= 1) {
+    const attempt = attempts[index]
+    if (attempt?.kind === 'phase' && attempt.phase === phase) return attempt
+  }
+  return null
+}
+
+function currentPollProofError(projection) {
+  if (projection.action !== 'poll') return null
+  const attempt = latestRealRecoveryAttempt(projection.receipt, projection.phase)
+  if (typeof attempt?.evidence?.txHash !== 'string' || attempt.evidence.txHash.length === 0) {
+    return {
+      code: 'RECOVERY_POLL_TX_HASH_REQUIRED',
+      phase: projection.phase,
+      message: `Recovery poll for ${projection.phase} has no durable transaction hash`,
+    }
+  }
+  if (
+    projection.phase === 'stellar_deposit' &&
+    (typeof attempt.evidence.preShareUnits !== 'string' ||
+      !/^\d+$/.test(attempt.evidence.preShareUnits))
+  ) {
+    return {
+      code: 'RECOVERY_POLL_SHARE_BASELINE_REQUIRED',
+      phase: projection.phase,
+      message: 'Deposit poll has no durable pre-submission share baseline',
+    }
+  }
+  return null
+}
+
+/**
+ * Project the one current authoritative recovery row after a poll-proof failure. A known claim is
+ * the local monotonic floor: an absent, malformed, lower, or same-version-but-different reread
+ * cannot replace it. Poll is exposed only from proof carried by the current phase's latest real
+ * attempt; stale errors never override newer terminal/manual states or safe newer work.
+ */
+function projectRecoveryAuthority({ authoritative, claim, error, identity, projectReceipt }) {
+  const claimHasReceipt = claim?.receipt != null && Number.isSafeInteger(claim?.version)
+  const currentVersion = authoritative?.version
+  const currentReceipt = authoritative?.receipt
+  const currentRowValid =
+    Number.isSafeInteger(currentVersion) &&
+    currentVersion >= 0 &&
+    ((currentReceipt == null && currentVersion === 0) || currentReceipt?.version === currentVersion)
+  const violatesClaimFloor =
+    claimHasReceipt &&
+    (!currentRowValid ||
+      currentReceipt == null ||
+      currentVersion < claim.version ||
+      (currentVersion === claim.version && !sameRecoveryReceipt(currentReceipt, claim.receipt)))
+  const selected = violatesClaimFloor
+    ? { receipt: claim.receipt, version: claim.version }
+    : authoritative
+  const next = projectReceipt({ ...selected, identity })
+  const proofError = currentPollProofError(next)
+  if (proofError) {
+    return {
+      ...next,
+      action: 'manual-review',
+      phase: proofError.phase,
+      reasonCode: proofError.code,
+      reason: proofError.message,
+    }
+  }
+  if (violatesClaimFloor) {
+    return {
+      ...next,
+      action: 'manual-review',
+      phase: error?.phase ?? claim.phase ?? next.phase,
+      reasonCode: error?.code ?? 'RECOVERY_RECEIPT_CHANGED',
+      reason:
+        error?.primaryError?.message ??
+        error?.message ??
+        'Recovery reread did not preserve the claimed receipt; manual reconciliation is required.',
+    }
+  }
+  if (!RECOVERY_MANUAL_REVIEW_CODES.has(error?.code)) return next
+  if (
+    next.action === 'complete' ||
+    next.action === 'manual-review' ||
+    next.action === 'blocked-reconcile' ||
+    next.action === 'poll' ||
+    (Number.isSafeInteger(currentVersion) && currentVersion > claim.version)
+  ) {
+    return next
+  }
+  return {
+    ...next,
+    action: 'manual-review',
+    phase: error.phase ?? claim.phase ?? next.phase,
+    reasonCode: error.code,
+    reason: error.primaryError?.message ?? error.message,
+  }
+}
+
+/** Stable, dependency-injected controller shared by App and app.recovery.test.jsx. */
+export function createRecoveryActionRunner({
+  getActiveAccount,
+  getProjection,
+  getMapping,
+  getPermission,
+  resolveCredential = resolveRecoveryCredential,
+  requestAction = requestRecoveryAction,
+  readReceipt = readRecoveryReceipt,
+  projectReceipt = projectRecoveryReceipt,
+  recoverAllocation,
+  onProjection = () => {},
+  onPending = () => {},
+  onError = () => {},
+  leaseOwner,
+  vault,
+}) {
+  const pending = new Set()
+  const assertCurrent = (captured) =>
+    assertCurrentActiveAccount({ captured, current: getActiveAccount() })
+  const projectAuthoritative = async (mapping, captured) => {
+    const authoritative = await readReceipt({
+      networkId: mapping.networkId,
+      owner: mapping.owner,
+      executionId: mapping.executionId,
+      allocationId: mapping.allocationId,
+    })
+    assertCurrent(captured)
+    const next = projectReceipt({
+      ...authoritative,
+      identity: mapping,
+    })
+    assertCurrent(captured)
+    onProjection(mapping.allocationId, next)
+    return authoritative
+  }
+
+  return {
+    async run(allocationId) {
+      if (pending.has(allocationId)) return { skipped: 'pending' }
+      const projected = getProjection(allocationId)
+      if (
+        projected?.action === 'blocked-reconcile' ||
+        projected?.route?.source === 'base-child-result'
+      ) {
+        return { skipped: 'blocked-reconcile' }
+      }
+      const mapping = getMapping(allocationId)
+      const captured = getActiveAccount()
+      if (
+        !projected?.requestIdentity ||
+        !mapping ||
+        captured?.version !== 1 ||
+        captured.address !== mapping.owner ||
+        projected.route?.allocationId !== allocationId
+      ) {
+        throw new Error(`Recovery is unavailable for allocation ${allocationId}.`)
+      }
+      pending.add(allocationId)
+      onPending(allocationId, true)
+      let claim = null
+      try {
+        assertCurrent(captured)
+        const credential = await resolveCredential({
+          networkId: mapping.networkId,
+          owner: mapping.owner,
+          vault,
+          agentAddress: mapping.agentAddress,
+        })
+        assertCurrent(captured)
+        claim = await requestAction({
+          ...projected.requestIdentity,
+          networkId: mapping.networkId,
+          owner: mapping.owner,
+          receipt: projected.receipt,
+          agentAddress: mapping.agentAddress,
+          allocationMapping: mapping,
+          leaseOwner,
+          vault,
+          resolveCredential: () => credential,
+        })
+        assertCurrent(captured)
+        const result = await recoverAllocation({
+          claim,
+          credential,
+          allocationMapping: mapping,
+          permissionEvidence: getPermission(),
+        })
+        assertCurrent(captured)
+        const next = projectRecoveryAuthority({
+          authoritative: result,
+          claim,
+          error: result.error,
+          identity: mapping,
+          projectReceipt,
+        })
+        onProjection(allocationId, next)
+        if (result.error) onError(result.error, allocationId)
+        return result
+      } catch (error) {
+        try {
+          assertCurrent(captured)
+          if (RECOVERY_MANUAL_REVIEW_CODES.has(error?.code) && claim) {
+            let authoritative = { receipt: claim.receipt, version: claim.version }
+            try {
+              authoritative = await readReceipt({
+                networkId: mapping.networkId,
+                owner: mapping.owner,
+                executionId: mapping.executionId,
+                allocationId: mapping.allocationId,
+              })
+            } catch {
+              // The claimed receipt/version remains the authoritative input for this local,
+              // disabled projection when both post-action reads are unavailable.
+            }
+            assertCurrent(captured)
+            const next = projectRecoveryAuthority({
+              authoritative,
+              claim,
+              error,
+              identity: mapping,
+              projectReceipt,
+            })
+            assertCurrent(captured)
+            onProjection(allocationId, next)
+          } else {
+            try {
+              await projectAuthoritative(mapping, captured)
+            } catch {
+              // A refresh failure leaves the existing projection untouched. Re-check the epoch
+              // below so a wallet switch is still silent rather than becoming a stale error toast.
+            }
+          }
+          assertCurrent(captured)
+          onError(error, allocationId)
+        } catch {
+          // A stale account owns none of the next account's recovery UI.
+        }
+        throw error
+      } finally {
+        pending.delete(allocationId)
+        try {
+          assertCurrent(captured)
+          onPending(allocationId, false)
+        } catch {
+          // installActiveWalletAccount clears the old owner's pending surface atomically.
+        }
+      }
+    },
+  }
+}
+
+// Final review, Fix 2: the cached envelope's SHAPE, not just its data, can go stale across a
+// deploy. A pre-Task-10 cache stamped `discovery.agents[].baseChildren` nowhere at all; under the
+// current `sourceUnknown = discovery?.status !== 'complete'` predicate (readOwnerMoney.js:635) a
+// `status:'complete'` cache like that reads as a POSITIVELY CONFIRMED EMPTY Base source rather
+// than an unread one, and Fix 1 just wired that field to the rendered headline total for the first
+// time. Bump this whenever a landed task changes what a cached `discovery`/`money` row is allowed
+// to look like; a reader that doesn't recognize the stamped version treats the whole cache as a
+// miss (never partially trusts it) and falls back to a live read instead.
+const MONEY_CACHE_SCHEMA_VERSION = 2
+
+export function loadMoneyCache(owner) {
+  if (!owner) return {}
+  try {
+    const parsed = JSON.parse(localStorage.getItem(moneyCacheKey(owner)) || '{}') || {}
+    return parsed.__schemaVersion === MONEY_CACHE_SCHEMA_VERSION ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+/** Persist the {money, discovery, protection} cache for `owner`. Safe to call with an empty object. */
+export function saveMoneyCache(owner, cache) {
+  if (!owner) return
+  try {
+    localStorage.setItem(
+      moneyCacheKey(owner),
+      JSON.stringify({ ...(cache || {}), __schemaVersion: MONEY_CACHE_SCHEMA_VERSION })
+    )
+  } catch {
+    // localStorage unavailable/full — non-fatal, the in-memory cache ref still serves this session.
+  }
+}
+
+/**
+ * Assemble the MoneySnapshot shape myMoneyModel.js documents (its own header JSDoc) from a raw
+ * readOwnerMoney() envelope — the exact `{ ...aggregateOwnerPositions(reads), agents, checkedAt,
+ * confirmedLedger, confirmedBlock, source }` shape buildMyMoneyModel's caller is responsible for
+ * assembling. Pure; never re-fetches.
+ */
+export function buildMoneySnapshot(reads) {
+  if (!reads) return null
+  return {
+    ...aggregateOwnerPositions(reads),
+    agents: reads.agents ?? [],
+    checkedAt: reads.checkedAt ?? null,
+    confirmedLedger: reads.confirmedLedger ?? null,
+    confirmedBlock: reads.confirmedBlock ?? null,
+    source: reads.source ?? null,
+  }
+}
+
+/**
+ * Wallet-switch identity guard (brief Step 2, hazard 1): a resolved fetch is only safe to commit
+ * if the owner it was fetched FOR still matches the owner currently connected — a wallet switch
+ * mid-flight must never let the PRIOR owner's discovery/money/risk journal repaint over the new
+ * owner's (or a disconnect's) state.
+ */
+export function isMoneyFetchForCurrentOwner({ fetchOwner, currentOwner }) {
+  return Boolean(fetchOwner) && fetchOwner === currentOwner
+}
+
+/**
+ * Post-action revision guard (brief Step 2, hazard 3): reuses freshness.js's own monotonic
+ * reconciliation token — the SAME primitive money/ownerActions.js's reconcileOwnerAction already
+ * uses for the identical hazard — so a read that STARTED before a mutating action
+ * (withdraw/revoke/recovery) resolved can never repaint the model over the action's own fresher
+ * reconciliation.
+ *
+ * Both guards are collapsed into ONE decision here (rather than checked separately at each call
+ * site) so there is exactly one place that can get this wrong, and exactly one place mutation
+ * testing has to prove right.
+ */
+export function shouldCommitMoneyFetch({ fetchOwner, currentOwner, readToken, currentToken }) {
+  return (
+    isMoneyFetchForCurrentOwner({ fetchOwner, currentOwner }) &&
+    isReconciliationCurrent({ readToken, currentToken })
+  )
+}
+
+/**
+ * Read-only: discovery -> money -> assembled snapshot for `owner`. No submit/sign/write seam
+ * exists on this function's signature at all — a reload/reconnect that calls this can, by
+ * construction, never replay a transaction (brief Step 2, hazard 2). Injectable seams mirror
+ * ownerDiscovery.js/readOwnerMoney.js's own convention (tests never touch the real network).
+ */
+export async function fetchMyMoneySnapshot({
+  owner,
+  now = Date.now(),
+  discoverScopes = discoverOwnerScopes,
+  readMoney = readOwnerMoney,
+}) {
+  const discovery = await discoverScopes({ owner })
+  const reads = await readMoney({ owner, discovery, now })
+  return { discovery, money: buildMoneySnapshot(reads) }
+}
+
+/**
+ * Fix loop 1, I1: the exact guard-then-commit sequence `refreshMoney` runs in production, factored
+ * out to a plain exported function so a controller-level test can inject a slow `fetchSnapshot` and
+ * mutate `currentOwnerRef`/`revisionRef` OUT FROM UNDER IT mid-flight — proving THIS call site
+ * keeps wiring LIVE ref values into `shouldCommitMoneyFetch`. The pure-function tests above already
+ * prove `shouldCommitMoneyFetch` is correct in isolation in both directions; the reviewer proved by
+ * mutation (replacing `currentOwner: currentOwnerRef.current` / `currentToken: revisionRef.current`
+ * with the tautological `currentOwner: owner` / `currentToken: readToken`) that nothing verified the
+ * CALLER still passed it live values — the whole 181-test suite stayed green. `refreshMoney` below
+ * is a thin wrapper with no guard logic of its own left to drift out of sync with this.
+ * @param {{owner: string, now: number, fetchSnapshot: Function, currentOwnerRef: {current},
+ *   revisionRef: {current}, onCommit: Function}} p
+ * @returns {Promise<boolean>} whether onCommit ran
+ */
+export async function guardedMoneyFetch({
+  owner,
+  now,
+  fetchSnapshot,
+  currentOwnerRef,
+  revisionRef,
+  onCommit,
+}) {
+  const readToken = nextReconciliationToken(revisionRef.current)
+  revisionRef.current = readToken
+  let snapshot
+  try {
+    snapshot = await fetchSnapshot({ owner, now })
+  } catch {
+    return false // a failed read leaves the last-good state in place; buildMyMoneyModel's own cache
+    // fallback (still fed from moneyCacheRef) is what downgrades it to stale over time.
+  }
+  if (
+    !shouldCommitMoneyFetch({
+      fetchOwner: owner,
+      currentOwner: currentOwnerRef.current,
+      readToken,
+      currentToken: revisionRef.current,
+    })
+  ) {
+    return false
+  }
+  onCommit(snapshot)
+  return true
+}
+
+/**
+ * Fix round 1 (I1, MM13 M5 blind spot): hoists the argument object `refreshMoney` builds into a
+ * single exported, identity-preserving function, rather than an inline object literal duplicated
+ * at the one real call site. Proves ONLY that whatever refs it is handed pass through to
+ * `guardedMoneyFetch` untouched (`Object.is`, not just deep equality) -- it cannot, on its own,
+ * prove `refreshMoney` hands it the REAL `realAddressRef`/`moneyRevisionRef`: those are per-render
+ * React refs with ~10 other read/write sites throughout this component (wallet-switch sync, five
+ * separate action handlers bumping the revision), so forcing them to module scope purely to make
+ * that provable without ever reading source would be a much larger, riskier refactor of this
+ * file's state ownership than a test-robustness fix warrants. The one remaining line at the real
+ * call site is covered by the comment-stripped, negative-matching source-scan immediately below
+ * instead (see the REFRESH-MONEY-WIRING markers) -- ~app.money.test.jsx has both tests.
+ * @param {string} owner
+ * @param {{currentOwnerRef: {current}, revisionRef: {current}, fetchSnapshot?: Function}} refs
+ */
+export function moneyFetchArgs(
+  owner,
+  { currentOwnerRef, revisionRef, fetchSnapshot = fetchMyMoneySnapshot }
+) {
+  return { owner, now: Date.now(), fetchSnapshot, currentOwnerRef, revisionRef }
+}
+
+// Task 10, carried finding C1: classifyKeeperAutomation (money/automationEvidence.js:18,33) only
+// counts events shaped {type: 'compound'|'rebalance', closedAt: <ms>} — but this file's own keeper
+// event producer (below, `keeperActivity`/`setKeeperActivity`) stores items shaped
+// {kind: 'compound_executed'|'rebalance_executed', timestamp: <ms>, closedAt: <ms|undefined>}.
+// Unadapted, the HEARTBEAT_TYPES filter matches nothing and `moneyKeeper.label` pins to
+// 'unavailable' forever.
+//
+// Fix round 1 (reviewer C1-FIX): this adapter used to map `closedAt: e.timestamp` -- but
+// `timestamp` is `Date.now()` stamped when the poll loop first SAW the event (read time), while
+// automationEvidence.js:21-23 documents the real contract in as many words: "carries a real
+// ledger-close-derived closedAt, never a Date.now() stamped at read time". That was worse than
+// the bug it replaced: `keeperLedgerRef` starts `undefined` (below), so the first poll after every
+// page load falls back to an ~8000-ledger/~11h lookback window (keeperEvents.js's own
+// DEFAULT_LOOKBACK_LEDGERS), and every historical compound/rebalance in it would have been
+// stamped "now" -- reading 'healthy' for up to 35 minutes after load even if the keeper cron died
+// half a day ago. The producer below now carries the REAL ledger-close time as its own `closedAt`
+// (keeperEvents.js's `decodeKeeperEvent` already decodes `ledgerClosedAt` for exactly this), so
+// this adapter reads that field instead -- an event whose record had no `ledgerClosedAt` degrades
+// to `undefined` here, which classifyKeeperAutomation's own `Number.isFinite` filter already drops
+// (-> 'unavailable', an honest gap, never a manufactured 'healthy').
+//
+// Adapted at THIS call site only — automationEvidence.js is shared by the My Money route and
+// stays untouched (frozen-system constraint); `keeperActivity` itself keeps carrying BOTH
+// `timestamp` (CrewActivity.jsx's own "x ago" display, which legitimately wants read-recency) and
+// `closedAt` (this adapter's freshness evidence) — two different questions, two different fields.
+const KEEPER_HEARTBEAT_KIND_TO_TYPE = {
+  compound_executed: 'compound',
+  rebalance_executed: 'rebalance',
+}
+export function toKeeperHeartbeatEvents(keeperActivity) {
+  return (keeperActivity || [])
+    .filter((e) => e && KEEPER_HEARTBEAT_KIND_TO_TYPE[e.kind])
+    .map((e) => ({ ...e, type: KEEPER_HEARTBEAT_KIND_TO_TYPE[e.kind], closedAt: e.closedAt }))
+}
+
+/**
+ * My Money Task 13 Part B item 5: is any NON-revoked agent still live for `vaultAddress` in `rows`
+ * (rehydrateScopes()'s own plain-scope shape -- {agent, vault, revoked}, NOT an OwnerDiscoveryV1
+ * envelope)? Extracted from the withdraw-success scope-catch-up poll below, whose termination
+ * condition this is: "has the post-sweep on-chain revoke landed on RPC yet". Deliberately NOT
+ * `pickRecoverableVaultAgents` (the discovery-based replacement for the deleted `pickVaultAgents`)
+ * -- that picker expects a completely different shape (`.address`, not `.agent`; no `.kind`) built
+ * for a different question ("who must a sweep target", inclusive of revoked-but-funded agents),
+ * and forcing `rows` through it would silently return every row's `.address` as `undefined`.
+ */
+export function hasLiveScopeForVault(rows, vaultAddress) {
+  const want = (vaultAddress || '').toLowerCase()
+  if (!want) return false
+  return (rows || []).some(
+    (s) => s && !s.revoked && s.agent && (s.vault || '').toLowerCase() === want
+  )
+}
+
+// Task 5 chunk C -- compose the final permissionDecision. `proveReusablePermission`'s own return
+// (`raw.version === 3`) carries NONE of `planFingerprint`/`reviewedBudgets`/`reviewedAgentInits`
+// (see permissionGrantV3.js's base object) -- but `dispatchPermissioned`'s entry checks
+// (`assertPermissionMatchesPlan` + the canonical reviewed-budget check, orchestrator.js, both
+// unconditional on mode) require all three on EVERY permissionDecision or throw
+// `VF_PLAN_FINGERPRINT_MISMATCH` before any dispatch code runs. This merges the SAME
+// `planFingerprint`/`reviewedBudgets`/`agentInits` `onRetryPreflight` already built to CALL
+// `preflightPermission` onto its result -- mirroring exactly what reusePreflight.js's own
+// (V2-only) `baseDecision` already assembles internally from the same three inputs. `agentInits`
+// (`planAgentToAgentInit`'s own shape: allocationId, kind, token, target, cap{token,units,decimals},
+// periodSeconds, expiry, plus mintRecipient/destinationDomain) already matches what
+// `assertPermissionMatchesPlan` structurally checks a `reviewedAgentInits[i]` against -- no
+// separate projection needed, and unlike V2's own `reviewedAgentInits` this carries no
+// signer/salt material to leak (V3's agentInits never had any to begin with). Identity return for
+// a V2 decision (`raw.version !== 3`): reusePreflight.js already carries all three there, so this
+// is a no-op on that path.
+// Inert under dormancy: `preflightPermission`'s default `resolveSchema` (`resolveRouterSchema`)
+// resolves no V3 address today, so `raw.version` is never 3 in production -- this is forward
+// wiring for the day a V3 router is registered, not a reachable path now.
+// `checkedAt` mirrors V2's own `baseDecision.checkedAt` (reusePreflight.js's `nowSec`) -- the
+// prover carries no timestamp of its own, and ProtectStage's V3 review renders an "As of"
+// freshness stamp exactly like V2's does. Captured at the moment this check resolves, the same
+// point V2's own timestamp is taken.
+export function composeV3Decision(raw, { plan, reviewedBudgets, agentInits }) {
+  if (raw.version !== 3) return raw
+  return {
+    ...raw,
+    planFingerprint: plan.planFingerprint,
+    reviewedBudgets,
+    reviewedAgentInits: agentInits,
+    checkedAt: Math.floor(Date.now() / 1000),
+  }
+}
+
 /* ---------- App ---------- */
 const App = () => {
   const devMode = isDevMode()
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS)
+  const normalizedTheme = normalizeTheme(tweaks.palette)
 
   // stage: 'strategy' | 'connect' | 'skills' | 'permission' | 'execute' | 'done'
   const [stage, setStage] = useS('strategy')
@@ -433,13 +1112,6 @@ const App = () => {
   const [risk, setRisk] = useS('med')
   const [devApiKey, setDevApiKey] = useS('')
 
-  // strategy sub-state
-  const [strategyPhase, setStrategyPhase] = useS('input') // input | thinking | ready
-  const [thinkingPhase, setThinkingPhase] = useS(0)
-  const [thinkTimes, setThinkTimes] = useS([]) // real measured per-step durations (seconds)
-  const [slowConfirm, setSlowConfirm] = useS(false) // AI exceeded timeout → ask keep waiting / fallback
-  const genAbortRef = useR(null)
-  const slowTimerRef = useR(null)
   const [strategy, setStrategy] = useS(null)
   const [council, setCouncil] = useS(undefined) // undefined = no strategy yet, null = deliberating
   const [councilRetry, setCouncilRetry] = useS(0) // bump to re-run deliberation
@@ -447,21 +1119,13 @@ const App = () => {
   const [debateResult, setDebateResult] = useS(null) // debate council result
   const [debateRunning, setDebateRunning] = useS(false) // debate in progress
 
-  // Continuous monitor state
-  const [monitorStatus, setMonitorStatus] = useS({
-    lastCheck: null,
-    level: 'idle',
-    score: 0,
-    reason: '',
-  })
-  const monitorTimerRef = useR(null)
-  const [rawStrategy, setRawStrategy] = useS(null) // raw Venice result (carries strategyHash) for on-chain attestation
-  const [strategyAttestation, setStrategyAttestation] = useS(null)
-  const [attesting, setAttesting] = useS(false)
+  // My Money Task 13 Part B: `monitorStatus`/`monitorTimerRef` (the council re-eval loop's own
+  // display state) had no reader anywhere in this file -- OpsConsole's own MonitorPanel was the
+  // only consumer, and it is retired from every production route. The monitor LOOP itself
+  // (runCouncilMonitorCheck below, and the `market_signal` branch in handleAgentEvent) keeps
+  // running and doing its real work (fastReeval/councilDebate/saveSnapshot/addLog) -- only the
+  // now-unread status snapshot is removed, not the automation it was reporting on.
   const [skillSource, setSkillSource] = useS('default')
-  // Grant-covers-burn design §4/§5: mandate setup is its OWN 1-tap ceremony, outside a run. This
-  // affordance shows only when the relayer is healthy but no valid mandate is stored yet.
-  const [needsBaseMandate, setNeedsBaseMandate] = useS(false)
   const [settingUpBaseMandate, setSettingUpBaseMandate] = useS(false)
   const [baseMandateError, setBaseMandateError] = useS(null)
   const [marketLive, setMarketLive] = useS(null) // Tavily live market context used? null until first generation
@@ -473,30 +1137,79 @@ const App = () => {
 
   // skills
   const [skillStates, setSkillStates] = useS({})
-  const [editingTexts, setEditingTexts] = useS({})
 
-  const [permPhase, setPermPhase] = useS('idle')
-  const [permError, setPermError] = useS(null)
-  // Single-signature grant flow (router path). grantPhase drives the GrantPanel button label; the chosen
-  // budget/duration are stashed in a ref so startExecution reads them synchronously when it builds
-  // the orchestrator (state updates are async).
-  const [grantPhase, setGrantPhase] = useS('idle')
-  const [grantError, setGrantError] = useS(null)
-  const grantCfgRef = useR(null)
   const [permActive, setPermActive] = useS(false)
   // Per-agent on-chain scopes (single-source summary + Revoke). Keyed by worker agent address.
   const [scopes, setScopes] = useS([])
   const [permExpiresAt, setPermExpiresAt] = useS(null)
+
+  // ===== Strategy Task 13 (Pocket Crew redesign, Wave 5) — Plan/Protect/Start integration =====
+  // The production `/strategy` route's state machine. `strategyFlowReducer` (flowState.js) is
+  // Foundation-owned and pure; the wrapper below adds exactly ONE app-local event, 'STRATEGY_RESET'
+  // (start a brand new run), which flowState.js's own authorized-edit scope (decision log #22)
+  // does not cover — resetting to `initialStrategyFlowState` is an app.jsx integration concern,
+  // not a reducer invariant.
+  const [strategyFlow, dispatchFlow] = useRed((state, event) => {
+    if (event.type === 'STRATEGY_RESET') return initialStrategyFlowState
+    return strategyFlowReducer(state, event)
+  }, initialStrategyFlowState)
+  const strategyFlowRef = useR(strategyFlow)
+  strategyFlowRef.current = strategyFlow
+  const [strategyReached, setStrategyReached] = useS(['plan'])
+  const [runId, setRunId] = useS(() => `run-${Date.now()}`)
+  // Base availability for the Plan surface — CONSUMED by PlanStage as the `base` prop, never
+  // re-derived there (PlanStage.jsx's own header comment). Refreshed on connect and after the
+  // 1-tap mandate setup ceremony.
+  const [baseView, setBaseView] = useS({
+    connected: false,
+    healthy: null,
+    mandateView: null,
+    action: null,
+  })
+  // PlanStage's amount-validation gate (strategy/amountValidation.js) needs the vault's real total
+  // share supply (null while unknown -- distinct from 0n, a genuine first-deposit state).
+  const [vaultTotalShares, setVaultTotalShares] = useS(null)
+  useE(() => {
+    let alive = true
+    readTotalShares()
+      .then((shares) => {
+        if (alive) setVaultTotalShares(shares)
+      })
+      .catch(() => {
+        if (alive) setVaultTotalShares(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+  const baseSetupSucceededRef = useR(false)
+  // Raw orchestrator/worker/bridge events for THIS run, in arrival order — StartStage's own pure
+  // lane-phase adapters (depositLanePhase/bridgeLanePhase) fold these; never cleared mid-run.
+  const [runEvents, setRunEvents] = useS([])
+  const [runReceipt, setRunReceipt] = useS(null)
+  const [recoveryByAllocation, setRecoveryByAllocation] = useS({})
+  const recoveryByAllocationRef = useR(recoveryByAllocation)
+  recoveryByAllocationRef.current = recoveryByAllocation
+  const [recoveryPendingAllocations, setRecoveryPendingAllocations] = useS(() => new Set())
+  const recoveryMappingsRef = useR(new Map())
+  const recoveryRunnerRef = useR(null)
+  const recoveryLeaseOwnerRef = useR(
+    `vf-recovery-${globalThis.crypto?.randomUUID?.() || Date.now()}`
+  )
+  // In-flight onRequestGrant/onConfirmReuse promise settlers — resolved by the shared orchestrator
+  // event handler the instant 'grant-confirmed'/'reuse-confirmed' fires (ProtectStage must resolve
+  // BEFORE the whole run settles, since Start renders live while dispatch continues in the
+  // background), rejected if the underlying dispatch promise rejects first.
+  const pendingConfirmRef = useR(null)
 
   // True when a refresh re-entered an active session (drives the Home banner).
   const [sessionResumed, setSessionResumed] = useS(false)
 
   // Wallet reconnect + session resume on page load. Without this, a refresh drops
   // realAddress/stage/strategy (all in-memory) so the app looks logged-out and the monitor loop
-  // never reboots even with an active vault. We ask the wallet kit for its current address; if a
-  // resume snapshot exists we restore stage='done' + strategy, which makes the loop effect (below)
-  // start the monitor loop again. If no wallet is selected yet (fresh reload) getUserAddress
-  // rejects and the catch leaves the app logged-out until the user reconnects. Mount-only.
+  // never reboots even with an active vault. Resume the wallet kit's already-selected module
+  // without opening its modal, installing the same complete epoch capability as an interactive
+  // connect. If no wallet is selected yet, the catch leaves the app logged-out. Mount-only.
   useE(() => {
     window.triggerTestAlert = () => {
       handleAgentEvent({
@@ -512,10 +1225,10 @@ const App = () => {
     }
 
     let alive = true
-    getUserAddress()
-      .then((addr) => {
-        if (!alive || !addr) return
-        setRealAddress(addr)
+    connectActiveAccount({ prompt: false })
+      .then((account) => {
+        if (!alive || !account) return
+        const addr = installActiveWalletAccount(account).address
         setConnectPhase('connected')
         const snap = loadResume(addr)
         if (snap?.strategy?.agents?.length) {
@@ -567,17 +1280,32 @@ const App = () => {
   // branch is dead-code-eliminated in prod and scripts/assert-no-dev-dispatch.mjs asserts the
   // __vfDevViewAs marker never ships in dist/.
   const viewAsAddress = getViewAsAddress()
+  // My Money Task 13's own discovery envelope, hoisted up from its controller block (below) --
+  // Part B item 5's `positionsAgents` migration (immediately below) needs it this early, and a
+  // `useState` call's textual position doesn't affect hook order/correctness as long as it fires
+  // unconditionally every render, same as every other hook in this component.
+  const [moneyDiscovery, setMoneyDiscovery] = useS(null)
   // Which agents' vault shares a "position" reads. Priority:
   //   view-as (dev) → the impersonated address's OWN shares;
-  //   real run      → the per-run agents the router deployed (scopes[].agent, non-revoked),
-  //                   which is where deposit mints the shares.
+  //   real run      → every agent this owner's discovery envelope has proven belongs to this
+  //                   vault, where deposit mints the shares.
   // Falling back to reconcile's default (the fixed demo agent) is the bug that emptied the
   // positions card ~15s after a real run: the poll read demo-agent = 0 shares and pruned the
   // vault. Shares sum across agents; withdrawn/other-run agents read 0 and drop out harmlessly.
-  // ponytail: N non-revoked agents = N readVaultShares per 15s poll; fine for a handful of
-  // runs, revisit if an owner accumulates dozens of live grants.
-  const positionsAgents = pickPositionsAgents(scopes, viewAsAddress)
-  // Reconcile effects capture this closure keyed on realAddress, but scopes rehydrate async
+  //
+  // My Money Task 13 Part B item 5: this used to read `pickPositionsAgents(scopes, viewAsAddress)`
+  // -- deleted (positionsStore.js's own comment) because it silently dropped revoked-but-funded
+  // agents, which the full-exit enumeration rule forbids: a revoked agent that still holds vault
+  // shares is exactly the one this reconcile must keep summing, or NotificationCenter/
+  // VaultDetailPage/handleEmergencyWithdraw (all fed by the `agentData.positions` this reconcile
+  // builds) silently under-report the true position. `pickRecoverableVaultAgents` (My Money Task
+  // 6's discovery-based replacement) never drops a revoked-but-funded candidate.
+  // ponytail: N candidate agents = N readVaultShares per 15s poll; fine for a handful of runs,
+  // revisit if an owner accumulates dozens of live grants.
+  const positionsAgents = viewAsAddress
+    ? [viewAsAddress]
+    : pickRecoverableVaultAgents(moneyDiscovery, { vault: SOROBAN_ACTIVE_VAULT_ADDRESS })
+  // Reconcile effects capture this closure keyed on realAddress, but discovery rehydrates async
   // AFTER connect. A latest-value ref lets the already-subscribed poll (and the cold-reconcile
   // that must not prune restored cache) read the current agent list without re-mounting.
   positionsAgentsRef.current = positionsAgents
@@ -598,6 +1326,10 @@ const App = () => {
       console.info('[dev] view-as read override active:', viewAsAddress)
     return viewAsAddress
   })
+  const [activeAccount, setActiveAccount] = useS(null)
+  const activeAccountRef = useR(activeAccount)
+  activeAccountRef.current = activeAccount
+  const activeOrchestrationRef = useR(null)
   const loopRef = useR(null)
   const latestGasRef = useR(null) // last live gas snapshot { level, gwei } for the monitor loop
   const hydratedRef = useR(null) // address whose cached positions have finished restoring
@@ -628,17 +1360,6 @@ const App = () => {
     }
   }, [location.pathname])
 
-  // Strategy Attestation — NON-BLOCKING, best-effort. Fires once a wallet provider
-  // exists (post-connect) and the AI strategy carries a deterministic hash. Any
-  // failure/rejection is swallowed by attestStrategyOnChain → strategy still executes.
-  useE(() => {
-    if (!rawStrategy?.strategyHash || strategyAttestation || attesting) return
-    setAttesting(true)
-    attestStrategyOnChain(rawStrategy, { attester: realAddress })
-      .then((a) => setStrategyAttestation(formatAttestation(a)))
-      .finally(() => setAttesting(false))
-  }, [rawStrategy, realAddress])
-
   // Background agent
   const [agentEnabled, setAgentEnabled] = useS(
     () => localStorage.getItem('yv_agent_enabled') !== 'false'
@@ -648,27 +1369,25 @@ const App = () => {
   // vf-autofarm KeeperPanel state — populated by the SAME 15s poll that already fetches
   // keeper events below (keeperLedgerRef), never a second interval.
   const [keeperActivity, setKeeperActivity] = useS([]) // newest-first, capped — feeds KeeperPanel
-  // vf-lifeboat Task 8 — separate from keeperActivity: KeeperPanel's LastAction assumes every
-  // item is a compound/rebalance alert shape (it treats anything without kind==='compound_executed'
-  // as a rebalance row), so mixing derisk/resume/mandate items into that array would render a
-  // broken "Rebalanced" row whenever a lifeboat event became the newest entry.
   const [lifeboatState, setLifeboatState] = useS(null) // {derisked, mandateExpiry, authority} | null
-  const [lifeboatActivity, setLifeboatActivity] = useS([]) // newest-first, capped — feeds LifeboatPanel
-  const [lifeboatBusy, setLifeboatBusy] = useS(false)
-  const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null, strategies: [] })
-  const [rebalancePulse, setRebalancePulse] = useS(null) // { key, ts } — force-graph edge pulse
+  const lifeboatStateRef = useR(lifeboatState)
+  lifeboatStateRef.current = lifeboatState
+  // My Money Task 13 Part B: `lifeboatActivity` (a second, derisk/resume/mandate-only activity
+  // log) and `lifeboatBusy`/`rebalancePulse` (a mandate-grant spinner and a force-graph edge pulse)
+  // are removed -- OpsConsole's LifeboatPanel/AgentGraph were their only readers, both retired.
+  // derisk/resume/mandate events are now routed straight into the alert bell (see the keeper poll
+  // below); the mandate-grant pending state is now `moneyActionPending` (handleMoneyPrimaryAction).
+  const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null })
   // vf-base-dashboard Task 10 — read-only Base positions (own poll piggyback, see the 15s
-  // sync() below). Stays [] for Stellar-only users; loadBasePositions never throws.
+  // sync() below). Stays [] for Stellar-only users; loadDeviceBasePositions never throws.
   const [basePositions, setBasePositions] = useS([])
   // Set only once the user actually clicks Withdraw on a Base position: { position,
   // ownerKernelAccount, publicClient } after the one-tap ensureBaseOwner login ceremony.
   const [baseWithdraw, setBaseWithdraw] = useS(null)
   const [baseWithdrawError, setBaseWithdrawError] = useS(null)
 
-  const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') === 'true')
-  const [railCollapsed, setRailCollapsed] = useS(
-    () => localStorage.getItem('yv_rail_collapsed') === 'true'
-  )
+  // New sessions default to labeled navigation; the legacy secondary rail no longer exists.
+  const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') !== 'false')
 
   const toggleSb = () => {
     setSbExtended((prev) => {
@@ -677,17 +1396,10 @@ const App = () => {
     })
   }
 
-  const toggleRail = () => {
-    setRailCollapsed((prev) => {
-      localStorage.setItem('yv_rail_collapsed', String(!prev))
-      return !prev
-    })
-  }
-
   useE(() => {
-    document.documentElement.dataset.palette = tweaks.palette
+    applyTheme(normalizedTheme)
     document.documentElement.dataset.density = tweaks.density
-  }, [tweaks.palette, tweaks.density])
+  }, [normalizedTheme, tweaks.density])
 
   // Redirect old hash URLs (bookmarks like /#/home → /home)
   useE(() => {
@@ -697,17 +1409,16 @@ const App = () => {
     }
   }, [])
 
-  // Document title per route
+  // Document title per route (resolveDocumentTitle mirrors this component's own render branch
+  // order -- see appShellTitle.js).
   useE(() => {
-    const titles = {
-      '/home': 'vibing / farmer',
-      '/strategy': 'New strategy | Vibing Farmer',
-      '/agent': 'Autonomous agent | Vibing Farmer',
-      '/history': 'History | Vibing Farmer',
-      '/settings': 'Settings | Vibing Farmer',
-    }
-    document.title = titles[location.pathname] || 'Vibing Farmer'
-  }, [location.pathname])
+    document.title = resolveDocumentTitle({
+      pathname: location.pathname,
+      skipLanding,
+      realAddress,
+      onboarded,
+    })
+  }, [location.pathname, skipLanding, realAddress, onboarded])
 
   // Record the furthest step reached so the rail can navigate to visited steps (and only those)
   useE(() => {
@@ -719,7 +1430,7 @@ const App = () => {
     )
   }, [stage])
 
-  const paletteIsLight = tweaks.palette === 'bone-paper'
+  const paletteIsLight = isLightTheme(normalizedTheme)
   const speed = SPEED_MS[tweaks.speed] || SPEED_MS.medium
 
   const addLog = (entry) => {
@@ -732,18 +1443,20 @@ const App = () => {
   // Restore positions on connect (instant from cache) then reconcile against chain.
   // Fixes home resetting to "no positions" after reload/reconnect with same wallet.
   useE(() => {
-    if (!realAddress) return
+    if (!realAddress || !activeAccount) return
+    const captured = activeAccount
+    const isCurrent = () => activeAccountRef.current === captured
     const restored = loadPersistedPositions(realAddress)
-    if (Object.keys(restored).length) {
+    if (isCurrent() && Object.keys(restored).length) {
       setAgentData((d) => ({ ...d, positions: { ...restored, ...d.positions } }))
     }
     // Mark hydrated after this render+effect flush (setTimeout 0), so the restored cache
     // is committed before the persist effect is allowed to write an empty map. Pre-hydration
     // empties stay skipped (anti-clobber); post-hydration empties = real withdraws → persist.
-    const hydrateTimer = setTimeout(() => {
-      hydratedRef.current = realAddress
-    }, 0)
     let alive = true
+    const hydrateTimer = setTimeout(() => {
+      if (alive && isCurrent()) hydratedRef.current = realAddress
+    }, 0)
     const persistedAgents = loadDeployedAgents(realAddress)
     ;(async () => {
       let agents = persistedAgents
@@ -758,12 +1471,13 @@ const App = () => {
         if (!agents.length) {
           agents = await discoverAgentsFromVault(realAddress).catch(() => [])
         }
+        if (!alive || !isCurrent()) return
         if (agents.length) {
           saveDeployedAgents(realAddress, agents)
           deployedAgentsRef.current = agents
         }
       }
-      if (!alive) return
+      if (!alive || !isCurrent()) return
       // Prefer the scope-derived agent list (per-run grant agents — the authoritative
       // source once scopes rehydrate); discovered agents cover the fresh-browser case.
       const scopeAgents = positionsAgentsRef.current
@@ -772,7 +1486,7 @@ const App = () => {
         realAddress,
         useAgents.length ? { agents: useAgents } : undefined
       ).catch(() => null)
-      if (!alive || !chain) return // null = no RPC / all reads failed → keep cache
+      if (!alive || !isCurrent() || !chain) return // null = no RPC / all reads failed → keep cache
       // Cold reconnect: cached positions are from a PRIOR session, so they're mined and
       // the chain is authoritative. applyChainPositions replaces balances and PRUNES any
       // vault the chain reports as '0' (withdrawn) — this is what heals a stale cached
@@ -789,7 +1503,7 @@ const App = () => {
       clearTimeout(hydrateTimer)
       hydratedRef.current = null
     }
-  }, [realAddress])
+  }, [realAddress, activeAccount])
 
   // Persist in-session position changes (deposits, withdraws). Pre-hydration empties are
   // skipped so a fresh-connect {} can't clobber the cached snapshot before restore runs.
@@ -808,14 +1522,16 @@ const App = () => {
   // can lower a balance (after owner_withdraw) and prune a fully-swept vault. The worker
   // also emits a 'position' event on deposit — this is the cold-reconcile cross-check.
   useE(() => {
-    if (!realAddress) return
+    if (!realAddress || !activeAccount) return
     let alive = true
+    const captured = activeAccount
+    const isCurrent = () => activeAccountRef.current === captured
     const sync = async () => {
       const startedAt = Date.now()
       // vf-base-dashboard Task 10 — piggybacks this SAME 15s poll (never a second interval).
-      // loadBasePositions never throws (see its own guard/catch); [] for Stellar-only users.
-      loadBasePositions().then((bp) => {
-        if (alive) setBasePositions(bp)
+      // loadDeviceBasePositions never throws (see its own guard/catch); [] for Stellar-only users.
+      loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) => {
+        if (alive && isCurrent()) setBasePositions(bp)
       })
       // Prefer the scope-derived agent list (per-run grant agents — kept fresh via
       // positionsAgentsRef); fall back to saved/discovered agents (fresh-browser case),
@@ -838,6 +1554,7 @@ const App = () => {
         if (!discovered.length) {
           discovered = await discoverAgentsFromVault(realAddress).catch(() => [])
         }
+        if (!alive || !isCurrent()) return
         if (discovered.length) {
           saveDeployedAgents(realAddress, discovered)
           deployedAgentsRef.current = discovered
@@ -848,7 +1565,7 @@ const App = () => {
         realAddress,
         pollAgents.length ? { agents: pollAgents } : undefined
       ).catch(() => null)
-      if (alive && chain) {
+      if (alive && isCurrent() && chain) {
         // A tick's reads can straddle a withdraw: dispatched before the sweep, resolved after
         // the withdraw's own reconcile corrected the vault — and applyChainPositions REPLACES,
         // so the stale snapshot would repaint the swept balance for a tick. While a vault's
@@ -871,12 +1588,11 @@ const App = () => {
           SOROBAN_AUTOFARM_VAULT_ADDRESS,
           keeperLedgerRef.current
         )
-        if (!alive) return
+        if (!alive || !isCurrent()) return
         // KeeperPanel activity feed — separate from the deduped/capped-at-8 alerts list above
         // (handleAgentEvent keeps only the LATEST of each kind for notifications; the panel
         // wants its own short history of real keeper actions).
         const newActivity = []
-        const newLifeboatActivity = []
         for (const ev of events) {
           keeperLedgerRef.current = Math.max(keeperLedgerRef.current || 0, ev.ledger + 1)
           if (ev.type === 'compound') {
@@ -888,6 +1604,12 @@ const App = () => {
               pricePerShare: toDisplay(ev.pricePerShare).toFixed(4),
               txHash: ev.txHash,
               timestamp: Date.now(),
+              // Task 10 C1-FIX: the real ledger-close time (keeperEvents.js's own `closedAt`,
+              // decoded from `ledgerClosedAt` -- "the ONLY source for closedAt"), kept alongside
+              // `timestamp` (read time, still used by CrewActivity.jsx's own "x ago" display) so
+              // classifyKeeperAutomation can judge freshness from when the keeper actually acted,
+              // not from whenever this poll happened to first see a historical event.
+              closedAt: ev.closedAt,
             }
             handleAgentEvent(item)
             newActivity.push(item)
@@ -903,32 +1625,34 @@ const App = () => {
               amountUsdc: toDisplay(ev.amount).toFixed(2),
               txHash: ev.txHash,
               timestamp: Date.now(),
+              closedAt: ev.closedAt, // Task 10 C1-FIX -- see the compound branch's comment above.
             }
             handleAgentEvent(item)
             newActivity.push(item)
-            // Pulse the force-graph edge between the two strategies/vault this rebalance moved
-            // funds between (rebalancePulseKey is direction-independent — see agents.jsx).
-            setRebalancePulse({ key: rebalancePulseKey(ev.from, ev.to), ts: Date.now() })
-          } else if (ev.type === 'derisk' || ev.type === 'resume' || ev.type === 'mandate') {
-            // Lifeboat activity feed (vf-lifeboat) — kept in decodeKeeperEvent's own shape
-            // (type/reasonCode/drainedTotal/txHash) rather than remapped into keeperActivity's
-            // kind-based alert objects; see lifeboatActivity state comment above for why.
-            newLifeboatActivity.push({ ...ev, timestamp: Date.now() })
           } else if (
+            ev.type === 'derisk' ||
+            ev.type === 'resume' ||
+            ev.type === 'mandate' ||
             ev.type === 'upgrade_scheduled' ||
             ev.type === 'upgrade_executed' ||
             ev.type === 'upgrade_cancelled'
           ) {
-            // Upgrade timelock visibility (surface-only — no auto-derisk, no on-chain action).
-            // Straight into the alert bell via handleAgentEvent, same as compound/rebalance
-            // above, so a holder actually sees a pending bytecode swap before the 3-day exit
-            // window closes.
+            // My Money Task 13 Part B: derisk/resume/mandate used to feed a dedicated
+            // `lifeboatActivity` log array, which had no reader once MyMoneyRoute replaced
+            // OpsConsole's own LifeboatPanel -- VaultProtection/HowMoneyWorks (this task's own
+            // classifyLifeboatAutomation) already surface the CURRENT protection state, but the
+            // EVENT itself (an emergency de-risk is exactly the kind of action an owner must not
+            // miss) would otherwise become fully invisible. Routed into the SAME generic alert-bell
+            // path upgrade_scheduled/upgrade_executed/upgrade_cancelled already use below, rather
+            // than a second, now-readerless log.
             handleAgentEvent({
               id: `${ev.type}:${ev.ledger}`,
               kind: `vault_${ev.type}`,
               vaultName: 'Autofarm vault',
               wasmHashHex: ev.wasmHashHex,
               eta: ev.eta,
+              reasonCode: ev.reasonCode,
+              drainedTotal: ev.drainedTotal,
               txHash: ev.txHash,
               timestamp: Date.now(),
             })
@@ -937,40 +1661,21 @@ const App = () => {
         if (newActivity.length) {
           setKeeperActivity((prev) => [...newActivity.reverse(), ...prev].slice(0, 20))
         }
-        if (newLifeboatActivity.length) {
-          setLifeboatActivity((prev) => [...newLifeboatActivity.reverse(), ...prev].slice(0, 20))
-        }
       } catch (e) {
         // transient RPC failure — the next 15s tick retries
         console.warn('[app] keeper event read failed:', e)
       }
-      // Live autofarm vault reads for the KeeperPanel: price-per-share + registered strategies,
-      // each paired with a best-effort Blend supply-APR estimate. Best-effort end to end — a
-      // failed read leaves the panel showing "--", never a fake number.
+      // Live autofarm vault read for HowMoneyWorks' classifyStrategyConfiguration: price-per-share
+      // only. My Money Task 13 Part B: this used to also fetch registered strategies + a
+      // per-strategy Blend supply-APR estimate for the force-graph cluster below (buildAutofarmGraphData)
+      // -- that graph had no reader once MyMoneyRoute replaced OpsConsole, so the strategies/APR
+      // fetch is dropped too (it existed only to feed that graph; leaving it would mean an RPC call
+      // every 15s for data nothing renders). Best-effort — a failed read leaves the panel showing
+      // "--", never a fake number.
       try {
-        const [pps, strategyAddrs] = await Promise.all([
-          readPricePerShare(SOROBAN_AUTOFARM_VAULT_ADDRESS),
-          readStrategies(SOROBAN_AUTOFARM_VAULT_ADDRESS),
-        ])
-        if (!alive) return
-        const strategies = await Promise.all(
-          strategyAddrs.map(async (addr) => {
-            const meta = AUTOFARM_STRATEGY_META[addr] || {}
-            const aprBps = meta.poolAddress ? await readSupplyAprBps(meta.poolAddress) : null
-            return {
-              address: addr,
-              label: meta.label || shortAddr(addr),
-              poolAddress: meta.poolAddress || null,
-              poolLabel: meta.poolLabel || null,
-              aprPct: aprBps == null ? null : aprBps / 100,
-            }
-          })
-        )
-        if (alive) {
-          setAutofarmReads({
-            pricePerShare: pps == null ? null : toDisplay(pps).toFixed(4),
-            strategies,
-          })
+        const pps = await readPricePerShare(SOROBAN_AUTOFARM_VAULT_ADDRESS)
+        if (alive && isCurrent()) {
+          setAutofarmReads({ pricePerShare: pps == null ? null : toDisplay(pps).toFixed(4) })
         }
       } catch (e) {
         // transient RPC failure — the next 15s tick retries; panel keeps its last-known reads
@@ -980,12 +1685,17 @@ const App = () => {
       // already returns null on RPC failure internally); this catch is defensive only.
       try {
         const s = await readLifeboatState(SOROBAN_AUTOFARM_VAULT_ADDRESS)
-        if (alive) setLifeboatState(s)
+        if (alive && isCurrent()) setLifeboatState(s)
       } catch {
-        if (alive) setLifeboatState(null)
+        if (alive && isCurrent()) setLifeboatState(null)
       }
       // Council monitor — check market drift setiap 15s tick.
-      if (alive && agentSettings.riskMonitoring && Object.keys(agentData.positions).length) {
+      if (
+        alive &&
+        isCurrent() &&
+        agentSettings.riskMonitoring &&
+        Object.keys(agentData.positions).length
+      ) {
         try {
           const apyByVault = {}
           for (const addr of Object.keys(agentData.positions)) {
@@ -1005,7 +1715,7 @@ const App = () => {
       alive = false
       clearInterval(id)
     }
-  }, [realAddress])
+  }, [realAddress, activeAccount])
 
   useE(() => {
     localStorage.setItem('yv_agent_enabled', String(agentEnabled))
@@ -1063,10 +1773,7 @@ const App = () => {
     }
     if (ev.kind === 'market_signal') {
       const settings = loadSettings()
-      if (!settings.monitorEnabled) {
-        setMonitorStatus((s) => ({ ...s, lastCheck: ev.timestamp, level: 'disabled' }))
-        return
-      }
+      if (!settings.monitorEnabled) return
       // 15s poll handles council monitor even without strategy (page refresh).
       // Only run the check here when a strategy exists (normal session flow).
       if (strategy?.agents?.length) {
@@ -1117,7 +1824,7 @@ const App = () => {
               : ev.kind === 'compound_executed'
                 ? `Keeper compounded ${ev.vaultName}, +${ev.totalGainUsdc} USDC, price/share ${ev.pricePerShare}.`
                 : ev.kind === 'rebalance_executed'
-                  ? `Keeper rebalanced ${ev.vaultName}, ${ev.fromLabel} → ${ev.toLabel}, ${ev.amountUsdc} USDC moved.`
+                  ? `Keeper rebalanced ${ev.vaultName}, ${ev.fromLabel} to ${ev.toLabel}, ${ev.amountUsdc} USDC moved.`
                   : ''
     addLog({
       event:
@@ -1252,121 +1959,14 @@ const App = () => {
     setLoopRestartTick((t) => t + 1)
   }, [agentData.positions, agentEnabled, realAddress])
 
-  // ── Autonomous Auto-Exit monitor loop ──
-  useE(() => {
-    if (!realAddress || stage !== 'done' || !agentEnabled) return
-    let active = true
-
-    const checkExit = async () => {
-      const storedRules = localStorage.getItem(`yv_exit_rules_${realAddress}`)
-      if (!storedRules) return
-      const rules = JSON.parse(storedRules)
-      if (!rules.authorized) return
-
-      const stateForExit = {
-        portfolio: { holdings: agentData.positions },
-        universe: Object.keys(agentData.positions).map((addr) => {
-          const cat = VAULT_CATALOG.find((v) => v.addr.toLowerCase() === addr.toLowerCase()) || {}
-          const pos = agentData.positions[addr] || {}
-          return {
-            address: addr,
-            protocol: cat.protocol || 'blend',
-            apy: Number(cat.apy || 6.5),
-            tvl: cat.tvl || 25_000_000,
-            drawdown: Number(pos.drawdown || 0),
-          }
-        }),
-        market: {
-          utilization: 0.96, // default utilization for simulation
-          signals: [],
-        },
-      }
-
-      const result = evaluateExit(rules, stateForExit, {
-        nowMs: Date.now(),
-        lastExitTripAt: Number(localStorage.getItem(`yv_last_exit_trip_${realAddress}`) || '0'),
-      })
-
-      if (result.tripped && active) {
-        localStorage.setItem(`yv_last_exit_trip_${realAddress}`, String(Date.now()))
-        addLog({
-          event: 'AgentFailed',
-          meta: `Auto-Exit Triggered: ${result.reason}`,
-          detail: `Trigger: ${result.trigger}. Launching autonomous exit...`,
-        })
-
-        // Surface a critical risk alert
-        setAgentData((d) => ({
-          ...d,
-          alerts: [
-            {
-              id: `exit-alert-${Date.now()}`,
-              kind: 'risk_alert',
-              severity: 'critical',
-              vaultName: 'VFUSD Yield Vault',
-              vaultAddress: SOROBAN_ACTIVE_VAULT_ADDRESS,
-              message: `Auto-Exit Triggered: ${result.reason}`,
-              timestamp: Date.now(),
-            },
-            ...d.alerts,
-          ],
-        }))
-
-        // Every per-run agent holds its own slice of the position and its own exit key, so the
-        // autonomous exit is one run per agent. Agents whose exit signer was never registered throw
-        // "No exit key is authorized" — surfaced, not swallowed, because the funds stay at risk.
-        const exitAgents = pickVaultAgents(scopes, SOROBAN_ACTIVE_VAULT_ADDRESS)
-        const exited = []
-        const exitFailed = []
-        for (const agentAddress of exitAgents) {
-          try {
-            exited.push(await runAutonomousExit({ agentAddress, ownerAddress: realAddress }))
-          } catch (err) {
-            console.error('[AutoExit] Autonomous exit failed for', agentAddress, err)
-            exitFailed.push({ agentAddress, error: err.message })
-          }
-        }
-
-        if (!exitAgents.length) {
-          addLog({
-            event: 'AgentFailed',
-            meta: 'Automatic exit stopped. No active agent holds this position.',
-            detail: 'Please execute emergency withdraw manually.',
-          })
-        }
-        if (exited.length) {
-          addLog({
-            event: 'AgentCompleted',
-            meta: `Autonomous exit swept ${exited.length} of ${exitAgents.length} agents. Transaction: ${exited[0].hash.slice(0, 8)}...`,
-            detail: 'Vault shares redeemed and USDC principal returned to owner wallet.',
-          })
-          const chain = await reconcileWithRetry(realAddress)
-          if (chain) {
-            setAgentData((d) => ({
-              ...d,
-              positions: applyChainPositions(d.positions, chain),
-              lastUpdated: Date.now(),
-            }))
-          }
-        }
-        if (exitFailed.length) {
-          addLog({
-            event: 'AgentFailed',
-            meta: `Automatic exit failed for ${exitFailed.length} of ${exitAgents.length} agents: ${exitFailed[0].error}`,
-            detail: 'Please execute emergency withdraw manually for the agents that did not exit.',
-          })
-        }
-      }
-    }
-
-    const intervalId = setInterval(checkExit, 15000)
-    checkExit()
-
-    return () => {
-      active = false
-      clearInterval(intervalId)
-    }
-  }, [realAddress, stage, agentEnabled, agentData.positions])
+  // The browser-driven autonomous Auto-Exit monitor loop (a 15s polling effect) that used to live
+  // here has been removed — risk watch is observe-only (money/riskWatchStore.js) and no legacy
+  // local rule may autonomously move production funds. Any leftover yv_exit_rules_*,
+  // yv_last_exit_trip_*, yv_exit_key_*, or vf_exit_inflight_* browser data from that removed
+  // feature is inspected (never auto-deleted) by money/legacyAutoExit.js, surfaced under Settings
+  // → Data & Privacy → "Legacy auto-exit data" (components/settings/LegacyAutoExitCleanup.jsx).
+  // Manual partial withdrawal is unaffected — it goes through stellar/partialWithdraw.js and the
+  // owner-scoped v2 exit-key namespace, which this removal never touches.
 
   // Persist a resume snapshot whenever the user is in an active ('done') session, so a
   // refresh can re-enter it (the mount effect reads this back). Only 'done' sessions —
@@ -1446,7 +2046,8 @@ const App = () => {
   // AI calls + possible synthesis call) so it runs as an effect, not a useMemo. Uses the SAME
   // live signals as the simulation panel. AI-only: each specialist retries once; if the provider
   // still fails, the council reports 'unavailable' and the panel offers a retry — no fabricated
-  // verdict. For the new debate council, see handleRunCouncil below.
+  // verdict. (The manual debate-council retry this comment used to point at, `handleRunCouncil`,
+  // was only ever wired to the old ceremony's StrategyCard button and was deleted in fix loop 1.)
   useE(() => {
     if (!strategy?.agents?.length) {
       setCouncil(undefined)
@@ -1493,7 +2094,7 @@ const App = () => {
       cancelled = true
       ctrl.abort()
     }
-  }, [strategy, strategyPhase, amount, risk, councilRetry, debateRunning, debateResult])
+  }, [strategy, amount, risk, councilRetry, debateRunning, debateResult])
 
   const handleEmergencyWithdraw = async (alert) => {
     const pos = agentData.positions[alert.vaultAddress]
@@ -1505,7 +2106,12 @@ const App = () => {
     // NOTE: agentSettings.emergencyPct cannot be honoured — owner_withdraw takes no amount and
     // always sweeps the agent whole. A partial emergency exit needs a vault-level partial redeem;
     // until then this is full-exit only, and the settings copy overpromises.
-    const agents = pickVaultAgents(scopes, alert.vaultAddress)
+    //
+    // My Money Task 13 Part B item 5: migrated off the deleted `pickVaultAgents` (dropped
+    // revoked-but-funded agents -- exactly the ones an emergency sweep must not skip).
+    // `pickRecoverableVaultAgents` (the discovery-based replacement) keeps every candidate this
+    // envelope has proven belongs to this owner for this vault, active or revoked.
+    const agents = pickRecoverableVaultAgents(moneyDiscovery, { vault: alert.vaultAddress })
     if (!agents.length) {
       addLog({
         event: 'AgentFailed',
@@ -1515,7 +2121,19 @@ const App = () => {
       return
     }
     try {
-      const results = await withdrawAllFromVault(alert.vaultAddress, realAddress, agents)
+      const captured = activeAccount
+      assertActiveAccount(captured)
+      const results = await withdrawAllFromVault(
+        alert.vaultAddress,
+        realAddress,
+        agents,
+        undefined,
+        {
+          activeAccount: captured,
+          getCurrentActiveAccount: () => activeAccountRef.current,
+        }
+      )
+      assertActiveAccount(captured)
       const ok = results.filter((r) => r.ok)
       const failed = results.filter((r) => !r.ok)
       if (ok.length) {
@@ -1538,12 +2156,13 @@ const App = () => {
         addLog({
           event: 'AgentFailed',
           meta: `Emergency withdrawal incomplete: ${failed.length} of ${results.length} agents failed.`,
-          detail: failed[0].error,
+          detail: failed[0].error?.message ?? failed[0].error,
         })
         return
       }
       dismissAlert(alert.id)
     } catch (e) {
+      if (e?.code === 'ACTIVE_ACCOUNT_CHANGED') return
       addLog({ event: 'AgentFailed', meta: `Withdrawal failed: ${e.message}` })
     }
   }
@@ -1551,52 +2170,16 @@ const App = () => {
   const handleReviewRebalance = (alert) =>
     addLog({
       event: 'OrchestratorPlanned',
-      meta: `Rebalance review: ${alert.fromVault} → ${alert.toProtocol} (+${alert.apyGain}%).`,
+      meta: `Rebalance review: ${alert.fromVault} to ${alert.toProtocol} (+${alert.apyGain}%).`,
       detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing authorizes a fresh Soroban session-key scope for the new vault.`,
     })
 
-  // Kill switch — user-signed Registry.revoke (works even if the relayer is down).
-  // Optimistically flip the row; the on-chain agent_revoked subscription confirms it.
-  const handleRevokeAgent = async (agent) => {
-    try {
-      // Revoke is a kill switch, not an exit: on-chain it only flips the flag and clears the
-      // allowance — it never redeems shares. Every withdraw list filters revoked agents out, so
-      // revoking a still-funded agent strands its deposit with no in-app way back. Refuse and
-      // point at the exit that actually moves the money. Fails OPEN on a read failure: an RPC
-      // hiccup must not disable the kill switch — a stranded deposit has a second chance
-      // (withdraw first), a live rogue key does not.
-      const scope = scopes.find((r) => r.agent?.toLowerCase() === agent.toLowerCase())
-      const shares = await readContract({
-        contract: scope?.vault || SOROBAN_ACTIVE_VAULT_ADDRESS,
-        method: 'balance',
-        args: [{ addr: agent }],
-      }).catch(() => 0n)
-      if (BigInt(shares ?? 0) > 0n) {
-        addLog({
-          event: 'AgentFailed',
-          meta: `Revocation blocked: agent ${shortAddr(agent)} still holds ${toDisplay(shares).toFixed(2)} vault shares.`,
-          detail:
-            'Withdraw first — a revoked agent disappears from every withdraw list, which would strand these funds.',
-        })
-        return
-      }
-      const { hash: tx } = await revokeAgentOnChain({ owner: realAddress, agent })
-      setScopes((prev) =>
-        prev.map((s) =>
-          s.agent?.toLowerCase() === agent.toLowerCase() ? { ...s, revoked: true } : s
-        )
-      )
-      addLog({
-        event: 'PermissionRevoked',
-        meta: `Revoked agent ${shortAddr(agent)}. Transaction ${shortAddr(tx)}.`,
-        txHash: tx,
-        detail:
-          'Agent scope revoked on-chain. Further deposits by this key now revert (ScopeInactive).',
-      })
-    } catch (e) {
-      addLog({ event: 'AgentFailed', meta: `Revocation failed: ${e.message}` })
-    }
-  }
+  // My Money Task 13: the old OpsConsole-only revoke handler that lived here is DELETED, not
+  // merely orphaned — it was Part B item 1's named defect ("the live revoke treats an unreadable
+  // balance as zero", `.catch(() => 0n)` above the old `shares` read), superseded by
+  // handleConfirmRevoke (StopAccessDialog -> ownerActions.js's planRevoke, which reports an
+  // unreadable balance as a WARNING, never a safe-to-revoke zero). It had zero callers left once
+  // OpsConsole stopped being the production /agent route — confirmed via grep before deletion.
 
   // Live agent_revoked subscription — flips a scope row to "revoked" the instant the event lands,
   // whether revoked from this UI or elsewhere. subscribeAgentRevoked already filters to the owner.
@@ -1635,17 +2218,20 @@ const App = () => {
   // Lifeboat mandate grant (vf-lifeboat) — user-signed, time-boxed 24h authority. Re-reads
   // lifeboat_state() right after the tx lands so the panel's countdown updates immediately
   // instead of waiting for the next 15s poll tick.
+  //
+  // My Money Task 13 Part B: this used to toggle its own `lifeboatBusy` flag, which had no reader
+  // once MyMoneyRoute replaced OpsConsole's own LifeboatPanel. `handleMoneyPrimaryAction`'s
+  // 'renew-protection' case (below) now wraps this SAME call in `moneyActionPending` -- the
+  // pending flag MoneyHero's primary action button already disables on -- so this call still gets
+  // a real pending indicator, using the mechanism the new route actually renders.
   const onGrantMandate = async () => {
     if (!realAddress) return
-    setLifeboatBusy(true)
     try {
       await grantMandate({ owner: realAddress })
       const s = await readLifeboatState()
       setLifeboatState(s)
     } catch (e) {
       console.error('mandate grant failed', e)
-    } finally {
-      setLifeboatBusy(false)
     }
   }
 
@@ -1690,7 +2276,14 @@ const App = () => {
         const rows = await rehydrateScopes({ owner: realAddress }).catch(() => null)
         if (rows && gen === scopeGenRef.current) setScopes(rows)
         if (scopeTries >= 6) return
-        if (rows && pickVaultAgents(rows, vaultAddress).length === 0) return
+        // My Money Task 13 Part B item 5: `rows` is rehydrateScopes()'s own plain-scope shape
+        // ({agent, vault, revoked}), NOT an OwnerDiscoveryV1 envelope -- forcing it through the
+        // discovery-based `pickRecoverableVaultAgents` would silently break (that picker reads
+        // `.address`, which this shape doesn't have). This is also a genuinely different question
+        // than item 5's exit-enumeration concern: it's asking "has the post-sweep revoke landed on
+        // RPC yet", not "who must a sweep target" -- so it deliberately keeps excluding revoked
+        // rows via the extracted `hasLiveScopeForVault` rather than switching pickers.
+        if (rows && !hasLiveScopeForVault(rows, vaultAddress)) return
         setTimeout(refreshScopes, 2000)
       }
       refreshScopes()
@@ -1739,18 +2332,37 @@ const App = () => {
   // ZeroDev/viem chain behind it) out of the eager bundle — mirrors orchestrator.js's
   // baseLeg.js gating (Task 8).
   const handleBaseWithdrawClick = async () => {
+    const captured = activeAccount
+    assertActiveAccount(captured)
     setBaseWithdrawError(null)
     // The positions on screen belong to THIS account; the ceremony below is discoverable, and
     // a user with several look-alike passkeys can pick one that derives a different (empty)
     // kernel — the withdraw userOp then reverts in simulation with an unreadable AA error, and
     // ensureBaseOwner's persist clobbers the good marker with the wrong address (seen live
     // 2026-07-20). Guard: mismatch → restore the marker + a retry-with-another-passkey message.
-    const expected = localStorage.getItem('vf_base_owner_address')
+    //
+    // VF Wallet Task 6: `expected` is sourced from the owner-scoped v2 record (readBaseOwner)
+    // instead of the blind global vf_base_owner_address key — a different connected wallet's
+    // leftover ceremony must never be read as "expected" here. ensureBaseOwner (unchanged)
+    // still dual-writes BOTH the legacy keys and the v2 record on every resolution, so a
+    // mismatch/failure restore must put BOTH back, or one storage location would keep the
+    // wrong-passkey clobber even after "restoring" the other.
+    const ownerRecordBefore = readBaseOwner(realAddress)
+    const expected = ownerRecordBefore?.kernelAddress || null
+    const restoreOwnerRecord = () => {
+      if (!realAddress) return
+      if (expected) localStorage.setItem('vf_base_owner_address', expected)
+      if (ownerRecordBefore) {
+        localStorage.setItem(baseOwnerStorageKey(realAddress), JSON.stringify(ownerRecordBefore))
+      }
+    }
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
+      assertActiveAccount(captured)
       const owner = await ensureBaseOwner({ connectedAddress: realAddress })
+      assertActiveAccount(captured)
       if (expected && owner.address?.toLowerCase() !== expected.toLowerCase()) {
-        localStorage.setItem('vf_base_owner_address', expected)
+        restoreOwnerRecord()
         setBaseWithdrawError(
           `That passkey opens a different Base account (${owner.address.slice(0, 6)}…) than the one holding these positions (${expected.slice(0, 6)}…). Retry and pick another passkey.`
         )
@@ -1763,256 +2375,67 @@ const App = () => {
         account: owner.address,
         publicClient: owner.publicClient,
       })
+      assertActiveAccount(captured)
       setBaseWithdraw({
         positions: basePositions,
         idleUsdc,
         ownerKernelAccount: owner.kernelAccount,
         publicClient: owner.publicClient,
+        activeAccount: captured,
       })
     } catch (err) {
-      if (expected) localStorage.setItem('vf_base_owner_address', expected)
+      restoreOwnerRecord()
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED') return
       setBaseWithdrawError(err.message)
     }
   }
 
-  // Cross-device recovery: the Base owner markers live in localStorage, but the passkey itself
-  // is synced (phone / password manager) and login is discoverable — one tap on a NEW device
-  // re-derives the SAME kernel account (passkeyBridge's two-way fallback), re-persists the
-  // markers, and the positions panel comes back. Without this, positions farmed on another
-  // laptop were invisible here with no code path to ever show them.
-  // Base token activity is loaded on History → Base (not home), so recover only refreshes positions.
-  const handleBaseRecover = async () => {
-    if (!realAddress) return
+  // Fix loop 1, I2: `handleBaseRecover` restored, re-sited on MyMoneyRoute (not RecoveryPanel --
+  // see MyMoneyRoute.jsx's own header comment for why RecoveryPanel cannot be the trigger: it only
+  // opens via openMoneyRecoveryFromOutcomes, i.e. AFTER an owner action already ran, so it is
+  // unreachable on exactly the brand-new-device/zero-local-state case this fixes). Same shape the
+  // review asked for: a discoverable passkey login (`preferLogin: true` -- an existing account is
+  // PRESUMED, so this never mints a fresh, empty kernel on a device that already has real custody)
+  // followed by the OWNER-WIDE `loadIndexedBasePositions` reader (Part B item 4), never
+  // `loadDeviceBasePositions`'s own local-record gate -- that gate is exactly the device-scoped
+  // assumption this whole gap traces back to. Enrichment (pool name/apy) is the same small map
+  // `loadDeviceBasePositions` itself applies, inlined here rather than exported from
+  // base/dashboardPositions.js, which is outside this fix loop's authorized file list. Never
+  // fabricates a position: `positions` is exactly what this read returns, [] when the ceremony
+  // succeeds but nothing is found there.
+  async function handleRecoverBaseAccount() {
+    if (!realAddress || !activeAccount) return
+    const captured = activeAccount
+    assertActiveAccount(captured)
+    setMoneyActionPending(true)
     setBaseWithdrawError(null)
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
-      await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
-      const bp = await loadBasePositions()
-      setBasePositions(bp)
-      if (!bp.length) setBaseWithdrawError('Base account connected — no open positions found.')
+      assertActiveAccount(captured)
+      const account = await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
+      assertActiveAccount(captured)
+      const result = await loadIndexedBasePositions({
+        stellarOwner: realAddress,
+        indexedBaseAccounts: [account.address],
+      })
+      assertActiveAccount(captured)
+      const positions = (result.accounts?.[0]?.positions ?? []).map((pos) => {
+        const cat = BASE_POOL_CATALOG.find(
+          (p) => p.address.toLowerCase() === pos.pool.toLowerCase()
+        )
+        return { ...pos, poolName: cat?.name || pos.pool, apy: cat?.apy || 0 }
+      })
+      setBasePositions(positions)
     } catch (err) {
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED') return
       setBaseWithdrawError(err.message)
-    }
-  }
-
-  // 1-tap Base activation (grant-covers-burn design §4/§5) — a SETUP moment, never something a
-  // run performs. On success, re-runs the same gate the affordance itself is driven by, so a
-  // silently-failed relayer registration cannot leave a stale "activated" state.
-  const handleSetupBaseMandate = async () => {
-    if (!realAddress) return
-    setSettingUpBaseMandate(true)
-    setBaseMandateError(null)
-    try {
-      await setupBaseMandate({ connectedAddress: realAddress })
-      const mandateOk = await checkStoredBaseMandate({ getMandateStatus })()
-      setNeedsBaseMandate(needsBaseMandateSetup({ healthy: true, mandateOk }))
-    } catch (e) {
-      setBaseMandateError(e.message)
     } finally {
-      setSettingUpBaseMandate(false)
-    }
-  }
-
-  /* ----- STRATEGY (step 01) ----- */
-  const handleSubmitPreference = () => {
-    setStrategyPhase('thinking')
-    setThinkingPhase(0)
-    addLog({
-      event: 'OrchestratorPlanned',
-      meta: `${amount} USDC, ${risk} risk. Planning started.`,
-    })
-  }
-
-  useE(() => {
-    if (stage !== 'strategy' || strategyPhase !== 'thinking') return
-    let cancelled = false
-    setThinkTimes([])
-    setThinkingPhase(0)
-    setStrategyAttestation(null)
-    setRawStrategy(null)
-    const delay = (ms) => new Promise((r) => setTimeout(r, ms))
-    const freeze = (i, st) =>
-      setThinkTimes((a) => {
-        const n = [...a]
-        n[i] = (performance.now() - st) / 1000
-        return n
-      })
-
-    ;(async () => {
-      let st = performance.now()
-      await delay(speed * 0.6) // step 0: scan vaults
-      if (cancelled) return
-      freeze(0, st)
-      setThinkingPhase(1)
-
-      st = performance.now()
-      await delay(speed * 1.1) // step 1: allocation
-      if (cancelled) return
-      freeze(1, st)
-      setThinkingPhase(2)
-
-      // step 2: real AI call — ThinkingCard ticks a live timer + spinner until this resolves.
-      // App owns the timeout: after VENICE_TIMEOUT_MS, ask the user to keep waiting or fall back.
-      let s = null
-      const ctrl = new AbortController()
-      genAbortRef.current = ctrl
-      slowTimerRef.current = setTimeout(() => {
-        if (!cancelled) setSlowConfirm(true)
-      }, VENICE_TIMEOUT_MS)
       try {
-        const numVaults = { low: 1, med: 2, high: 3 }[risk] || 2
-        const riskLevel = risk === 'med' ? 'medium' : risk
-        // Fresh per run (not cached): a relayer that came up/down between strategy generations
-        // must be reflected immediately, not stick to whatever the last run observed.
-        const { checkRelayerHealth } = await import('./strategy/mergedCatalog.js')
-        // Not awaited here — the promise is handed to generateStrategy, which awaits it AFTER its
-        // own DAG fetch so the ~3s relayer probe overlaps that network wait instead of serializing
-        // before it (perf: overlap relayer health probe with strategy generation).
-        // Independent, narrower probe (health + mandate only) driving the "Activate Base"
-        // affordance — a relayer outage or missing funding are not fixed by a mandate tap, so
-        // those states never show the button. Fire-and-forget: never blocks strategy generation.
-        Promise.all([
-          checkRelayerHealth({ signal: ctrl.signal }),
-          checkStoredBaseMandate({ getMandateStatus })(),
-        ])
-          .then(([healthy, mandateOk]) => {
-            if (!cancelled) setNeedsBaseMandate(needsBaseMandateSetup({ healthy, mandateOk }))
-          })
-          .catch(() => {
-            if (!cancelled) setNeedsBaseMandate(false)
-          })
-        // Fail-closed preflight beyond bare relayer reachability: a stored-but-invalid Base
-        // mandate, or a connected wallet with no Circle USDC to burn, both quietly drop Base from
-        // the catalog rather than surface an error the user can't act on mid strategy-generation.
-        const { baseAvailable } = resolveBaseAvailability({
-          checkHealth: () => checkRelayerHealth({ signal: ctrl.signal }),
-          checkMandate: checkStoredBaseMandate({ getMandateStatus }),
-          checkFunding: checkCircleUsdcFunding({
-            address: realAddress || null,
-            readTokenBalance,
-            token: STELLAR_USDC_SAC,
-          }),
-        })
-        const veniceResult = await generateStrategy({
-          amount: Number(amount),
-          riskLevel,
-          numVaults,
-          veniceAuth: null, // wallet not connected yet at step 1
-          devApiKey: devApiKey || null,
-          signal: ctrl.signal,
-          address: realAddress || null, // positions node runs only when connected
-          baseAvailable,
-        })
-        setSkillSource(veniceResult.skillSource || 'default')
-        setMarketLive(!!veniceResult.marketContextUsed)
-        setVaultLive(veniceResult.vaultDataSource === 'defiLlama')
-        if (veniceResult.mdpState?.gasLevel) {
-          latestGasRef.current = {
-            level: veniceResult.mdpState.gasLevel,
-            gwei: veniceResult.mdpState.gasGwei,
-          }
-          addLog({
-            event: 'OrchestratorPlanned',
-            meta: `Market data fetched in parallel. Gas: ${veniceResult.mdpState.gasGwei} gwei (${veniceResult.mdpState.gasLevel}).`,
-          })
-        }
-        if (veniceResult.dagTimings) {
-          const breakdown = Object.entries(veniceResult.dagTimings)
-            .map(([id, ms]) => `${id} ${Math.round(ms)}ms`)
-            .join(', ')
-          addLog({
-            event: 'OrchestratorPlanned',
-            meta: `Strategy graph completed in ${veniceResult.dagWallMs}ms.`,
-            detail: breakdown,
-          })
-        }
-        setRawStrategy(veniceResult) // carries strategyHash → attestation effect picks it up once a provider exists
-        if (veniceResult.generatedBy !== 'fallback') {
-          s = mapVeniceToStrategy(veniceResult, amount, risk)
-          addLog({
-            event: 'OrchestratorPlanned',
-            meta: `Strategy generated by ${veniceResult.generatedBy}. ${(veniceResult.strategy_summary || veniceResult.rationale)?.slice(0, 60)}`,
-          })
-        }
-      } catch (e) {
-        console.warn('[app] Strategy AI failed:', e)
+        assertActiveAccount(captured)
+        setMoneyActionPending(false)
+      } catch {
+        // The account-transition reset already cleared this pending flag.
       }
-      clearTimeout(slowTimerRef.current)
-      setSlowConfirm(false)
-      if (cancelled) return
-      if (!s) s = buildStrategy(amount, risk)
-      setStrategy(s)
-      setStrategyPhase('ready')
-      const sk = {}
-      s.agents.forEach((a) => {
-        sk[a.id] = { state: 'pending', skill: null }
-      })
-      setSkillStates(sk)
-      addLog({
-        event: 'OrchestratorPlanned',
-        meta: `${s.agents.length} worker spawned, ${s.blendedApy}% blended apy`,
-      })
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [stage, strategyPhase])
-
-  const handleAcceptStrategy = () => setStage('connect')
-
-  const handleRunCouncil = async () => {
-    if (!strategy?.agents?.length || debateRunning) return
-    // Stay on strategyPhase 'ready' so the stage key does not remount StrategyCard
-    // (key used to flip ready→council and felt like a full page refresh).
-    setDebateRunning(true)
-    setDebateResult(null)
-    const ctrl = new AbortController()
-    try {
-      const state = buildStrategyState({
-        amountUsdc: Number(amount) || 0,
-        riskLevel: risk,
-        numVaults: strategy.agents.length,
-        vaultData: VAULT_CATALOG,
-        marketContext: marketLive,
-        positions: agentData.positions,
-        gas: latestGasRef.current,
-      })
-      const sim = runSimulation(allocationsFromStrategy(strategy), state, {
-        runs: 200,
-        horizonDays: 30,
-        seed: 1,
-        context: {
-          turbulence: strategy.mdpState?.turbulence || state.market.turbulence,
-          apyTrendPct: 0,
-          gasGwei: latestGasRef.current?.gwei || null,
-        },
-      })
-      const settings = await loadSettings()
-      const input = buildDebateInput(strategy, sim, state)
-      const result = await councilDebate(input, {
-        proposer: proposerVerdict,
-        riskCompliance: riskComplianceVerdict,
-        validator: validatorVerdict,
-        devApiKey: devApiKey || null,
-        signal: ctrl.signal,
-        maxIterations: settings.maxIterations || 5,
-        convergenceThreshold: 0.15,
-      })
-      setDebateResult(result)
-      setCouncil(result)
-      addLog({
-        event: 'OrchestratorPlanned',
-        meta: `Debate Council, ${result.verdict}, ${result.iterations} iters, converged: ${result.converged}`,
-      })
-    } catch (e) {
-      console.warn('[app] Debate council failed:', e)
-      addLog({
-        event: 'OrchestratorPlanned',
-        meta: `Debate Council failed, ${e?.message || 'unknown error'}`,
-      })
-    } finally {
-      setDebateRunning(false)
     }
   }
 
@@ -2030,13 +2453,6 @@ const App = () => {
     const diff = diffMarket(currentData, snapshot, settings)
     // Full debate requires strategy object — cap to fast re-eval on page refresh (strategy null)
     const safeLevel = !strategy?.agents?.length && diff.level === 'full' ? 'fast' : diff.level
-    setMonitorStatus({
-      lastCheck: Date.now(),
-      level: safeLevel,
-      score: diff.score,
-      reason: diff.reasons[0] || '',
-    })
-
     if (safeLevel === 'skip') return
 
     if (safeLevel === 'fast') {
@@ -2046,17 +2462,11 @@ const App = () => {
       if (result.passed) {
         saveSnapshot(result, currentData)
         if (settings.autoApprove) return
-        setMonitorStatus((s) => ({
-          ...s,
-          result: 'approved',
-          permissionSentence: result.permissionSentence,
-        }))
         addLog({
           event: 'OrchestratorPlanned',
           meta: `Monitor re-eval, fast pass, confidence ${(result.confidence * 100).toFixed(0)}%`,
         })
       } else {
-        setMonitorStatus((s) => ({ ...s, result: 'violation', error: result.error }))
         addLog({
           event: 'AgentFailed',
           meta: `Monitor re-eval, ${result.error}`,
@@ -2100,11 +2510,6 @@ const App = () => {
           convergenceThreshold: 0.15,
         })
         saveSnapshot(result, currentData)
-        setMonitorStatus((s) => ({
-          ...s,
-          result: result.verdict === 'keep' ? 'approved' : 'rejected',
-          debateResultId: Date.now(),
-        }))
         addLog({
           event: result.verdict === 'keep' ? 'OrchestratorPlanned' : 'AgentFailed',
           meta: `Monitor full debate, ${result.verdict}, ${result.iterations} iters, converged: ${result.converged}`,
@@ -2116,33 +2521,11 @@ const App = () => {
     }
   }
 
-  const handleRegenerate = () => {
-    setStrategy(null)
-    setSkillStates({})
-    setStrategyPhase('thinking')
-    setThinkingPhase(0)
-    setDebateResult(null)
-    setCouncil(undefined)
-    addLog({ event: 'OrchestratorPlanned', meta: `Replanning: ${amount} USDC, ${risk} risk.` })
-  }
-
-  const handleKeepWaiting = () => {
-    setSlowConfirm(false)
-    slowTimerRef.current = setTimeout(() => setSlowConfirm(true), VENICE_TIMEOUT_MS) // ask again next minute
-  }
-  const handleStopWaiting = () => {
-    setSlowConfirm(false)
-    clearTimeout(slowTimerRef.current)
-    genAbortRef.current?.abort() // → generateStrategy returns fallback → default strategy
-  }
-
-  /* ----- CONNECT (step 02) ----- */
   const handleConnect = async () => {
     setConnectPhase('connecting')
     setConnectError(null)
     try {
-      const addr = await connectWallet()
-      setRealAddress(addr)
+      const addr = installActiveWalletAccount(await connectActiveAccount()).address
       setConnectPhase('connected')
       addLog({ event: 'Connected', meta: shortAddr(addr) })
     } catch (err) {
@@ -2152,559 +2535,1447 @@ const App = () => {
     }
   }
 
-  const handleUpgrade = async () => {
-    // ponytail: Venice x402 wallet-funded inference removed (single-chain Stellar; no EVM SIWE).
-    // AI strategist runs via Settings keys / host proxy / deterministic fallback. veniceAuth stays
-    // null — resolveProvider degrades cleanly. Re-add a Stellar-native paid-inference path here later.
-    setConnectPhase('upgrading')
-    setTimeout(() => {
-      setConnectPhase('upgraded')
-      addLog({ event: 'Authorized', meta: 'Session ready. The relayer sponsors network fees.' })
-    }, speed * 0.8)
-  }
+  // ========================================================================================
+  // My Money Task 13 (Pocket Crew redesign, Wave 5) — the production `/agent` route (MyMoneyRoute)
+  // + the compact `/home` launcher's projection. This controller owns discovery/money/protection
+  // state, applies the request generation/revision guards (shouldCommitMoneyFetch, above) on
+  // wallet change and post-action refresh, and passes a normalized model + real action handlers
+  // to MyMoneyRoute/WithdrawDialog/StopAccessDialog/RecoveryPanel. It never puts a raw secret or
+  // session key into React state: `moneyAccountValue` below is only `{kind, address}` —
+  // signing itself stays inside stellar/exit.js, stellar/revoke.js, stellar/partialWithdraw.js
+  // (wallet-kit popup / relayer ceremony), which this controller only calls, never inspects.
+  const [moneyModel, setMoneyModel] = useS(() => buildMyMoneyModel({ owner: null }))
+  // moneyDiscovery is declared earlier in this component now (My Money Task 13 Part B item 5's
+  // positionsAgents needs it before this block runs) -- see that declaration's own comment.
+  const [moneyRead, setMoneyRead] = useS(null) // readOwnerMoney-derived MoneySnapshot (buildMoneySnapshot)
+  const [moneyActionPending, setMoneyActionPending] = useS(false)
+  const [moneyWithdrawOpen, setMoneyWithdrawOpen] = useS(false)
+  const [moneyStopAccessAddress, setMoneyStopAccessAddress] = useS(null)
+  const [moneyRecovery, setMoneyRecovery] = useS(null)
+  const moneyRevisionRef = useR(null) // freshness.js's nextReconciliationToken/isReconciliationCurrent
+  const realAddressRef = useR(realAddress)
+  const moneyCacheRef = useR({})
 
-  const handleConnectDone = () => setStage('skills')
-
-  /* ----- SKILLS (step 03) ----- */
-  const updateSkillState = (id, patch) => {
-    setSkillStates((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }))
-  }
-
-  const handleSkillApprove = (id) => {
-    updateSkillState(id, { state: 'approved' })
-    addLog({ event: 'SkillApproved', agent: id, meta: 'Skill JSON approved and ready to bind.' })
-  }
-
-  const handleApproveAll = () => {
-    const next = {}
-    Object.entries(skillStates).forEach(([id, s]) => {
-      next[id] = { ...s, state: 'approved' }
-    })
-    setSkillStates(next)
-    addLog({
-      event: 'SkillApproved',
-      meta: `${Object.keys(next).length} skills approved in this batch.`,
-    })
-  }
-
-  const handleSkillEdit = (id, text, start = false) => {
-    let err = null
-    try {
-      JSON.parse(text)
-    } catch (e) {
-      err = e.message.replace(/^.*: /, '')
-    }
-    setEditingTexts((prev) => ({ ...prev, [id]: { text, error: err } }))
-    if (start) updateSkillState(id, { state: 'editing' })
-  }
-
-  const handleSkillSave = (id) => {
-    const entry = editingTexts[id]
-    if (!entry || entry.error) return
-    try {
-      const parsed = JSON.parse(entry.text)
-      updateSkillState(id, { state: 'pending', skill: parsed })
-    } catch {
-      /* guarded above */
-    }
-  }
-
-  const handleSkillReset = (id) => {
-    updateSkillState(id, { state: 'pending' })
-    setEditingTexts((prev) => ({ ...prev, [id]: { text: '', error: null } }))
-  }
-
-  const handleSkillUpdate = (id, skillObj) => {
-    updateSkillState(id, { state: 'pending', skill: skillObj })
-  }
-
-  const handleSkillsContinue = () => {
-    setStage('permission')
-  }
-
-  /* ----- GRANT (step 04, router single-signature path) ----- */
-  // "Grant & run": stash the user's budget + window, then advance to execute. The SINGLE wallet
-  // wallet signature (router.grant) fires inside orchestrator.dispatch → setupViaRouter; every later worker
-  // funding is a relayed router.pull (0 further signatures).
-  const handleGrantAndRun = ({ budget, durationSeconds }) => {
-    grantCfgRef.current = { budgetUsdc: budget, durationSeconds }
-    setGrantError(null)
-    setGrantPhase('granting')
-    setPermActive(true)
-    setPermExpiresAt(Date.now() + durationSeconds * 1000)
-    addLog({
-      event: 'PermissionGranted',
-      meta: `Router grant: ${budget} USDC for ${durationSeconds}s.`,
-    })
-    setStage('execute')
-    startExecution()
-  }
-
-  // Kill switch — zero the on-chain allowance in one signature (works even if the relayer is down).
-  const handleRevokeGrant = async () => {
-    if (!realAddress) return
-    setGrantError(null)
-    setGrantPhase('revoking')
-    try {
-      const { hash } = await revokeGrant({ owner: realAddress })
-      addLog({
-        event: 'PermissionRevoked',
-        meta: `Router allowance set to 0. Transaction ${hash?.slice(0, 10)}...`,
+  function installActiveWalletAccount(next) {
+    const previous = activeAccountRef.current
+    if (previous && previous !== next) {
+      const changed = Object.assign(new Error('The active wallet account changed.'), {
+        code: 'ACTIVE_ACCOUNT_CHANGED',
       })
-    } catch (err) {
-      setGrantError(err?.message || 'revoke failed')
-    } finally {
-      setGrantPhase('idle')
+      pendingConfirmRef.current?.reject(changed)
+      pendingConfirmRef.current = null
+      activeOrchestrationRef.current?.cancel()
+      activeOrchestrationRef.current = null
+      dispatchFlow({ type: 'STRATEGY_RESET' })
+      setStrategy(null)
+      setRunReceipt(null)
+      setRecoveryByAllocation({})
+      setRecoveryPendingAllocations(new Set())
+      recoveryMappingsRef.current = new Map()
+      setExecMap({})
+      setOpenAgentId(null)
+      setRunEvents([])
+      setLogs([])
+      agentMapRef.current = {}
+      deployedAgentsRef.current = []
+      setPermActive(false)
+      setPermExpiresAt(null)
+      setBaseView({ connected: false, healthy: null, mandateView: null, action: null })
+      setBasePositions([])
+      setBaseWithdraw(null)
+      setBaseWithdrawError(null)
+      setBaseMandateError(null)
+      setSettingUpBaseMandate(false)
+      baseSetupSucceededRef.current = false
+      setMoneyDiscovery(null)
+      setMoneyRead(null)
+      setMoneyModel(buildMyMoneyModel({ owner: null }))
+      setMoneyActionPending(false)
+      setMoneyWithdrawOpen(false)
+      setMoneyStopAccessAddress(null)
+      setMoneyRecovery(null)
+      moneyCacheRef.current = {}
+      setScopes([])
+      setAgentData({ positions: {}, alerts: [], lastUpdated: null })
+      positionsAgentsRef.current = undefined
+      hydratedRef.current = null
+      moneyRevisionRef.current = nextReconciliationToken(moneyRevisionRef.current)
+    }
+    activeAccountRef.current = next || null
+    setActiveAccount(next || null)
+    setRealAddress(next?.address || null)
+    return next
+  }
+
+  useE(() => onActiveAccountChange(installActiveWalletAccount), [])
+
+  const assertActiveAccount = (captured) =>
+    assertCurrentActiveAccount({ captured, current: activeAccountRef.current })
+
+  useE(() => {
+    realAddressRef.current = realAddress
+  }, [realAddress])
+
+  const moneyAccountValue = useM(
+    () => (activeAccount ? { kind: activeAccount.kind, address: activeAccount.address } : null),
+    [activeAccount]
+  )
+
+  // Final-review fix, M7: `selectCrewDecisions(logs)` used to be called inline in the render body,
+  // unmemoized, over `logs` -- an array that grows without bound (appended at :951-955, cleared
+  // only at flow reset) and is re-derived on every render, including every 15s poll tick, even on
+  // routes other than /agent. Memoized on the only input that can change its output.
+  const crewDecisions = useM(() => selectCrewDecisions(logs), [logs])
+
+  function moneyProtectionSnapshot() {
+    const state = lifeboatStateRef.current
+    if (!state) return null
+    return classifyLifeboatAutomation({
+      derisked: state.derisked,
+      mandateExpiry: state.mandateExpiry,
+      authority: state.authority,
+      now: Date.now(),
+    })
+  }
+
+  useE(() => {
+    if (!realAddress || !lifeboatState) return
+    const protection = classifyLifeboatAutomation({
+      derisked: lifeboatState.derisked,
+      mandateExpiry: lifeboatState.mandateExpiry,
+      authority: lifeboatState.authority,
+      now: Date.now(),
+    })
+    const cache = moneyCacheRef.current
+    if (
+      cache.protection?.state === protection.state &&
+      cache.protection?.authority === protection.authority &&
+      cache.protection?.mandateExpiry === protection.mandateExpiry
+    )
+      return
+    const nextCache = { ...cache, protection }
+    moneyCacheRef.current = nextCache
+    saveMoneyCache(realAddress, nextCache)
+    setMoneyModel(
+      buildMyMoneyModel({
+        owner: realAddress,
+        discovery: nextCache.discovery ?? null,
+        money: nextCache.money ?? null,
+        protection,
+        cache: nextCache,
+        now: Date.now(),
+      })
+    )
+  }, [lifeboatState, realAddress])
+
+  // Read-only refresh: discovery -> money -> model, guarded by guardedMoneyFetch/
+  // shouldCommitMoneyFetch so a wallet switch or a newer mutating action (bumped moneyRevisionRef)
+  // can never let this stale attempt repaint the screen, however late it resolves. Fix loop 1, I1:
+  // ALL of the guard-then-commit decision now lives in the exported guardedMoneyFetch above — this
+  // is a thin wrapper, not a second copy, so a controller-level test on guardedMoneyFetch IS a test
+  // of this call site.
+  async function refreshMoney(owner) {
+    // REFRESH-MONEY-WIRING:START -- MM13 M5, fix round 2: pinned by a source-scan test
+    // (app.money.test.jsx) asserting this call passes the LIVE ref objects, not dead literals, and
+    // that nothing after the spread overrides them. moneyFetchArgs itself (exported above) is
+    // unit-tested for identity-preservation directly; the marker spans the WHOLE guardedMoneyFetch
+    // call, through its closing `})`, not just the spread line -- fix round 1's narrower block
+    // (spread line only) left `currentOwnerRef: { current: owner }, revisionRef: { current: null }`
+    // keys ADDED AFTER the spread completely unreachable by construction (a later key wins over an
+    // earlier spread; no-dupe-keys does not flag spread-then-key), so that exact mutation passed
+    // 39/39 green. Comments are stripped before matching; the negative assertion (an inline
+    // `{ current: ... }` literal anywhere in this whole block) now actually covers the space a
+    // plausible "add an override" refactor would use.
+    await guardedMoneyFetch({
+      ...moneyFetchArgs(owner, { currentOwnerRef: realAddressRef, revisionRef: moneyRevisionRef }),
+      onCommit: (snapshot) => {
+        const protection = moneyProtectionSnapshot()
+        const nextCache = { money: snapshot.money, discovery: snapshot.discovery, protection }
+        moneyCacheRef.current = nextCache
+        saveMoneyCache(owner, nextCache)
+        setMoneyDiscovery(snapshot.discovery)
+        setMoneyRead(snapshot.money)
+        setMoneyModel(
+          buildMyMoneyModel({
+            owner,
+            discovery: snapshot.discovery,
+            money: snapshot.money,
+            protection,
+            cache: nextCache,
+            now: Date.now(),
+          })
+        )
+      },
+    })
+    // REFRESH-MONEY-WIRING:END
+  }
+
+  // Wallet change (connect/switch/disconnect): render the cache immediately, marked stale by
+  // buildMyMoneyModel's own freshness math (never a confident 'current' from a cache alone) —
+  // strictly read-only, no transaction replay — then kick off a fresh, guarded refresh. The
+  // `alive` flag scopes every poll tick below to THIS owner's effect lifetime; combined with
+  // shouldCommitMoneyFetch's own owner check inside refreshMoney, a switch mid-flight is guarded
+  // twice over.
+  // MONEY-RELOAD-EFFECT:START -- Fix loop 1, I1 (hazard 2). app.money.test.jsx source-scans
+  // EXACTLY this block: it must prime state via buildMyMoneyModel and call refreshMoney (the
+  // guarded read path), and must NEVER call a write-capable function (sweepAgents/partialWithdraw/
+  // revokeAgentOnChain/ensureExitSigner/reconcileOwnerAction) — a reload/reconnect must render
+  // cache-as-stale and reconcile read-only, never replay a transaction. Keep these markers directly
+  // wrapping the effect if you touch it.
+  useE(() => {
+    let alive = true
+    if (!realAddress) {
+      moneyCacheRef.current = {}
+      setMoneyDiscovery(null)
+      setMoneyRead(null)
+      setMoneyModel(buildMyMoneyModel({ owner: null }))
+      return
+    }
+    const cached = loadMoneyCache(realAddress)
+    moneyCacheRef.current = cached
+    setMoneyDiscovery(cached.discovery ?? null)
+    setMoneyRead(cached.money ?? null)
+    setMoneyModel(
+      buildMyMoneyModel({
+        owner: realAddress,
+        discovery: cached.discovery ?? null,
+        money: cached.money ?? null,
+        protection: cached.protection ?? null,
+        cache: cached,
+        now: Date.now(),
+      })
+    )
+    refreshMoney(realAddress)
+    const id = setInterval(() => {
+      if (alive) refreshMoney(realAddress)
+    }, 30_000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [realAddress])
+  // MONEY-RELOAD-EFFECT:END
+
+  // Re-derives the model from an ALREADY-fresh read (an owner action's own reconcileOwnerAction
+  // result) when one is available, avoiding a redundant extra readOwnerMoney round-trip; falls
+  // back to a full refreshMoney() when the action's reconciliation never got a fresh read (e.g.
+  // 'not-submitted'). Guarded the same way as refreshMoney — a wallet switch during a pending
+  // action must not let its aftermath repaint the new owner's screen.
+  async function refreshMoneyAfterAction(freshReads) {
+    if (
+      !isMoneyFetchForCurrentOwner({
+        fetchOwner: realAddress,
+        currentOwner: realAddressRef.current,
+      })
+    ) {
+      return
+    }
+    if (!freshReads) {
+      await refreshMoney(realAddress)
+      return
+    }
+    const money = buildMoneySnapshot(freshReads)
+    const protection = moneyProtectionSnapshot()
+    const nextCache = { money, discovery: moneyDiscovery, protection }
+    moneyCacheRef.current = nextCache
+    saveMoneyCache(realAddress, nextCache)
+    setMoneyRead(money)
+    setMoneyModel(
+      buildMyMoneyModel({
+        owner: realAddress,
+        discovery: moneyDiscovery,
+        money,
+        protection,
+        cache: nextCache,
+        now: Date.now(),
+      })
+    )
+  }
+
+  function boundReadOwnerMoney() {
+    return readOwnerMoney({ owner: realAddress, discovery: moneyDiscovery, now: Date.now() })
+  }
+
+  async function handleMoneyPrimaryAction(action) {
+    if (action === 'connect-wallet') return handleConnect()
+    if (action === 'deposit' || action === 'add-money') {
+      navigate('/strategy')
+      return
+    }
+    if (action === 'renew-protection') {
+      setMoneyActionPending(true)
+      try {
+        await onGrantMandate()
+      } finally {
+        setMoneyActionPending(false)
+      }
+      return
+    }
+    if (action === 'review-problem') {
+      setMoneyWithdrawOpen(true)
+      return
     }
   }
 
-  /* ----- PERMISSION (step 04) ----- */
-  const handleGrant = () => setPermPhase('prompting')
-
-  const handlePermReject = () => {
-    setPermPhase('idle')
-    addLog({ event: 'PermissionRevoked', meta: 'Permission request rejected by the user.' })
+  function handleRecoverAgent(address, plan) {
+    // AgentTeam.jsx already computed `plan` via planFullExit -- execute it directly (its own
+    // dialog copy: "Owner withdrawal is always allowed by the contract"). Falls back to opening
+    // the full withdraw dialog when discovery hadn't finished loading yet (plan is null there).
+    if (plan?.ok) {
+      handleConfirmFullExit(plan)
+      return
+    }
+    setMoneyWithdrawOpen(true)
   }
 
-  const handlePermConfirm = async () => {
-    setPermPhase('idle')
-    setPermError(null)
-    // Stellar path: there is no EVM-style permission-grant step. The per-agent authorize + fund (one
-    // user-signed wallet-kit tx per agent) happens inside orchestrator.dispatch. Just advance
-    // to execute and let the orchestrator prompt the wallet.
-    const expiresAtMs = Date.now() + 86400 * 1000
-    setPermActive(true)
-    setPermExpiresAt(expiresAtMs)
-    addLog({
-      event: 'PermissionGranted',
-      meta: 'Stellar authorization will fund each agent during execution.',
-    })
-    setTimeout(() => {
-      setStage('execute')
-      startExecution()
-    }, 600)
+  function openMoneyRecoveryFromOutcomes({ action, outcomes }) {
+    const bad = outcomes.find((o) => o.outcome === 'unknown' || o.outcome === 'not-submitted')
+    if (!bad) return
+    setMoneyRecovery({ action, submission: bad, reconciled: null })
   }
 
-  /* ----- EXECUTE (step 05) — real parallel agents ----- */
-  const updateExecMap = (agentId, patch) => {
-    setExecMap((prev) => ({
-      ...prev,
-      [agentId]: {
-        ...(prev[agentId] || {
-          status: 'idle',
-          activeStep: null,
-          steps: { swap: 'idle', approve: 'idle', deposit: 'idle' },
-          hashes: {},
-          memory: [],
-          metrics: {},
-        }),
-        ...patch,
+  async function handleConfirmFullExit(plan) {
+    if (!plan?.ok || !realAddress) return
+    const captured = activeAccount
+    assertActiveAccount(captured)
+    setMoneyActionPending(true)
+    try {
+      const addresses = plan.targets.map((t) => t.address)
+      const swept = await sweepAgents({
+        owner: realAddress,
+        agentAddresses: addresses,
+        to: realAddress,
+        activeAccount: captured,
+        getCurrentActiveAccount: () => activeAccountRef.current,
+      })
+      assertActiveAccount(captured)
+      const perAgent = addresses.map((address, i) => ({
+        agentAddress: address,
+        ok: swept.errors[i] == null,
+        status: swept.errors[i] == null ? 'SUCCESS' : undefined,
+        hash: swept.txHashes[i],
+        error: swept.errors[i],
+      }))
+      const beforeRevision = moneyRevisionRef.current
+      const action = { kind: 'full-exit', targets: plan.targets }
+      const reconciled = await reconcileOwnerAction({
+        action,
+        result: perAgent,
+        readOwnerMoney: boundReadOwnerMoney,
+        beforeRevision,
+      })
+      assertActiveAccount(captured)
+      moneyRevisionRef.current = reconciled.revision
+      await refreshMoneyAfterAction(reconciled.fresh)
+      assertActiveAccount(captured)
+      if (reconciled.complete) setMoneyWithdrawOpen(false)
+      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+    } finally {
+      try {
+        assertActiveAccount(captured)
+        setMoneyActionPending(false)
+      } catch {
+        // The replacement account's transition already cleared this owner-scoped pending state.
+      }
+    }
+  }
+
+  async function handleConfirmPartialExit(plan) {
+    if (!plan?.ok || plan.mode !== 'partial' || !realAddress) return
+    setMoneyActionPending(true)
+    const action = { kind: 'partial-exit', agentAddress: plan.agentAddress }
+    const captured = activeAccount
+    assertActiveAccount(captured)
+    try {
+      await ensureExitSigner({
+        owner: realAddress,
+        agentAddress: plan.agentAddress,
+        activeAccount: captured,
+        getCurrentActiveAccount: () => activeAccountRef.current,
+      })
+      assertActiveAccount(captured)
+      await partialWithdraw({
+        owner: realAddress,
+        agentAddress: plan.agentAddress,
+        amountUnits: BigInt(plan.amount.units),
+        activeAccount: captured,
+        getCurrentActiveAccount: () => activeAccountRef.current,
+      })
+      assertActiveAccount(captured)
+      const beforeRevision = moneyRevisionRef.current
+      const reconciled = await reconcileOwnerAction({
+        action,
+        result: {
+          agentAddress: plan.agentAddress,
+          ok: true,
+          status: 'SUCCESS',
+          amount: plan.amount,
+        },
+        readOwnerMoney: boundReadOwnerMoney,
+        beforeRevision,
+      })
+      assertActiveAccount(captured)
+      moneyRevisionRef.current = reconciled.revision
+      await refreshMoneyAfterAction(reconciled.fresh)
+      assertActiveAccount(captured)
+      if (reconciled.complete) setMoneyWithdrawOpen(false)
+      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+    } catch (err) {
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED') return
+      const beforeRevision = moneyRevisionRef.current
+      const reconciled = await reconcileOwnerAction({
+        action,
+        result: { agentAddress: plan.agentAddress, error: err },
+        readOwnerMoney: boundReadOwnerMoney,
+        beforeRevision,
+      })
+      assertActiveAccount(captured)
+      moneyRevisionRef.current = reconciled.revision
+      await refreshMoneyAfterAction(reconciled.fresh)
+      assertActiveAccount(captured)
+      openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+    } finally {
+      try {
+        assertActiveAccount(captured)
+        setMoneyActionPending(false)
+      } catch {
+        // Cleared atomically by the account transition.
+      }
+    }
+  }
+
+  async function handleConfirmRevoke(plan) {
+    if (!plan?.ok || !realAddress) return
+    setMoneyActionPending(true)
+    const action = { kind: 'revoke', agentAddress: plan.agentAddress }
+    const captured = activeAccount
+    assertActiveAccount(captured)
+    try {
+      const result = await revokeAgentOnChain({
+        owner: realAddress,
+        agent: plan.agentAddress,
+        activeAccount: captured,
+        getCurrentActiveAccount: () => activeAccountRef.current,
+      })
+      assertActiveAccount(captured)
+      const beforeRevision = moneyRevisionRef.current
+      const reconciled = await reconcileOwnerAction({
+        action,
+        result: {
+          agentAddress: plan.agentAddress,
+          ok: result.status === 'SUCCESS',
+          status: result.status,
+          hash: result.hash,
+        },
+        readOwnerMoney: boundReadOwnerMoney,
+        beforeRevision,
+      })
+      assertActiveAccount(captured)
+      moneyRevisionRef.current = reconciled.revision
+      await refreshMoneyAfterAction(reconciled.fresh)
+      assertActiveAccount(captured)
+      if (reconciled.complete) setMoneyStopAccessAddress(null)
+      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+    } finally {
+      try {
+        assertActiveAccount(captured)
+        setMoneyActionPending(false)
+      } catch {
+        // Cleared atomically by the account transition.
+      }
+    }
+  }
+
+  function handleConfirmBaseWithdraw() {
+    // Base's real unwind ceremony (passkey ceremony + screens/Withdraw.jsx's step-flow) already
+    // exists and stays off-limits/unmodified for this task — this dialog action re-triggers that
+    // SAME proven flow rather than re-implementing a second one inline.
+    setMoneyWithdrawOpen(false)
+    handleBaseWithdrawClick()
+  }
+
+  async function handleCheckSubmissionStatus() {
+    if (!moneyRecovery?.action) return
+    setMoneyActionPending(true)
+    try {
+      const beforeRevision = moneyRevisionRef.current
+      const reconciled = await reconcileOwnerAction({
+        action: moneyRecovery.action,
+        result: moneyRecovery.submission,
+        readOwnerMoney: boundReadOwnerMoney,
+        beforeRevision,
+      })
+      moneyRevisionRef.current = reconciled.revision
+      await refreshMoneyAfterAction(reconciled.fresh)
+      setMoneyRecovery((prev) =>
+        prev
+          ? {
+              ...prev,
+              reconciled: reconciled.complete
+                ? 'landed'
+                : reconciled.retryAllowed
+                  ? 'not-landed'
+                  : null,
+            }
+          : prev
+      )
+    } finally {
+      setMoneyActionPending(false)
+    }
+  }
+
+  function handleRetrySubmission() {
+    // Reconciliation already proved this never landed (retryEnabled gates on exactly that in
+    // RecoveryPanel) -- route back to the SAME action's own dialog rather than resubmit blindly
+    // from here.
+    const kind = moneyRecovery?.action?.kind
+    const agentAddress = moneyRecovery?.action?.agentAddress
+    setMoneyRecovery(null)
+    if (kind === 'revoke' && agentAddress) setMoneyStopAccessAddress(agentAddress)
+    else setMoneyWithdrawOpen(true)
+  }
+
+  // ========================================================================================
+  // Strategy Task 13 (Pocket Crew redesign, Wave 5) — the production Plan/Protect/Start route.
+  // Everything below this line, down to renderStrategyRoute(), wires the pure
+  // PlanStage/ProtectStage/StartStage/StrategyReceipt components (Tasks 10-12) to real
+  // generation, wallet, preflight/grant, and orchestrator calls, via its own parallel
+  // orchestrator dispatch (`runOrchestratorDispatch`/`handleNewRunEvent`). Every real producer
+  // (worker.js's `emit()` wrapper, orchestrator.js's worker-queued/worker-started, baseLeg.js's
+  // now-keyed leg events) already carries `allocationId` directly.
+  //
+  // Fix loop 1 (C1): the old six-step/fake-ceremony flow (StepRail stages connect/skills/
+  // permission/execute/done, `renderStage()`, `jumpTo`/`goBack`, and the legacy `startExecution`
+  // orchestrator dispatch it drove) has been deleted outright rather than re-gated — see the
+  // report for the grep proof that nothing reachable from production still renders it.
+
+  const STELLAR_VENUE_ENTRY = VAULT_CATALOG[0]
+  const stellarVenueDisplay = {
+    name: STELLAR_VENUE_ENTRY?.name,
+    protocol: STELLAR_VENUE_ENTRY?.protocol,
+    apy: STELLAR_VENUE_ENTRY?.apy,
+    drawdown: STELLAR_VENUE_ENTRY?.drawdown,
+    risk: STELLAR_VENUE_ENTRY?.risk,
+    address: STELLAR_VENUE_ENTRY?.address,
+    role: 'Conservative, lending',
+    roleLabel: 'Conservative',
+    destination: STELLAR_VENUE_ENTRY?.destination || STELLAR_VENUE_ENTRY?.name,
+  }
+
+  // ----- Base availability for the Plan surface -----
+  // Composes the canonical `resolveBaseAvailability({mandate, connection, health})` contract
+  // (mergeFlowHelpers.js, decision log #22 obligation D) with the Circle USDC funding gate that
+  // contract does not itself check (Task 7's fail-closed rule: a mandate can be 'ready' with zero
+  // burn-token balance) -- folded into `health` so a caller of the canonical contract still gets
+  // the full fail-closed preflight the deleted legacy overload used to provide in one call.
+  //
+  // Known gap, disclosed rather than silently guessed: `toBaseMandateView`'s relayer-origin-drift
+  // check compares `mandate.relayerOrigin` (the LOCAL record, captured once at setup) against
+  // `connection.relayerOrigin` -- there is no second, independent LIVE source for "the relayer's
+  // origin right now" anywhere in this codebase today (getMandateStatus's response only carries
+  // one once a mandate already exists), so this passes the same stored value for both. The
+  // mismatch branch therefore never trips in production yet; every other status (missing/expired/
+  // revoked/owner+kernel-mismatch) is unaffected and still fail-closed. Flagged for a future task.
+  async function resolveBaseForPlan({ stellarOwner, signal, setupSucceeded }) {
+    if (!stellarOwner) return { connected: false, healthy: null, mandateView: null, action: null }
+    const record = readBaseMandate(stellarOwner)
+    let mandateEvidence = null
+    if (record?.serializedApproval && record?.kernelAddress) {
+      try {
+        mandateEvidence = await getMandateStatus(record.serializedApproval, {
+          stellarOwner,
+          kernelAddress: record.kernelAddress,
+          allocation: baseMandateProbeAllocation(),
+        })
+      } catch {
+        mandateEvidence = null
+      }
+    }
+    const { checkRelayerHealth } = await import('./strategy/mergedCatalog.js')
+    const { baseAvailable, mandateView, action } = resolveBaseAvailability({
+      mandate: mandateEvidence,
+      connection: {
+        connected: true,
+        stellarOwner,
+        kernelAddress: mandateEvidence?.kernelAddress ?? record?.kernelAddress ?? null,
+        relayerOrigin: mandateEvidence?.relayerOrigin ?? record?.relayerOrigin ?? null,
+        setupSucceeded,
       },
-    }))
+      health: async () => {
+        const healthy = await checkRelayerHealth({ signal })
+        if (!healthy) return false
+        return checkCircleUsdcFunding({
+          address: stellarOwner,
+          readTokenBalance,
+          token: STELLAR_USDC_SAC,
+        })()
+      },
+    })
+    const healthy = await baseAvailable
+    return { connected: true, healthy, mandateView, action }
   }
 
-  const startExecution = () => {
-    if (!strategy) return
-    setMonitorStatus({
-      level: 'skip',
-      score: 0,
-      reason: 'Starting execution...',
-      lastCheck: Date.now(),
-      result: 'approved',
+  async function refreshBaseView(captured = activeAccount) {
+    if (!captured) return null
+    assertActiveAccount(captured)
+    const result = await resolveBaseForPlan({
+      stellarOwner: realAddress,
+      setupSucceeded: baseSetupSucceededRef.current,
     })
+    assertActiveAccount(captured)
+    setBaseView(result)
+    return result
+  }
 
-    const sessionId = `session-${Date.now()}`
-    const init = makeInitialExecState(strategy.agents)
-    setExecMap(init)
+  useE(() => {
+    refreshBaseView(activeAccount).catch(() => {
+      // Fail closed; the Plan surface remains unavailable until the next guarded refresh.
+    })
+  }, [realAddress, activeAccount])
 
-    // Enforcement A — eligibility gate. Drop ineligible protocols BEFORE dispatch; all-fail = hard stop.
-    const { verdictBySlug, survivors, dropped, allFailed } = computeBasket(strategy.agents)
+  async function onConnectForBase() {
+    try {
+      const addr = installActiveWalletAccount(await connectActiveAccount()).address
+      setConnectPhase('connected')
+    } catch {
+      // PlanStage's own header comment: no richer connect-error surface belongs on this stage.
+    }
+  }
+
+  async function onSetupBase() {
+    if (!realAddress || !activeAccount) return
+    const captured = activeAccount
+    assertActiveAccount(captured)
+    setSettingUpBaseMandate(true)
+    setBaseMandateError(null)
+    try {
+      await setupBaseMandate({ connectedAddress: realAddress })
+      assertActiveAccount(captured)
+      baseSetupSucceededRef.current = true
+      await refreshBaseView(captured)
+    } catch (e) {
+      if (e?.code === 'ACTIVE_ACCOUNT_CHANGED') return
+      setBaseMandateError(e.message)
+    } finally {
+      try {
+        assertActiveAccount(captured)
+        setSettingUpBaseMandate(false)
+      } catch {
+        // The account-transition reset already cleared this pending flag.
+      }
+    }
+  }
+
+  function onRebuildPlan() {
+    baseSetupSucceededRef.current = false
+    refreshBaseView().catch(() => {
+      // Fail closed; the Plan surface remains unavailable until the next guarded refresh.
+    })
+  }
+
+  // ----- Plan generation (real strategist + council-eligibility, never a `speed * ...` timer) -----
+  async function generateStrategyPlan({ amountUnits, risk, baseEligible }, reportPhase) {
+    const riskLevel = risk === 'med' ? 'medium' : risk
+    const numVaults = { low: 1, med: 2, high: 3 }[risk] || 2
+    const ctrl = new AbortController()
+    reportPhase('Checking destinations')
+    const { checkRelayerHealth } = await import('./strategy/mergedCatalog.js')
+    const healthPromise = baseEligible
+      ? checkRelayerHealth({ signal: ctrl.signal })
+      : Promise.resolve(false)
+    reportPhase('Building bounded allocations')
+    const veniceResult = await generateStrategy({
+      amount: Number(amountUnits) / 10 ** SOROBAN_DECIMALS,
+      riskLevel,
+      numVaults,
+      veniceAuth: null,
+      devApiKey: devApiKey || null,
+      signal: ctrl.signal,
+      address: realAddress || null,
+      baseAvailable: healthPromise,
+    })
+    const generatedBy = veniceResult.generatedBy || 'fallback'
+    const source = generatedBy === 'fallback' ? 'fallback' : generatedBy
+    const sourceState = generatedBy === 'fallback' ? 'deterministic' : 'live-ai'
+    const selected = veniceResult.selected_vaults || []
+
+    // Enforcement A (eligibility gate), run BEFORE the plan is even shown for review -- a
+    // destination that fails eligibility is never offered, not merely dropped after the fact.
+    // The Stellar leg has exactly one real venue (STELLAR_VENUE_ENTRY), so every Stellar-tagged
+    // pick collapses onto the SAME verdict; a Base pick keys its own verdict via factSlug.
+    const eligibilityAgents = selected.map((v) => {
+      const isBase = baseEligible && v.chain === 'base'
+      const cat = isBase
+        ? BASE_POOL_CATALOG.find(
+            (p) => p.address.toLowerCase() === String(v.address || '').toLowerCase()
+          )
+        : null
+      return {
+        allocation: Number(v.allocation) || 0,
+        vault: {
+          protocol: isBase ? cat?.protocol || v.protocol : stellarVenueDisplay.protocol,
+          factSlug: isBase ? cat?.factSlug || v.factSlug : undefined,
+          chain: isBase ? 'base' : 'stellar',
+          addr: v.address,
+        },
+        __base: isBase,
+        __cat: cat,
+      }
+    })
+    const { survivors, dropped } = computeBasket(eligibilityAgents)
     dropped.forEach((d) =>
       addLog({
         event: 'VaultRejected',
-        agent: d.agent.id,
         meta: (d.verdict.reasons || []).join('; '),
       })
     )
-    if (allFailed) {
-      addLog({ event: 'ExecutionBlocked', meta: 'No eligible vault. Nothing will run.' })
-      setStage('permission') // stay on the approval card; do NOT dispatch
-      return
-    }
-    // Build hex→designId map to mirror the orchestrator's numbering EXACTLY: it calls
-    // makeAgentId(i, sessionId) over the STELLAR vaults of the DISPATCHED strategy only (base
-    // vaults settle as one leg, no per-agent hex id). The old map indexed every designed agent
-    // pre-eligibility, so one dropped or base vault ordered ahead of a stellar one shifted
-    // every hex id — painting worker events onto the wrong (even a Base) graph node.
-    const agentMap = {}
-    survivors
-      .filter((a) => a.vault.chain !== 'base')
-      .forEach((a, i) => {
-        agentMap[makeAgentId(i, sessionId)] = a.id // 'worker-1', 'worker-2', etc.
-      })
-    agentMapRef.current = agentMap
-    // Base vault design nodes: leg-level baseleg-*/farm-* events paint ALL of them (below).
-    const baseWorkerIds = survivors.filter((a) => a.vault.chain === 'base').map((a) => a.id)
+    reportPhase('Safety review')
 
-    // Applies one mapBaseLegEvent recipe to every Base vault node. Hoisted out of onEvent so the
-    // post-dispatch settlement re-poll below can reuse it verbatim.
-    const paintBaseNodes = (upd) => {
-      if (!upd || baseWorkerIds.length === 0) return
-      const terminal = upd.status === 'completed' || upd.status === 'failed'
-      setExecMap((prev) => {
-        const next = { ...prev }
-        baseWorkerIds.forEach((bId) => {
-          const cur = next[bId] || makeInitialExecState([{ id: bId }])[bId]
-          next[bId] = {
-            ...cur,
-            status: upd.status || cur.status || 'running',
-            activeStep: terminal ? null : upd.step || cur.activeStep,
-            steps: upd.step ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus } : cur.steps,
-            hashes: upd.hash
-              ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash }
-              : cur.hashes,
-            memory: [...(cur.memory || []), { ...upd.memory, t: nowT() }],
-            metrics: terminal
-              ? {
-                  ...(cur.metrics || {}),
-                  completedAt: Date.now(),
-                  successRate: upd.status === 'completed' ? 1 : 0,
-                }
-              : cur.metrics || {},
-          }
-        })
-        return next
+    const amountFloat = Number(amountUnits) / 10 ** SOROBAN_DECIMALS
+    const baseAllocations = []
+    let baseUnits7Total = 0n
+    for (const a of survivors.filter((s) => s.__base)) {
+      if (!a.__cat) continue // never invent a bridge target outside the allowlisted catalog
+      const units6 = BigInt(Math.max(0, Math.round(amountFloat * a.allocationFraction * 1e6)))
+      if (units6 <= 0n) continue
+      baseAllocations.push({
+        address: a.__cat.address,
+        proxyTarget: a.__cat.proxyTarget,
+        factSlug: a.__cat.factSlug,
+        venueKind: a.__cat.venueKind,
+        chain: 'base',
+        units: units6.toString(),
       })
-      if (upd.log) {
-        addLog({
-          event: upd.log,
-          agent: baseWorkerIds[0],
-          meta: `${upd.memory.title} — ${upd.memory.meta}`,
-        })
+      baseUnits7Total += units6 * 10n
+    }
+    // Defensive fail-closed clamp: a malformed AI response whose Base fractions alone exceed 1
+    // must never produce a negative Stellar remainder.
+    if (baseUnits7Total > amountUnits) {
+      baseAllocations.length = 0
+      baseUnits7Total = 0n
+    }
+    const stellarEligible = survivors.some((s) => !s.__base)
+    // stellarUnits is DERIVED by subtraction, never independently re-estimated from its own
+    // fraction -- guarantees stellarUnits + sum(baseAllocations.units)*10 === amountUnits exactly,
+    // which is what PlanStage's own hard "did not match the amount you entered" check requires.
+    const stellarUnits = stellarEligible ? (amountUnits - baseUnits7Total).toString() : '0'
+
+    return {
+      source,
+      sourceState,
+      stellarUnits,
+      baseAllocations,
+      review: { candidates: buildEligibilityReview({ survivors, dropped }) },
+    }
+  }
+
+  async function onGenerate(input, reportPhase) {
+    dispatchFlow({ type: 'PLAN_REQUESTED' })
+    try {
+      return await generateStrategyPlan(input, reportPhase)
+    } catch (err) {
+      dispatchFlow({ type: 'PLAN_FAILED', error: err?.message || 'Could not build a plan.' })
+      throw err
+    }
+  }
+
+  // Accepting a plan is the moment it becomes canonical AND opens Protect together (brief Step 2:
+  // "Accepting plan enters Protect; current agent instructions are approved together") --
+  // flowState.js's 3-moment granularity has no separate "reviewing" sub-phase, so PLAN_READY and
+  // PROTECT_OPENED fire back to back here rather than at generation-resolve time (PlanStage builds
+  // the canonical plan object internally; this is the first moment app.jsx ever sees it).
+  function onAcceptPlan({ plan, fingerprint }) {
+    const canonicalPlan = { ...plan, planFingerprint: fingerprint }
+    dispatchFlow({ type: 'PLAN_READY', plan: canonicalPlan })
+    dispatchFlow({ type: 'PROTECT_OPENED' })
+
+    // Bridge into the surviving monitor-loop/resume/background-agent/agentVaultMeta cluster,
+    // which all read the OLD per-agent `strategy` shape (mapVeniceToStrategy/buildStrategy's
+    // shape) -- Task 13's "must not silently detach" obligation (app.jsx:659-3116) covers that
+    // whole cluster, not just orchestrator events, and it is fed by `strategy` state, not `plan`.
+    const viewModel = buildStrategyViewModel({
+      plan: canonicalPlan,
+      stellarVenue: stellarVenueDisplay,
+    })
+    const blended = viewModel.agents.reduce(
+      (acc, a) => acc + (Number(a.vault.apy) || 0) * (a.allocation / (viewModel.total || 1)),
+      0
+    )
+    setStrategy({
+      agents: viewModel.agents,
+      total: viewModel.total,
+      blendedApy: blended.toFixed(1),
+      risk: viewModel.risk,
+      rationale: null,
+      reward: null,
+      mdpState: null,
+    })
+    const sk = {}
+    viewModel.agents.forEach((a) => {
+      sk[a.id] = { state: 'approved', skill: null }
+    })
+    setSkillStates(sk)
+    setStrategyReached(['plan', 'protect'])
+  }
+
+  // ----- Protect: preflight, fresh grant, or reuse confirm -----
+  function planAgentToAgentInit(agent, baseKernelAddress) {
+    const isBridge = agent.kind === 'bridge'
+    return {
+      allocationId: agent.allocationId,
+      cap: { token: agent.cap.token, units: agent.cap.units, decimals: agent.cap.decimals },
+      token: agent.cap.token,
+      target: isBridge ? STELLAR_TOKEN_MESSENGER_MINTER : SOROBAN_ACTIVE_VAULT_ADDRESS,
+      kind: isBridge ? AGENT_KIND_BRIDGE : AGENT_KIND_DEPOSIT,
+      mintRecipient: isBridge && baseKernelAddress ? evmAddrToBytes32(baseKernelAddress) : ZERO32,
+      destinationDomain: isBridge ? CCTP_BASE_DOMAIN : 0,
+      periodSeconds: agent.periodSeconds,
+      expiry: agent.expiry,
+    }
+  }
+
+  function planReviewedBudgets(planAgents) {
+    const byToken = new Map()
+    for (const agent of planAgents) {
+      const cap = agent.cap
+      const existing = byToken.get(cap.token)
+      const existingUnits = existing ? BigInt(existing.units) : 0n
+      byToken.set(cap.token, {
+        token: cap.token,
+        units: (existingUnits + BigInt(cap.units)).toString(),
+        decimals: cap.decimals,
+      })
+    }
+    return [...byToken.values()]
+  }
+
+  async function onConnectWallet() {
+    const addr = installActiveWalletAccount(await connectActiveAccount()).address
+    setConnectPhase('connected')
+    return addr
+  }
+
+  async function onRetryPreflight({ durationSeconds }) {
+    const plan = strategyFlowRef.current.plan
+    const bridgeAgent = plan.agents.find((a) => a.kind === 'bridge')
+    const baseKernel = bridgeAgent ? baseView.mandateView?.kernelAddress : null
+    const agentInits = plan.agents.map((a) => planAgentToAgentInit(a, baseKernel))
+    const reviewedBudgets = planReviewedBudgets(plan.agents)
+    const captured = activeAccount
+    try {
+      const raw = await preflightPermission({
+        runId: plan.runId,
+        owner: realAddress,
+        planFingerprint: plan.planFingerprint,
+        agentInits,
+        reviewedBudgets,
+        durationSeconds,
+        activeAccount: captured,
+        getCurrentActiveAccount: () => activeAccountRef.current,
+      })
+      const composed = composeV3Decision(raw, { plan, reviewedBudgets, agentInits })
+      const decision = toPermissionDecisionView(composed)
+      dispatchFlow({ type: 'PREFLIGHT_READY', decision })
+      return decision
+    } catch (err) {
+      dispatchFlow({
+        type: 'PREFLIGHT_FAILED',
+        error: err?.message || 'Could not check your permission. Try again.',
+      })
+      throw err
+    }
+  }
+
+  function classifyPermissionFailure(err) {
+    if (err instanceof PermissionPhaseError && err.phase !== 'fresh-grant') {
+      // 'preflight' (structural plan/decision mismatch) and 'reuse-revalidation' (the world moved
+      // since review) are both genuine staleness -- the reviewed decision no longer holds.
+      return { kind: 'preflight', message: err.message }
+    }
+    // 'fresh-grant' PermissionPhaseErrors (grantFreshFromDecision wraps EVERYTHING, including a
+    // real wallet rejection, as phase:'fresh-grant') and any plain Error are wallet-class from
+    // ProtectStage's perspective: the reviewed permission is still good, only the signature/
+    // submission attempt failed. Unwrapped to a plain Error so ProtectStage's own
+    // `instanceof PermissionPhaseError` check (which only recognizes preflight/reuse-revalidation
+    // staleness) never misclassifies a submission failure as staleness.
+    const message = err?.message || 'The wallet request did not complete.'
+    const rejected = /declin|reject|denied|cancel/i.test(message)
+    return { kind: rejected ? 'rejected' : 'failed', message }
+  }
+
+  function requestPermissionConfirmation() {
+    return new Promise((resolve, reject) => {
+      pendingConfirmRef.current = { resolve, reject }
+      runOrchestratorDispatch(strategyFlowRef.current.permission).catch((err) => {
+        if (!pendingConfirmRef.current) return // already resolved via a grant-confirmed/reuse-confirmed event
+        pendingConfirmRef.current = null
+        const { kind, message } = classifyPermissionFailure(err)
+        if (kind === 'preflight') {
+          dispatchFlow({ type: 'PREFLIGHT_FAILED', error: message })
+          // ProtectStage's own handleAuthorize distinguishes preflight-class staleness from a
+          // plain wallet failure via `instanceof PermissionPhaseError` -- rejecting with a bare
+          // Error here (as the wallet-class branches correctly do) would make EVERY failure look
+          // wallet-class to ProtectStage, regardless of what classifyPermissionFailure decided.
+          reject(
+            err instanceof PermissionPhaseError
+              ? err
+              : new PermissionPhaseError({
+                  phase: 'preflight',
+                  code: 'VF_PERMISSION_STALE',
+                  message,
+                })
+          )
+        } else if (kind === 'rejected') {
+          dispatchFlow({ type: 'WALLET_REJECTED', reason: message })
+          reject(new Error(message))
+        } else {
+          dispatchFlow({ type: 'WALLET_FAILED', error: message })
+          reject(new Error(message))
+        }
+      })
+    })
+  }
+
+  function onRequestGrant() {
+    dispatchFlow({ type: 'GRANT_REQUESTED' })
+    return requestPermissionConfirmation()
+  }
+
+  function onConfirmReuse() {
+    // No GRANT_REQUESTED here: REUSE_CONFIRMED's own gate only requires a reuse-mode
+    // 'preflight-ready' decision, never a prior grant request (brief journey: "verified reuse
+    // zero-confirmation path with no provider/grant builder call").
+    return requestPermissionConfirmation()
+  }
+
+  // ----- Start: real orchestrator dispatch, live events, settled receipt -----
+  function handleNewRunEvent(evName, data) {
+    setRunEvents((prev) => [...prev, { name: evName, data }])
+
+    // Custody-tracking translation (decision log #22, obligations A-C): the ONLY place real
+    // producer event names/shapes get mapped onto flowState.js's vocabulary.
+    if (evName === 'worker-queued') {
+      dispatchFlow({ type: 'WORKER_QUEUED', allocationId: data.allocationId })
+    } else if (evName === 'worker-started' || evName === 'started') {
+      dispatchFlow({ type: 'WORKER_STARTED', allocationId: data.allocationId })
+    } else if (evName === 'pull-confirmed') {
+      dispatchFlow({ type: 'PULL_CONFIRMED', allocationId: data.allocationId })
+    } else if (evName === 'completed') {
+      dispatchFlow({ type: 'DEPOSIT_CONFIRMED', allocationId: data.allocationId })
+    } else if (evName === 'failed') {
+      dispatchFlow({ type: 'DEPOSIT_FAILED', allocationId: data.allocationId, error: data.error })
+    } else if (evName === 'farm-burn-started') {
+      dispatchFlow({
+        type: 'BASE_JOB_UPDATED',
+        allocationId: data.allocationId,
+        status: 'submitted',
+        jobId: null,
+      })
+    } else if (evName === 'farm-completed' && data.status === 'done') {
+      dispatchFlow({
+        type: 'BASE_JOB_UPDATED',
+        allocationId: data.allocationId,
+        status: 'bridged',
+        jobId: data.jobId,
+      })
+    } else if (
+      (evName === 'farm-completed' && data.status === 'error') ||
+      evName === 'farm-failed' ||
+      evName === 'baseleg-failed'
+    ) {
+      dispatchFlow({
+        type: 'BASE_JOB_UPDATED',
+        allocationId: data.allocationId,
+        status: 'bridge-failed',
+        jobId: data.jobId,
+      })
+    }
+
+    // Resolves the ProtectStage-facing promise the INSTANT permission confirms -- before the run
+    // settles, so Start can render live progress while dispatch continues in the background.
+    if (evName === 'grant-confirmed' || evName === 'reuse-confirmed') {
+      dispatchFlow({ type: evName === 'grant-confirmed' ? 'GRANT_CONFIRMED' : 'REUSE_CONFIRMED' })
+      if (pendingConfirmRef.current) {
+        pendingConfirmRef.current.resolve({ agentAddresses: data.agentAddresses || [] })
+        pendingConfirmRef.current = null
       }
     }
 
-    // dispatchSet ⊆ survivors: only survivors get a plan; allocations re-normalized to sum 1.
-    // Each survivor carries a freshly-minted eligibility token (Enforcement B asserts it worker-side).
-    // protocolSlug/verdictBySlug lookup keyed via slugFor — the SAME key computeBasket used to
-    // build verdictBySlug. Keying by bare a.vault.protocol would mint the token off the wrong
-    // (or no) verdict for a base vault, or crash (mintToken throws reading .eligible of undefined).
-    // chain drives OrchestratorAgent.dispatch's Stellar/Base split (defaults 'stellar' upstream).
-    const yvStrategy = {
-      vaults: survivors.map((a, i) => ({
-        address: a.vault.addr,
-        allocation: a.allocationFraction,
-        protocolSlug: slugFor(a),
-        chain: a.vault.chain,
-        eligibilityToken: mintToken(verdictBySlug[slugFor(a)], i),
-      })),
+    // Feeds the SAME surviving force-graph/memory/keeper cluster the legacy onEvent handler fed
+    // (brief Step 2: "must not silently detach"). Keyed directly by allocationId -- every real
+    // producer already carries it, so no hex-agentId translation layer is needed here.
+    if (evName === 'AgentScopeAuthorized') {
+      const summary = scopeSummary({
+        agent: data.agent,
+        vault: data.vault,
+        token: data.token,
+        capPerPeriod: BigInt(data.capPerPeriod),
+        periodDuration: data.periodDuration,
+        expiry: data.expiry,
+        nowSec: Math.floor(Date.now() / 1000),
+      })
+      setScopes((prev) => {
+        const next = prev.filter((s) => s.agent?.toLowerCase() !== data.agent?.toLowerCase())
+        return [
+          ...next,
+          { ...summary, agentId: data.agentId, revoked: false, authorized: data.authorized },
+        ]
+      })
+      return
     }
+    const dId = data?.allocationId
+    if (
+      dId &&
+      (evName === 'worker-queued' || evName === 'worker-started' || evName === 'started')
+    ) {
+      setExecMap((prev) => {
+        const cur = prev[dId] || makeInitialExecState([{ id: dId }])[dId]
+        return {
+          ...prev,
+          [dId]: { ...cur, status: 'running', activeStep: cur.activeStep || 'swap' },
+        }
+      })
+    }
+    if (dId && evName === 'step') {
+      const stepName = WORKER_STEP_MAP[data.step]
+      if (stepName) {
+        const stepStatus =
+          data.status === 'done' ? 'confirmed' : data.status === 'skipped' ? 'skipped' : 'running'
+        setExecMap((prev) => {
+          const cur = prev[dId] || {}
+          return {
+            ...prev,
+            [dId]: {
+              ...cur,
+              activeStep: stepName,
+              steps: { ...(cur.steps || {}), [stepName]: stepStatus },
+            },
+          }
+        })
+      }
+    }
+    if (dId && evName === 'completed') {
+      setExecMap((prev) => {
+        const cur = prev[dId] || {}
+        return {
+          ...prev,
+          [dId]: {
+            ...cur,
+            status: 'confirmed',
+            activeStep: null,
+            steps: { ...(cur.steps || {}), approve: 'confirmed', deposit: 'confirmed' },
+            metrics: { ...(cur.metrics || {}), completedAt: Date.now(), successRate: 100 },
+          },
+        }
+      })
+      addLog({
+        event: 'AgentCompleted',
+        agent: dId,
+        meta: data.txHash
+          ? `Transaction ${shortAddr(data.txHash)}`
+          : 'Completed. No transaction hash.',
+      })
+    }
+    if (dId && evName === 'failed') {
+      setExecMap((prev) => {
+        const cur = prev[dId] || {}
+        return {
+          ...prev,
+          [dId]: {
+            ...cur,
+            status: 'failed',
+            activeStep: null,
+            metrics: { ...(cur.metrics || {}), completedAt: Date.now(), successRate: 0 },
+          },
+        }
+      })
+      addLog({ event: 'AgentFailed', agent: dId, meta: data.error })
+    }
+    if (dId && (evName.startsWith('baseleg-') || evName.startsWith('farm-'))) {
+      const upd = mapBaseLegEvent(evName, data)
+      if (upd) {
+        setExecMap((prev) => {
+          const cur = prev[dId] || makeInitialExecState([{ id: dId }])[dId]
+          const terminal = upd.status === 'completed' || upd.status === 'failed'
+          return {
+            ...prev,
+            [dId]: {
+              ...cur,
+              status: upd.status || cur.status || 'running',
+              activeStep: terminal ? null : upd.step || cur.activeStep,
+              steps: upd.step ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus } : cur.steps,
+              hashes: upd.hash
+                ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash }
+                : cur.hashes,
+              memory: [...(cur.memory || []), { ...upd.memory, t: nowT() }],
+            },
+          }
+        })
+        if (upd.log)
+          addLog({ event: upd.log, agent: dId, meta: `${upd.memory.title} — ${upd.memory.meta}` })
+      }
+    }
+  }
 
-    // Router path: pass the user's chosen grant budget (USDC → base units) + window so the ONE
-    // grant signature sizes the allowance. null on the legacy path → orchestrator defaults (budget =
-    // run total, window = SCOPE_TTL_SECONDS).
-    const grantCfg = grantCfgRef.current
-    const grantBudgetUnits =
-      grantCfg?.budgetUsdc != null
-        ? BigInt(Math.floor(grantCfg.budgetUsdc * 10 ** SOROBAN_DECIMALS))
-        : null
+  async function runOrchestratorDispatch(permissionDecision) {
+    const plan = strategyFlowRef.current.plan
+    const baseAllocations = baseMandateAllocationsForPlan(plan)
+    if (baseAllocations.length > 0) {
+      const record = readBaseMandate(realAddress)
+      const reviewedEvidence = baseView.mandateView?.evidence ?? null
+      for (const allocation of baseAllocations) {
+        let currentEvidence = null
+        try {
+          currentEvidence = await getMandateStatus(record?.serializedApproval, {
+            stellarOwner: realAddress,
+            kernelAddress: record?.kernelAddress,
+            allocation,
+          })
+        } catch {
+          currentEvidence = null
+        }
+        if (baseMandateRequiresReview(reviewedEvidence, currentEvidence)) {
+          setBaseView((previous) => ({
+            ...previous,
+            healthy: false,
+            mandateView: {
+              ...(previous?.mandateView || {}),
+              ready: false,
+              status: currentEvidence?.status || 'unavailable',
+              evidence: currentEvidence,
+            },
+          }))
+          setStrategyReached(['plan'])
+          throw new PermissionPhaseError({
+            phase: 'preflight',
+            code: 'VF_BASE_MANDATE_CHANGED',
+            message: 'Base mandate evidence changed. Rebuild and review the plan before granting.',
+          })
+        }
+      }
+    }
+    const sessionId = `session-${runId}`
+    const captured = activeAccount
+    assertActiveAccount(captured)
+    activeOrchestrationRef.current?.cancel()
+    const epochRun = createEpochBoundRun({
+      captured,
+      getCurrent: () => activeAccountRef.current,
+      onEvent: handleNewRunEvent,
+    })
+    activeOrchestrationRef.current = epochRun
+    setExecMap((prev) => ({
+      ...prev,
+      ...makeInitialExecState(plan.agents.map((a) => ({ id: a.allocationId }))),
+    }))
+    setRunEvents([])
+    setRecoveryByAllocation({})
+    setRecoveryPendingAllocations(new Set())
+    recoveryMappingsRef.current = new Map()
 
     const orch = new OrchestratorAgent({
       user: realAddress,
-      veniceAuth: veniceAuth,
+      activeAccount: captured,
+      getCurrentActiveAccount: () => activeAccountRef.current,
+      signal: epochRun.signal,
+      veniceAuth,
       devApiKey: devApiKey || null,
       sessionId,
-      grantBudgetUnits,
-      grantDurationSeconds: grantCfg?.durationSeconds || null,
-      // Only required when yvStrategy.vaults contains a chain:'base' entry (dispatch throws
-      // otherwise) — reuses the SAME wallet-kit singleton/signing path the grant flow signs
-      // through (signWithTimeout → signTxXdr → the one loadKit() instance), never a second kit.
       baseLegContext: buildBaseLegContext({
         connectedAddress: realAddress,
         kitSignTransaction: (xdr) => signWithTimeout(xdr, 'cross-chain leg'),
       }),
-      onEvent: (evName, data) => {
-        if (evName === 'skill-gen-failed') {
-          const dId = agentMapRef.current?.[data.agentId] || data.agentId
-          addLog({
-            event: 'AgentFailed',
-            agent: dId,
-            meta: `Skill generation failed: ${data.error}. Using the fallback skill.`,
-          })
-          return
-        }
-
-        if (evName === 'AgentScopeAuthorized') {
-          // Single source: derive the human summary (cap + max-at-risk) from the SAME scope
-          // object the orchestrator authorized on-chain. UI numbers cannot diverge from chain.
-          const summary = scopeSummary({
-            agent: data.agent,
-            vault: data.vault,
-            token: data.token,
-            capPerPeriod: BigInt(data.capPerPeriod),
-            periodDuration: data.periodDuration,
-            expiry: data.expiry,
-            nowSec: Math.floor(Date.now() / 1000),
-          })
-          setScopes((prev) => {
-            const next = prev.filter((s) => s.agent?.toLowerCase() !== data.agent?.toLowerCase())
-            return [
-              ...next,
-              { ...summary, agentId: data.agentId, revoked: false, authorized: data.authorized },
-            ]
-          })
-          return
-        }
-
-        // Base leg events are leg-level (no per-agent hex id) — paint them onto every Base
-        // vault design node so the graph shows the cross-chain lifecycle instead of dropping it.
-        if (evName.startsWith('baseleg-') || evName.startsWith('farm-')) {
-          paintBaseNodes(mapBaseLegEvent(evName, data))
-          return
-        }
-
-        const agentId = data?.agentId
-        if (!agentId) return
-
-        // Resolve hex agentId → design worker id ('worker-1', etc.)
-        const dId = agentMapRef.current?.[agentId] || agentId
-
-        if (evName === 'started') {
-          setExecMap((prev) => {
-            const cur = prev[dId] || prev[agentId] || makeInitialExecState([{ id: dId }])[dId]
-            return {
-              ...prev,
-              [dId]: {
-                ...cur,
-                status: 'running',
-                activeStep: 'swap',
-                memory: [
-                  ...(cur.memory || []),
-                  {
-                    status: 'running',
-                    title: 'Agent started',
-                    meta: `Vault ${shortAddr(data.vault)}`,
-                    t: nowT(),
-                  },
-                ],
-                metrics: {
-                  ...(cur.metrics || {}),
-                  startedAt: Date.now(),
-                  totalRuns: (cur.metrics?.totalRuns || 0) + 1,
-                },
-              },
-            }
-          })
-          addLog({ event: 'AgentStarted', agent: dId, meta: `Vault: ${shortAddr(data.vault)}` })
-        }
-
-        if (evName === 'step') {
-          const stepName = WORKER_STEP_MAP[data.step]
-          if (!stepName) return // skip 'grant-permission' internal step
-          const stepStatus =
-            data.status === 'done' ? 'confirmed' : data.status === 'skipped' ? 'skipped' : 'running'
-          setExecMap((prev) => {
-            const cur = prev[dId] || prev[agentId] || {}
-            return {
-              ...prev,
-              [dId]: {
-                ...cur,
-                activeStep: stepName,
-                gasMethod: data.gasMethod || cur.gasMethod || null,
-                steps: { ...(cur.steps || {}), [stepName]: stepStatus },
-                hashes: data.txHash
-                  ? { ...(cur.hashes || {}), [stepName]: data.txHash }
-                  : cur.hashes || {},
-                memory: [
-                  ...(cur.memory || []),
-                  {
-                    status: stepStatus,
-                    title: `${stepName.replace(/^./, (c) => c.toUpperCase())} ${data.status === 'done' ? 'confirmed' : 'executing'}`,
-                    meta: data.txHash
-                      ? `Tx ${shortAddr(data.txHash)}${data.gasMethod === 'user-signed' ? ', user-signed' : ''}`
-                      : 'Via fee-bump relayer',
-                    hash: data.txHash || null,
-                    t: nowT(),
-                  },
-                ],
-              },
-            }
-          })
-          if (data.status === 'skipped' && stepName === 'swap') {
-            addLog({
-              event: 'SwapExecuted',
-              agent: dId,
-              meta: data.reason || 'Skipped. No swap is required.',
-            })
-          }
-          if (data.status === 'done') {
-            const evMap = {
-              swap: 'SwapExecuted',
-              approve: 'ApproveExecuted',
-              deposit: 'DepositExecuted',
-            }
-            if (stepName === 'deposit') {
-              const gasLabel =
-                data.gasMethod === 'relayer'
-                  ? 'Gas paid by relayer'
-                  : data.gasMethod === 'user-signed'
-                    ? 'Gas paid by user, relay not configured'
-                    : ''
-              addLog({
-                event: 'DepositExecuted',
-                agent: dId,
-                meta: `${data.txHash ? `Transaction ${shortAddr(data.txHash)}` : 'No transaction hash'}${gasLabel ? `. ${gasLabel}.` : '.'}`,
-              })
-            } else if (evMap[stepName]) {
-              addLog({
-                event: evMap[stepName],
-                agent: dId,
-                meta: data.txHash ? `Transaction ${shortAddr(data.txHash)}` : 'No transaction hash',
-              })
-            }
-          }
-        }
-
-        if (evName === 'completed') {
-          setExecMap((prev) => {
-            const cur = prev[dId] || prev[agentId] || {}
-            return {
-              ...prev,
-              [dId]: {
-                ...cur,
-                status: 'confirmed',
-                activeStep: null,
-                // The de-simulated worker only emits swap (skipped) + deposit, so the discrete
-                // "approve" step never fires — it was satisfied by the orchestrator's batched
-                // USDC approve + authorizeSessionKey. Mark it confirmed on completion so the
-                // step count reaches 3/3 (else allDone never trips → "waiting for relayer" hangs).
-                steps: { ...(cur.steps || {}), approve: 'confirmed', deposit: 'confirmed' },
-                memory: [
-                  ...(cur.memory || []),
-                  {
-                    status: 'confirmed',
-                    title: 'Agent completed',
-                    meta: `Tx ${shortAddr(data.txHash)}`,
-                    hash: data.txHash,
-                    lesson: 'Vault deposit completed. The strategy executed.',
-                    t: nowT(),
-                  },
-                ],
-                metrics: { ...(cur.metrics || {}), completedAt: Date.now(), successRate: 100 },
-              },
-            }
-          })
-          addLog({
-            event: 'AgentCompleted',
-            agent: dId,
-            meta: data.txHash
-              ? `Transaction ${shortAddr(data.txHash)}`
-              : 'Completed. No transaction hash.',
-          })
-          const ag = strategy?.agents?.find((a) => a.id === dId)
-          if (ag && data.txHash)
-            saveTransaction({
-              txHash: data.txHash,
-              vaultName: ag.vault.name,
-              vaultAddress: ag.vault.addr,
-              protocol: ag.vault.protocol,
-              amountUsdc: ag.allocation,
-              apy: ag.vault.apy,
-              workerLabel: ag.name,
-              workerId: ag.id,
-              network: 'stellar-testnet',
-            })
-        }
-
-        if (evName === 'failed') {
-          setExecMap((prev) => {
-            const cur = prev[dId] || prev[agentId] || {}
-            return {
-              ...prev,
-              [dId]: {
-                ...cur,
-                status: 'failed',
-                activeStep: null,
-                memory: [
-                  ...(cur.memory || []),
-                  {
-                    status: 'failed',
-                    title: 'Agent failed',
-                    meta: data.error || 'Unknown error',
-                    t: nowT(),
-                  },
-                ],
-                metrics: { ...(cur.metrics || {}), completedAt: Date.now(), successRate: 0 },
-              },
-            }
-          })
-          addLog({ event: 'AgentFailed', agent: dId, meta: data.error })
-        }
-      },
+      onEvent: epochRun.onEvent,
     })
 
-    orch
-      .dispatch(yvStrategy, strategy.total)
-      .then((summary) => {
-        addLog({
-          event: 'OrchestratorPlanned',
-          meta: `Completed: ${summary.completed} deposited, ${summary.failed} failed.`,
-        })
-        const addrs = summary.agentAddresses || []
-        deployedAgentsRef.current = addrs
-        if (addrs.length) saveDeployedAgents(realAddress, addrs)
-        if (summary.baseLeg) {
-          // Writes the dashboard's owner-address markers (backup for a wiped localStorage) and
-          // returns a log line that matches the job's real final status — see mergeFlowHelpers.
-          const outcome = applyBaseLegOutcome(summary.baseLeg)
-          if (outcome) addLog(outcome)
-          if (summary.baseLeg.success) {
-            // Don't wait for the 15s poll tick: surface the fresh Base positions now.
-            // Base token activity is on History → Base (fetched when that tab opens).
-            loadBasePositions().then((bp) => setBasePositions(bp))
-            // Dispatch's own poll window is ~2 min; a CCTP leg can take far longer. Keep asking
-            // slowly so the graph + log settle on the truth instead of freezing on "still
-            // settling" after the deposits have already landed (live 2026-07-20: 60 USDC farmed
-            // into 3 pools on-chain while the UI still showed the deposit phase).
-            const jobId = summary.baseLeg.jobId
-            if (jobId && summary.baseLeg.finalStatus !== 'done') {
-              import('./base/relayerClient.js').then(({ pollFarmStatus }) =>
-                pollBaseLegUntilSettled({
-                  jobId,
-                  pollOnce: (id) => pollFarmStatus({ jobId: id, maxTries: 1 }),
-                }).then((settled) => {
-                  if (!settled) return
-                  paintBaseNodes(mapBaseLegEvent('farm-completed', { jobId, finalStatus: settled }))
-                  if (settled === 'done') loadBasePositions().then((bp) => setBasePositions(bp))
-                })
-              )
-            }
-          }
-        }
+    const dispatchPromise = orch.dispatch(plan, { permissionDecision }).then(async (summary) => {
+      epochRun.assertCurrent()
+      addLog({
+        event: 'OrchestratorPlanned',
+        meta: `Completed: ${summary.completed ?? 0} deposited, ${summary.failed ?? 0} failed.`,
       })
-      .catch((err) => {
-        console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
+      const addrs = summary.permission?.agentAddresses || []
+      deployedAgentsRef.current = addrs
+      if (addrs.length) saveDeployedAgents(realAddress, addrs)
+      // dispatchPermissioned's pure-Stellar branch never builds a receipt (only the mixed/bridge
+      // branch does, via buildDispatchReceipt) -- build one here so StrategyReceipt always gets a
+      // real DispatchReceiptV1, never a shape that only exists for runs with a Base leg.
+      const receipt =
+        summary.receipt ||
+        buildDispatchReceipt({
+          plan,
+          permission: summary.permission,
+          branches: {
+            stellar: { results: summary.results || [] },
+            base: { status: undefined, results: [] },
+          },
+        })
+      try {
+        recoveryMappingsRef.current = buildRecoveryAllocationMappings({
+          plan,
+          confirmedPermission: receipt.permission,
+          reviewedPermission: permissionDecision,
+          owner: realAddress,
+        })
+      } catch (error) {
+        recoveryMappingsRef.current = new Map()
         addLog({
           event: 'AgentFailed',
-          meta: `Orchestrator simulation failed: ${err?.message || err}`,
+          meta: `Recovery mapping unavailable: ${error?.message || error}`,
         })
-        setExecMap((prev) => {
-          const next = { ...prev }
-          Object.keys(next).forEach((id) => {
-            if (next[id]?.status === 'running' || next[id]?.status === 'idle') {
-              next[id] = { ...next[id], status: 'failed', activeStep: null }
-            }
+      }
+      setRunReceipt(receipt)
+      if (summary.baseLeg) {
+        const outcome = applyBaseLegOutcome(summary.baseLeg, { stellarOwner: realAddress })
+        if (outcome) addLog(outcome)
+        if (summary.baseLeg.success) {
+          loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) =>
+            epochRun.commit(() => setBasePositions(bp))
+          )
+        }
+      }
+      // Reuses the proven position-reconciliation/council-reflect logic (setStage('done') included)
+      // rather than duplicating it -- the OLD per-agent `strategy` shape it reads is the same one
+      // onAcceptPlan already bridged from the canonical plan.
+      await handleExecDone(epochRun.assertCurrent)
+      epochRun.assertCurrent()
+      return summary
+    })
+    dispatchPromise.catch((err) => {
+      if (!epochRun.commit(() => {})) return
+      if (pendingConfirmRef.current) return // surfaced via requestPermissionConfirmation's own catch
+      // A post-confirm failure (e.g. a relay outage mid-run) stays on Start and ends in an
+      // aggregate receipt -- never bounces back to Protect (brief: "post-grant branch failures
+      // stay Start and end in aggregate receipt").
+      console.warn('[app] run failed after confirmation:', err?.message || err)
+      addLog({ event: 'AgentFailed', meta: `Run failed: ${err?.message || err}` })
+      setStage('done')
+    })
+    const clearActiveRun = () => {
+      if (activeOrchestrationRef.current === epochRun) activeOrchestrationRef.current = null
+    }
+    dispatchPromise.then(clearActiveRun, clearActiveRun)
+    return dispatchPromise
+  }
+
+  // Project every failed settled lane from durable evidence. Base children deliberately receive
+  // only a blocked display projection; no Stellar identity mapping is ever created for them.
+  useE(() => {
+    const plan = strategyFlow.plan
+    const captured = activeAccount
+    if (!runReceipt || !plan || captured?.version !== 1) return undefined
+    let alive = true
+    const parentByChild = new Map()
+    for (const agent of plan.agents || []) {
+      if (agent.kind !== 'bridge') continue
+      for (const child of agent.children || []) parentByChild.set(child.allocationId, agent)
+    }
+    Promise.all(
+      (runReceipt.allocations || [])
+        .filter((outcome) => outcome?.executionStatus === 'failed')
+        .map(async (outcome) => {
+          const parent = parentByChild.get(outcome.allocationId)
+          if (parent) {
+            return [
+              outcome.allocationId,
+              projectRecoveryReceipt({
+                receipt: null,
+                version: 0,
+                identity: {
+                  executionId: `${plan.runId}:exec:${outcome.allocationId}`,
+                  allocationId: outcome.allocationId,
+                  parentAllocationId: parent.allocationId,
+                  childId: outcome.allocationId,
+                },
+                baseResult: {
+                  allocationId: outcome.allocationId,
+                  jobId: outcome.evidence?.jobId ?? null,
+                },
+                strandedBridge:
+                  outcome.custody?.location === 'agent'
+                    ? {
+                        pulled: true,
+                        bridgeAgentAddress: outcome.evidence?.bridgeAgentAddress ?? null,
+                      }
+                    : null,
+              }),
+            ]
+          }
+          const mapping = recoveryMappingsRef.current.get(outcome.allocationId)
+          if (!mapping) {
+            return [
+              outcome.allocationId,
+              {
+                action: 'manual-review',
+                phase: null,
+                reason: 'The authoritative in-memory agent mapping is unavailable.',
+                route: { allocationId: outcome.allocationId, source: 'unmapped' },
+              },
+            ]
+          }
+          try {
+            const authoritative = await readRecoveryReceipt({
+              networkId: mapping.networkId,
+              owner: mapping.owner,
+              executionId: mapping.executionId,
+              allocationId: mapping.allocationId,
+            })
+            assertCurrentActiveAccount({ captured, current: activeAccountRef.current })
+            return [
+              outcome.allocationId,
+              projectRecoveryReceipt({ ...authoritative, identity: mapping }),
+            ]
+          } catch (error) {
+            return [
+              outcome.allocationId,
+              {
+                action: 'manual-review',
+                phase: null,
+                reason: error?.message || 'Recovery evidence could not be read.',
+                route: { allocationId: outcome.allocationId, source: 'read-failed' },
+              },
+            ]
+          }
+        })
+    ).then((entries) => {
+      if (!alive || activeAccountRef.current !== captured) return
+      setRecoveryByAllocation(Object.fromEntries(entries))
+    })
+    return () => {
+      alive = false
+    }
+  }, [runReceipt, strategyFlow.plan, activeAccount])
+
+  if (!recoveryRunnerRef.current) {
+    recoveryRunnerRef.current = createRecoveryActionRunner({
+      getActiveAccount: () => activeAccountRef.current,
+      getProjection: (allocationId) => recoveryByAllocationRef.current[allocationId],
+      getMapping: (allocationId) => recoveryMappingsRef.current.get(allocationId),
+      getPermission: () => strategyFlowRef.current.permission,
+      recoverAllocation: async (args) => {
+        const captured = activeAccountRef.current
+        assertCurrentActiveAccount({ captured, current: activeAccountRef.current })
+        const orchestrator = new OrchestratorAgent(
+          createAccountScopedRecoveryConfig({
+            captured,
+            getCurrent: () => activeAccountRef.current,
+            sessionId: `session-${strategyFlowRef.current.plan?.runId || runId}-recovery`,
+            onEvent: handleNewRunEvent,
           })
+        )
+        return orchestrator.recoverAllocation(args)
+      },
+      onProjection: (allocationId, projected) =>
+        setRecoveryByAllocation((previous) => ({
+          ...previous,
+          [allocationId]: projected,
+        })),
+      onPending: (allocationId, pending) =>
+        setRecoveryPendingAllocations((previous) => {
+          const next = new Set(previous)
+          if (pending) next.add(allocationId)
+          else next.delete(allocationId)
           return next
-        })
-        setMonitorStatus({
-          level: 'skip',
-          score: 0,
-          reason: 'Stellar relayer offline. Simulation mode. Council Monitor badge visible.',
-          lastCheck: Date.now(),
-          result: 'approved',
-        })
-      })
+        }),
+      onError: (error, allocationId) =>
+        addLog({
+          event: 'AgentFailed',
+          agent: allocationId,
+          meta: `Recovery: ${error?.message || error}`,
+        }),
+      leaseOwner: recoveryLeaseOwnerRef.current,
+      vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+    })
+  }
+
+  async function onRecoverAllocation(allocationId) {
+    try {
+      return await recoveryRunnerRef.current.run(allocationId)
+    } catch {
+      return null
+    }
+  }
+
+  // Task 10, carried finding C2: /agent is now the crew route (below), so "Back to my money"
+  // must land on /home -- leaving this pointed at /agent would put it on the exact same screen
+  // "Watch the crew" (onViewCrew, below) already opens.
+  function onViewMoney() {
+    navigate('/home')
+  }
+
+  function onMakeAnotherDeposit() {
+    handleAgain()
+  }
+
+  // ProtectStage's "Edit plan" -- flowState.js's moments only move forward by design (its own
+  // header: "the moment machine's whole job is refusing to move forward"), so there is no
+  // reducer-safe way to step Protect back to Plan while preserving the reviewed plan. Resetting to
+  // a fresh Plan review is the one option that violates no invariant; STRATEGY_RESET is the
+  // app-local wrapper event added above for exactly this.
+  function onEditPlan() {
+    dispatchFlow({ type: 'STRATEGY_RESET' })
+    setStrategyReached(['plan'])
+  }
+
+  function onNavigateStrategyStage(stepId) {
+    if (stepId === 'plan' && strategyFlowRef.current.moment !== 'plan') {
+      onEditPlan()
+    }
+  }
+
+  // The route's public state is only Plan, Protect, Start, or receipt (brief's Interfaces
+  // section) — `strategyFlow.moment` drives which of the three stages renders; StartStage renders
+  // StrategyReceipt itself once `receipt` is non-null (StartStage.jsx's own composition).
+  // I1 fix (fix loop 1): the wrapper markup itself now lives in exactly one place,
+  // StrategyRoute.jsx — this just supplies the real props per stage.
+  function renderStrategyRoute() {
+    return (
+      <StrategyRoute
+        stage={strategyFlow.moment}
+        reached={strategyReached}
+        onNavigateStage={onNavigateStrategyStage}
+        plan={strategyFlow.plan}
+        vaultTotalShares={vaultTotalShares}
+        stellarVenue={stellarVenueDisplay}
+        base={baseView}
+        runId={runId}
+        onGenerate={onGenerate}
+        onRetryLive={onGenerate}
+        onAcceptPlan={onAcceptPlan}
+        onConnectForBase={onConnectForBase}
+        onSetupBase={onSetupBase}
+        onRebuildPlan={onRebuildPlan}
+        skillSource={skillSource}
+        marketLive={marketLive}
+        vaultLive={vaultLive}
+        onCustomizeSkill={() => setSkillDrawerOpen(true)}
+        protectProps={{
+          owner: realAddress,
+          baseMandateView: baseView.mandateView,
+          onConnectWallet,
+          onRetryPreflight,
+          onRequestGrant,
+          onConfirmReuse,
+          onEditPlan,
+        }}
+        startProps={{
+          permission: strategyFlow.permission,
+          events: runEvents,
+          receipt: runReceipt,
+          runId,
+          stellarVenue: stellarVenueDisplay,
+          recoveryByAllocation,
+          recoveryPendingAllocations,
+          onRecoverAllocation,
+          onViewMoney,
+          onMakeAnotherDeposit,
+          // Task 7 (Pocket Crew design alignment) -- the done-state "Watch the crew" action.
+          // Task 10 makes /agent the crew route (below) and /home the money route (onViewMoney
+          // above) -- the two buttons are genuinely distinct destinations now, not a duplicate.
+          onViewCrew: () => navigate('/agent'),
+        }}
+      />
+    )
   }
 
   // Chain balances can lag 1-2 blocks after a deposit. Retry until at least one
@@ -2729,12 +4000,14 @@ const App = () => {
   }
 
   /* ----- DONE (step 06) ----- */
-  const handleExecDone = async () => {
+  const handleExecDone = async (assertCurrent = () => {}) => {
+    assertCurrent()
     setStage('done')
     // ACE loop: credit/debit the rules the council cited at review time, based on
     // how the deposit actually went. Closes review → deposit → reflect end-to-end.
     const { citedRules, verdict } = councilCitedRef.current
     if (verdict === 'keep' && citedRules.length) {
+      assertCurrent()
       const outcome = councilOutcome(execMap, strategy?.agents || [])
       reflect({ verdict, citedRules, outcome }, { increment: playbookIncrement })
       addLog({
@@ -2764,6 +4037,7 @@ const App = () => {
     // If chain unavailable (RPC down / tx not yet mined), ADD seed into existing
     // positions — these are confirmed new deposits, so we sum, not take max.
     const chain = await reconcileWithRetry(realAddress, 3, 3000, deployedAgentsRef.current)
+    assertCurrent()
     if (chain) {
       const finalPositions = mergePositions(seedPositions, chain)
       if (Object.keys(finalPositions).length > 0) {
@@ -2792,6 +4066,7 @@ const App = () => {
       })
     }
     const agentAddrs = deployedAgentsRef.current
+    assertCurrent()
     if (agentAddrs?.length) saveDeployedAgents(realAddress, agentAddrs)
 
     addLog({
@@ -2805,15 +4080,10 @@ const App = () => {
     navigate('/strategy')
     setFurthest(0)
     setStrategy(null)
-    setRawStrategy(null)
-    setStrategyAttestation(null)
-    setAttesting(false)
     setSkillStates({})
-    setEditingTexts({})
     setConnectPhase('idle')
     setConnectError(null)
     setPermActive(false)
-    setPermError(null)
     setPermExpiresAt(null)
     clearResume(realAddress)
     setSessionResumed(false)
@@ -2824,6 +4094,23 @@ const App = () => {
     setLogs([])
     agentMapRef.current = {}
 
+    // Strategy Task 13 — reset the new Plan/Protect/Start machinery too, so "Start over"/"Make
+    // another deposit" always begins a genuinely fresh run rather than reopening the settled one.
+    dispatchFlow({ type: 'STRATEGY_RESET' })
+    setStrategyReached(['plan'])
+    setRunEvents([])
+    setRunReceipt(null)
+    setRecoveryByAllocation({})
+    setRecoveryPendingAllocations(new Set())
+    recoveryMappingsRef.current = new Map()
+    setRunId(`run-${Date.now()}`)
+    baseSetupSucceededRef.current = false
+    pendingConfirmRef.current = null
+
+    // Fix loop 1 (C1): the old ceremony's strategyPhase/thinkingPhase 'thinking'-timer kickoff for
+    // an overridden amount was deleted along with the rest of that flow — PlanStage now owns
+    // amount entry and generation. Still worth carrying a caller-supplied amount into the fresh
+    // Plan surface rather than silently discarding it.
     if (
       overrideAmount !== undefined &&
       overrideAmount !== null &&
@@ -2832,15 +4119,6 @@ const App = () => {
         !isNaN(Number(overrideAmount)))
     ) {
       setAmount(String(overrideAmount))
-      setStrategyPhase('thinking')
-      setThinkingPhase(0)
-      addLog({
-        event: 'OrchestratorPlanned',
-        meta: `${overrideAmount} usdc, ${risk} risk, planning`,
-      })
-    } else {
-      setStrategyPhase('input')
-      setThinkingPhase(0)
     }
   }
 
@@ -2861,7 +4139,7 @@ const App = () => {
   }
   const handleDisconnect = () => {
     stopBackgroundAgent()
-    setRealAddress(null)
+    installActiveWalletAccount(null)
     setConnectPhase('idle')
     setPermActive(false)
     setPermExpiresAt(null)
@@ -2880,223 +4158,6 @@ const App = () => {
     setSkillSource('default')
   }
 
-  /* ----- Step rail: navigate back to a completed step (state preserved) ----- */
-  const goBack = (id) => {
-    if (id === 'strategy') setStrategyPhase('ready')
-    setStage(id)
-  }
-
-  /* ----- Jump to step (tweaks panel) ----- */
-  const jumpTo = (id) => {
-    if (id === 'strategy') {
-      setStage('strategy')
-      setStrategyPhase('input')
-      setThinkingPhase(0)
-      return
-    }
-    const ensured = strategy || buildStrategy(amount, risk)
-    if (!strategy) {
-      setStrategy(ensured)
-      const sk = {}
-      ensured.agents.forEach((a) => {
-        sk[a.id] = { state: 'approved', skill: null }
-      })
-      setSkillStates(sk)
-    }
-    if (id === 'connect') {
-      setStage('connect')
-      setConnectPhase('idle')
-      return
-    }
-    if (id === 'skills') {
-      setStage('skills')
-      setConnectPhase('upgraded')
-      return
-    }
-    if (id === 'permission') {
-      setStage('permission')
-      setPermPhase('idle')
-      setConnectPhase('upgraded')
-      const sk = {}
-      ensured.agents.forEach((a) => {
-        sk[a.id] = { state: 'approved', skill: null }
-      })
-      setSkillStates(sk)
-      return
-    }
-    if (id === 'execute') {
-      setStage('execute')
-      setConnectPhase('upgraded')
-      setPermActive(true)
-      const sk = {}
-      ensured.agents.forEach((a) => {
-        sk[a.id] = { state: 'approved', skill: null }
-      })
-      setSkillStates(sk)
-      startExecution(null)
-      return
-    }
-    if (id === 'done') {
-      setStage('done')
-      setConnectPhase('upgraded')
-      setPermActive(true)
-      // Preserve real execution state. Navigating back to "done" must NOT fabricate
-      // tx hashes — only fill a confirmed shell (no hashes) for agents the user
-      // genuinely reached but whose live exec map was lost (e.g. after reload).
-      setExecMap((prev) => {
-        const map = { ...(prev || {}) }
-        ensured.agents.forEach((a) => {
-          const cur = map[a.id]
-          const alreadyReal = cur && cur.hashes && cur.hashes.deposit
-          if (alreadyReal) return // keep real, event-sourced state untouched
-          map[a.id] = {
-            status: 'confirmed',
-            activeStep: null,
-            steps: { swap: 'skipped', approve: 'confirmed', deposit: 'confirmed' },
-            hashes: cur?.hashes || {}, // no fabricated hash — empty if no real tx
-            gasMethod: cur?.gasMethod || null,
-            memory: cur?.memory?.length
-              ? cur.memory
-              : [
-                  {
-                    status: 'confirmed',
-                    title: 'Agent completed',
-                    meta: 'Position confirmed on-chain',
-                    t: nowT(),
-                    lesson: 'Vault deposit complete',
-                  },
-                ],
-            metrics: cur?.metrics || {
-              totalRuns: 1,
-              successRate: 100,
-              startedAt: Date.now(),
-              completedAt: Date.now(),
-            },
-          }
-        })
-        return map
-      })
-    }
-  }
-
-  const renderStage = () => {
-    switch (stage) {
-      case 'strategy':
-        if (strategyPhase === 'input')
-          return (
-            <InputScreen
-              amount={amount}
-              setAmount={setAmount}
-              risk={risk}
-              setRisk={setRisk}
-              onSubmit={handleSubmitPreference}
-            />
-          )
-        if (strategyPhase === 'thinking')
-          return <ThinkingCard phase={thinkingPhase} times={thinkTimes} />
-        return (
-          <>
-            {needsBaseMandate && (
-              <div className="lede" style={{ marginBottom: 12 }}>
-                <span>Base pools need one-time activation. </span>
-                <button
-                  className="btn btn-ghost"
-                  onClick={handleSetupBaseMandate}
-                  disabled={settingUpBaseMandate}
-                >
-                  {settingUpBaseMandate ? 'Activating…' : 'Activate Base (1 tap)'}
-                </button>
-                {baseMandateError && (
-                  <div role="alert" style={{ color: 'var(--danger)', fontSize: 11, marginTop: 6 }}>
-                    {baseMandateError}
-                  </div>
-                )}
-              </div>
-            )}
-            <StrategyCard
-              strategy={strategy}
-              skillSource={skillSource}
-              onProceed={handleAcceptStrategy}
-              onRegenerate={handleRegenerate}
-              strategyHash={rawStrategy?.strategyHash}
-              attestation={strategyAttestation}
-              attesting={attesting}
-              simulation={simulation}
-              council={debateResult || council}
-              onCouncilRetry={handleRunCouncil}
-              onRunCouncil={handleRunCouncil}
-              debateRunning={debateRunning}
-              showRunCouncil={!debateResult}
-            />
-          </>
-        )
-      case 'connect':
-        return (
-          <ConnectCard
-            phase={connectPhase}
-            error={connectError}
-            onConnect={handleConnect}
-            onUpgrade={handleUpgrade}
-            onDone={handleConnectDone}
-            onCancel={() => {
-              setConnectPhase('idle')
-              setStage('strategy')
-            }}
-          />
-        )
-      case 'skills':
-        return (
-          <SkillReviewCard
-            agents={strategy?.agents || []}
-            riskProfile={risk}
-            skillStates={skillStates}
-            onApprove={handleSkillApprove}
-            onApproveAll={handleApproveAll}
-            onSkillUpdate={handleSkillUpdate}
-            onContinue={handleSkillsContinue}
-            connectedAddress={realAddress}
-          />
-        )
-      case 'permission':
-        // Router path: ONE grant signature (budget + window) replaces the per-agent batch. Legacy path
-        // (router unset / VITE_LEGACY_AGENT_SETUP=1) keeps the original PermissionCard flow.
-        return USE_FUNDING_ROUTER ? (
-          <GrantPanel
-            defaultBudget={strategy?.total ?? 100}
-            agentCount={strategy?.agents?.length ?? 0}
-            phase={grantPhase}
-            error={grantError}
-            onGrant={handleGrantAndRun}
-            onRevoke={handleRevokeGrant}
-          />
-        ) : (
-          <PermissionCard
-            strategy={strategy}
-            eligibility={eligibility}
-            phase={permPhase}
-            error={permError}
-            onGrant={handleGrant}
-            onConfirm={handlePermConfirm}
-            onReject={handlePermReject}
-          />
-        )
-      case 'execute':
-        return (
-          <ExecuteCard
-            strategy={strategy}
-            execMap={execMap}
-            paletteIsLight={paletteIsLight}
-            onOpenMemory={setOpenAgentId}
-            onDone={handleExecDone}
-          />
-        )
-      case 'done':
-        return <SuccessCard strategy={strategy} onAgain={handleAgain} address={realAddress} />
-      default:
-        return null
-    }
-  }
-
   const walletPhase =
     connectPhase === 'idle' || connectPhase === 'connecting'
       ? 'none'
@@ -3113,44 +4174,49 @@ const App = () => {
     }
   })
 
-  // vf-autofarm keeper/strategy/pool force-graph cluster (Task 15). Memoized on the strategy
-  // address list (not the whole `autofarmReads.strategies` array, which gets a new reference
-  // every 15s poll even when addresses are unchanged) so the canvas physics don't reheat/jitter
-  // on every tick — only when the registered strategy set actually changes.
-  const autofarmStrategyKey = autofarmReads.strategies
-    .map((s) => `${s.address}:${s.poolAddress || ''}`)
-    .join(',')
-  const autofarmGraphData = useM(
-    () =>
-      buildAutofarmGraphData({
-        vaultAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
-        keeperAddress: SOROBAN_KEEPER_ADDRESS,
-        strategies: autofarmReads.strategies,
-      }),
-    [autofarmStrategyKey]
-  )
+  // My Money Task 13 Part B: the vf-autofarm keeper/strategy/pool force-graph cluster (Task 15,
+  // buildAutofarmGraphData) that used to be memoized here fed OpsConsole's own AgentGraph only --
+  // retired along with it (no reader anywhere in the production route tree). Item 8's real agent
+  // network graph lives in TechnicalMoneyDetails.jsx instead, built from `agents`/`model` (props
+  // that component already receives), not this vault-wide automation topology.
 
   // Public pages — standalone full-bleed, own NavBar, no wallet required.
   // Checked before every gate so judges and visitors can browse without connecting.
   if (location.pathname === '/explorer') {
     return (
-      <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-        <ExplorerPage />
-      </Suspense>
+      <>
+        <SkipLink />
+        {/* RouteFocus sits INSIDE the Suspense, after the lazy page -- both commit together only
+            once the chunk resolves, so its effect never fires while <main> doesn't exist yet
+            (the loading fallback has no landmark at all). Mounting it outside would run the
+            focus effect immediately against the fallback and silently find nothing. */}
+        <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+          <ExplorerPage />
+          <RouteFocus pathname={location.pathname} />
+        </Suspense>
+      </>
     )
   }
   if (location.pathname === '/ecosystem') {
     return (
-      <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-        <EcosystemPage />
-      </Suspense>
+      <>
+        <SkipLink />
+        <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+          <EcosystemPage />
+          <RouteFocus pathname={location.pathname} />
+        </Suspense>
+      </>
     )
   }
   if (location.pathname === '/replay') {
     return (
-      <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-        <ReplayPage />
-      </Suspense>
+      <>
+        <SkipLink />
+        <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+          <ReplayPage />
+          <RouteFocus pathname={location.pathname} />
+        </Suspense>
+      </>
     )
   }
 
@@ -3159,17 +4225,21 @@ const App = () => {
   // sets the URL to /strategy, which surfaces once onboarding (connect) completes.
   if (!skipLanding && !realAddress) {
     return (
-      <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-        <LandingHero
-          onStart={() => {
-            localStorage.setItem('yv_skip_landing', 'true')
-            localStorage.setItem('yv_onboarded', 'true')
-            setSkipLanding(true)
-            setOnboarded(true)
-            navigate('/strategy')
-          }}
-        />
-      </Suspense>
+      <>
+        <SkipLink />
+        <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+          <LandingHero
+            onStart={() => {
+              localStorage.setItem('yv_skip_landing', 'true')
+              localStorage.setItem('yv_onboarded', 'true')
+              setSkipLanding(true)
+              setOnboarded(true)
+              navigate('/strategy')
+            }}
+          />
+          <RouteFocus pathname={location.pathname} />
+        </Suspense>
+      </>
     )
   }
 
@@ -3178,28 +4248,57 @@ const App = () => {
   // "Skip intro" or "Got it" persists yv_onboarded=true so it never shows again.
   if (!onboarded) {
     return (
-      <OnboardingFlow
-        connected={!!realAddress}
-        onConnect={handleConnect}
-        onComplete={() => {
-          localStorage.setItem('yv_onboarded', 'true')
-          setOnboarded(true)
-        }}
-      />
+      <>
+        <SkipLink />
+        <RouteFocus pathname={location.pathname} />
+        <OnboardingFlow
+          connected={!!realAddress}
+          onConnect={handleConnect}
+          onComplete={() => {
+            localStorage.setItem('yv_onboarded', 'true')
+            setOnboarded(true)
+          }}
+        />
+      </>
     )
   }
 
+  // My Money Task 13: automation-evidence labels for HowMoneyWorks, and the Base withdraw preview
+  // for WithdrawDialog's "base" tab -- all derived from state this app already polls every 15s,
+  // never a second fetch of its own.
+  const moneyKeeper = classifyKeeperAutomation({
+    events: toKeeperHeartbeatEvents(keeperActivity),
+    now: Date.now(),
+  })
+  const moneyStrategyConfig = classifyStrategyConfiguration({
+    pricePerShare: autofarmReads.pricePerShare,
+  })
+  const moneyRiskWatch = describeRiskWatchProvenance({
+    owner: realAddress,
+    networkId: 'stellar-testnet',
+  })
+  const moneyBasePlan = { available: basePositions.length > 0, positions: basePositions }
+  const moneyStopAccessAgent =
+    moneyRead?.agents?.find((a) => a.address === moneyStopAccessAddress) ?? null
+  // Fix round 1, M9: this MUST stay byte-identical to CrewRoute.jsx's own `activeCount` predicate
+  // (`!a?.scope?.value?.revoked && !a?.problems?.length`) -- the badge used to count only
+  // `!revoked`, so an agent with problems made the rail say one more than the crew page's own
+  // "Working for you" stat for the exact same word, "active".
+  const activeAgentCount = (moneyRead?.agents ?? []).filter(
+    (a) => !a?.scope?.value?.revoked && !a?.problems?.length
+  ).length
+
   return (
-    <div
-      className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'} ${railCollapsed ? 'rail-collapsed' : ''}`}
-    >
-      <Sidebar extended={sbExtended} onToggle={toggleSb} />
-      <main className="main">
+    <div className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'}`}>
+      <SkipLink />
+      <Sidebar extended={sbExtended} onToggle={toggleSb} agentCount={activeAgentCount} />
+      <main id="main-content" className="main" tabIndex={-1}>
+        <RouteFocus pathname={location.pathname} />
         <TopBar
-          walletConnected={walletPhase !== 'none'}
           onReset={handleAgain}
-          railCollapsed={railCollapsed}
-          onToggleRail={toggleRail}
+          walletPhase={walletPhase}
+          walletAddress={realAddress}
+          walletLabel={shortAddr(realAddress)}
           notifications={
             <NotificationCenter
               alerts={agentData.alerts}
@@ -3217,160 +4316,196 @@ const App = () => {
           <Route
             path="/home"
             element={
-              <HomePage
-                userAddress={realAddress}
-                positions={agentData.positions}
-                alerts={agentData.alerts}
-                vaultMeta={agentVaultMeta}
-                lastUpdated={agentData.lastUpdated}
-                agentActive={agentEnabled && stage === 'done'}
-                autoHarvest={agentSettings.autoHarvest}
-                sessionResumed={sessionResumed}
-                onDismissResumed={() => setSessionResumed(false)}
-                onConnect={handleConnect}
-                onStartStrategy={handleAgain}
-                onOpenAgent={() => navigate('/agent')}
-                onViewHistory={() => navigate('/history')}
-                onWithdrawSuccess={handleWithdrawSuccess}
-                scopes={scopes}
-                basePositions={basePositions}
-                onBaseWithdraw={handleBaseWithdrawClick}
-                onBaseRecover={handleBaseRecover}
-                baseWithdrawError={baseWithdrawError}
-              />
+              <>
+                {sessionResumed && (
+                  <div className="pc-resumed-banner" role="status">
+                    <span>Session resumed — reconnected your wallet.</span>
+                    {/* Fix round 1, F3: a classless <button> inherits style.css's `border: none;
+                        background: none` reset -- no padding, no min-height, no visible
+                        affordance, and no zero-specificity :where(...) 44px floor catches it here.
+                        `.pc-button pc-button--secondary` is the same control class
+                        StopAccessDialog.jsx:61 already uses, and MyMoneyRoute (my-money.css) is
+                        always co-rendered with this banner on /home, so the class is guaranteed
+                        loaded whenever this button is. */}
+                    <button
+                      type="button"
+                      className="pc-button pc-button--secondary"
+                      onClick={() => setSessionResumed(false)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+                <MyMoneyRoute
+                  model={moneyModel}
+                  agents={moneyRead?.agents ?? []}
+                  discovery={moneyDiscovery}
+                  account={moneyAccountValue}
+                  keeper={moneyKeeper}
+                  strategyConfig={moneyStrategyConfig}
+                  riskWatch={moneyRiskWatch}
+                  onAction={handleMoneyPrimaryAction}
+                  onRecoverAgent={handleRecoverAgent}
+                  onRecoverBase={handleRecoverBaseAccount}
+                  actionPending={moneyActionPending}
+                />
+              </>
             }
           />
           <Route
             path="/strategy"
             element={
-              <>
-                <StepRail stage={stage} furthest={furthest} onStepClick={goBack} lang={language} />
-                {/* Key only major strategy sub-views so "Run risk review" (stays on ready)
-                    does not remount the whole card like a page refresh. */}
-                <div
-                  className="stage"
-                  key={`${stage}-${strategyPhase === 'thinking' || strategyPhase === 'input' ? strategyPhase : 'plan'}`}
-                >
-                  {renderStage()}
-                </div>
-              </>
+              // Fix loop 1 (C1): the old six-step StepRail/renderStage() ceremony used to be
+              // gated here on isDevMode() — but isDevMode() resolves ?dev=1 from the live URL at
+              // runtime (devFlag.js), so that gate was reachable on a deployed production build,
+              // not just in dev. Deleted the ceremony outright (renderStage/goBack/jumpTo and
+              // every handler that only they called) rather than re-gating it on a stricter
+              // check — the route's only production output is the real Plan/Protect/Start
+              // surface.
+              renderStrategyRoute()
             }
           />
           <Route
             path="/agent"
             element={
-              <div className="stage">
-                <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-                  <OpsConsole
-                    positions={agentData.positions}
-                    vaultMeta={agentVaultMeta}
-                    lastUpdated={agentData.lastUpdated}
-                    userAddress={realAddress}
-                    withdrawEnabled={stage !== 'execute' && stage !== 'permission'}
-                    onWithdrawSuccess={handleWithdrawSuccess}
-                    onNewStrategy={handleAgain}
-                    monitorStatus={monitorStatus}
-                    loop={
-                      agentEnabled
-                        ? {
-                            running: loopRef.current?.isRunning() || false,
-                            phase: loopPhase,
-                            cycle: loopRef.current?.getCycle() || 0,
-                            nextTickAt: loopRef.current?.getNextTickAt() || null,
-                            heartbeatMs:
-                              loopRef.current?.getHeartbeatMs() ||
-                              (agentSettings.apyInterval || 10) * 60 * 1000,
-                            rows: getCycles().slice(0, 40),
-                            summary: getJournalSummary(),
-                            decisionsRows: getDecisions().slice(0, 30),
-                            decisionsSummary: getDecisionSummary(),
-                          }
-                        : null
-                    }
-                    keeper={{
-                      events: keeperActivity,
-                      pricePerShare: autofarmReads.pricePerShare,
-                      strategies: autofarmReads.strategies,
-                    }}
-                    lifeboat={{
-                      state: lifeboatState,
-                      events: lifeboatActivity,
-                      busy: lifeboatBusy,
-                      onGrant: onGrantMandate,
-                    }}
-                    scopes={scopes}
-                    onRevoke={handleRevokeAgent}
-                    graph={{
-                      data: autofarmGraphData,
-                      paletteIsLight,
-                      pulseEdge: rebalancePulse,
-                    }}
-                  />
-                </Suspense>
+              <CrewRoute
+                agents={moneyRead?.agents ?? []}
+                model={moneyModel}
+                keeper={moneyKeeper}
+                keeperEvents={keeperActivity}
+                decisions={crewDecisions}
+                onRenewMandate={() => handleMoneyPrimaryAction('renew-protection')}
+                onCancelAgent={(address) => setMoneyStopAccessAddress(address)}
+                onStartStrategy={() => navigate('/strategy')}
+                actionPending={moneyActionPending}
+              />
+            }
+          />
+          {/* The legacy routes below opt into `.pc-route` (pocket-crew.css) so their content column
+              is the same width, centred the same way and inset by the same gutter as My money,
+              Put it to work and The crew -- until now each rendered at whatever width its own markup
+              happened to produce. It also buys them scrolling: `.main` is `overflow: hidden`
+              (style.css) and only `.main:has(.pc-route)` unclips it, which is why a tall legacy route
+              could previously run past the viewport with nothing to scroll. */}
+          <Route
+            path="/history"
+            element={
+              <div className="pc-route">
+                <HistoryPanel connectedAddress={realAddress} />
               </div>
             }
           />
-          <Route path="/history" element={<HistoryPanel />} />
           <Route
             path="/settings"
             element={
-              <SettingsPage
-                userAddress={realAddress}
-                walletPhase={walletPhase}
-                permActive={permActive}
-                permExpiresAt={permExpiresAt}
-                permissionCount={strategy?.agents?.length || 0}
-                agentEnabled={agentEnabled}
-                setAgentEnabled={setAgentEnabled}
-                agentSettings={agentSettings}
-                setAgentSettings={setAgentSettings}
-                skillSource={skillSource}
-                language={language}
-                onLanguageChange={handleLanguageChange}
-                onChangeSkill={() => setSkillDrawerOpen(true)}
-                onResetSkill={handleResetSkill}
-                onResetAgentSettings={handleResetAgentSettings}
-                onConnect={handleConnect}
-                onDisconnect={handleDisconnect}
-                onRevoke={handleRevoke}
-                addLog={addLog}
-              />
+              <div className="pc-route-flush">
+                <SettingsPage
+                  userAddress={realAddress}
+                  walletPhase={walletPhase}
+                  permActive={permActive}
+                  permExpiresAt={permExpiresAt}
+                  permissionCount={strategy?.agents?.length || 0}
+                  agentEnabled={agentEnabled}
+                  setAgentEnabled={setAgentEnabled}
+                  agentSettings={agentSettings}
+                  setAgentSettings={setAgentSettings}
+                  skillSource={skillSource}
+                  language={language}
+                  onLanguageChange={handleLanguageChange}
+                  onChangeSkill={() => setSkillDrawerOpen(true)}
+                  onResetSkill={handleResetSkill}
+                  onResetAgentSettings={handleResetAgentSettings}
+                  onConnect={handleConnect}
+                  onDisconnect={handleDisconnect}
+                  onRevoke={handleRevoke}
+                  addLog={addLog}
+                />
+              </div>
             }
           />
           <Route
             path="/vault/:protocol"
-            element={<VaultDetailPage positions={agentData.positions} />}
+            element={
+              <div className="pc-route">
+                <VaultDetailPage positions={agentData.positions} />
+              </div>
+            }
           />
-          <Route path="/tx/:txHash" element={<TxDetailPage />} />
+          <Route
+            path="/tx/:txHash"
+            element={
+              <div className="pc-route">
+                <TxDetailPage />
+              </div>
+            }
+          />
           <Route
             path="/developers/*"
             element={
               <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-                <DevelopersLayout />
+                {/* Inside the Suspense boundary, so the wrapper commits with the lazy chunk rather
+                    than framing an empty fallback. */}
+                <div className="pc-route">
+                  <DevelopersLayout />
+                </div>
               </Suspense>
             }
           />
           <Route path="/farm" element={<Navigate to="/home" replace />} />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
+        {/* Task 10 (IA remap): these three overlays are open-state-driven, not route-scoped --
+            hoisted out of any single Route so they work identically from /home (MyMoneyRoute) and
+            /agent (CrewRoute); e.g. StopAccessDialog's "go to withdraw" and CrewRoute's cancel
+            action both open them regardless of which route triggered it. */}
+        <WithdrawDialog
+          open={moneyWithdrawOpen}
+          onClose={() => setMoneyWithdrawOpen(false)}
+          agents={moneyRead?.agents ?? []}
+          discovery={moneyDiscovery}
+          account={moneyAccountValue}
+          basePlan={moneyBasePlan}
+          pending={moneyActionPending}
+          onConfirmFull={handleConfirmFullExit}
+          onConfirmPartial={handleConfirmPartialExit}
+          onConfirmBase={handleConfirmBaseWithdraw}
+        />
+        <StopAccessDialog
+          open={Boolean(moneyStopAccessAddress)}
+          onClose={() => setMoneyStopAccessAddress(null)}
+          agent={moneyStopAccessAgent}
+          shareRead={moneyStopAccessAgent?.vaultShares}
+          idleBalanceRead={moneyStopAccessAgent?.idleToken}
+          account={moneyAccountValue}
+          pending={moneyActionPending}
+          onConfirmRevoke={handleConfirmRevoke}
+          onGoToWithdraw={() => {
+            setMoneyStopAccessAddress(null)
+            setMoneyWithdrawOpen(true)
+          }}
+        />
+        <RecoveryPanel
+          open={Boolean(moneyRecovery)}
+          onClose={() => setMoneyRecovery(null)}
+          location={moneyRecovery?.location}
+          amount={moneyRecovery?.amount}
+          agentAddress={moneyRecovery?.action?.agentAddress}
+          strandedBridge={moneyRecovery?.strandedBridge}
+          submission={moneyRecovery?.submission}
+          reconciled={moneyRecovery?.reconciled}
+          pending={moneyActionPending}
+          onRecoverViaFullExit={() => {
+            setMoneyRecovery(null)
+            setMoneyWithdrawOpen(true)
+          }}
+          onGoToBaseWithdraw={() => {
+            setMoneyRecovery(null)
+            handleBaseWithdrawClick()
+          }}
+          onCheckStatus={handleCheckSubmissionStatus}
+          onRetry={handleRetrySubmission}
+        />
       </main>
-      <aside className="rail">
-        <WalletPanel phase={walletPhase} address={realAddress} />
-        <PermissionPanel
-          active={permActive}
-          strategy={strategy}
-          onRevoke={handleRevoke}
-          expiresAt={permExpiresAt}
-        />
-        <ActivityPanel logs={logs} />
-        <SkillPanel
-          skillSource={skillSource}
-          marketLive={marketLive}
-          vaultLive={vaultLive}
-          onCustomize={() => setSkillDrawerOpen(true)}
-        />
-      </aside>
-
       <SkillDrawer
         open={skillDrawerOpen}
         onClose={() => setSkillDrawerOpen(false)}
@@ -3387,27 +4522,6 @@ const App = () => {
         />
       )}
 
-      {slowConfirm && (
-        <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true">
-            <div className="modal-eyebrow">AI timeout</div>
-            <h3 className="modal-title">AI is still processing. Keep waiting?</h3>
-            <p className="lede" style={{ marginTop: 8 }}>
-              Generation has exceeded {Math.round(VENICE_TIMEOUT_MS / 1000)} seconds. Do you want to
-              keep waiting or use the default strategy instead?
-            </p>
-            <div className="modal-actions">
-              <button className="btn btn-ghost" onClick={handleStopWaiting}>
-                Use default
-              </button>
-              <button className="btn btn-primary" onClick={handleKeepWaiting}>
-                Keep waiting
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {baseWithdraw && (
         <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
           <Withdraw
@@ -3418,7 +4532,10 @@ const App = () => {
             stellarRecipient={realAddress}
             onClose={() => setBaseWithdraw(null)}
             onDone={() => {
-              loadBasePositions().then((bp) => setBasePositions(bp))
+              const captured = baseWithdraw.activeAccount
+              loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) => {
+                if (activeAccountRef.current === captured) setBasePositions(bp)
+              })
             }}
           />
         </Suspense>
@@ -3427,7 +4544,15 @@ const App = () => {
       {devMode && (
         <TweaksPanel title="Tweaks">
           <TweakSection label="Brand palette" />
-          <PalettePicker value={tweaks.palette} onChange={(v) => setTweak('palette', v)} />
+          <TweakRadio
+            label="Palette"
+            value={normalizedTheme}
+            options={[
+              { value: 'forest', label: 'Forest' },
+              { value: 'day-field', label: 'Day Field' },
+            ]}
+            onChange={(v) => setTweak('palette', v)}
+          />
 
           <TweakSection label="Demo speed" />
           <TweakRadio
@@ -3554,42 +4679,6 @@ const App = () => {
                 }
               />
             </label>
-          </div>
-
-          <TweakSection label="Jump to step, dev only" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-            {STEPS.map((s, i) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => jumpTo(s.id)}
-                style={{
-                  appearance: 'none',
-                  border: '.5px solid rgba(0,0,0,.08)',
-                  borderRadius: 6,
-                  background: stage === s.id ? 'rgba(0,0,0,.08)' : 'rgba(255,255,255,.4)',
-                  color: 'inherit',
-                  font: 'inherit',
-                  fontSize: 10.5,
-                  fontWeight: stage === s.id ? 600 : 500,
-                  padding: '6px 8px',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  letterSpacing: '-0.01em',
-                }}
-              >
-                <span
-                  style={{
-                    color: 'rgba(41,38,27,.45)',
-                    marginRight: 5,
-                    fontFamily: 'ui-monospace, monospace',
-                  }}
-                >
-                  {String(i + 1).padStart(2, '0')}
-                </span>
-                {s.label}
-              </button>
-            ))}
           </div>
         </TweaksPanel>
       )}

@@ -5,6 +5,7 @@ import {
   YIELD_ROUTER_ABI,
   createOrchestrator,
 } from '../../src/base/orchestrator.mjs';
+import { MAX_CALL_CAP_UNITS } from '../../src/base/session.mjs';
 import {
   buildFarmPermissions,
   evaluateCall,
@@ -200,5 +201,31 @@ describe('dispatchDeposits', () => {
       expect(approval.args[1]).toBe(units[index]);
       expect(deposit.args[1]).toBe(units[index]);
     }
+  });
+
+  // VF Wallet Task 7 — defense in depth: this is the point where the session key is actually
+  // used (reconstructSessionClientFn builds a live signing client from it), so an over-cap
+  // allocation must never get this far even if some future caller bypasses httpRouter's own
+  // pre-dispatch check. Rejects the WHOLE call up front (never releases the key at all) rather
+  // than the allSettled per-pool pattern used for runtime failures below — a policy violation is
+  // caught before dispatch starts, not discovered mid-flight.
+  it('rejects the whole call before reconstructing the session client when any allocation exceeds the 10,000 USDC per-call cap', async () => {
+    const kernelClient = buildMockKernelClient();
+    const reconstructSessionClientFn = vi.fn().mockResolvedValue(kernelClient);
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn,
+    });
+
+    const allocations = [
+      { pool: '0x00000000000000000000000000000000000000a1', amount: MAX_CALL_CAP_UNITS, minShares: 1n },
+      { pool: '0x00000000000000000000000000000000000000b2', amount: MAX_CALL_CAP_UNITS + 1n, minShares: 1n },
+    ];
+
+    await expect(orchestrator.dispatchDeposits('serialized-approval', allocations)).rejects.toThrow(/cap/i);
+    expect(reconstructSessionClientFn).not.toHaveBeenCalled();
+    expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
   });
 });
