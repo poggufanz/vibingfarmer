@@ -154,10 +154,7 @@ export const STELLAR_TOKEN_MESSENGER_MINTER = pick(
   'cctpTokenMessengerMinter'
 )
 export const STELLAR_USDC_SAC = pick('VITE_STELLAR_USDC_SAC', 'cctpUsdcSac')
-export const CCTP_STELLAR_DOMAIN = pickInteger(
-  'VITE_CCTP_STELLAR_DOMAIN',
-  'cctpStellarDomain'
-)
+export const CCTP_STELLAR_DOMAIN = pickInteger('VITE_CCTP_STELLAR_DOMAIN', 'cctpStellarDomain')
 export const CCTP_BASE_DOMAIN = pickInteger('VITE_CCTP_BASE_DOMAIN', 'cctpBaseDomain')
 export const SOROBAN_AUTOFARM_VAULT_ADDRESS = pick(
   'VITE_SOROBAN_AUTOFARM_VAULT_ADDRESS',

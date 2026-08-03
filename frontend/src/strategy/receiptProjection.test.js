@@ -1,11 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { RECOVERY_REASON_CODES } from '../../api/agent-index/recovery.js'
 import { RECEIPT_CUSTODY_LOCATIONS } from '../../api/agent-index/models.js'
-import {
-  appendPhase,
-  confirmCustody,
-  createAllocationReceipt,
-} from './allocationReceipt.js'
+import { appendPhase, confirmCustody, createAllocationReceipt } from './allocationReceipt.js'
 import { projectRecoveryReceipt } from './receiptProjection.js'
 
 const HUGE_UNITS = '123456789012345678901234567890123456789'
@@ -146,20 +142,23 @@ describe('projectRecoveryReceipt', () => {
   it.each([
     ['future-location', { location: 'future-location', confirmed: true, amount: AMOUNT }],
     ['non-string units', { location: 'owner', confirmed: true, amount: { ...AMOUNT, units: 42 } }],
-  ])('localizes defensive schema-only malformed custody (%s) to one allocation', (_label, custody) => {
-    // Defensive schema-only fixture: createAllocationReceipt/confirmCustody cannot emit either
-    // shape; this represents corrupt storage or future client/server schema drift only.
-    const receipt = persisted({ ...producedReceipt(), custody })
-    const projected = projectRecoveryReceipt({ receipt, version: 9 })
+  ])(
+    'localizes defensive schema-only malformed custody (%s) to one allocation',
+    (_label, custody) => {
+      // Defensive schema-only fixture: createAllocationReceipt/confirmCustody cannot emit either
+      // shape; this represents corrupt storage or future client/server schema drift only.
+      const receipt = persisted({ ...producedReceipt(), custody })
+      const projected = projectRecoveryReceipt({ receipt, version: 9 })
 
-    expect(projected.custody).toMatchObject({
-      location: 'unknown',
-      confirmed: false,
-      amount: null,
-      source: 'unmapped',
-    })
-    expect(projected.custody.reason).toContain(IDENTITY.allocationId)
-  })
+      expect(projected.custody).toMatchObject({
+        location: 'unknown',
+        confirmed: false,
+        amount: null,
+        source: 'unmapped',
+      })
+      expect(projected.custody.reason).toContain(IDENTITY.allocationId)
+    }
+  )
 
   it('keeps every producer-capable Base touch fail closed and routes child display by allocationId/jobId', () => {
     let receipt = confirmCustody(producedReceipt(), {

@@ -16,12 +16,7 @@ import {
   CCTP_BASE_DOMAIN,
 } from './config.js'
 
-export {
-  STELLAR_TOKEN_MESSENGER_MINTER,
-  STELLAR_USDC_SAC,
-  CCTP_STELLAR_DOMAIN,
-  CCTP_BASE_DOMAIN,
-}
+export { STELLAR_TOKEN_MESSENGER_MINTER, STELLAR_USDC_SAC, CCTP_STELLAR_DOMAIN, CCTP_BASE_DOMAIN }
 
 export const CCTP_MIN_FINALITY_STANDARD = 2000 // finalized, no fast-fee (default — safer than Fast)
 export const CCTP_MAX_FEE = 0n

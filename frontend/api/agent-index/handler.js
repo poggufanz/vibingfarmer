@@ -875,11 +875,11 @@ export async function handleRead({
   try {
     const [membershipRows, coverageRows, authoritativeChildren, legacyAssociations] =
       await Promise.all([
-      store.readOwnerMemberships({ networkId, owner }),
-      store.readCoverage({ networkId }),
-      store.readOwnerBaseChildIntents({ networkId, owner }),
-      store.readOwnerRunAllocations({ networkId, owner }),
-    ])
+        store.readOwnerMemberships({ networkId, owner }),
+        store.readCoverage({ networkId }),
+        store.readOwnerBaseChildIntents({ networkId, owner }),
+        store.readOwnerRunAllocations({ networkId, owner }),
+      ])
     memberships = membershipRows
     coverage = coverageRows
     associations = mergeOwnerBaseAssociations({ authoritativeChildren, legacyAssociations })

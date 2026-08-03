@@ -78,11 +78,7 @@ const BASE_CHILD_INTENT_FIELDS = new Set([
   'baseJobId',
 ])
 const BASE_CHILD_LIFECYCLE_FIELDS = new Set(['sequence', 'status', 'evidence', 'observedAt'])
-const BASE_CHILD_EVIDENCE_FIELDS = new Set([
-  'executionStatus',
-  'custodyLocation',
-  'txHash',
-])
+const BASE_CHILD_EVIDENCE_FIELDS = new Set(['executionStatus', 'custodyLocation', 'txHash'])
 const LIVE_BRIDGE_GENERATION = AGENT_WASM_GENERATIONS.find(
   (generation) => generation.generation === 'agent-v3-bridge'
 )
@@ -562,14 +558,7 @@ function lifecycleStatusForExecution(executionStatus) {
 
 function authoritativeAssociation(child) {
   if (child?.version !== 1) throw new Error('unsupported Base child version')
-  for (const field of [
-    'networkId',
-    'bindingId',
-    'allocationId',
-    'childId',
-    'owner',
-    'agent',
-  ]) {
+  for (const field of ['networkId', 'bindingId', 'allocationId', 'childId', 'owner', 'agent']) {
     requiredString(child?.[field], `Base child.${field}`)
   }
   requireExactFields(child.intent, BASE_CHILD_INTENT_FIELDS, 'Base child intent')
@@ -707,9 +696,7 @@ export function mergeOwnerBaseAssociations({ authoritativeChildren, legacyAssoci
       merged.set(row.allocationId, row)
       continue
     }
-    if (
-      immutableAssociationFingerprint(authoritative) !== immutableAssociationFingerprint(row)
-    ) {
+    if (immutableAssociationFingerprint(authoritative) !== immutableAssociationFingerprint(row)) {
       throw new AgentIndexValidationError('conflicting authoritative and legacy Base association')
     }
   }

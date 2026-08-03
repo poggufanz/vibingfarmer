@@ -11,10 +11,20 @@ const projects = [
 export default defineConfig({
   testDir: './e2e',
   forbidOnly: Boolean(process.env.CI),
+  // The per-assertion screenshot budget below only helps if the test itself can outlive it:
+  // a 20000ms capture plus fixture settle already exceeds Playwright's 30000ms default on the
+  // tallest fixtures. Still a hard ceiling -- nothing here is retried or tolerated.
+  timeout: 60000,
   snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}-{projectName}{ext}',
   expect: {
     toHaveScreenshot: {
       animations: 'disabled',
+      // Not a tolerance -- the comparison stays pixel-exact. Several fixtures capture fullPage
+      // surfaces over 20000px tall; on a shared CI runner a single capture of one of those can
+      // exceed the 5000ms default before the compare even starts ("Failed to take two
+      // consecutive stable screenshots" on the Strategy fixture, run 30772546683). More time,
+      // same assertion.
+      timeout: 20000,
     },
   },
   use: {

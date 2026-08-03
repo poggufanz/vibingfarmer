@@ -2,7 +2,7 @@
   {
     "path": "/brand/vibing-farmer-mark.svg",
     "kind": "mark",
-    "sha256": "ef9b5cf2eeef7df3ac3289f31cd3f813612430758d53a371c4be3cc585f3ae4f",
+    "sha256": "83a3691246976a785a1b7a0e61ae3023c4007d1ad5a81ebb66d4756df001db88",
     "source": "Vibing Farmer Pocket Crew design system (original artwork)",
     "sourceUrl": "",
     "retrievedAt": "2026-07-22",
@@ -11,7 +11,7 @@
   {
     "path": "/brand/vibing-farmer-mark-forest.svg",
     "kind": "mark-forest",
-    "sha256": "3ff0b31d161f3bca52a63bb37ca87a6d0b496d9b1edd9796e3f150e6241e5fd7",
+    "sha256": "07c5f907868ab6c36ed7175ef363a3df1bc6e740119b1c03a52beb66dc576f39",
     "source": "Vibing Farmer Pocket Crew design system (original artwork)",
     "sourceUrl": "",
     "retrievedAt": "2026-07-22",
@@ -20,7 +20,7 @@
   {
     "path": "/brand/vibing-farmer-mark-day.svg",
     "kind": "mark-day",
-    "sha256": "cc65b4917d23be1c03e30415145de607b0e28e68c03a4d1c3b76804e8d8cc495",
+    "sha256": "0bf312d9f4bba6c21a52eac17242b24a54dad7360da4972630d0dd09816af005",
     "source": "Vibing Farmer Pocket Crew design system (original artwork)",
     "sourceUrl": "",
     "retrievedAt": "2026-07-22",
@@ -29,7 +29,7 @@
   {
     "path": "/brand/vibing-farmer-mark-mono.svg",
     "kind": "mark-mono",
-    "sha256": "5cdb42a980adc2680d6d8b41cf8358adc4cbe6b259a7badf275ddadf69f9eff9",
+    "sha256": "2470689e113908a5a347591c9984a297fd2ef0489ab8c80096f84b8d0cbc753b",
     "source": "Vibing Farmer Pocket Crew design system (original artwork)",
     "sourceUrl": "",
     "retrievedAt": "2026-07-22",
@@ -38,7 +38,7 @@
   {
     "path": "/brand/vibing-farmer-lockup-forest.svg",
     "kind": "lockup-forest",
-    "sha256": "8ec15ba886ce83e8d4ddd78655257c3d09f92540c71128011902e65c52262a24",
+    "sha256": "91811ff079e6005d370c2d6d37912f42268fa3d07be8f2df4d04098b629f7d37",
     "source": "Vibing Farmer Pocket Crew design system (original artwork)",
     "sourceUrl": "",
     "retrievedAt": "2026-07-22",
@@ -47,7 +47,7 @@
   {
     "path": "/brand/vibing-farmer-lockup-day.svg",
     "kind": "lockup-day",
-    "sha256": "2892b8918afdf51c9ab09d129ef7dce80013ba7208795acf68db95940c4f7cf6",
+    "sha256": "9d5dca7543f3abd2368b909dd4e2de3ce0b464b46336e138f9727bec0add211e",
     "source": "Vibing Farmer Pocket Crew design system (original artwork)",
     "sourceUrl": "",
     "retrievedAt": "2026-07-22",
@@ -56,7 +56,7 @@
   {
     "path": "/brand/vibing-farmer-lockup-mono.svg",
     "kind": "lockup-mono",
-    "sha256": "fa91840e9a3c3fa52664d10c8fe6ab8db6cfd81ec7a0c55388a3df956191e781",
+    "sha256": "016f359a7e9c763d39719ed006f1970fa176b9fb81ac9cffae936f4a1ce3865a",
     "source": "Vibing Farmer Pocket Crew design system (original artwork)",
     "sourceUrl": "",
     "retrievedAt": "2026-07-22",
@@ -65,7 +65,34 @@
   {
     "path": "/brand/favicon.svg",
     "kind": "favicon",
-    "sha256": "2ae84265ef439c63f31c9ce3dd630b73c5b3b5be17f66a0f6f8b6c4952424ca6",
+    "sha256": "3afb672bc96b4197f05e97b09613ef7c16b3265cd2d6755ee5c8ad71e4cad6d0",
+    "source": "Vibing Farmer Pocket Crew design system (original artwork)",
+    "sourceUrl": "",
+    "retrievedAt": "2026-07-22",
+    "trademarkTreatment": "Vibing Farmer™ Pocket Crew mark — geometry is frozen; recolor only within the approved theme variants (forest, day, mono). No distortion, rotation, or recombination with other symbols."
+  },
+  {
+    "path": "/brand/agents/sprout.svg",
+    "kind": "agent-sprout",
+    "sha256": "008a0f0ed962d48ef59806450714793fba259331655c5dff9cbdb1fbf58327cd",
+    "source": "Vibing Farmer Pocket Crew design system (original artwork)",
+    "sourceUrl": "",
+    "retrievedAt": "2026-07-22",
+    "trademarkTreatment": "Vibing Farmer™ Pocket Crew mark — geometry is frozen; recolor only within the approved theme variants (forest, day, mono). No distortion, rotation, or recombination with other symbols."
+  },
+  {
+    "path": "/brand/agents/clover.svg",
+    "kind": "agent-clover",
+    "sha256": "d8849ef1e096261875f6305857e4c84edfb6b8f4d51912cf8e1c4d35c96bd2b7",
+    "source": "Vibing Farmer Pocket Crew design system (original artwork)",
+    "sourceUrl": "",
+    "retrievedAt": "2026-07-22",
+    "trademarkTreatment": "Vibing Farmer™ Pocket Crew mark — geometry is frozen; recolor only within the approved theme variants (forest, day, mono). No distortion, rotation, or recombination with other symbols."
+  },
+  {
+    "path": "/brand/agents/mochi.svg",
+    "kind": "agent-mochi",
+    "sha256": "507fc2c799151ed7f54e4021d83d2a88161d94e47c393252a832464746b94f19",
     "source": "Vibing Farmer Pocket Crew design system (original artwork)",
     "sourceUrl": "",
     "retrievedAt": "2026-07-22",

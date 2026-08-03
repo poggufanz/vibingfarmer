@@ -468,8 +468,42 @@ test('workflow: soroban caches the stellar-cli install and actually asserts the 
     !/rustc --version\s*&&/.test(verifyStep.run),
     'the verification step must not be a bare print (the old `a && b && c` form asserted nothing)'
   )
-  assert.ok(verifyStep.run.includes('1.91.0'), 'the verification step must assert the pinned Rust version')
-  assert.ok(verifyStep.run.includes('26.1.0'), 'the verification step must assert the pinned stellar-cli version')
+  // Both pins are read back out of the job rather than repeated as literals here. Repeating them
+  // made this test a second place to edit on every bump -- and it went red for the bump itself
+  // (1.91.0 -> 1.93.0, forced by stellar-cli 26.1.0's own declared MSRV) rather than for the drift
+  // it exists to catch. Derived, it still fails on exactly what it always guarded: a verify step
+  // that greps a version the job doesn't actually install.
+  const toolchainStep = job.steps.find(
+    (s) => typeof s.uses === 'string' && s.uses.startsWith('dtolnay/rust-toolchain@')
+  )
+  assert.ok(toolchainStep, 'soroban must install Rust via an exactly pinned dtolnay/rust-toolchain')
+  const rustPin = toolchainStep.uses.split('@')[1]
+  assert.match(rustPin, /^\d+\.\d+\.\d+$/, 'the Rust toolchain pin must be exact, never a channel')
+  const cliPin = job.steps[installIdx].run.match(/--version\s+(\d+\.\d+\.\d+)/)?.[1]
+  assert.ok(cliPin, 'the stellar-cli install must pin an exact version')
+  // Per line, not over the whole script: a substring search across the whole `run` block passes as
+  // long as ANY line mentions the pin, so a single drifted grep (rustc checked against a version
+  // the job never installs, while the cargo line still carries the right one) slipped through.
+  const verifyLines = verifyStep.run
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  for (const [tool, pin] of [
+    ['rustc', rustPin],
+    ['cargo', rustPin],
+    ['stellar', cliPin],
+  ]) {
+    const line = verifyLines.find((l) => l.startsWith(`${tool} --version`))
+    assert.ok(line, `the verification step must check \`${tool} --version\``)
+    assert.ok(
+      line.includes(pin),
+      `\`${tool} --version\` must be grepped for the version this job actually installs (${pin}), got: ${line}`
+    )
+  }
+  assert.ok(
+    typeof cacheStep.with?.key === 'string' && cacheStep.with.key.includes(cliPin),
+    'the cache key must carry the pinned stellar-cli version so a bump cannot restore a stale binary'
+  )
 })
 
 test('workflow: release-gate verifies its own tooling (node --test) before or independently of gate evaluation', () => {

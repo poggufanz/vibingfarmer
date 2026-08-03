@@ -104,11 +104,7 @@ export function projectRecoveryReceipt({
     throw new Error('projectRecoveryReceipt: executionId and allocationId are required')
   }
   const recoveryChildId = receipt ? (receipt.childId ?? null) : null
-  const displayChildId = receipt
-    ? recoveryChildId
-    : baseResult
-      ? (identity?.childId ?? null)
-      : null
+  const displayChildId = receipt ? recoveryChildId : baseResult ? (identity?.childId ?? null) : null
   return {
     ...decision,
     version: rowVersion,
@@ -117,9 +113,7 @@ export function projectRecoveryReceipt({
     requestIdentity: {
       executionId: sourceIdentity.executionId,
       allocationId: sourceIdentity.allocationId,
-      ...(recoveryChildId == null || recoveryChildId === ''
-        ? {}
-        : { childId: recoveryChildId }),
+      ...(recoveryChildId == null || recoveryChildId === '' ? {} : { childId: recoveryChildId }),
       expectedReceiptVersion: rowVersion,
     },
     route: {

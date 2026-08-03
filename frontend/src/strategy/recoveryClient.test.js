@@ -519,7 +519,11 @@ describe('requestRecoveryAction', () => {
   it.each([
     [
       'version differs from the requested compare-and-swap value',
-      ({ persisted, success }) => ({ ...success, version: 8, receipt: { ...persisted, version: 8 } }),
+      ({ persisted, success }) => ({
+        ...success,
+        version: 8,
+        receipt: { ...persisted, version: 8 },
+      }),
     ],
     ['nonzero version has no receipt', ({ success }) => ({ ...success, receipt: null })],
     [
@@ -631,7 +635,12 @@ describe('requestRecoveryAction', () => {
     ['missing', null],
     [
       'wrong holder',
-      { holder: 'other-tab', leaseToken: 'valid-token', expiresAt: 4_000_000_000_000, phase: 'pull' },
+      {
+        holder: 'other-tab',
+        leaseToken: 'valid-token',
+        expiresAt: 4_000_000_000_000,
+        phase: 'pull',
+      },
     ],
     [
       'wrong phase',
@@ -646,10 +655,7 @@ describe('requestRecoveryAction', () => {
       'empty token',
       { holder: 'tab-a', leaseToken: '', expiresAt: 4_000_000_000_000, phase: 'pull' },
     ],
-    [
-      'expired',
-      { holder: 'tab-a', leaseToken: 'valid-token', expiresAt: 1, phase: 'pull' },
-    ],
+    ['expired', { holder: 'tab-a', leaseToken: 'valid-token', expiresAt: 1, phase: 'pull' }],
   ])('rejects an actionable success with a %s lease', async (_label, lease) => {
     const sessionKey = newSessionKey()
     const persisted = receipt()

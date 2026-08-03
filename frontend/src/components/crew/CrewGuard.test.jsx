@@ -21,16 +21,27 @@ import { CrewGuard } from './CrewGuard.jsx'
 afterEach(cleanup)
 
 describe('CrewGuard', () => {
+  // The expiry below and the clock CrewGuard reads at render time have to be the SAME instant, or
+  // this asserts on a moving target: it used to build the expiry from a live `Date.now()` and match
+  // /^01:01:0\d$/, which tolerated only ten seconds of drift between the two reads -- enough on an
+  // idle machine, not enough on a loaded runner (observed failing mid-suite locally). Frozen, the
+  // remaining time is exactly 3661s and the expected string is exact.
   it('shows ARMED with a countdown while the mandate is live', () => {
-    render(
-      <CrewGuard
-        protection={{ state: 'armed', mandateExpiry: Math.floor(Date.now() / 1000) + 3661 }}
-        onRenew={vi.fn()}
-        pending={false}
-      />
-    )
-    expect(screen.getByText('ARMED')).toBeTruthy()
-    expect(screen.getByText(/^01:01:0\d$/)).toBeTruthy()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    try {
+      render(
+        <CrewGuard
+          protection={{ state: 'armed', mandateExpiry: Math.floor(Date.now() / 1000) + 3661 }}
+          onRenew={vi.fn()}
+          pending={false}
+        />
+      )
+      expect(screen.getByText('ARMED')).toBeTruthy()
+      expect(screen.getByText('01:01:01')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('shows ALARM ONLY when the mandate has lapsed', () => {

@@ -76,7 +76,9 @@ const ROUTE_FILES = Object.freeze([
   ['ReplayPage.jsx', resolve(SRC_DIR, 'components/ReplayPage.jsx')],
   ['NavBar.jsx', resolve(SRC_DIR, 'components/NavBar.jsx')],
   // Shell chrome and overlays -- rendered on top of EVERY route, so a defect here is universal.
-  ['RightRail.jsx', resolve(SRC_DIR, 'components/RightRail.jsx')],
+  // RightRail.jsx was deleted with the shell rebuild (c27b598) and has no replacement surface;
+  // its entry is dropped, not repointed -- the same treatment HomePage.jsx got above. Nothing
+  // renders it any more, so there is no file left for this audit to read.
   ['components.jsx', resolve(SRC_DIR, 'components.jsx')],
   ['NotificationCenter.jsx', resolve(SRC_DIR, 'components/NotificationCenter.jsx')],
   ['AlertCard.jsx', resolve(SRC_DIR, 'components/AlertCard.jsx')],

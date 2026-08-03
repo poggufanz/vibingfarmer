@@ -504,6 +504,22 @@ if (fixture === 'strategy') {
   Date.now = () => FIXED_NOW_MS
 }
 
+// Same determinism hazard, second clock: freezing Date.now() above is not enough for the
+// "Plan -- safe-default generating" section. driveGenerating() parks PlanStage in `generating`
+// forever (its `generate()` deliberately never resolves), and that phase owns a 1s
+// `window.setInterval` counter (PlanStage.jsx:275) that does NOT read Date.now() -- it increments
+// its own `generationElapsed`, which drives both the printed 00:mm:ss and the rotating
+// BUILDING_MESSAGES line. So the surface kept changing every second forever: the frozen baseline
+// captured whichever second it happened to land on, and Playwright could never take two
+// consecutive stable screenshots of it (all 12 Strategy baselines, CI run 30772546683).
+//
+// Neutered here, in the harness, rather than in PlanStage: the ticking is correct product
+// behaviour. Only setInterval is stubbed, and only on this fixture -- waitFor() above polls on
+// setTimeout, and no other interval renders on the strategy surface.
+if (fixture === 'strategy') {
+  window.setInterval = () => 0
+}
+
 // Task 12 (visual harness fixtures): CrewGuard.jsx (src/components/crew/CrewGuard.jsx) owns a LIVE
 // clock -- `useState(() => Date.now())` plus a 1s `setInterval(() => setNow(Date.now()))` for its
 // countdown -- unlike anything MyMoneyRoute renders; it reads the wall clock at RENDER time, not

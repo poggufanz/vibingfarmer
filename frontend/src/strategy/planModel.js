@@ -122,7 +122,11 @@ export function expandAgentSlots(input) {
       allocationId: allocationId(runId, 'bridge', 'base'),
       kind: 'bridge',
       hostNetworkId: STELLAR_NETWORK_ID,
-      allocation: { token: bridgeToken, units: bridgeCapUnits.toString(), decimals: stellarDecimals },
+      allocation: {
+        token: bridgeToken,
+        units: bridgeCapUnits.toString(),
+        decimals: stellarDecimals,
+      },
       cap: { token: bridgeToken, units: bridgeCapUnits.toString(), decimals: stellarDecimals },
       periodSeconds,
       expiry,

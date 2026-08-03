@@ -1321,9 +1321,19 @@
   display: none;
 }
 
+/* Drawn, not typed -- same reason as NetworkIdentity.jsx's route arrow: U+2304 is outside every
+   bundled Geist subset, so the glyph fell back to a machine-dependent system font and its box
+   differed between the machine that froze the visual baselines and CI. Borders are identical
+   everywhere. */
 .pc-plan-change-menu > summary::after {
-  content: '⌄';
+  content: '';
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
   margin-left: var(--pc-space-2);
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-0.15em) rotate(45deg);
 }
 
 .pc-plan-change-options {

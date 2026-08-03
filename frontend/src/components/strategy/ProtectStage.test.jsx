@@ -1029,7 +1029,9 @@ describe('ProtectStage — rejection/failure says "Nothing moved" and offers Ret
 
       const failure = document.querySelector('.pc-protect-failure')
       const actions = failure?.querySelector('.pc-protect-failure-actions')
-      expect(getComputedStyle(failure?.querySelector('.pc-status-notice')).borderTopWidth).toBe('2px')
+      expect(getComputedStyle(failure?.querySelector('.pc-status-notice')).borderTopWidth).toBe(
+        '2px'
+      )
       expect(getComputedStyle(actions).gap).toBe('var(--pc-space-3)')
       expect(getComputedStyle(actions?.querySelector('.pc-button')).borderTopWidth).toBe('2px')
     })

@@ -95,6 +95,12 @@ const MANIFEST_ENTRIES = [
   { path: '/brand/vibing-farmer-lockup-day.svg', kind: 'lockup-day' },
   { path: '/brand/vibing-farmer-lockup-mono.svg', kind: 'lockup-mono' },
   { path: '/brand/favicon.svg', kind: 'favicon' },
+  // Hand-authored per-agent marks (PlanStage/ProtectStage cycle through these three). Same
+  // origin and trademark treatment as the marks above, so they belong to this script rather
+  // than to the hand-recorded third-party block preserved below.
+  { path: '/brand/agents/sprout.svg', kind: 'agent-sprout' },
+  { path: '/brand/agents/clover.svg', kind: 'agent-clover' },
+  { path: '/brand/agents/mochi.svg', kind: 'agent-mochi' },
   { path: '/brand/icon-192.png', kind: 'icon-192' },
   { path: '/brand/icon-512.png', kind: 'icon-512' },
   { path: '/brand/apple-touch-icon.png', kind: 'apple-touch-icon' },

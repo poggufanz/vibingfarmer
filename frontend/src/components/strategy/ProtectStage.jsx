@@ -790,10 +790,18 @@ export function ProtectStage({
               <StatusNotice state="danger" title="Nothing moved">
                 <p>{failureMessage}</p>
                 <div className="pc-protect-failure-actions">
-                  <button type="button" className="pc-button pc-button--primary" onClick={handleRetry}>
+                  <button
+                    type="button"
+                    className="pc-button pc-button--primary"
+                    onClick={handleRetry}
+                  >
                     Retry
                   </button>
-                  <button type="button" className="pc-button pc-button--secondary" onClick={handleEdit}>
+                  <button
+                    type="button"
+                    className="pc-button pc-button--secondary"
+                    onClick={handleEdit}
+                  >
                     Edit plan
                   </button>
                 </div>

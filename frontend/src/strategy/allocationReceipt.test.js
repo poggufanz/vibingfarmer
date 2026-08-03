@@ -438,7 +438,12 @@ describe('confirmCustody', () => {
       matchingEvent: true,
       amount: AMOUNT,
     })
-    expect(r.custody).toEqual({ location: 'cctp-transit', confirmed: true, amount: AMOUNT, reason: null })
+    expect(r.custody).toEqual({
+      location: 'cctp-transit',
+      confirmed: true,
+      amount: AMOUNT,
+      reason: null,
+    })
   })
 
   // Mandatory mutation target (controller ruling): "Add a test that cctp-transit on txSuccess
@@ -468,7 +473,12 @@ describe('confirmCustody', () => {
       matchingEvent: true,
       amount: AMOUNT,
     })
-    expect(r.custody).toEqual({ location: 'base-kernel', confirmed: true, amount: AMOUNT, reason: null })
+    expect(r.custody).toEqual({
+      location: 'base-kernel',
+      confirmed: true,
+      amount: AMOUNT,
+      reason: null,
+    })
   })
 
   test('an ambiguous base-kernel deposit does not confirm custody on transaction success alone', () => {
@@ -488,10 +498,30 @@ describe('confirmCustody', () => {
   test('the full ladder advances end to end when every location is claimed on genuine proof', () => {
     let r = baseReceipt()
     r = confirmCustody(r, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
-    r = confirmCustody(r, { location: 'cctp-transit', txSuccess: true, matchingEvent: true, amount: AMOUNT })
-    r = confirmCustody(r, { location: 'base-kernel', txSuccess: true, matchingEvent: true, amount: AMOUNT })
-    r = confirmCustody(r, { location: 'base-vault', txSuccess: true, matchingEvent: true, amount: AMOUNT })
-    expect(r.custody).toEqual({ location: 'base-vault', confirmed: true, amount: AMOUNT, reason: null })
+    r = confirmCustody(r, {
+      location: 'cctp-transit',
+      txSuccess: true,
+      matchingEvent: true,
+      amount: AMOUNT,
+    })
+    r = confirmCustody(r, {
+      location: 'base-kernel',
+      txSuccess: true,
+      matchingEvent: true,
+      amount: AMOUNT,
+    })
+    r = confirmCustody(r, {
+      location: 'base-vault',
+      txSuccess: true,
+      matchingEvent: true,
+      amount: AMOUNT,
+    })
+    expect(r.custody).toEqual({
+      location: 'base-vault',
+      confirmed: true,
+      amount: AMOUNT,
+      reason: null,
+    })
   })
 
   test('never mutates the input receipt', () => {

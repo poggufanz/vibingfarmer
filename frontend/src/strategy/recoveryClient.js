@@ -50,15 +50,7 @@ function requestDigest(request) {
 }
 
 function proofMessage({ networkId, owner, agent, challengeId, expiresAt, digest }) {
-  return [
-    PROOF_PREFIX,
-    networkId,
-    owner,
-    agent,
-    challengeId,
-    String(expiresAt),
-    digest,
-  ].join('|')
+  return [PROOF_PREFIX, networkId, owner, agent, challengeId, String(expiresAt), digest].join('|')
 }
 
 function base64url(bytes) {
@@ -434,7 +426,8 @@ export async function requestRecoveryAction({
     }
   }
   if (decision.phase == null) {
-    if (body.lease !== null) invalidSuccess('No-action recovery verdict unexpectedly carries a lease')
+    if (body.lease !== null)
+      invalidSuccess('No-action recovery verdict unexpectedly carries a lease')
   } else if (
     !body.lease ||
     body.lease.holder !== leaseOwner ||

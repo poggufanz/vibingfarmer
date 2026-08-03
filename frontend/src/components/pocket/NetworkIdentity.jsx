@@ -74,6 +74,32 @@ function transitCopy(ctx) {
   return build ? build(ctx) : ''
 }
 
+// Drawn, not typed. The bundled Geist subsets declare U+2191/U+2193 but NOT U+2192, so a literal
+// "→" always fell through to whatever system font the machine happened to have -- different
+// advance width per machine, which shifted every route line and (at some widths) re-wrapped the
+// surface, so frozen visual baselines could never survive a move between the authoring machine
+// and CI. An inline SVG has the same box everywhere.
+function RouteArrowMark({ px }) {
+  return (
+    <svg
+      width={px}
+      height={px}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      className="network-route-arrow-mark"
+    >
+      <path
+        d="M2.5 8h11M9.5 4l4 4-4 4"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 /**
  * Renders a network route. A single badge when there is nothing to bridge (source equals
  * destination, or there is no destination at all); otherwise source, an accessible arrow, then
@@ -113,7 +139,7 @@ export function NetworkRoute({ context, compact = false, className = '' }) {
       <div className="network-route-path">
         <NetworkBadge networkId={ctx.sourceNetworkId} size={px} />
         <span className="network-route-arrow" role="img" aria-label="to">
-          →
+          <RouteArrowMark px={px} />
         </span>
         <NetworkBadge networkId={ctx.destinationNetworkId} size={px} />
       </div>

@@ -440,7 +440,9 @@ describe('/api/agent-index authenticated execution routes', () => {
     expect(
       mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'scope_of')
     ).toHaveLength(1)
-    expect(mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'signer')).toHaveLength(1)
+    expect(mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'signer')).toHaveLength(
+      1
+    )
     expect(authorityCalls()).toEqual([
       [ROUTER_V2, 'owner_of'],
       [AGENT, 'scope_of'],

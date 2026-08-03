@@ -624,7 +624,9 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
       within(screen.getByRole('dialog')).getByRole('button', { name: 'Change amount' })
     )
     expect(screen.getByLabelText('Amount in USDC').value).toBe('100')
-    expect(screen.getByRole('radio', { name: 'Balanced' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Balanced' }).getAttribute('aria-checked')).toBe(
+      'true'
+    )
   })
 
   it('clears the amount and comfort choice only after Reset plan is confirmed', async () => {

@@ -37,11 +37,7 @@ import {
 } from '../../strategy/amountValidation.js'
 import { needsBaseMandateSetup } from '../../mergeFlowHelpers.js'
 import { hashStrategy } from '../../attestation.js'
-import {
-  SOROBAN_DECIMALS,
-  SOROBAN_TOKEN_ADDRESS,
-  STELLAR_USDC_SAC,
-} from '../../stellar/config.js'
+import { SOROBAN_DECIMALS, SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
 
 gsap.registerPlugin(useGSAP)
 
@@ -698,8 +694,9 @@ export function PlanStage({
                     <span className="pc-field-help"> ({planExpiry.absolute})</span>
                   )}
                 </p>
-                {depositAgents.length > 0 &&
-                  stellarYield.state === 'live' && <p>{stellarYield.apy}% APY</p>}
+                {depositAgents.length > 0 && stellarYield.state === 'live' && (
+                  <p>{stellarYield.apy}% APY</p>
+                )}
               </div>
             )}
 

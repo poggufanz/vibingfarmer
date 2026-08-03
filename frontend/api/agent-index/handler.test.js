@@ -25,10 +25,7 @@ import {
   receiptRequestDigest,
 } from './executionReceipts.js'
 import { AGENT_CREATORS } from '../../src/stellar/agentCreatorManifest.js'
-import {
-  appendPhase,
-  createAllocationReceipt,
-} from '../../src/strategy/allocationReceipt.js'
+import { appendPhase, createAllocationReceipt } from '../../src/strategy/allocationReceipt.js'
 import { aggregateOwnerPositions, readOwnerMoney } from '../../src/money/readOwnerMoney.js'
 import { BASE_POOL_CATALOG } from '../../src/config.js'
 
@@ -1141,9 +1138,9 @@ describe('handleRead — Base association envelope', () => {
       })
     ).resolves.toMatchObject({ status: 200 })
 
-    expect(
-      db._raw.prepare('SELECT COUNT(*) AS count FROM agent_run_allocations').get().count
-    ).toBe(0)
+    expect(db._raw.prepare('SELECT COUNT(*) AS count FROM agent_run_allocations').get().count).toBe(
+      0
+    )
 
     const out = await handleRead({
       networkId: ROUTER_V1.networkId,

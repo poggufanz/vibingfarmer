@@ -670,8 +670,7 @@ export async function readOwnerMoney({
     if (units != null) {
       baseSubtotalUnits += units
       const location = mostAdvancedChild(groupChildren)?.custody?.location ?? 'unknown'
-      ownerBaseCustodyBreakdown[location] =
-        (ownerBaseCustodyBreakdown[location] ?? 0n) + units
+      ownerBaseCustodyBreakdown[location] = (ownerBaseCustodyBreakdown[location] ?? 0n) + units
     } else anyGroupUnknown = true
     if (groupProblems.some((p) => READ_INCOMPLETE_PROBLEMS.has(p))) anyGroupIncomplete = true
   }

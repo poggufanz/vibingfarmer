@@ -49,8 +49,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: relayer/package-lock.json
+          cache-dependency-path: |
+            relayer/package-lock.json
+            frontend/package-lock.json
       - run: npm ci
+      # relayer/smoke/mint-mandate.mjs imports frontend/src/base/policyEngine.js — the shared,
+      # single source of truth for the session-policy shape, deliberately not duplicated here.
+      # Node resolves that file's `@zerodev/permissions` import from frontend/, not from
+      # relayer/node_modules, so test/smoke/import-safety.test.mjs needs frontend's install too.
+      - name: Install frontend deps (relayer smoke imports frontend/src/base/policyEngine.js)
+        working-directory: frontend
+        run: npm ci
       - run: npm test
 
   keeper:
@@ -68,16 +77,19 @@ jobs:
       - run: npm ci
       - run: npm test
 
-  # Pinned Ubuntu 24.04 + Rust 1.91.0 + stellar-cli 26.1.0 — deliberately not the local WSL
+  # Pinned Ubuntu 24.04 + Rust 1.93.0 + stellar-cli 26.1.0 — deliberately not the local WSL
   # toolchain. Gates the existing V2 soroban/ contracts (Router V3/agent V4 work was dropped
   # from this remediation plan for lack of a WSL host; this job is unaffected by that).
   #
-  # 1.91.0, not the remediation plan's stated 1.82.0: soroban/Cargo.toml:6 pins
+  # 1.93.0, not 1.91.0 and not the remediation plan's stated 1.82.0. soroban/Cargo.toml:6 pins
   # `soroban-sdk = "26.1.0"`, whose own manifest declares `rust-version = "1.91.0"` — 1.82.0
   # cannot even complete step 2 (`wasm32v1-none` as a rustup target didn't exist before 1.84),
-  # and would fail the SDK's MSRV regardless. 1.91.0 is the exact minimum that satisfies both
-  # the plan's "pinned deterministic tooling" intent and the SDK it must actually build. Not
-  # `stable` — the pin stays exact.
+  # and would fail the SDK's MSRV regardless. 1.91.0 satisfies the SDK but not the toolchain
+  # this job installs one step later: the crates.io index entry for stellar-cli 26.1.0 declares
+  # `rust_version = 1.93.0`, so `cargo install` refused it outright ("requires rustc 1.93.0 or
+  # newer, while the currently active rustc version is 1.91.0" — run 30772546683). 1.93.0 is the
+  # exact minimum that satisfies both the SDK and the pinned CLI. Not `stable` — the pin stays
+  # exact, and it moves only together with the two greps below.
   soroban:
     runs-on: ubuntu-24.04
     defaults:
@@ -85,7 +97,7 @@ jobs:
         working-directory: soroban
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: dtolnay/rust-toolchain@1.93.0
         with:
           targets: wasm32v1-none
           components: clippy
@@ -112,8 +124,8 @@ jobs:
       # strings instead of only printing them.
       - name: Verify pinned toolchain versions
         run: |
-          rustc --version | grep -F '1.91.0'
-          cargo --version | grep -F '1.91.0'
+          rustc --version | grep -F '1.93.0'
+          cargo --version | grep -F '1.93.0'
           stellar --version | grep -F '26.1.0'
       - run: stellar contract build
       - run: cargo test --locked
