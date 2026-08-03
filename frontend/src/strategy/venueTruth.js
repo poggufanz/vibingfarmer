@@ -16,7 +16,7 @@ export const VENUE_KINDS = Object.freeze({
 // Capital v2. Every Stellar-side record normalizes to this destination regardless of whatever
 // protocol/name string a fetched or fabricated input claims — that is the whole point of this
 // module (see buildMergedCatalog in mergedCatalog.js, which stamps this over live inputs too).
-const STELLAR_DESTINATION = 'Autofarm Vault → Blend Capital v2'
+const STELLAR_DESTINATION = 'Autofarm Vault to Blend Capital v2'
 const STELLAR_LIVE_DISCLOSURE =
   'Vibing Farmer Autofarm supplies to Blend Capital v2 on Stellar testnet.'
 

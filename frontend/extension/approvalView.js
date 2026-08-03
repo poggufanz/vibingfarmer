@@ -112,13 +112,13 @@ export function submissionStatusText(state, { origin, detail } = {}) {
 const GRANT_TRUTHS = [
   'This grant creates isolated agent accounts and permissions; it does NOT mean any deposit has completed.',
   'Each agent has its own spending limit, expiry, and session signer.',
-  'Current Stellar deposit agents all share the same destination: Autofarm Vault → Blend Capital v2.',
+  'Current Stellar deposit agents all share the same destination: Autofarm Vault to Blend Capital v2.',
   'That shared destination is operational isolation (separate agents/keys), not multiple different Stellar protocols.',
 ]
 const GRANT_MIXED_TOKEN_TRUTH =
   'This grant covers more than one token: each token’s allowance budget and each agent’s cap ceiling are shown separately below. Later execution may use less than either ceiling; the two numbers are never the same thing and are never added together.'
 const GRANT_BRIDGE_TRUTH =
-  'Base-side proxy: the bridge route is Stellar testnet → Circle CCTP → Base Sepolia. Base-side pools are custody proxies holding real Circle USDC; there is no live protocol yield there.'
+  'Base-side proxy: the bridge route is Stellar testnet to Circle CCTP to Base Sepolia. Base-side pools are custody proxies holding real Circle USDC; there is no live protocol yield there.'
 
 // ---------------------------------------------------------------------------------------------
 // Row values are built as arrays of PARTS, never a bare string -- rejection-checklist item 5

@@ -29,7 +29,7 @@ describe('buildMergedCatalog — truthful venue records (Strategy Task 1)', () =
     expect(cat[0]).toMatchObject({
       name: 'Vibing Farmer Autofarm',
       address: VAULT_CATALOG[0].address,
-      destination: 'Autofarm Vault → Blend Capital v2',
+      destination: 'Autofarm Vault to Blend Capital v2',
       networkId: 'stellar-testnet',
       venueKind: 'stellar-live',
     })
@@ -51,7 +51,7 @@ describe('buildMergedCatalog — truthful venue records (Strategy Task 1)', () =
       chain: 'stellar',
       networkId: 'stellar-testnet',
       venueKind: 'stellar-live',
-      destination: 'Autofarm Vault → Blend Capital v2',
+      destination: 'Autofarm Vault to Blend Capital v2',
     })
     expect(cat[0].yield).toEqual({ state: 'unavailable', apy: null })
   })

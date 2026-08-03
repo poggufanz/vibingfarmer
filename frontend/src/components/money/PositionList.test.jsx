@@ -215,7 +215,7 @@ describe('PositionList — two Base children on one agent render as distinguisha
 describe('PositionList — Stellar vault destination and network truth', () => {
   it('shows the exact Autofarm -> Blend destination string and a visible Stellar testnet badge', () => {
     render(<PositionList agents={[stellarVaultAgent()]} />)
-    expect(screen.getByText('Autofarm Vault → Blend Capital v2')).toBeTruthy()
+    expect(screen.getByText('Autofarm Vault to Blend Capital v2')).toBeTruthy()
     expect(screen.getByText('Stellar testnet')).toBeTruthy()
   })
 

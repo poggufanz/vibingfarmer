@@ -75,7 +75,7 @@ function classifyDestination({ kind, target, destinationDomain }) {
       network: STELLAR_NETWORK_LABEL,
       targetAddress: target,
       classification: 'known-stellar-vault',
-      routeLabel: 'Autofarm Vault → Blend Capital v2',
+      routeLabel: 'Autofarm Vault to Blend Capital v2',
       venueLabel: 'Blend Capital v2',
     }
   }
@@ -88,7 +88,7 @@ function classifyDestination({ kind, target, destinationDomain }) {
       network: STELLAR_NETWORK_LABEL,
       targetAddress: target,
       classification: 'known-cctp-messenger',
-      routeLabel: 'Stellar testnet → Circle CCTP → Base Sepolia',
+      routeLabel: 'Stellar testnet to Circle CCTP to Base Sepolia',
       // Base-side pools are custody proxies holding real Circle USDC — no live protocol yield,
       // so there is no venue to name here (copy-truth constraint, never invent one).
       venueLabel: null,

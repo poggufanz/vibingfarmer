@@ -20,7 +20,7 @@ import {
   TechnicalDetails,
   VenueTruth,
 } from '../pocket/Primitives.jsx'
-import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
+import { NetworkBadge, NetworkRoute, RouteArrowMark } from '../pocket/NetworkIdentity.jsx'
 import {
   RISK_PROFILES,
   expandAgentSlots,
@@ -857,7 +857,7 @@ export function PlanStage({
           </ul>
           <p className="pc-provenance">
             <span>Stellar testnet</span>
-            <span aria-hidden="true">→</span>
+            <RouteArrowMark px={14} />
             <span>Blend Capital v2</span>
           </p>
         </div>

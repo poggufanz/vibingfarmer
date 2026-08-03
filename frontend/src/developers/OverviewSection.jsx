@@ -63,7 +63,7 @@ export default function OverviewSection({ session }) {
       </div>
 
       <p className="foot-note" style={{ marginTop: 24 }}>
-        Pipeline: <span className="mono">strategy → scan → build-tx → simulate → submit</span>.
+        Pipeline: <span className="mono">{'strategy > scan > build-tx > simulate > submit'}</span>.
         Signing stays client-side on testnet.
       </p>
     </div>

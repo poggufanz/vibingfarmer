@@ -227,7 +227,7 @@ function Hero({ onStart, reduceMotion }) {
           <em>fee-bump sponsor · allowlisted ops only</em>
         </div>
         <div className="vf-xray-box vf-xray-box--vault">
-          <span>vault.deposit → Blend v2</span>
+          <span>vault.deposit to Blend v2</span>
           <em>real testnet lending, not a mock drip</em>
         </div>
         <div className="vf-xray-tag">X-RAY // the machine under the marketing</div>

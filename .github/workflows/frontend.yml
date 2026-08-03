@@ -25,6 +25,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # Several suites (sweep320.js and the ceremony/approval guards that call it) measure real
+      # layout in a real Chromium. Without this the launcher falls through to the runner's
+      # google-chrome-stable -- a different build from the package-lock-pinned one every
+      # developer runs, so the numbers those guards assert on were browser-dependent.
+      - run: npx playwright install --with-deps chromium
       - run: npm run lint:ci
       - run: npm run format:check
       - run: npm run brand:check
@@ -116,6 +121,13 @@ jobs:
             ~/.cargo/.crates.toml
             ~/.cargo/.crates2.json
           key: stellar-cli-26.1.0-${{ runner.os }}
+      # stellar-cli's default `additional-libs` feature pulls libdbus-sys (OS keyring/secret
+      # service). Its build script does not probe -- it panics outright when `dbus-1.pc` is
+      # absent, which is the stock ubuntu-24.04 image ("The system library `dbus-1` required by
+      # crate `libdbus-sys` was not found", run 30778669013). Installed rather than dropped with
+      # `--no-default-features` so the binary this job builds stays the same binary the pin names.
+      - name: Install stellar-cli build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libudev-dev pkg-config
       - name: Install stellar-cli 26.1.0
         run: cargo install --locked --version 26.1.0 stellar-cli
       # Final review, Fix 4: this used to print the three versions and assert nothing -- with a

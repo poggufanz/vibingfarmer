@@ -33,7 +33,7 @@ describe('normalizeVenue — Stellar-live', () => {
   const record = normalizeVenue(VAULT_CATALOG[0])
 
   it('stamps the real destination, networkId, and venueKind', () => {
-    expect(record.destination).toBe('Autofarm Vault → Blend Capital v2')
+    expect(record.destination).toBe('Autofarm Vault to Blend Capital v2')
     expect(record.networkId).toBe('stellar-testnet')
     expect(record.venueKind).toBe(VENUE_KINDS.STELLAR_LIVE)
     expect(record.address).toBe(SOROBAN_ACTIVE_VAULT_ADDRESS)

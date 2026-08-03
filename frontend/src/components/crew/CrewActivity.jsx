@@ -30,7 +30,7 @@ function agoText(timestamp, now) {
 function keeperRowText(event) {
   if (event.kind === 'compound_executed') return `Compounded, +${event.totalGainUsdc} USDC`
   if (event.kind === 'rebalance_executed')
-    return `Rebalanced, ${event.fromLabel} → ${event.toLabel}, ${event.amountUsdc} USDC`
+    return `Rebalanced, ${event.fromLabel} to ${event.toLabel}, ${event.amountUsdc} USDC`
   return 'Keeper activity'
 }
 

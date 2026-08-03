@@ -29,11 +29,11 @@ export const STELLAR_TESTNET_LABEL = 'Stellar testnet'
 // showing this (rather than a blank/guessed origin) is the internal-path equivalent of
 // approvalView.js's Chrome-verified dapp origin: the one truthful fact about who is asking.
 export const INTERNAL_ORIGIN_LABEL = 'VF Wallet (this extension)'
-export const BASE_ROUTE_LABEL = `${STELLAR_TESTNET_LABEL} → Base Sepolia`
+export const BASE_ROUTE_LABEL = `${STELLAR_TESTNET_LABEL} to Base Sepolia`
 // Truthful, fixed venue label for the one live deposit target -- mirrors approvalView.js's own
 // GRANT_TRUTHS[2] wording (Autofarm Vault -> Blend Capital v2 is a single Stellar destination,
 // never re-derived per call site).
-export const VAULT_ROUTE_LABEL = 'Autofarm Vault → Blend Capital v2'
+export const VAULT_ROUTE_LABEL = 'Autofarm Vault to Blend Capital v2'
 
 // Every state a ceremony's result can end in (Step 3: "distinguish signed, submitted, confirmed,
 // not submitted, and checking"). A signature is never called a completed deposit; a

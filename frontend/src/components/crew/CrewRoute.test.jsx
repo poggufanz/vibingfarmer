@@ -170,7 +170,7 @@ describe('CrewRoute', () => {
         },
       ],
     })
-    expect(screen.getByText('Rebalanced, VaultA → VaultB, 5.00 USDC')).toBeTruthy()
+    expect(screen.getByText('Rebalanced, VaultA to VaultB, 5.00 USDC')).toBeTruthy()
     unmountRebalance()
 
     renderCrew({ keeperEvents: [] })

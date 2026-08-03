@@ -83,7 +83,7 @@ const TxList = ({ rows }) => {
               {short(r.txHash)}
             </span>
             <span className="tx-vault">
-              {isWithdraw ? `Withdrew ← ${r.vaultName}` : `Deposited → ${r.vaultName}`}
+              {isWithdraw ? `Withdrew from ${r.vaultName}` : `Deposited to ${r.vaultName}`}
               <span className="tx-sub mono">
                 {[
                   r.protocol,

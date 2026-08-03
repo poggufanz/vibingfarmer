@@ -30,6 +30,7 @@
 // the per-element `maxRight` check below.
 import { expect } from 'vitest'
 import fs from 'node:fs'
+import process from 'node:process'
 
 export const CHROMIUM_CANDIDATES = [
   undefined,
@@ -58,8 +59,40 @@ export async function launchRealChromium() {
   )
 }
 
+// The harness loads no app CSS, so every measured width came from the browser's DEFAULT font --
+// whatever the host OS happens to provide. That made this guard's numbers machine-specific: the
+// same states measured <=320 locally and 325.84/333.02 on the CI runner (run 30778669013), a
+// failure about installed fonts rather than about layout. The bundled Geist is pinned by
+// package-lock and inlined here as a data URI (no network, no @font-face fetch to race), so what
+// this measures has the same metrics on every machine -- and the same metrics the product
+// actually ships, which the OS default never was.
+// Resolved from cwd, not `import.meta.url`: under the jsdom environment vitest rewrites
+// import.meta.url to an http:// URL, and readFileSync then throws "The URL must be of scheme
+// file" at IMPORT time -- which took down all six suites that merely import this module. Read
+// lazily and cached, so a resolution problem can only ever fail the sweep that needs the font.
+const GEIST_WOFF2_RELATIVE =
+  'node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2'
+let geistWoff2Base64 = null
+
+function geistWoff2() {
+  if (geistWoff2Base64 !== null) return geistWoff2Base64
+  const candidates = [GEIST_WOFF2_RELATIVE, `frontend/${GEIST_WOFF2_RELATIVE}`]
+  const found = candidates.find((candidate) => fs.existsSync(candidate))
+  if (!found) {
+    throw new Error(
+      `Layout guard: pinned Geist woff2 not found (looked for ${candidates.join(', ')} from ${process.cwd()})`
+    )
+  }
+  geistWoff2Base64 = fs.readFileSync(found).toString('base64')
+  return geistWoff2Base64
+}
+
 export function buildHarnessHtml(bodyHtml) {
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${bodyHtml}</body></html>`
+  const GEIST_WOFF2_BASE64 = geistWoff2()
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+@font-face{font-family:'Geist Variable';font-style:normal;font-weight:100 900;font-display:block;src:url(data:font/woff2;base64,${GEIST_WOFF2_BASE64}) format('woff2')}
+body{font-family:'Geist Variable',sans-serif}
+</style></head><body style="margin:0">${bodyHtml}</body></html>`
 }
 
 // React-render convenience for React-based wallet suites: turns [label, ReactNode][] into
@@ -93,6 +126,9 @@ export async function sweep320(
       const page = await browser.newPage()
       await page.setViewportSize(viewport)
       await page.setContent(buildHarnessHtml(html))
+      // `font-display: block` above keeps text unrendered until the inlined face is ready, but
+      // measuring before that resolves would still read the fallback's metrics.
+      await page.evaluate(() => document.fonts.ready)
       const { docScrollWidth, maxRight, culprit } = await page.evaluate(() => {
         // Inlined (not imported) -- page.evaluate runs serialized in the browser context and
         // cannot close over this module's outer scope.

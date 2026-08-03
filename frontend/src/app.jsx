@@ -268,7 +268,7 @@ const sendPushNotification = async (ev, passedSettings) => {
     detail = `${ev.vaultName}, +${ev.totalGainUsdc} USDC reinvested, price/share ${ev.pricePerShare}. No action needed.`
   } else if (ev.kind === 'rebalance_executed') {
     title = 'Keeper rebalanced'
-    detail = `${ev.vaultName}, ${ev.fromLabel} → ${ev.toLabel}, ${ev.amountUsdc} USDC moved. No action needed.`
+    detail = `${ev.vaultName}, ${ev.fromLabel} to ${ev.toLabel}, ${ev.amountUsdc} USDC moved. No action needed.`
   }
 
   const messageText = `*${title}*\n\n${detail}\n\n_Time: ${new Date(ev.timestamp || Date.now()).toLocaleString()}_`
@@ -1824,7 +1824,7 @@ const App = () => {
               : ev.kind === 'compound_executed'
                 ? `Keeper compounded ${ev.vaultName}, +${ev.totalGainUsdc} USDC, price/share ${ev.pricePerShare}.`
                 : ev.kind === 'rebalance_executed'
-                  ? `Keeper rebalanced ${ev.vaultName}, ${ev.fromLabel} → ${ev.toLabel}, ${ev.amountUsdc} USDC moved.`
+                  ? `Keeper rebalanced ${ev.vaultName}, ${ev.fromLabel} to ${ev.toLabel}, ${ev.amountUsdc} USDC moved.`
                   : ''
     addLog({
       event:
@@ -2170,7 +2170,7 @@ const App = () => {
   const handleReviewRebalance = (alert) =>
     addLog({
       event: 'OrchestratorPlanned',
-      meta: `Rebalance review: ${alert.fromVault} → ${alert.toProtocol} (+${alert.apyGain}%).`,
+      meta: `Rebalance review: ${alert.fromVault} to ${alert.toProtocol} (+${alert.apyGain}%).`,
       detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing authorizes a fresh Soroban session-key scope for the new vault.`,
     })
 

@@ -26,7 +26,7 @@ import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
 // (chain/factSlug/address), not a per-agent money row, and pulling in a whole normalization layer
 // for one fixed string would be the wrong tool for this file's actual job. Matches the sibling-
 // surface convention StrategyReceipt.jsx already uses for its own local TOKEN_SYMBOLS constant.
-const STELLAR_VAULT_DESTINATION = 'Autofarm Vault → Blend Capital v2'
+const STELLAR_VAULT_DESTINATION = 'Autofarm Vault to Blend Capital v2'
 
 function unitsToDisplay(units, decimals) {
   return Number(BigInt(units)) / 10 ** decimals

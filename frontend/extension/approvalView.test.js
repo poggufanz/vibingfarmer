@@ -339,7 +339,7 @@ const singleTokenGrant = {
       periodDurationSeconds: 86400,
       destination: {
         classification: 'known-stellar-vault',
-        routeLabel: 'Autofarm Vault → Blend Capital v2',
+        routeLabel: 'Autofarm Vault to Blend Capital v2',
         targetAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
       },
     },
@@ -398,7 +398,7 @@ describe('buildApprovalView — Step 2: render decoded grant truth', () => {
     const agentRow = decoded.rows.find(([k]) => k === 'Agent #0')
     expect(partsToText(agentRow[1])).toContain('cap')
     expect(partsToText(agentRow[1])).toContain('every 1d') // periodDurationSeconds: 86400
-    expect(partsToText(agentRow[1])).toContain('Autofarm Vault → Blend Capital v2')
+    expect(partsToText(agentRow[1])).toContain('Autofarm Vault to Blend Capital v2')
     expect(partsToText(agentRow[1])).not.toMatch(/expires/i) // no expiryTimestamp on the fixture
   })
 
@@ -425,7 +425,7 @@ describe('buildApprovalView — Step 2: render decoded grant truth', () => {
     )
     const decoded = v.sections.find((s) => s.kind === 'decoded')
     expect(
-      decoded.rows.some(([, v2]) => /Autofarm Vault → Blend Capital v2/.test(partsToText(v2)))
+      decoded.rows.some(([, v2]) => /Autofarm Vault to Blend Capital v2/.test(partsToText(v2)))
     ).toBe(true)
   })
 
@@ -445,7 +445,7 @@ describe('buildApprovalView — Step 2: render decoded grant truth', () => {
           periodDurationSeconds: 3600,
           destination: {
             classification: 'known-cctp-messenger',
-            routeLabel: 'Stellar testnet → Circle CCTP → Base Sepolia',
+            routeLabel: 'Stellar testnet to Circle CCTP to Base Sepolia',
             targetAddress: 'CMESSENGER11111111111111111111111111111111111111111',
           },
         },
@@ -582,7 +582,7 @@ describe('buildApprovalView — item 5: mono is marked ONLY on address/hash segm
           periodDurationSeconds: 3600,
           destination: {
             classification: 'known-cctp-messenger',
-            routeLabel: 'Stellar testnet → Circle CCTP → Base Sepolia',
+            routeLabel: 'Stellar testnet to Circle CCTP to Base Sepolia',
             targetAddress: 'CMESSENGER11111111111111111111111111111111111111111',
           },
         },
@@ -612,7 +612,7 @@ describe('buildApprovalView — item 5: mono is marked ONLY on address/hash segm
       .map((p) => p.text)
       .join('')
     expect(plainText).toContain('deposit')
-    expect(plainText).toContain('Autofarm Vault → Blend Capital v2')
+    expect(plainText).toContain('Autofarm Vault to Blend Capital v2')
     expect(plainText).toContain('every 1d')
   })
 
@@ -948,7 +948,7 @@ const bridgeAndMixedGrant = {
       periodDurationSeconds: 3600,
       destination: {
         classification: 'known-cctp-messenger',
-        routeLabel: 'Stellar testnet → Circle CCTP → Base Sepolia',
+        routeLabel: 'Stellar testnet to Circle CCTP to Base Sepolia',
         targetAddress: 'CMESSENGER11111111111111111111111111111111111111111',
       },
     },

@@ -178,6 +178,13 @@
     "relativePath": "src/agents.jsx",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
+    "message": "'RouteArrowMark' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/agents.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
     "message": "'SimulationPanel' is assigned a value but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
@@ -1988,13 +1995,6 @@
     "count": 1
   },
   {
-    "relativePath": "src/components/pocket/NetworkIdentity.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'RouteArrowMark' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
     "relativePath": "src/components/pocket/NetworkIdentity.test.jsx",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
@@ -2181,6 +2181,13 @@
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
     "message": "'NetworkRoute' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/components/strategy/PlanStage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'RouteArrowMark' is defined but never used. Allowed unused vars must match /^_/u.",
     "count": 1
   },
   {

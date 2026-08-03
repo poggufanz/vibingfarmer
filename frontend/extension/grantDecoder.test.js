@@ -147,7 +147,7 @@ describe('decodeFundingRouterGrant — v1 (pinned-token) router', () => {
       network: STELLAR_NETWORK_LABEL,
       targetAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
       classification: 'known-stellar-vault',
-      routeLabel: 'Autofarm Vault → Blend Capital v2',
+      routeLabel: 'Autofarm Vault to Blend Capital v2',
       venueLabel: 'Blend Capital v2',
     })
     expect(result.aggregateCapsByToken).toEqual([
@@ -333,7 +333,7 @@ describe('decodeFundingRouterGrant — v2 (per-budget, multi-token) router', () 
       network: STELLAR_NETWORK_LABEL,
       targetAddress: STELLAR_TOKEN_MESSENGER_MINTER,
       classification: 'known-cctp-messenger',
-      routeLabel: 'Stellar testnet → Circle CCTP → Base Sepolia',
+      routeLabel: 'Stellar testnet to Circle CCTP to Base Sepolia',
       // No live protocol yield on the Base custody-proxy side — never claim a venue here.
       venueLabel: null,
     })

@@ -172,7 +172,7 @@ describe('buildCeremonyView — bridge detection uses the canonical Base mandate
     )
     const mandate = v.sections.find((s) => s.kind === 'base-mandate')
     expect(mandate.route).toBe(BASE_ROUTE_LABEL)
-    expect(mandate.route).toBe(`${STELLAR_TESTNET_LABEL} → Base Sepolia`)
+    expect(mandate.route).toBe(`${STELLAR_TESTNET_LABEL} to Base Sepolia`)
     expect(mandate.perCallCapUsdc).toBe(canonical.perCallCap.usdc)
     expect(mandate.durationDays).toBe(canonical.durationDays)
     expect(mandate.statements).toContain(canonical.primaryCopy)

@@ -17,6 +17,7 @@ import React, { useEffect as useEAg, useRef as useRAg, useState as useSAg } from
 import { PixiSwarmGraph } from './graph/PixiSwarmGraph.jsx'
 import { Icon } from './components.jsx'
 import { shortAddr } from './screens.jsx'
+import { RouteArrowMark } from './components/pocket/NetworkIdentity.jsx'
 import { VAULT_CATALOG } from './config.js'
 import { buildStrategyState, scoreReward, riskCeiling } from './strategy/mdp.js'
 import { normalizeStrategyPlan, buildStrategyViewModel } from './strategy/planModel.js'
@@ -1456,7 +1457,7 @@ const LoopStatusPanel = ({
           className={`vf-flowchart-arrow ${running && (phase === 'gate' || activeIdx > 1) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 2 }}
         >
-          →
+          <RouteArrowMark px="1em" />
         </div>
 
         {/* Stage 2: Gate Check */}
@@ -1487,7 +1488,7 @@ const LoopStatusPanel = ({
           className={`vf-flowchart-arrow ${running && activeIdx > 1 && latestVerdict !== 'gated' && (phase === 'simulate' || activeIdx > 2) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 4 }}
         >
-          →
+          <RouteArrowMark px="1em" />
         </div>
 
         {/* Stage 3: Simulate */}
@@ -1519,7 +1520,7 @@ const LoopStatusPanel = ({
           className={`vf-flowchart-arrow ${running && activeIdx > 2 && latestVerdict !== 'gated' && (phase === 'council' || activeIdx > 3) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 6 }}
         >
-          →
+          <RouteArrowMark px="1em" />
         </div>
 
         {/* Stage 4: AI Council */}
@@ -1553,7 +1554,7 @@ const LoopStatusPanel = ({
           className={`vf-flowchart-arrow ${running && activeIdx > 3 && !['gated', 'discard'].includes(latestVerdict) && (phase === 'execute' || activeIdx > 4) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 8 }}
         >
-          →
+          <RouteArrowMark px="1em" />
         </div>
 
         {/* Stage 5: Execute */}
@@ -1584,7 +1585,7 @@ const LoopStatusPanel = ({
           className={`vf-flowchart-arrow ${running && activeIdx > 4 && latestVerdict === 'keep' && (phase === 'reflect' || activeIdx > 5) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 10 }}
         >
-          →
+          <RouteArrowMark px="1em" />
         </div>
 
         {/* Stage 6: Reflect */}

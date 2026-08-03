@@ -79,7 +79,7 @@ function transitCopy(ctx) {
 // advance width per machine, which shifted every route line and (at some widths) re-wrapped the
 // surface, so frozen visual baselines could never survive a move between the authoring machine
 // and CI. An inline SVG has the same box everywhere.
-function RouteArrowMark({ px }) {
+export function RouteArrowMark({ px = 16 }) {
   return (
     <svg
       width={px}

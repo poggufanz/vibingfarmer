@@ -364,7 +364,7 @@ export function mapBaseLegEvent(evName, data = {}) {
         memory: {
           status: 'running',
           title: 'Relayer dispatched',
-          meta: `Job ${data.jobId}: attest → mint → deposit`,
+          meta: `Job ${data.jobId}: attest to mint to deposit`,
         },
       }
     case 'farm-completed':

@@ -34,7 +34,7 @@ export const VAULT_CATALOG = [
     address: SOROBAN_ACTIVE_VAULT_ADDRESS,
     venueKind: 'stellar-live',
     networkId: NETWORK_IDS.STELLAR_TESTNET,
-    destination: 'Autofarm Vault → Blend Capital v2',
+    destination: 'Autofarm Vault to Blend Capital v2',
     apy: 4.8,
     risk: 'low',
     yield_source: 'lending',

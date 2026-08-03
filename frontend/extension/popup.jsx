@@ -941,7 +941,7 @@ function Popup() {
             setCw((s) => ({ ...s, needsBackup: false }))
             setScreen('classic-home')
             refresh(cw.publicKey)
-            setErr('Backup phrase unavailable. Use Settings → Export secret as your wallet backup.')
+            setErr('Backup phrase unavailable. Use Settings > Export secret as your wallet backup.')
           } finally {
             setBusy(false)
           }
@@ -1320,7 +1320,7 @@ function Popup() {
             target="_blank"
             rel="noreferrer"
           >
-            View on Stellar Expert →
+            View on Stellar Expert
           </a>
         )}
         <button className="btn btn-primary" onClick={() => setScreen('home')}>
@@ -1517,7 +1517,7 @@ function Popup() {
             target="_blank"
             rel="noreferrer"
           >
-            View on Stellar Expert →
+            View on Stellar Expert
           </a>
         )}
       </WalletActivity>

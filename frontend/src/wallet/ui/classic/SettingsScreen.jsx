@@ -67,7 +67,7 @@ export default function SettingsScreen({ onLock, onExport, onReset, autoLockMin,
         <p className="pc-field-help">
           {vfKeySaved
             ? 'Saved. Vault eligibility (F8) now checks via the VF gateway.'
-            : 'Generate at /developers → Keys (scope: market). Empty = local F8 check.'}
+            : 'Generate at /developers > Keys (scope: market). Empty = local F8 check.'}
         </p>
       </div>
 
