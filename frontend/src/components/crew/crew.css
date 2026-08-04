@@ -100,6 +100,11 @@
   font-weight: 650;
   color: var(--pc-faint);
 }
+.pc-crew-stat,
+.pc-crew-stat-value {
+  min-width: 0;
+  max-width: 100%;
+}
 .pc-crew-stat-value {
   margin: 4px 0 0;
   font-size: 22px;
@@ -109,12 +114,19 @@
 }
 .pc-crew-amount-list {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: var(--pc-space-1);
   margin: 0;
   padding: 0;
   list-style: none;
   font-family: var(--pc-font-mono);
   font-variant-numeric: tabular-nums;
+}
+.pc-crew-amount-list li {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .pc-crew-coverage {
   display: block;
@@ -378,6 +390,19 @@
   min-width: 0;
   overflow-wrap: anywhere;
   text-align: right;
+}
+.pc-crew-pending-amounts,
+.pc-crew-pending-amount {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--pc-space-1);
+}
+.pc-crew-pending-amount + .pc-crew-pending-amount {
+  margin-top: var(--pc-space-2);
+}
+.pc-crew-pending-amount > span:last-child {
+  color: var(--pc-faint);
 }
 
 /* Emergency guard */

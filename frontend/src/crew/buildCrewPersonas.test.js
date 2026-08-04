@@ -124,19 +124,16 @@ describe('buildCrewPersonas — indexed grouping', () => {
         indexedRow(ADDRESS_B, 1),
         indexedRow(ADDRESS_C, 2),
       ]),
-      moneyAgents: [
-        moneyAgent(ADDRESS_A),
-        moneyAgent(ADDRESS_B),
-        moneyAgent(ADDRESS_C),
-      ],
+      moneyAgents: [moneyAgent(ADDRESS_A), moneyAgent(ADDRESS_B), moneyAgent(ADDRESS_C)],
     })
 
-    expect(out.personas.map(({ id, children }) => ({ id, addresses: childAddresses({ children }) })))
-      .toEqual([
-        { id: 'sprout', addresses: [ADDRESS_A] },
-        { id: 'clover', addresses: [ADDRESS_B] },
-        { id: 'mochi', addresses: [ADDRESS_C] },
-      ])
+    expect(
+      out.personas.map(({ id, children }) => ({ id, addresses: childAddresses({ children }) }))
+    ).toEqual([
+      { id: 'sprout', addresses: [ADDRESS_A] },
+      { id: 'clover', addresses: [ADDRESS_B] },
+      { id: 'mochi', addresses: [ADDRESS_C] },
+    ])
     expect(out.personas).toHaveLength(3)
     expect(out.productiveAgentCount).toBe(3)
     expect(out.activeCount).toBe(3)
@@ -165,11 +162,7 @@ describe('buildCrewPersonas — indexed grouping', () => {
     const rows = [indexedRow(ADDRESS_A, 4), indexedRow(ADDRESS_B, 2), indexedRow(ADDRESS_C, 3)]
     const out = buildCrewPersonas({
       discovery: discovery([...rows].reverse()),
-      moneyAgents: [
-        moneyAgent(ADDRESS_B),
-        moneyAgent(ADDRESS_C),
-        moneyAgent(ADDRESS_A),
-      ],
+      moneyAgents: [moneyAgent(ADDRESS_B), moneyAgent(ADDRESS_C), moneyAgent(ADDRESS_A)],
     })
     const mapping = Object.fromEntries(
       out.personas.flatMap((persona) =>
@@ -203,9 +196,7 @@ describe('buildCrewPersonas — exact productive totals', () => {
       ],
     })
 
-    expect(out.personas[0].totals).toEqual([
-      { token: 'USDC', units: '1500000000', decimals: 7 },
-    ])
+    expect(out.personas[0].totals).toEqual([{ token: 'USDC', units: '1500000000', decimals: 7 }])
     expect(out.totals).toEqual([{ token: 'USDC', units: '1500000000', decimals: 7 }])
   })
 
@@ -251,13 +242,8 @@ describe('buildCrewPersonas — exact productive totals', () => {
     })
     const child = out.personas[0].children[0]
 
-    expect(child.workingLegs.map((leg) => leg.location)).toEqual([
-      'stellar-vault',
-      'base-proxy',
-    ])
-    expect(child.workingTotals).toEqual([
-      { token: 'USDC', units: '1500000000', decimals: 7 },
-    ])
+    expect(child.workingLegs.map((leg) => leg.location)).toEqual(['stellar-vault', 'base-proxy'])
+    expect(child.workingTotals).toEqual([{ token: 'USDC', units: '1500000000', decimals: 7 }])
     expect(child.idleAmount).toEqual({ token: 'USDC', units: '250000000', decimals: 7 })
     expect(child.hasWithdrawableStellar).toBe(true)
     expect(out.totals).toEqual([{ token: 'USDC', units: '1500000000', decimals: 7 }])
@@ -312,9 +298,7 @@ describe('buildCrewPersonas — global Base deduplication', () => {
     expect(newer).toMatchObject({ shared: true, counted: false })
     expect(oldest).toMatchObject({ shared: true, counted: true })
     expect(out.personas[0].totals).toEqual([])
-    expect(out.personas[1].totals).toEqual([
-      { token: 'USDC', units: '700000000', decimals: 7 },
-    ])
+    expect(out.personas[1].totals).toEqual([{ token: 'USDC', units: '700000000', decimals: 7 }])
     expect(out.totals).toEqual([{ token: 'USDC', units: '700000000', decimals: 7 }])
   })
 
@@ -368,6 +352,38 @@ describe('buildCrewPersonas — global Base deduplication', () => {
 })
 
 describe('buildCrewPersonas — pending and incomplete evidence', () => {
+  it.each(['scope-read-failed', 'unexpected-error'])(
+    'keeps a complete discovery partial when its joined money row has %s and is non-productive',
+    (problem) => {
+      const out = buildCrewPersonas({
+        discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+        moneyAgents: [
+          moneyAgent(ADDRESS_A, {
+            scope: { state: 'unavailable', value: null, checkedAt: 1 },
+            vaultShares: { state: 'unavailable', amount: null, checkedAt: 1 },
+            idleToken: { state: 'unavailable', amount: null, checkedAt: 1 },
+            amount: null,
+            executionStatus: 'unknown',
+            custody: { location: 'unknown' },
+            custodyBreakdown: [],
+            problems: [problem],
+          }),
+        ],
+      })
+
+      expect(out.status).toBe('partial')
+      expect(out.productiveAgentCount).toBe(0)
+      expect(out.pendingAssignments).toEqual([])
+      expect(out.personas.every((persona) => persona.children.length === 0)).toBe(true)
+      expect(out.personas.map((persona) => persona.totalState)).toEqual([
+        'partial',
+        'known',
+        'known',
+      ])
+      expect(out.totals).toEqual([])
+    }
+  )
+
   it('8. exposes a hint-only productive row as pending without guessing a persona', () => {
     const out = buildCrewPersonas({
       discovery: discovery([hintRow(ADDRESS_A)], 'partial'),
@@ -404,9 +420,7 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
 
     expect(assignedLeg).toMatchObject({ shared: true, counted: true })
     expect(pendingLeg).toMatchObject({ shared: true, counted: false })
-    expect(out.personas[0].totals).toEqual([
-      { token: 'USDC', units: '700000000', decimals: 7 },
-    ])
+    expect(out.personas[0].totals).toEqual([{ token: 'USDC', units: '700000000', decimals: 7 }])
     expect(out.totals).toEqual([{ token: 'USDC', units: '700000000', decimals: 7 }])
   })
 
@@ -422,9 +436,7 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
       'partial',
       'partial',
     ])
-    expect(out.personas[0].totals).toEqual([
-      { token: 'USDC', units: '10000000', decimals: 7 },
-    ])
+    expect(out.personas[0].totals).toEqual([{ token: 'USDC', units: '10000000', decimals: 7 }])
   })
 
   it('9. preserves a known productive amount but marks its total partial on unreadable evidence', () => {
@@ -441,9 +453,7 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
       ],
     })
 
-    expect(out.personas[0].totals).toEqual([
-      { token: 'USDC', units: '500000000', decimals: 7 },
-    ])
+    expect(out.personas[0].totals).toEqual([{ token: 'USDC', units: '500000000', decimals: 7 }])
     expect(out.personas[0].totalState).toBe('partial')
   })
 
@@ -482,9 +492,7 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
       amount: null,
       counted: false,
     })
-    expect(child.workingTotals).toEqual([
-      { token: 'USDC', units: '400000000', decimals: 7 },
-    ])
+    expect(child.workingTotals).toEqual([{ token: 'USDC', units: '400000000', decimals: 7 }])
     expect(out.status).toBe('partial')
     expect(out.personas[0].totalState).toBe('partial')
   })

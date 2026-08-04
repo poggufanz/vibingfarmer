@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
+import { buildCrewPersonas } from '../../crew/buildCrewPersonas.js'
 import { CrewRoute } from './CrewRoute.jsx'
 import { CrewLanes } from './CrewLanes.jsx'
 
@@ -54,6 +55,80 @@ function child(address, units, overrides = {}) {
 
 function persona(id, name, avatar, children = [], totals = [], totalState = 'known') {
   return { id, name, avatar, children, totals, totalState }
+}
+
+function discoveryRow(address, overrides = {}) {
+  return {
+    address,
+    creator: 'CINDEXEDCREATOR',
+    createdLedger: 1200,
+    createdTxHash: `create-${address}`,
+    runId: `run-${address}`,
+    runOrdinal: 0,
+    grantTxHash: `grant-${address}`,
+    provenance: {
+      source: 'router-event',
+      providerId: 'live-rpc',
+      endpointClass: 'live',
+      generation: 'agent-v3',
+    },
+    discoverySources: ['agent-index-api'],
+    scopeReadStatus: 'ok',
+    vault: 'CVAULT',
+    revoked: false,
+    expiry: 0,
+    authorized: true,
+    cap: amount('9999999999'),
+    baseChildren: [],
+    ...overrides,
+  }
+}
+
+function discovery(rows) {
+  return {
+    status: 'complete',
+    networkId: 'stellar-testnet',
+    owner: 'GOWNER',
+    agents: rows,
+    coverage: null,
+    hints: {
+      localCacheCount: 0,
+      rpcEventCount: 0,
+      registryCount: 0,
+      vaultVerifiedCount: 0,
+      unverifiedCandidateCount: 0,
+    },
+  }
+}
+
+function moneyAgent(address, overrides = {}) {
+  const workingAmount = amount('700000000')
+  return {
+    address,
+    scope: {
+      state: 'known',
+      value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true },
+      checkedAt: 1,
+    },
+    vaultShares: { state: 'known', amount: amount('0'), checkedAt: 1 },
+    idleToken: { state: 'known', amount: amount('0'), checkedAt: 1 },
+    amount: workingAmount,
+    executionStatus: 'idle',
+    custody: { location: 'base-proxy' },
+    custodyBreakdown: [
+      {
+        location: 'base-proxy',
+        amount: workingAmount,
+        kernelAddress: '0xKeRnEl',
+        poolAddress: '0xPoOl',
+        asset: '0xUSDC',
+        poolName: 'Aave v3',
+        coverageReason: null,
+      },
+    ],
+    problems: [],
+    ...overrides,
+  }
 }
 
 function crew(overrides = {}) {
@@ -196,6 +271,7 @@ describe('CrewRoute persona projection', () => {
   })
 
   it('uses the projection status for a confident empty versus uncertain empty result', () => {
+    const onStartStrategy = vi.fn()
     const emptyPersonas = crew().personas.map((entry) => ({ ...entry, children: [], totals: [] }))
     const complete = crew({
       personas: emptyPersonas,
@@ -204,13 +280,63 @@ describe('CrewRoute persona projection', () => {
       activeCount: 0,
       totals: [],
     })
-    const { unmount } = renderCrew({ crew: complete })
+    const { unmount } = renderCrew({ crew: complete, onStartStrategy })
     expect(screen.getByText(/no confirmed productive crew accounts are working yet/i)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Put it to work' }))
+    expect(onStartStrategy).toHaveBeenCalledTimes(1)
     unmount()
 
     renderCrew({ crew: { ...complete, status: 'partial' } })
     expect(screen.queryByText(/no confirmed productive crew accounts are working yet/i)).toBeNull()
     expect(screen.getByText(/could not confirm your crew/i)).toBeTruthy()
+  })
+
+  it('uses uncertain copy for a complete discovery whose joined money row is unreadable', () => {
+    const unreadable = moneyAgent(ADDRESSES.first, {
+      scope: { state: 'unavailable', value: null, checkedAt: 1 },
+      vaultShares: { state: 'unavailable', amount: null, checkedAt: 1 },
+      idleToken: { state: 'unavailable', amount: null, checkedAt: 1 },
+      amount: null,
+      executionStatus: 'unknown',
+      custody: { location: 'unknown' },
+      custodyBreakdown: [],
+      problems: ['scope-read-failed'],
+    })
+    const projected = buildCrewPersonas({
+      discovery: discovery([discoveryRow(ADDRESSES.first)]),
+      moneyAgents: [unreadable],
+    })
+
+    renderCrew({ crew: projected })
+
+    expect(screen.getByText(/could not confirm your crew/i)).toBeTruthy()
+    expect(screen.queryByText(/no confirmed productive crew accounts/i)).toBeNull()
+  })
+
+  it('shows a known shared pending Base amount and where it is counted', () => {
+    const projected = buildCrewPersonas({
+      discovery: discovery([
+        discoveryRow(ADDRESSES.first),
+        discoveryRow(ADDRESSES.base, {
+          creator: null,
+          createdLedger: null,
+          createdTxHash: null,
+          runId: null,
+          runOrdinal: null,
+          grantTxHash: null,
+          provenance: null,
+          discoverySources: ['rpc-router-events'],
+        }),
+      ]),
+      moneyAgents: [moneyAgent(ADDRESSES.first), moneyAgent(ADDRESSES.base)],
+    })
+
+    renderCrew({ crew: projected })
+    const pending = screen.getByRole('status')
+
+    expect(within(pending).getByText('70 USDC')).toBeTruthy()
+    expect(within(pending).getByText(/shared, counted under another account/i)).toBeTruthy()
+    expect(within(pending).queryByText(/amount unavailable/i)).toBeNull()
   })
 
   it('preserves the Emergency guard and Activity side column', () => {
@@ -261,6 +387,7 @@ describe('CrewLanes exact-address actions and evidence', () => {
       idleAmount: null,
       hasWithdrawableStellar: false,
     })
+    const secondStellar = child(ADDRESSES.second, '250000000')
     render(
       <CrewLanes
         personas={[
@@ -268,8 +395,8 @@ describe('CrewLanes exact-address actions and evidence', () => {
             'sprout',
             'Sprout',
             '/brand/agents/sprout.svg',
-            [stellar, baseOnly],
-            [amount('1500000000')]
+            [stellar, secondStellar, baseOnly],
+            [amount('1750000000')]
           ),
         ]}
         onCancelAgent={onCancelAgent}
@@ -278,9 +405,26 @@ describe('CrewLanes exact-address actions and evidence', () => {
     )
 
     const stellarRow = document.querySelector(`[data-child-address="${ADDRESSES.first}"]`)
+    const secondStellarRow = document.querySelector(`[data-child-address="${ADDRESSES.second}"]`)
     const baseRow = document.querySelector(`[data-child-address="${ADDRESSES.base}"]`)
-    fireEvent.click(within(stellarRow).getByRole('button', { name: /withdraw/i }))
-    fireEvent.click(within(baseRow).getByRole('button', { name: /cancel/i }))
+    const withdrawFirst = within(stellarRow).getByRole('button', {
+      name: `Withdraw from ${ADDRESSES.first}`,
+    })
+    expect(
+      within(secondStellarRow).getByRole('button', {
+        name: `Withdraw from ${ADDRESSES.second}`,
+      })
+    ).toBeTruthy()
+    expect(
+      within(stellarRow).getByRole('button', { name: `Cancel ${ADDRESSES.first}` })
+    ).toBeTruthy()
+    expect(
+      within(secondStellarRow).getByRole('button', { name: `Cancel ${ADDRESSES.second}` })
+    ).toBeTruthy()
+    const cancelBase = within(baseRow).getByRole('button', { name: `Cancel ${ADDRESSES.base}` })
+
+    fireEvent.click(withdrawFirst)
+    fireEvent.click(cancelBase)
 
     expect(onWithdrawAgent).toHaveBeenCalledWith(ADDRESSES.first)
     expect(onCancelAgent).toHaveBeenCalledWith(ADDRESSES.base)
@@ -291,6 +435,67 @@ describe('CrewLanes exact-address actions and evidence', () => {
     expect(within(stellarRow).getByText('5 USDC')).toBeTruthy()
     expect(within(stellarRow).getByText('base-read-unavailable')).toBeTruthy()
     expect(within(stellarRow).queryByText(/plan id/i)).toBeNull()
+  })
+
+  it('keeps a revoked child visible as cancelled without offering Cancel again', () => {
+    const revoked = child(ADDRESSES.first, '1000000000', {
+      agent: {
+        address: ADDRESSES.first,
+        scope: { state: 'known', value: { revoked: true, vault: 'CVAULT' } },
+        executionStatus: 'idle',
+        problems: ['scope-revoked'],
+      },
+      active: false,
+    })
+
+    render(
+      <CrewLanes
+        personas={[
+          persona(
+            'sprout',
+            'Sprout',
+            '/brand/agents/sprout.svg',
+            [revoked],
+            [amount('1000000000')],
+            'partial'
+          ),
+        ]}
+        onCancelAgent={vi.fn()}
+      />
+    )
+
+    const row = document.querySelector(`[data-child-address="${ADDRESSES.first}"]`)
+    expect(row.dataset.revoked).toBe('true')
+    expect(within(row).getByText('Cancelled')).toBeTruthy()
+    expect(within(row).queryByRole('button', { name: `Cancel ${ADDRESSES.first}` })).toBeNull()
+  })
+
+  it('renders each repeated problem only once', () => {
+    const repeated = child(ADDRESSES.first, '1000000000', {
+      agent: {
+        address: ADDRESSES.first,
+        scope: { state: 'known', value: { revoked: false, vault: 'CVAULT' } },
+        executionStatus: 'failed',
+        problems: ['base-read-unavailable', 'base-read-unavailable', 'unexpected-error'],
+      },
+    })
+
+    render(
+      <CrewLanes
+        personas={[
+          persona(
+            'sprout',
+            'Sprout',
+            '/brand/agents/sprout.svg',
+            [repeated],
+            [amount('1000000000')]
+          ),
+        ]}
+      />
+    )
+
+    expect(screen.getAllByText('base-read-unavailable')).toHaveLength(1)
+    expect(screen.getAllByText('unexpected-error')).toHaveLength(1)
   })
 })
 

@@ -595,16 +595,22 @@ test.describe('Pocket Crew crew', () => {
     const shape = await page.evaluate(() => {
       const firstRoute = document.querySelector('[data-fixture="crew"] .pc-crew-route')
       const cards = [...(firstRoute?.querySelectorAll('[data-persona-id]') || [])]
-      return cards.map((card) => ({
-        id: card.dataset.personaId,
-        children: card.querySelectorAll('[data-child-address]').length,
-      }))
+      return {
+        cards: cards.map((card) => ({
+          id: card.dataset.personaId,
+          children: card.querySelectorAll('[data-child-address]').length,
+        })),
+        amountTexts: [...(firstRoute?.querySelectorAll('.pc-crew-amount-list li') || [])].map(
+          (row) => row.textContent
+        ),
+      }
     })
-    expect(shape).toEqual([
+    expect(shape.cards).toEqual([
       { id: 'sprout', children: 2 },
       { id: 'clover', children: 0 },
       { id: 'mochi', children: 0 },
     ])
+    expect(shape.amountTexts).toContain('17,014,118,346,046,923,173,168,730,371,588.4105727 USDC')
   }
 
   test('forest theme', async ({ page }, testInfo) => {

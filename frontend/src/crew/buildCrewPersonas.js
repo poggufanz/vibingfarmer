@@ -70,7 +70,12 @@ function sumAmounts(amounts) {
     const key = `${amount.token}:${amount.decimals}`
     const current = grouped.get(key)
     if (current) current.units += BigInt(amount.units)
-    else grouped.set(key, { token: amount.token, decimals: amount.decimals, units: BigInt(amount.units) })
+    else
+      grouped.set(key, {
+        token: amount.token,
+        decimals: amount.decimals,
+        units: BigInt(amount.units),
+      })
   }
 
   return [...grouped.entries()]
@@ -163,20 +168,24 @@ function isActive(agent) {
 
 function makeChild({ agent, discoveryRow, assignment, networkId }) {
   const evidence = extractMoneyEvidence(agent, networkId)
-  if (evidence.workingLegs.length === 0) return null
+  const incomplete = hasIncompleteEvidence(agent, evidence)
+  if (evidence.workingLegs.length === 0) return { child: null, incomplete }
 
   return {
-    agent,
-    discoveryRow,
-    assignment,
-    workingLegs: evidence.workingLegs,
-    workingTotals: [],
-    idleAmount: evidence.idleAmount,
-    hasWithdrawableStellar: evidence.workingLegs.some(
-      (leg) => leg.location === 'stellar-vault' && leg.amount != null
-    ),
-    active: assignment.state === 'assigned' && isActive(agent),
-    incomplete: hasIncompleteEvidence(agent, evidence),
+    incomplete,
+    child: {
+      agent,
+      discoveryRow,
+      assignment,
+      workingLegs: evidence.workingLegs,
+      workingTotals: [],
+      idleAmount: evidence.idleAmount,
+      hasWithdrawableStellar: evidence.workingLegs.some(
+        (leg) => leg.location === 'stellar-vault' && leg.amount != null
+      ),
+      active: assignment.state === 'assigned' && isActive(agent),
+      incomplete,
+    },
   }
 }
 
@@ -214,17 +223,22 @@ function markBaseOwnership(children) {
 
 function finishChild(child) {
   child.workingTotals = sumAmounts(
-    child.workingLegs
-      .filter((leg) => leg.counted && leg.amount != null)
-      .map((leg) => leg.amount)
+    child.workingLegs.filter((leg) => leg.counted && leg.amount != null).map((leg) => leg.amount)
   )
   return child
 }
 
-function projectionStatus(discoveryStatus, assignedChildren, pendingAssignments) {
+function projectionStatus(
+  discoveryStatus,
+  assignedChildren,
+  pendingAssignments,
+  incompleteJoinedRows
+) {
   if (!['complete', 'partial', 'unavailable'].includes(discoveryStatus)) return 'unavailable'
   if (discoveryStatus !== 'complete') return discoveryStatus
-  return assignedChildren.some((child) => child.incomplete) || pendingAssignments.length > 0
+  return assignedChildren.some((child) => child.incomplete) ||
+    pendingAssignments.length > 0 ||
+    incompleteJoinedRows.length > 0
     ? 'partial'
     : 'complete'
 }
@@ -236,13 +250,18 @@ function projectionStatus(discoveryStatus, assignedChildren, pendingAssignments)
 export function buildCrewPersonas({ moneyAgents = [], discovery } = {}) {
   const discoveryByAddress = new Map()
   for (const row of discovery?.agents ?? []) {
-    if (typeof row?.address === 'string' && row.address.length > 0 && !discoveryByAddress.has(row.address)) {
+    if (
+      typeof row?.address === 'string' &&
+      row.address.length > 0 &&
+      !discoveryByAddress.has(row.address)
+    ) {
       discoveryByAddress.set(row.address, row)
     }
   }
 
   const assignedChildren = []
   const pendingAssignments = []
+  const incompleteJoinedRows = []
   const networkId = typeof discovery?.networkId === 'string' ? discovery.networkId : ''
 
   for (const agent of Array.isArray(moneyAgents) ? moneyAgents : []) {
@@ -251,8 +270,11 @@ export function buildCrewPersonas({ moneyAgents = [], discovery } = {}) {
     if (!discoveryRow) continue
 
     const assignment = assignCrewPersona({ networkId, discoveryRow })
-    const child = makeChild({ agent, discoveryRow, assignment, networkId })
-    if (!child) continue
+    const { child, incomplete } = makeChild({ agent, discoveryRow, assignment, networkId })
+    if (!child) {
+      if (incomplete) incompleteJoinedRows.push({ assignment })
+      continue
+    }
 
     if (assignment.state === 'assigned') assignedChildren.push(child)
     else pendingAssignments.push(child)
@@ -264,9 +286,20 @@ export function buildCrewPersonas({ moneyAgents = [], discovery } = {}) {
   markBaseOwnership(allChildren)
   allChildren.forEach(finishChild)
 
-  const status = projectionStatus(discovery?.status, assignedChildren, pendingAssignments)
+  const status = projectionStatus(
+    discovery?.status,
+    assignedChildren,
+    pendingAssignments,
+    incompleteJoinedRows
+  )
   const personas = CREW_PERSONAS.map((catalogEntry) => {
-    const children = assignedChildren.filter((child) => child.assignment.persona.id === catalogEntry.id)
+    const children = assignedChildren.filter(
+      (child) => child.assignment.persona.id === catalogEntry.id
+    )
+    const hasIncompleteJoinedRow = incompleteJoinedRows.some(
+      ({ assignment }) =>
+        assignment.state !== 'assigned' || assignment.persona.id === catalogEntry.id
+    )
     return {
       ...catalogEntry,
       children,
@@ -274,6 +307,7 @@ export function buildCrewPersonas({ moneyAgents = [], discovery } = {}) {
       totalState:
         discovery?.status !== 'complete' ||
         pendingAssignments.length > 0 ||
+        hasIncompleteJoinedRow ||
         children.some((child) => child.incomplete)
           ? 'partial'
           : 'known',

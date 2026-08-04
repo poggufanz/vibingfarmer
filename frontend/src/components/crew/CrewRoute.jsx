@@ -34,6 +34,28 @@ function shortAddress(address) {
   return `${address.slice(0, 4)}…${address.slice(-4)}`
 }
 
+function PendingAmountEvidence({ child }) {
+  if (child.workingTotals.length) {
+    return child.workingTotals.map(formatCrewAmount).join(' · ')
+  }
+
+  const sharedLegs = child.workingLegs.filter(
+    (leg) => leg.shared && !leg.counted && leg.amount != null
+  )
+  if (!sharedLegs.length) return 'Amount unavailable'
+
+  return (
+    <span className="pc-crew-pending-amounts">
+      {sharedLegs.map((leg) => (
+        <span className="pc-crew-pending-amount" key={leg.key}>
+          <span>{formatCrewAmount(leg.amount)}</span>
+          <span>shared, counted under another account</span>
+        </span>
+      ))}
+    </span>
+  )
+}
+
 function PendingAssignments({ pendingAssignments }) {
   if (!pendingAssignments.length) return null
   return (
@@ -50,9 +72,7 @@ function PendingAssignments({ pendingAssignments }) {
           <li key={child.agent.address}>
             <span>{shortAddress(child.agent.address)}</span>
             <span>
-              {child.workingTotals.length
-                ? child.workingTotals.map(formatCrewAmount).join(' · ')
-                : 'Amount unavailable'}
+              <PendingAmountEvidence child={child} />
             </span>
           </li>
         ))}

@@ -65,6 +65,7 @@ function locationLabel(location) {
 
 function ChildTechnicalDetails({ child }) {
   const { agent, discoveryRow = {} } = child
+  const problems = Array.isArray(agent.problems) ? [...new Set(agent.problems)] : []
   return (
     <details className="pc-crew-child-details">
       <summary>Technical details · {shortAddress(agent.address)}</summary>
@@ -118,9 +119,9 @@ function ChildTechnicalDetails({ child }) {
 
         <div className="pc-crew-evidence-block">
           <h4>Problems</h4>
-          {agent.problems?.length ? (
+          {problems.length ? (
             <ul className="pc-crew-problem-list">
-              {agent.problems.map((problem) => (
+              {problems.map((problem) => (
                 <li key={problem}>{problem}</li>
               ))}
             </ul>
@@ -158,6 +159,7 @@ function CrewChild({ child, onCancelAgent, onWithdrawAgent, actionPending }) {
           <button
             type="button"
             className="pc-button pc-button--secondary"
+            aria-label={`Withdraw from ${address}`}
             disabled={actionPending}
             onClick={() => onWithdrawAgent(address)}
           >
@@ -168,6 +170,7 @@ function CrewChild({ child, onCancelAgent, onWithdrawAgent, actionPending }) {
           <button
             type="button"
             className="pc-button pc-button--secondary"
+            aria-label={`Cancel ${address}`}
             disabled={actionPending}
             onClick={() => onCancelAgent?.(address)}
           >

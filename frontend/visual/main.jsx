@@ -1735,9 +1735,10 @@ function crewHealthyAgent(address, units) {
   }
 }
 
+const CREW_MAX_I128_UNITS = 170141183460469231731687303715884105727n
 const CREW_AGENTS_ASSIGNED = Object.freeze([
   mmDepositAgent(),
-  crewHealthyAgent(MM_AGENT_RECOVERY, 150_0000000n),
+  crewHealthyAgent(MM_AGENT_RECOVERY, CREW_MAX_I128_UNITS - 300_0000000n),
 ])
 
 function crewIndexedRow(address, runOrdinal, cap, createdLedger) {
@@ -1778,11 +1779,11 @@ const CREW_DISCOVERY_ASSIGNED = Object.freeze({
 })
 
 const CREW_MONEY_ASSIGNED = Object.freeze({
-  confirmedTotal: { state: 'known', amount: mmAmt(450_0000000n) },
+  confirmedTotal: { state: 'known', amount: mmAmt(CREW_MAX_I128_UNITS) },
   yield: { state: 'live', apy: 8.1 },
   earned: { state: 'unavailable', amount: null },
   unattributed: {},
-  custodyBreakdown: { 'stellar-vault': '4500000000' },
+  custodyBreakdown: { 'stellar-vault': String(CREW_MAX_I128_UNITS) },
   agentCount: 2,
   problemAgentCount: 0,
   agents: CREW_AGENTS_ASSIGNED,
