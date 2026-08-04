@@ -76,6 +76,27 @@ function cursorFrom(url) {
   return new URL(url, 'https://vf.invalid').searchParams.get('cursor')
 }
 
+function deeplyNestedJson(depth) {
+  const root = {}
+  let node = root
+  for (let index = 0; index < depth; index += 1) {
+    node.child = {}
+    node = node.child
+  }
+  return root
+}
+
+function legacyCompleteBody(coverage) {
+  return {
+    version: 1,
+    networkId: NETWORK,
+    owner: OWNER,
+    status: 'complete',
+    agents: [indexedAgent(1)],
+    coverage,
+  }
+}
+
 describe('fetchOwnerAgentIndex', () => {
   it('enumerates a literal 201-row snapshot in exact page order before returning complete', async () => {
     const firstPage = Array.from({ length: 200 }, (_, index) => indexedAgent(index + 1))
@@ -175,6 +196,31 @@ describe('fetchOwnerAgentIndex', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
+  it('round-trips an opaque cursor containing every reserved query character', async () => {
+    const opaqueCursor = 'a+/=?& %'
+    const signal = new AbortController().signal
+    const fetchImpl = vi.fn(async (url, init) => {
+      expect(init).toEqual({ signal })
+      if (cursorFrom(url) === null)
+        return response(
+          pagedBody({ agents: [indexedAgent(1)], hasMore: true, nextCursor: opaqueCursor })
+        )
+      expect(url).toContain('cursor=a%2B%2F%3D%3F%26+%25')
+      expect(cursorFrom(url)).toBe(opaqueCursor)
+      return response(pagedBody({ agents: [indexedAgent(2)], hasMore: false }))
+    })
+
+    const res = await fetchOwnerAgentIndex({
+      owner: OWNER,
+      networkId: NETWORK,
+      fetchImpl,
+      signal,
+    })
+
+    expect(res.status).toBe('complete')
+    expect(res.agents.map((agent) => agent.address)).toEqual(['CAGENT0001', 'CAGENT0002'])
+  })
+
   it('returns partial without replacing proven metadata when a duplicate address conflicts', async () => {
     const original = indexedAgent(1)
     const fetchImpl = vi.fn(async (url) =>
@@ -270,6 +316,176 @@ describe('fetchOwnerAgentIndex', () => {
 
     expect(res.status).toBe('partial')
     expect(res.agents.map((agent) => agent.address)).toEqual(['CAGENT0001'])
+  })
+
+  it('returns unavailable when the signal aborts after fetch resolves but before JSON is read', async () => {
+    const controller = new AbortController()
+    const fetchImpl = vi.fn(async () => {
+      controller.abort()
+      return response(pagedBody({ agents: [indexedAgent(1)], hasMore: false }))
+    })
+
+    const res = await fetchOwnerAgentIndex({
+      owner: OWNER,
+      networkId: NETWORK,
+      fetchImpl,
+      signal: controller.signal,
+    })
+
+    expect(res.status).toBe('unavailable')
+    expect(res.agents).toEqual([])
+  })
+
+  it('returns only earlier proven rows when the signal aborts during terminal JSON parsing', async () => {
+    const controller = new AbortController()
+    const fetchImpl = vi.fn(async (url) => {
+      if (cursorFrom(url) === null)
+        return response(
+          pagedBody({ agents: [indexedAgent(1)], hasMore: true, nextCursor: 'abort-in-json' })
+        )
+      return {
+        ok: true,
+        status: 200,
+        json: async () => {
+          controller.abort()
+          return pagedBody({ agents: [indexedAgent(2)], hasMore: false })
+        },
+      }
+    })
+
+    const res = await fetchOwnerAgentIndex({
+      owner: OWNER,
+      networkId: NETWORK,
+      fetchImpl,
+      signal: controller.signal,
+    })
+
+    expect(res.status).toBe('partial')
+    expect(res.agents.map((agent) => agent.address)).toEqual(['CAGENT0001'])
+  })
+
+  it.each([
+    ['boolean indexed tip', { indexedThroughLedger: false }],
+    ['string indexed tip', { indexedThroughLedger: '100' }],
+    ['unsafe indexed tip', { indexedThroughLedger: Number.MAX_SAFE_INTEGER + 1 }],
+    ['negative indexed start', { indexedFromLedger: -1 }],
+    ['boolean finalized ledger', { finalizedThroughLedger: false }],
+    ['string finalized ledger', { finalizedThroughLedger: '98' }],
+    ['indexed start after finalized tip', { indexedFromLedger: 99 }],
+    ['finalized tip after indexed tip', { finalizedThroughLedger: 101 }],
+    ['unsafe finality margin', { requiredFinalityLedgers: Number.MAX_SAFE_INTEGER + 1 }],
+  ])(
+    'never completes malformed %s coverage in paginated or legacy envelopes',
+    async (_name, patch) => {
+      const coverage = goodCoverage(patch)
+      const snapshotThroughLedger = Number.isSafeInteger(coverage.finalizedThroughLedger)
+        ? coverage.finalizedThroughLedger
+        : 98
+      const paginated = await fetchOwnerAgentIndex({
+        owner: OWNER,
+        networkId: NETWORK,
+        fetchImpl: fakeFetch(
+          pagedBody({
+            agents: [indexedAgent(1)],
+            hasMore: false,
+            coverage,
+            snapshotThroughLedger,
+          })
+        ),
+      })
+      const legacy = await fetchOwnerAgentIndex({
+        owner: OWNER,
+        networkId: NETWORK,
+        fetchImpl: fakeFetch(legacyCompleteBody(coverage)),
+      })
+
+      expect(paginated.status).not.toBe('complete')
+      expect(legacy.status).not.toBe('complete')
+    }
+  )
+
+  it.each([
+    [
+      'cyclic agent metadata',
+      () => {
+        const cycle = {}
+        cycle.self = cycle
+        return indexedAgent(1, { extra: cycle })
+      },
+    ],
+    ['non-JSON agent metadata', () => indexedAgent(1, { extra: 1n })],
+    ['non-finite agent metadata', () => indexedAgent(1, { extra: Number.POSITIVE_INFINITY })],
+    [
+      'accessor agent address',
+      () => {
+        const agent = indexedAgent(1)
+        Object.defineProperty(agent, 'address', {
+          enumerable: true,
+          get() {
+            throw new Error('untrusted getter must not run')
+          },
+        })
+        return agent
+      },
+    ],
+    ['excessive agent nodes', () => indexedAgent(1, { extra: Array(25_000).fill(null) })],
+  ])('returns unavailable instead of throwing for first-page %s', async (_name, makeAgent) => {
+    const fetchImpl = fakeFetch(
+      pagedBody({ agents: [makeAgent()], hasMore: false, coverageStatus: 'complete' })
+    )
+
+    const resultPromise = fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })
+
+    await expect(resultPromise).resolves.toMatchObject({ status: 'unavailable', agents: [] })
+  })
+
+  it('returns unavailable instead of overflowing on first-page deeply nested coverage', async () => {
+    const fetchImpl = fakeFetch(
+      pagedBody({
+        agents: [indexedAgent(1)],
+        hasMore: false,
+        coverage: goodCoverage({ extra: deeplyNestedJson(20_000) }),
+      })
+    )
+
+    const resultPromise = fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })
+
+    await expect(resultPromise).resolves.toMatchObject({ status: 'unavailable', agents: [] })
+  })
+
+  it('returns unavailable instead of invoking a non-JSON coverage accessor', async () => {
+    const coverage = goodCoverage()
+    Object.defineProperty(coverage, 'checkedAt', {
+      enumerable: true,
+      get() {
+        throw new Error('untrusted getter must not run')
+      },
+    })
+    const fetchImpl = fakeFetch(pagedBody({ agents: [indexedAgent(1)], hasMore: false, coverage }))
+
+    const resultPromise = fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })
+
+    await expect(resultPromise).resolves.toMatchObject({ status: 'unavailable', agents: [] })
+  })
+
+  it('returns prior rows as partial instead of overflowing on later-page deep metadata', async () => {
+    const fetchImpl = vi.fn(async (url) =>
+      response(
+        cursorFrom(url) === null
+          ? pagedBody({ agents: [indexedAgent(1)], hasMore: true, nextCursor: 'deep-page' })
+          : pagedBody({
+              agents: [indexedAgent(2, { extra: deeplyNestedJson(20_000) })],
+              hasMore: false,
+            })
+      )
+    )
+
+    const resultPromise = fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'partial',
+      agents: [{ address: 'CAGENT0001' }],
+    })
   })
 
   it('returns a complete response verbatim when owner/network/manifest all validate', async () => {

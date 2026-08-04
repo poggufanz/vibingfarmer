@@ -10,6 +10,9 @@ import {
 
 const AGENT_INDEX_PATH = '/api/agent-index'
 const LEGACY_DEFAULT_READ_LIMIT = 200
+const MAX_CANONICAL_DEPTH = 64
+const MAX_CANONICAL_NODES_PER_PAGE = 20_000
+const MAX_CANONICAL_CHARS_PER_PAGE = 2_000_000
 const NULL_HINTS = {
   localCacheCount: null,
   rpcEventCount: null,
@@ -58,35 +61,143 @@ function manifestIsTrusted(coverage) {
     coverage.manifestHash === AGENT_CREATOR_MANIFEST_HASH &&
     coverage.manifestVersion === AGENT_CREATOR_MANIFEST_VERSION &&
     coverage.schemaVersion === AGENT_INDEX_SCHEMA_VERSION &&
-    Number.isInteger(coverage.requiredFinalityLedgers) &&
+    Number.isSafeInteger(coverage.requiredFinalityLedgers) &&
     coverage.requiredFinalityLedgers >= AGENT_INDEX_FINALITY_LEDGERS
   )
 }
 
+function isNonNegativeSafeInteger(value) {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
 function coverageIsTrusted(coverage) {
+  const { indexedFromLedger, finalizedThroughLedger, indexedThroughLedger } = coverage
   return (
     coverage.contiguous === true &&
     Array.isArray(coverage.gaps) &&
     coverage.gaps.length === 0 &&
     coverage.historicalBackfill === 'verified' &&
-    coverage.indexedThroughLedger != null
+    isNonNegativeSafeInteger(indexedFromLedger) &&
+    isNonNegativeSafeInteger(finalizedThroughLedger) &&
+    isNonNegativeSafeInteger(indexedThroughLedger) &&
+    indexedFromLedger <= finalizedThroughLedger &&
+    finalizedThroughLedger <= indexedThroughLedger
   )
 }
 
-function stableJson(value) {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  return `{${Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
-    .join(',')}}`
+function canonicalBudget() {
+  return { nodes: 0, chars: 0 }
 }
 
-function coverageIdentity(coverage) {
+function boundedCanonicalJson(root, budget, { omitRootKey } = {}) {
+  const parts = []
+  const seen = new WeakSet()
+  const stack = [{ type: 'value', value: root, depth: 0, root: true }]
+
+  const append = (part) => {
+    budget.chars += part.length
+    if (budget.chars > MAX_CANONICAL_CHARS_PER_PAGE) throw new Error('canonical JSON too large')
+    parts.push(part)
+  }
+
+  try {
+    while (stack.length > 0) {
+      const action = stack.pop()
+      if (action.type === 'token') {
+        append(action.token)
+        continue
+      }
+
+      budget.nodes += 1
+      if (budget.nodes > MAX_CANONICAL_NODES_PER_PAGE || action.depth > MAX_CANONICAL_DEPTH) {
+        return null
+      }
+
+      const value = action.value
+      if (value === null) {
+        append('null')
+        continue
+      }
+      if (typeof value === 'string' || typeof value === 'boolean') {
+        append(JSON.stringify(value))
+        continue
+      }
+      if (typeof value === 'number') {
+        if (!Number.isFinite(value)) return null
+        append(JSON.stringify(value))
+        continue
+      }
+      if (typeof value !== 'object' || seen.has(value)) return null
+      seen.add(value)
+
+      const actions = []
+      if (Array.isArray(value)) {
+        if (value.length > MAX_CANONICAL_NODES_PER_PAGE - budget.nodes) return null
+        const ownKeys = Reflect.ownKeys(value)
+        if (
+          ownKeys.some(
+            (key) =>
+              key !== 'length' &&
+              (typeof key !== 'string' ||
+                !/^(0|[1-9]\d*)$/u.test(key) ||
+                Number(key) >= value.length)
+          )
+        ) {
+          return null
+        }
+        for (let index = 0; index < value.length; index += 1) {
+          if (!Object.hasOwn(value, index)) return null
+          if (index > 0) actions.push({ type: 'token', token: ',' })
+          actions.push({ type: 'value', value: value[index], depth: action.depth + 1 })
+        }
+        append('[')
+        stack.push({ type: 'token', token: ']' })
+      } else {
+        const prototype = Object.getPrototypeOf(value)
+        if (prototype !== Object.prototype && prototype !== null) return null
+        let keys = Reflect.ownKeys(value)
+        if (keys.some((key) => typeof key !== 'string')) return null
+        keys = keys.filter((key) => !(action.root && key === omitRootKey)).sort()
+        if (keys.length > MAX_CANONICAL_NODES_PER_PAGE - budget.nodes) return null
+        let projectedKeyChars = 0
+        for (const key of keys) {
+          projectedKeyChars += key.length
+          if (projectedKeyChars > MAX_CANONICAL_CHARS_PER_PAGE - budget.chars) return null
+          const descriptor = Object.getOwnPropertyDescriptor(value, key)
+          if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return null
+          if (actions.length > 0) actions.push({ type: 'token', token: ',' })
+          actions.push({ type: 'token', token: JSON.stringify(key) })
+          actions.push({ type: 'token', token: ':' })
+          actions.push({ type: 'value', value: descriptor.value, depth: action.depth + 1 })
+        }
+        append('{')
+        stack.push({ type: 'token', token: '}' })
+      }
+
+      for (let index = actions.length - 1; index >= 0; index -= 1) stack.push(actions[index])
+    }
+    return parts.join('')
+  } catch {
+    return null
+  }
+}
+
+function coverageIdentity(coverage, budget) {
   // checkedAt is the time of each independent HTTP read, not coverage evidence. The remaining
   // fields must stay identical throughout one snapshot traversal.
-  const { checkedAt: _checkedAt, ...identity } = coverage
-  return stableJson(identity)
+  try {
+    const checkedAt = Object.getOwnPropertyDescriptor(coverage, 'checkedAt')
+    if (
+      !checkedAt?.enumerable ||
+      !Object.hasOwn(checkedAt, 'value') ||
+      !isNonNegativeSafeInteger(checkedAt.value)
+    ) {
+      return null
+    }
+    return boundedCanonicalJson(coverage, budget, { omitRootKey: 'checkedAt' })
+  } catch {
+    return null
+  }
 }
 
 function parsePagination(pagination) {
@@ -105,13 +216,20 @@ function parsePagination(pagination) {
   return { hasMore, nextCursor, snapshotThroughLedger, coverageStatus }
 }
 
-function preparePage(metadataByAddress, pageAgents) {
+function preparePage(metadataByAddress, pageAgents, budget) {
   const additions = []
   const pageMetadata = new Map()
   for (const rawAgent of pageAgents) {
-    if (!rawAgent || typeof rawAgent.address !== 'string' || !rawAgent.address) return null
-    const agent = { ...rawAgent }
-    const metadata = stableJson(agent)
+    if (!rawAgent || typeof rawAgent !== 'object' || Array.isArray(rawAgent)) return null
+    const metadata = boundedCanonicalJson(rawAgent, budget)
+    if (metadata === null) return null
+    let agent
+    try {
+      agent = { ...rawAgent }
+    } catch {
+      return null
+    }
+    if (typeof agent.address !== 'string' || !agent.address) return null
     const prior = pageMetadata.get(agent.address) ?? metadataByAddress.get(agent.address)
     if (prior !== undefined) {
       if (prior !== metadata) return null
@@ -176,6 +294,7 @@ export async function fetchOwnerAgentIndex({
     } catch {
       return interrupted()
     }
+    if (signal?.aborted) return interrupted()
     if (!response?.ok) return interrupted()
 
     let body
@@ -184,9 +303,12 @@ export async function fetchOwnerAgentIndex({
     } catch {
       return interrupted()
     }
+    if (signal?.aborted) return interrupted()
     if (!isRecognizedBody(body, owner, networkId)) return interrupted()
 
-    const pageCoverageIdentity = coverageIdentity(body.coverage)
+    const budget = canonicalBudget()
+    const pageCoverageIdentity = coverageIdentity(body.coverage, budget)
+    if (pageCoverageIdentity === null) return interrupted()
     const paginationPresent = Object.hasOwn(body, 'pagination')
     const pagination = paginationPresent ? parsePagination(body.pagination) : null
     if (paginationPresent && !pagination) return interrupted()
@@ -195,7 +317,7 @@ export async function fetchOwnerAgentIndex({
     // at its request cap could be truncated, so it is never upgraded or preserved as complete.
     if (!paginationPresent) {
       if (acceptedPages > 0 || cursor !== null) return interrupted()
-      const prepared = preparePage(metadataByAddress, body.agents)
+      const prepared = preparePage(metadataByAddress, body.agents, budget)
       if (!prepared) return interrupted()
       acceptPage(agents, metadataByAddress, prepared)
       acceptedPages = 1
@@ -227,7 +349,7 @@ export async function fetchOwnerAgentIndex({
       return interrupted()
     }
 
-    const prepared = preparePage(metadataByAddress, body.agents)
+    const prepared = preparePage(metadataByAddress, body.agents, budget)
     if (!prepared) return interrupted()
     acceptPage(agents, metadataByAddress, prepared)
     acceptedPages += 1
