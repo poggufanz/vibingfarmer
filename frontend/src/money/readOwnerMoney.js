@@ -523,6 +523,9 @@ async function readOneAgentMoney({ row, sharesResult, idleResult, pps, baseAccou
  *   checkedAt:number}>, stellarYield:{state:string, apy:number|null},
  *   stellarSubtotalUnits:bigint, baseSubtotalUnits:bigint, completeBaseTotalUnits:bigint|null,
  *   overallTotalUnits:bigint|null, baseValuationKind:string,
+ *   baseGroups:Array<{groupKey:string, kernelAddress:string, poolAddress:string, asset:string,
+ *   amount:{token:string, units:string, decimals:number}|null,
+ *   coverage:{state:'complete'|'partial'|'unavailable', problems:string[]}}>,
  *   ownerBaseCustodyBreakdown:Record<string,bigint>,
  *   associationCoverage:{state:'complete'|'partial'|'unknown', reasons:string[]},
  *   baseSourceCoverage:{state:'complete'|'unknown'},
@@ -676,6 +679,10 @@ export async function readOwnerMoney({
   let terminalGroupsTotal = 0
   let terminalGroupsLive = 0
   let baseSubtotalUnits = 0n
+  // Deterministic, owner-wide numeric evidence for Crew and any future projection that must not
+  // sum repeated per-agent views of one shared Base position. ownerNormalized.groups is already
+  // sorted by its normalized groupKey, so this list is stable across discovery/page order.
+  const baseGroups = []
   const ownerBaseCustodyBreakdown = {}
   let anyGroupUnknown = false
   // Review round 1, finding 4 (Important, fixed): the old loop kept only `{units, live}`,
@@ -693,6 +700,20 @@ export async function readOwnerMoney({
       live,
       problems: groupProblems,
     } = valueBaseGroup({ group, children: groupChildren, baseAccountsMap })
+    const groupIncomplete = groupProblems.some((p) => READ_INCOMPLETE_PROBLEMS.has(p))
+    baseGroups.push({
+      groupKey: group.groupKey,
+      kernelAddress: group.kernelAddress,
+      poolAddress: group.poolAddress,
+      asset: group.asset,
+      // amountOf is the one canonical 7-decimal string-money constructor for this module. Never
+      // leak the internal BigInt (or a precision-losing Number) across this evidence boundary.
+      amount: units == null ? null : amountOf(units),
+      coverage: {
+        state: units == null ? 'unavailable' : groupIncomplete ? 'partial' : 'complete',
+        problems: [...groupProblems],
+      },
+    })
     if (group.hasTerminal) {
       terminalGroupsTotal += 1
       if (live) terminalGroupsLive += 1
@@ -702,7 +723,7 @@ export async function readOwnerMoney({
       const location = mostAdvancedChild(groupChildren)?.custody?.location ?? 'unknown'
       ownerBaseCustodyBreakdown[location] = (ownerBaseCustodyBreakdown[location] ?? 0n) + units
     } else anyGroupUnknown = true
-    if (groupProblems.some((p) => READ_INCOMPLETE_PROBLEMS.has(p))) anyGroupIncomplete = true
+    if (groupIncomplete) anyGroupIncomplete = true
   }
 
   const hasTaintedEvidence =
@@ -784,6 +805,7 @@ export async function readOwnerMoney({
     stellarYield,
     stellarSubtotalUnits,
     baseSubtotalUnits,
+    baseGroups,
     ownerBaseCustodyBreakdown,
     completeBaseTotalUnits,
     overallTotalUnits,

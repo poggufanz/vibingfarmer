@@ -576,6 +576,141 @@ describe('active account application state', () => {
     expect(mountedHarness.crewRouteProps.onWithdrawAgent).toBeUndefined()
   })
 
+  it('projects owner-wide Base value and coverage changes from the full money envelope', async () => {
+    const newerAddress = `C${'N'.repeat(55)}`
+    const oldestAddress = `C${'O'.repeat(55)}`
+    const discoveryRow = (address, runOrdinal, createdLedger) => ({
+      address,
+      creator: 'CINDEXCREATOR',
+      createdLedger,
+      createdTxHash: `create-${runOrdinal}`,
+      runId: `run-${runOrdinal}`,
+      runOrdinal,
+      grantTxHash: `grant-${runOrdinal}`,
+      provenance: {
+        source: 'router-event',
+        providerId: 'rpc',
+        endpointClass: 'live',
+        generation: 'agent-v3',
+      },
+      discoverySources: ['agent-index-api'],
+      scopeReadStatus: 'ok',
+      vault: 'CVAULT',
+      revoked: false,
+      expiry: 0,
+      authorized: true,
+      baseChildren: [],
+    })
+    const baseAgent = (address, units) => {
+      const amount = { token: 'USDC', units, decimals: 7 }
+      return {
+        address,
+        scope: { state: 'known', value: { vault: 'CVAULT', revoked: false } },
+        vaultShares: {
+          state: 'known',
+          amount: { token: 'USDC', units: '0', decimals: 7 },
+        },
+        idleToken: {
+          state: 'known',
+          amount: { token: 'USDC', units: '0', decimals: 7 },
+        },
+        amount,
+        custody: { location: 'base-proxy' },
+        custodyBreakdown: [
+          {
+            location: 'base-proxy',
+            amount,
+            kernelAddress: '0xKeRnEl',
+            poolAddress: '0xPoOl',
+            asset: 'USDC',
+            coverageReason: null,
+          },
+        ],
+        executionStatus: 'succeeded',
+        problems: [],
+      }
+    }
+    const agents = [baseAgent(newerAddress, '300000000'), baseAgent(oldestAddress, '700000000')]
+    const envelope = (units, groupState, coverage) => ({
+      ...moneyReads(agents),
+      networkId: 'stellar-testnet',
+      stellarSubtotalUnits: 0n,
+      baseSubtotalUnits: BigInt(units),
+      baseGroups: [
+        {
+          groupKey: '84532:0xkernel:0xpool:usdc',
+          kernelAddress: '0xkernel',
+          poolAddress: '0xpool',
+          asset: 'usdc',
+          amount: { token: 'USDC', units, decimals: 7 },
+          coverage: {
+            state: groupState,
+            problems: groupState === 'complete' ? [] : ['base-read-unavailable'],
+          },
+        },
+      ],
+      associationCoverage: coverage,
+      baseSourceCoverage: { state: 'complete' },
+      basePositionCoverage:
+        groupState === 'complete'
+          ? { state: 'complete', reasons: [] }
+          : { state: 'unknown', reasons: ['unavailable'] },
+    })
+
+    discoverOwnerScopes.mockResolvedValue(
+      discoveryWith([discoveryRow(newerAddress, 0, 200), discoveryRow(oldestAddress, 1, 100)])
+    )
+    readOwnerMoney
+      .mockReset()
+      .mockResolvedValueOnce(
+        envelope('1000000000', 'partial', {
+          state: 'unknown',
+          reasons: ['unavailable'],
+        })
+      )
+      // Reuse the exact same agents array: only owner-wide value/coverage changes. This catches a
+      // Crew memo keyed solely on moneyRead.agents as well as an App that drops the envelope.
+      .mockResolvedValue(envelope('1250000000', 'complete', { state: 'complete', reasons: [] }))
+
+    render(
+      <MemoryRouter
+        initialEntries={['/agent']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <App />
+      </MemoryRouter>
+    )
+
+    await waitFor(() =>
+      expect(mountedHarness.crewRouteProps?.crew?.totals).toEqual([
+        { token: 'USDC', units: '1000000000', decimals: 7 },
+      ])
+    )
+    expect(mountedHarness.crewRouteProps.crew.status).toBe('partial')
+    expect(mountedHarness.sidebarProps.agentCount).toBe(
+      mountedHarness.crewRouteProps.crew.activeCount
+    )
+
+    await act(async () => {
+      await mountedHarness.withdrawDialogProps.onConfirmPartial({
+        ok: true,
+        mode: 'partial',
+        agentAddress: newerAddress,
+        amount: { token: 'USDC', units: '1', decimals: 7 },
+      })
+    })
+
+    await waitFor(() =>
+      expect(mountedHarness.crewRouteProps?.crew?.totals).toEqual([
+        { token: 'USDC', units: '1250000000', decimals: 7 },
+      ])
+    )
+    expect(mountedHarness.crewRouteProps.crew.status).toBe('complete')
+    expect(mountedHarness.sidebarProps.agentCount).toBe(
+      mountedHarness.crewRouteProps.crew.activeCount
+    )
+  })
+
   it('starts an owner action after React StrictMode replays mount effects', async () => {
     render(
       <React.StrictMode>

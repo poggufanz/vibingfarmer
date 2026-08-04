@@ -116,6 +116,20 @@ function childAddresses(persona) {
   return persona.children.map((child) => child.agent.address)
 }
 
+function moneyEnvelope(agents, overrides = {}) {
+  return {
+    status: 'complete',
+    owner: 'GOWNER',
+    networkId: 'stellar-testnet',
+    agents,
+    baseGroups: [],
+    associationCoverage: { state: 'complete', reasons: [] },
+    baseSourceCoverage: { state: 'complete' },
+    basePositionCoverage: { state: 'complete', reasons: [] },
+    ...overrides,
+  }
+}
+
 describe('buildCrewPersonas — indexed grouping', () => {
   it('1. creates exactly the three catalog personas for indexed ordinals 0, 1, and 2', () => {
     const out = buildCrewPersonas({
@@ -349,6 +363,233 @@ describe('buildCrewPersonas — global Base deduplication', () => {
 
     expect(countedAddress).toBe(ADDRESS_A)
   })
+
+  it('uses the owner-wide 100 USDC group once instead of summing or choosing its 30/70 reports', () => {
+    const agents = [
+      moneyAgent(ADDRESS_A, {
+        amount: amount('300000000'),
+        custody: { location: 'base-proxy' },
+        custodyBreakdown: [baseLeg('300000000', { asset: 'USDC' })],
+      }),
+      moneyAgent(ADDRESS_B, {
+        amount: amount('700000000'),
+        custody: { location: 'base-proxy' },
+        custodyBreakdown: [baseLeg('700000000', { asset: 'USDC' })],
+      }),
+    ]
+    const out = buildCrewPersonas({
+      discovery: discovery([
+        indexedRow(ADDRESS_A, 0, { createdLedger: 200 }),
+        indexedRow(ADDRESS_B, 1, { createdLedger: 100 }),
+      ]),
+      moneyRead: moneyEnvelope(agents, {
+        basePositionCoverage: { state: 'unknown', reasons: ['unavailable'] },
+        baseGroups: [
+          {
+            groupKey: '84532:0xkernel:0xpool:usdc',
+            kernelAddress: '0xkernel',
+            poolAddress: '0xpool',
+            asset: 'usdc',
+            amount: amount('1000000000'),
+            coverage: { state: 'partial', problems: ['base-read-unavailable'] },
+          },
+        ],
+      }),
+    })
+    const newer = out.personas[0].children[0].workingLegs[0]
+    const oldest = out.personas[1].children[0].workingLegs[0]
+
+    expect(newer).toMatchObject({ shared: true, counted: false, amount: amount('300000000') })
+    expect(oldest).toMatchObject({
+      shared: true,
+      counted: true,
+      amount: amount('1000000000'),
+    })
+    expect(out.personas[0].totals).toEqual([])
+    expect(out.personas[1].totals).toEqual([amount('1000000000')])
+    expect(out.totals).toEqual([amount('1000000000')])
+    expect(out.status).toBe('partial')
+    expect(out.personas.map((persona) => persona.totalState)).toEqual([
+      'partial',
+      'partial',
+      'partial',
+    ])
+  })
+
+  it.each([
+    ['associationCoverage', { state: 'unknown', reasons: ['unavailable'] }],
+    ['baseSourceCoverage', { state: 'unknown' }],
+    ['basePositionCoverage', { state: 'partial', reasons: ['unavailable'] }],
+  ])(
+    'keeps the known group value but fails Crew and persona totals closed on %s',
+    (axis, value) => {
+      const agent = moneyAgent(ADDRESS_A, {
+        amount: amount('500000000'),
+        custody: { location: 'base-proxy' },
+        custodyBreakdown: [baseLeg('500000000', { asset: 'USDC' })],
+      })
+      const out = buildCrewPersonas({
+        discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+        moneyRead: moneyEnvelope([agent], {
+          [axis]: value,
+          baseGroups: [
+            {
+              groupKey: '84532:0xkernel:0xpool:usdc',
+              kernelAddress: '0xkernel',
+              poolAddress: '0xpool',
+              asset: 'usdc',
+              amount: amount('500000000'),
+              coverage: { state: 'complete', problems: [] },
+            },
+          ],
+        }),
+      })
+
+      expect(out.totals).toEqual([amount('500000000')])
+      expect(out.status).toBe('partial')
+      expect(out.personas.map((persona) => persona.totalState)).toEqual([
+        'partial',
+        'partial',
+        'partial',
+      ])
+    }
+  )
+
+  it('never substitutes per-agent Base reports when authoritative group evidence is missing', () => {
+    const agent = moneyAgent(ADDRESS_A, {
+      amount: amount('500000000'),
+      custody: { location: 'base-proxy' },
+      custodyBreakdown: [baseLeg('500000000', { asset: 'USDC' })],
+    })
+    const out = buildCrewPersonas({
+      discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+      moneyRead: moneyEnvelope([agent]),
+    })
+
+    expect(out.personas[0].children[0].workingLegs[0]).toMatchObject({
+      amount: amount('500000000'),
+      counted: false,
+    })
+    expect(out.personas[0].totals).toEqual([])
+    expect(out.totals).toEqual([])
+    expect(out.status).toBe('partial')
+    expect(out.personas[0].totalState).toBe('partial')
+  })
+
+  it('fails closed on internally inconsistent authoritative group coverage', () => {
+    const agent = moneyAgent(ADDRESS_A, {
+      amount: amount('500000000'),
+      custody: { location: 'base-proxy' },
+      custodyBreakdown: [baseLeg('500000000', { asset: 'USDC' })],
+    })
+    const out = buildCrewPersonas({
+      discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+      moneyRead: moneyEnvelope([agent], {
+        baseGroups: [
+          {
+            groupKey: '84532:0xkernel:0xpool:usdc',
+            kernelAddress: '0xkernel',
+            poolAddress: '0xpool',
+            asset: 'usdc',
+            amount: amount('500000000'),
+            // A complete valuation cannot simultaneously carry a read-incomplete problem.
+            coverage: { state: 'complete', problems: ['base-read-unavailable'] },
+          },
+        ],
+      }),
+    })
+
+    expect(out.personas[0].children[0].workingLegs[0].counted).toBe(false)
+    expect(out.totals).toEqual([])
+    expect(out.status).toBe('partial')
+    expect(out.personas[0].totalState).toBe('partial')
+  })
+
+  it('treats an unmatched complete known-zero Base group as non-productive, not incomplete', () => {
+    const zero = amount('0')
+    const agent = moneyAgent(ADDRESS_A, {
+      amount: zero,
+      vaultShares: { state: 'known', amount: zero, checkedAt: 1 },
+      idleToken: { state: 'known', amount: zero, checkedAt: 1 },
+      custody: { location: 'base-proxy' },
+      custodyBreakdown: [baseLeg('0', { asset: 'USDC' })],
+    })
+    const out = buildCrewPersonas({
+      discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+      moneyRead: moneyEnvelope([agent], {
+        baseGroups: [
+          {
+            groupKey: '84532:0xkernel:0xpool:usdc',
+            kernelAddress: '0xkernel',
+            poolAddress: '0xpool',
+            asset: 'usdc',
+            amount: zero,
+            coverage: { state: 'complete', problems: [] },
+          },
+        ],
+      }),
+    })
+
+    expect(out.productiveAgentCount).toBe(0)
+    expect(out.activeCount).toBe(0)
+    expect(out.totals).toEqual([])
+    expect(out.status).toBe('complete')
+    expect(out.personas.map((persona) => persona.totalState)).toEqual(['known', 'known', 'known'])
+  })
+
+  it.each([
+    [null, { state: 'unavailable', problems: ['base-read-unavailable'] }],
+    [amount('500000000'), { state: 'complete', problems: [] }],
+  ])(
+    'keeps an unmatched unavailable/positive owner group unresolved and partial',
+    (value, coverage) => {
+      const out = buildCrewPersonas({
+        discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+        moneyRead: moneyEnvelope(
+          [
+            moneyAgent(ADDRESS_A, {
+              amount: null,
+              custody: { location: 'base-proxy' },
+              custodyBreakdown: [baseLeg(null, { asset: 'USDC' })],
+              problems: ['base-read-unavailable'],
+            }),
+          ],
+          {
+            baseGroups: [
+              {
+                groupKey: '84532:0xkernel:0xpool:usdc',
+                kernelAddress: '0xkernel',
+                poolAddress: '0xpool',
+                asset: 'usdc',
+                amount: value,
+                coverage,
+              },
+            ],
+          }
+        ),
+      })
+
+      expect(out.productiveAgentCount).toBe(0)
+      expect(out.totals).toEqual([])
+      expect(out.status).toBe('partial')
+      expect(out.personas[0].totalState).toBe('partial')
+    }
+  )
+
+  it('downgrades Crew when the money envelope is partial even if discovery is complete', () => {
+    const out = buildCrewPersonas({
+      discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+      moneyRead: moneyEnvelope([moneyAgent(ADDRESS_A)], { status: 'partial' }),
+    })
+
+    expect(out.totals).toEqual([amount('10000000')])
+    expect(out.status).toBe('partial')
+    expect(out.personas.map((persona) => persona.totalState)).toEqual([
+      'partial',
+      'partial',
+      'partial',
+    ])
+  })
 })
 
 describe('buildCrewPersonas — pending and incomplete evidence', () => {
@@ -493,6 +734,28 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
       counted: false,
     })
     expect(child.workingTotals).toEqual([{ token: 'USDC', units: '400000000', decimals: 7 }])
+    expect(out.productiveAgentCount).toBe(1)
+    expect(out.status).toBe('partial')
+    expect(out.personas[0].totalState).toBe('partial')
+  })
+
+  it('excludes an unreadable-only productive row from children, productive count, and active count', () => {
+    const out = buildCrewPersonas({
+      discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+      moneyAgents: [
+        moneyAgent(ADDRESS_A, {
+          amount: null,
+          custody: { location: 'base-proxy' },
+          custodyBreakdown: [baseLeg(null)],
+          problems: ['base-read-unavailable'],
+        }),
+      ],
+    })
+
+    expect(out.personas[0].children).toEqual([])
+    expect(out.productiveAgentCount).toBe(0)
+    expect(out.activeCount).toBe(0)
+    expect(out.totals).toEqual([])
     expect(out.status).toBe('partial')
     expect(out.personas[0].totalState).toBe('partial')
   })
@@ -506,10 +769,9 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
         }),
       ],
     })
-    const child = out.personas[0].children[0]
-
-    expect(child.workingLegs[0]).toMatchObject({ amount: null, counted: false })
-    expect(child.workingTotals).toEqual([])
+    expect(out.personas[0].children).toEqual([])
+    expect(out.productiveAgentCount).toBe(0)
+    expect(out.activeCount).toBe(0)
     expect(out.totals).toEqual([])
     expect(out.status).toBe('partial')
   })

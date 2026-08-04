@@ -911,7 +911,17 @@ export function buildMoneySnapshot(reads) {
   if (!reads) return null
   return {
     ...aggregateOwnerPositions(reads),
+    owner: reads.owner ?? null,
+    networkId: reads.networkId ?? null,
     agents: reads.agents ?? [],
+    // JSON-safe owner-wide evidence retained from readOwnerMoney. The internal subtotal fields
+    // are BigInts and intentionally stay outside the cacheable snapshot; these exact string-money
+    // groups plus their coverage axes are the complete projection input Crew needs.
+    baseGroups: reads.baseGroups ?? null,
+    associationCoverage: reads.associationCoverage ?? null,
+    baseSourceCoverage: reads.baseSourceCoverage ?? null,
+    basePositionCoverage: reads.basePositionCoverage ?? null,
+    baseValuationKind: reads.baseValuationKind ?? null,
     checkedAt: reads.checkedAt ?? null,
     confirmedLedger: reads.confirmedLedger ?? null,
     confirmedBlock: reads.confirmedBlock ?? null,
@@ -2694,10 +2704,12 @@ const App = () => {
   const crew = useM(
     () =>
       buildCrewPersonas({
-        moneyAgents: moneyRead?.agents ?? [],
+        moneyRead,
         discovery: moneyDiscovery,
       }),
-    [moneyRead?.agents, moneyDiscovery]
+    // Owner-wide Base value/coverage can change while the same per-agent array survives an
+    // action reconciliation. The whole envelope is an input, so the whole envelope is the key.
+    [moneyRead, moneyDiscovery]
   )
 
   function moneyProtectionSnapshot() {

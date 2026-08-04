@@ -1386,6 +1386,115 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
     expect(result.baseSubtotalUnits).toBe(expected)
   })
 
+  it('exposes one partial owner-wide group whose reported fallback is the exact 30 + 70 USDC sum', async () => {
+    const rows = [
+      agentRow({
+        address: 'CREPORTED30',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            allocationId: 'run30:bridge:aave-v3',
+            amount: { token: 'USDC', units: '30000000', decimals: 6 },
+          }),
+        ],
+      }),
+      agentRow({
+        address: 'CREPORTED70',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            allocationId: 'run70:bridge:aave-v3',
+            amount: { token: 'USDC', units: '70000000', decimals: 6 },
+          }),
+        ],
+      }),
+    ]
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar: stellarDeps({
+        shares: { CREPORTED30: 0n, CREPORTED70: 0n },
+        idle: { CREPORTED30: 0n, CREPORTED70: 0n },
+      }),
+      // Both terminal children miss their live kernel read, so the real production fallback
+      // sums their independently reported 30 and 70 USDC contributions owner-wide.
+      base: baseDeps({ status: 'known', accounts: [] }),
+      associationDelivery: { events: [] },
+      now: NOW,
+    })
+
+    expect(result.agents.map((agent) => agent.amount?.units)).toEqual(['300000000', '700000000'])
+    expect(result.baseSubtotalUnits).toBe(1_000_000_000n)
+    expect(result.baseGroups).toEqual([
+      expect.objectContaining({
+        kernelAddress: '0xkernel',
+        poolAddress: BASE_POOL_CATALOG[0].address.toLowerCase(),
+        asset: 'usdc',
+        amount: { token: 'USDC', units: '1000000000', decimals: 7 },
+        coverage: {
+          state: 'partial',
+          problems: ['base-read-unavailable'],
+        },
+      }),
+    ])
+  })
+
+  it('exposes a repeated live whole-group value as one complete group and one amount', async () => {
+    const rows = [
+      agentRow({
+        address: 'CLIVEONE',
+        association: 'known',
+        baseChildren: [baseChild({ allocationId: 'live-one' })],
+      }),
+      agentRow({
+        address: 'CLIVETWO',
+        association: 'known',
+        baseChildren: [baseChild({ allocationId: 'live-two' })],
+      }),
+    ]
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar: stellarDeps({
+        shares: { CLIVEONE: 0n, CLIVETWO: 0n },
+        idle: { CLIVEONE: 0n, CLIVETWO: 0n },
+      }),
+      base: baseDeps({
+        status: 'known',
+        accounts: [
+          {
+            kernelAddress: '0xkernel',
+            positions: [
+              {
+                pool: BASE_POOL_CATALOG[0].address,
+                shares: 100_000_000n,
+                assets: 100_000_000n,
+                minAssets: 99_000_000n,
+              },
+            ],
+            idleUsdc: 0n,
+          },
+        ],
+      }),
+      associationDelivery: { events: [] },
+      now: NOW,
+    })
+
+    // Each per-agent row legitimately repeats the live whole-position read. The owner envelope
+    // is the deduplicated boundary consumed by Crew.
+    expect(result.agents.map((agent) => agent.amount?.units)).toEqual(['1000000000', '1000000000'])
+    expect(result.baseSubtotalUnits).toBe(1_000_000_000n)
+    expect(result.baseGroups).toEqual([
+      expect.objectContaining({
+        kernelAddress: '0xkernel',
+        poolAddress: BASE_POOL_CATALOG[0].address.toLowerCase(),
+        asset: 'usdc',
+        amount: { token: 'USDC', units: '1000000000', decimals: 7 },
+        coverage: { state: 'complete', problems: [] },
+      }),
+    ])
+  })
+
   it('completeBaseTotalUnits and overallTotalUnits stay null while Base coverage is only partial, but the known subtotal is retained', async () => {
     const rows = [
       agentRow({
