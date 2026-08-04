@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
-import { nativeToScVal, Keypair } from '@stellar/stellar-sdk'
+import { nativeToScVal, Keypair, StrKey } from '@stellar/stellar-sdk'
 import { symbolScVal, addrScVal } from '../../src/stellar/scval.js'
 import { createAgentIndexStore } from './store.js'
 import { createOwnerReadCursorCodec } from './readCursor.js'
@@ -970,6 +970,12 @@ describe('handleAssociationReport — server-only authentication', () => {
 })
 
 describe('handleRead — Base association envelope', () => {
+  function generatedAgentAddress(ordinal) {
+    const raw = new Uint8Array(32)
+    new DataView(raw.buffer).setUint32(28, ordinal)
+    return StrKey.encodeContract(raw)
+  }
+
   async function seedMembership({ store, agent, ledger }) {
     await store.upsertMembership({
       networkId: ROUTER_V1.networkId,
@@ -1184,6 +1190,74 @@ describe('handleRead — Base association envelope', () => {
       },
     })
   })
+
+  it.each([
+    [99, [100]],
+    [100, [100, 2]],
+    [101, [100, 3]],
+  ])(
+    'keeps every targeted membership query within 100 total D1 binds for %i associations',
+    async (count, expectedParameterCounts) => {
+      const store = createAgentIndexStore(fakeD1())
+      const now = Date.now()
+      const finalizedThroughLedger = ROUTER_V1.coverageStartLedger + 200
+      await handleIngest({
+        secret: 's',
+        providedSecret: 's',
+        store,
+        sources: [ROUTER_V1],
+        eventSourceFor: async () =>
+          fakeEventSource({
+            events: [],
+            oldestAvailableLedger: ROUTER_V1.coverageStartLedger,
+            latestAvailableLedger: finalizedThroughLedger + 2,
+          }),
+        finalizedLedgerFor: async () => finalizedThroughLedger,
+      })
+
+      for (let ordinal = 1; ordinal <= count; ordinal += 1) {
+        const agent = generatedAgentAddress(ordinal)
+        await seedMembership({
+          store,
+          agent,
+          ledger: ROUTER_V1.coverageStartLedger + ordinal,
+        })
+        await store.commitAssociation({
+          association: canonicalLegacyAssociation({
+            agent,
+            now,
+            suffix: `bind-budget-${count}-${ordinal}`,
+          }),
+          idempotencyKey: `bind-budget-${count}-${ordinal}`,
+        })
+      }
+
+      const targetedRead = store.readMembershipsByAgentAddresses
+      const effectiveParameterCounts = []
+      store.readMembershipsByAgentAddresses = async (request) => {
+        const parameterCount = 1 + request.agentAddresses.length
+        effectiveParameterCounts.push(parameterCount)
+        if (parameterCount > 100) throw new Error('D1 bind parameter limit exceeded')
+        return targetedRead(request)
+      }
+
+      const out = await handleRead({
+        networkId: ROUTER_V1.networkId,
+        owner: OWNER_A,
+        store,
+        manifest: { ...LIVE_MANIFEST, creators: [ROUTER_V1] },
+        now,
+        limit: 500,
+      })
+      expect(out).toMatchObject({
+        status: 200,
+        body: { status: 'complete', pagination: { hasMore: false } },
+      })
+      expect(out.body.agents).toHaveLength(count)
+      expect(effectiveParameterCounts).toEqual(expectedParameterCounts)
+      expect(effectiveParameterCounts.every((parameterCount) => parameterCount <= 100)).toBe(true)
+    }
+  )
 
   it('fails closed when authoritative and legacy copies of one allocation name agents on different pages', async () => {
     const store = createAgentIndexStore(fakeD1())

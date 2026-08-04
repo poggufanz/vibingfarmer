@@ -822,7 +822,9 @@ function unavailableBody({ networkId, owner, manifest, now, pagination }) {
 
 const DEFAULT_READ_LIMIT = 200
 const MAX_READ_LIMIT = 500
-const ASSOCIATION_MEMBERSHIP_CHUNK_SIZE = 100
+const D1_TOTAL_BIND_PARAMETER_LIMIT = 100
+// The targeted membership SQL always binds networkId once; every remaining D1 bind is an address.
+const ASSOCIATION_MEMBERSHIP_CHUNK_SIZE = D1_TOTAL_BIND_PARAMETER_LIMIT - 1
 
 async function validateOwnerAssociationMemberships({
   associations,
