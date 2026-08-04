@@ -822,6 +822,52 @@ function unavailableBody({ networkId, owner, manifest, now, pagination }) {
 
 const DEFAULT_READ_LIMIT = 200
 const MAX_READ_LIMIT = 500
+const ASSOCIATION_MEMBERSHIP_CHUNK_SIZE = 100
+
+async function validateOwnerAssociationMemberships({
+  associations,
+  store,
+  networkId,
+  owner,
+  isValidAddress,
+}) {
+  const addresses = [...new Set(associations.map((row) => row.bridgeAgentAddress))]
+  const addressSet = new Set(addresses)
+  if (addresses.some((address) => !isValidAddress(address))) {
+    throw new AgentIndexValidationError('Base association agent address is invalid')
+  }
+  const memberships = []
+  for (let offset = 0; offset < addresses.length; offset += ASSOCIATION_MEMBERSHIP_CHUNK_SIZE) {
+    memberships.push(
+      ...(await store.readMembershipsByAgentAddresses({
+        networkId,
+        agentAddresses: addresses.slice(offset, offset + ASSOCIATION_MEMBERSHIP_CHUNK_SIZE),
+      }))
+    )
+  }
+  const membershipByAddress = new Map()
+  for (const membership of memberships) {
+    if (
+      membership.networkId !== networkId ||
+      membership.owner !== owner ||
+      !addressSet.has(membership.address) ||
+      membershipByAddress.has(membership.address)
+    ) {
+      throw new AgentIndexValidationError('Base association membership scope is invalid')
+    }
+    membershipByAddress.set(membership.address, membership)
+  }
+  for (const association of associations) {
+    if (
+      association.networkId !== networkId ||
+      association.ownerAddress !== owner ||
+      membershipByAddress.get(association.bridgeAgentAddress)?.address !==
+        association.bridgeAgentAddress
+    ) {
+      throw new AgentIndexValidationError('Base association has no exact owner membership')
+    }
+  }
+}
 
 /**
  * `GET /api/agent-index?network=<networkId>&owner=<G-or-C-StrKey>&limit=<n>&cursor=<token>`.
@@ -858,8 +904,13 @@ export async function handleRead({
     return { status: 400, body: { error: 'Invalid owner' } }
   }
   let effectiveLimit = DEFAULT_READ_LIMIT
-  if (limit !== undefined && limit !== null && limit !== '') {
-    const n = Number(limit)
+  if (limit !== undefined && limit !== null) {
+    const n =
+      typeof limit === 'number'
+        ? limit
+        : typeof limit === 'string' && /^\d+$/u.test(limit)
+          ? Number(limit)
+          : Number.NaN
     if (!Number.isInteger(n) || n < 1 || n > MAX_READ_LIMIT) {
       return { status: 400, body: { error: 'Invalid limit' } }
     }
@@ -875,7 +926,8 @@ export async function handleRead({
     typeof store.readOwnerBaseChildIntents !== 'function' ||
     typeof store.readOwnerRunAllocations !== 'function' ||
     typeof store.readOwnerMembershipsPage !== 'function' ||
-    typeof store.readOwnerMaximumCreationLedger !== 'function'
+    typeof store.readOwnerMaximumCreationLedger !== 'function' ||
+    typeof store.readMembershipsByAgentAddresses !== 'function'
   ) {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
@@ -974,25 +1026,26 @@ export async function handleRead({
       provenance: m.provenance,
     }))
   const pageAddresses = new Set(agents.map((agent) => agent.address))
-  const pageOnlyJoin = startedFromCursor || hasMore
-  const selectedChildren = pageOnlyJoin
-    ? authoritativeChildren.filter((child) => pageAddresses.has(child.agent))
-    : authoritativeChildren
-  const selectedLegacy = pageOnlyJoin
-    ? legacyAssociations.filter((row) => pageAddresses.has(row.bridgeAgentAddress))
-    : legacyAssociations
   let associations
   try {
     associations = mergeOwnerBaseAssociations({
-      authoritativeChildren: selectedChildren,
-      legacyAssociations: selectedLegacy,
+      authoritativeChildren,
+      legacyAssociations,
+    })
+    await validateOwnerAssociationMemberships({
+      associations,
+      store,
+      networkId,
+      owner,
+      isValidAddress,
     })
   } catch {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
+  const pageAssociations = associations.filter((row) => pageAddresses.has(row.bridgeAgentAddress))
   let associatedAgents
   try {
-    associatedAgents = joinBaseAssociations({ agents, associations, now })
+    associatedAgents = joinBaseAssociations({ agents, associations: pageAssociations, now })
   } catch (error) {
     if (!(error instanceof AgentIndexValidationError)) throw error
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }

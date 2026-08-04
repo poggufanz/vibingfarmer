@@ -1015,6 +1015,7 @@ describe('/api/agent-index owner pagination adapter', () => {
           ? { rows: [membershipRow(AGENT, 10)], hasMore: true }
           : { rows: [membershipRow(OTHER_AGENT, 20)], hasMore: false }
       ),
+      readMembershipsByAgentAddresses: vi.fn(async () => []),
       readOwnerBaseChildIntents: vi.fn(async () => []),
       readOwnerRunAllocations: vi.fn(async () => []),
     })
@@ -1063,5 +1064,17 @@ describe('/api/agent-index owner pagination adapter', () => {
     )
     expect(out.res.statusCode).toBe(200)
     expect(out.body).toMatchObject({ status: 'unavailable', agents: [] })
+  })
+
+  it.each(['1e2', '0x10', '+2', ' 2 '])('rejects non-decimal limit spelling %j', async (limit) => {
+    mocked.store = pagedStore()
+    const out = await call(
+      mockReq({
+        url:
+          `/api/agent-index?network=${NETWORK}&owner=${OWNER}&limit=` + encodeURIComponent(limit),
+      })
+    )
+    expect(out.res.statusCode).toBe(400)
+    expect(out.body).toEqual({ error: 'Invalid limit' })
   })
 })

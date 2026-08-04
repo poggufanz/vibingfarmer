@@ -184,6 +184,7 @@ const ROUTER_V1 = AGENT_CREATORS.find(
 const OWNER_A = 'GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H'
 const AGENT_A = 'CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3'
 const AGENT_B = 'CACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINCW'
+const ORPHAN_AGENT = 'CAUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSS3Y4'
 const CURSOR_SECRET = 'handler-owner-cursor-secret-with-at-least-32-bytes'
 
 describe('authenticated Base child handlers', () => {
@@ -969,6 +970,47 @@ describe('handleAssociationReport — server-only authentication', () => {
 })
 
 describe('handleRead — Base association envelope', () => {
+  async function seedMembership({ store, agent, ledger }) {
+    await store.upsertMembership({
+      networkId: ROUTER_V1.networkId,
+      agentAddress: agent,
+      ownerAddress: OWNER_A,
+      creatorAddress: ROUTER_V1.address,
+      schemaVersion: 1,
+      kind: 'bridge',
+      creationLedger: ledger,
+      creationTx: `tx-${ledger}`,
+      grantTxHash: `grant-${ledger}`,
+      runId: `run-${ledger}`,
+      runOrdinal: 0,
+      provenance: { source: 'router-event' },
+    })
+  }
+
+  function canonicalLegacyAssociation({ agent, now, suffix }) {
+    return {
+      allocationId: `run-${suffix}:bridge:aave-v3`,
+      networkId: ROUTER_V1.networkId,
+      runId: `run-${suffix}`,
+      ownerAddress: OWNER_A,
+      bridgeAgentAddress: agent,
+      poolAddress: BASE_POOL_CATALOG[0].address,
+      amount: { token: 'USDC', units: '1000000', decimals: 6 },
+      proxyTarget: 'aave-v3',
+      baseJobId: `job-${suffix}`,
+      txHash: `0xdeposit-${suffix}`,
+      executionStatus: 'deposited',
+      custodyLocation: 'base-proxy',
+      grantTxHash: `grant-${suffix}`,
+      kernelAddress: `0x${'14'.repeat(20)}`,
+      mandateBindingId: `binding-${suffix}`,
+      mandateBindingHash: `binding-hash-${suffix}`,
+      associationSource: 'relayer-attested',
+      reportedAt: now - 100,
+      scopeCheckedAt: now - 100,
+    }
+  }
+
   async function writeConfirmedBaseChild({ store, agent, now, suffix }) {
     const runId = `run-${suffix}`
     const allocationId = `${runId}:bridge:aave-v3`
@@ -1143,6 +1185,55 @@ describe('handleRead — Base association envelope', () => {
     })
   })
 
+  it('fails closed when authoritative and legacy copies of one allocation name agents on different pages', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const now = Date.now()
+    await seedMembership({ store, agent: AGENT_A, ledger: 10 })
+    await seedMembership({ store, agent: AGENT_B, ledger: 11 })
+    await writeConfirmedBaseChild({ store, agent: AGENT_A, now, suffix: 'cross-page-conflict' })
+    await store.commitAssociation({
+      association: canonicalLegacyAssociation({
+        agent: AGENT_B,
+        now,
+        suffix: 'cross-page-conflict',
+      }),
+      idempotencyKey: 'cross-page-conflict',
+    })
+
+    const out = await handleRead({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+      store,
+      now,
+      limit: 1,
+      cursorCodec: createOwnerReadCursorCodec({ secret: CURSOR_SECRET, now: () => now }),
+    })
+    expect(out).toMatchObject({ status: 200, body: { status: 'unavailable', agents: [] } })
+  })
+
+  it('fails closed on an orphan association even when valid owner memberships span pages', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const now = Date.now()
+    await seedMembership({ store, agent: AGENT_A, ledger: 10 })
+    await seedMembership({ store, agent: AGENT_B, ledger: 11 })
+    await writeConfirmedBaseChild({
+      store,
+      agent: ORPHAN_AGENT,
+      now,
+      suffix: 'paginated-orphan',
+    })
+
+    const out = await handleRead({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+      store,
+      now,
+      limit: 1,
+      cursorCodec: createOwnerReadCursorCodec({ secret: CURSOR_SECRET, now: () => now }),
+    })
+    expect(out).toMatchObject({ status: 200, body: { status: 'unavailable', agents: [] } })
+  })
+
   // Defect caught: the expected orphan validation boundary also swallowed unrelated join bugs.
   it('propagates an unexpected join failure instead of disguising it as unavailable', async () => {
     const store = createAgentIndexStore(fakeD1())
@@ -1171,6 +1262,8 @@ describe('handleRead — Base association envelope', () => {
     store.readOwnerRunAllocations = async () => [
       {
         allocationId: 'run-unexpected:bridge:aave-v3',
+        networkId: ROUTER_V1.networkId,
+        ownerAddress: OWNER_A,
         bridgeAgentAddress: AGENT_A,
         get associationSource() {
           sourceReads += 1
