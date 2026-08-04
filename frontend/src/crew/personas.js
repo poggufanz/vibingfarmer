@@ -1,0 +1,79 @@
+// Presentation-only identities for agent UI. These never replace or transform agent addresses.
+export const CREW_PERSONAS = Object.freeze([
+  Object.freeze({
+    id: 'sprout',
+    name: 'Sprout',
+    ordinal: 0,
+    avatar: '/brand/agents/sprout.svg',
+  }),
+  Object.freeze({
+    id: 'clover',
+    name: 'Clover',
+    ordinal: 1,
+    avatar: '/brand/agents/clover.svg',
+  }),
+  Object.freeze({
+    id: 'mochi',
+    name: 'Mochi',
+    ordinal: 2,
+    avatar: '/brand/agents/mochi.svg',
+  }),
+])
+
+function isNonNegativeSafeInteger(value) {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.length > 0
+}
+
+function isD1Proven(discoveryRow) {
+  if (!discoveryRow || typeof discoveryRow !== 'object') return false
+
+  const indexedByApi =
+    Array.isArray(discoveryRow.discoverySources) &&
+    discoveryRow.discoverySources.includes('agent-index-api')
+  if (indexedByApi) return true
+
+  return (
+    isNonEmptyString(discoveryRow.address) &&
+    isNonEmptyString(discoveryRow.creator) &&
+    isNonNegativeSafeInteger(discoveryRow.createdLedger) &&
+    isNonEmptyString(discoveryRow.createdTxHash)
+  )
+}
+
+export function personaForOrdinal(ordinal) {
+  if (!isNonNegativeSafeInteger(ordinal)) return null
+  return CREW_PERSONAS[ordinal % CREW_PERSONAS.length]
+}
+
+export function legacyPersonaSlot(networkId, verifiedAddress) {
+  if (!isNonEmptyString(networkId) || !isNonEmptyString(verifiedAddress)) return null
+
+  const bytes = new TextEncoder().encode(`crew-persona-v1\0${networkId}\0${verifiedAddress}`)
+  let hash = 0x811c9dc5
+  for (const byte of bytes) hash = Math.imul((hash ^ byte) >>> 0, 0x01000193) >>> 0
+  return hash % CREW_PERSONAS.length
+}
+
+export function assignCrewPersona({ networkId, discoveryRow } = {}) {
+  if (!isD1Proven(discoveryRow)) return { state: 'pending', reason: 'unverified-discovery-row' }
+
+  const runOrdinal = discoveryRow.runOrdinal
+  if (runOrdinal != null) {
+    const persona = personaForOrdinal(runOrdinal)
+    if (!persona) return { state: 'pending', reason: 'invalid-run-ordinal' }
+    return { state: 'assigned', persona, source: 'run-ordinal', runOrdinal }
+  }
+
+  const slot = legacyPersonaSlot(networkId, discoveryRow.address)
+  if (slot == null) return { state: 'pending', reason: 'missing-legacy-identity' }
+  return {
+    state: 'assigned',
+    persona: CREW_PERSONAS[slot],
+    source: 'legacy-fnv1a',
+    runOrdinal: null,
+  }
+}
