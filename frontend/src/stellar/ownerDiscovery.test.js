@@ -459,3 +459,107 @@ describe('discoverOwnerScopes — cap carried from RouterDeployedEvent onto the 
     expect(d.agents.find((a) => a.address === 'CAGENT4').cap).toBe('0')
   })
 })
+
+describe('discoverOwnerScopes — bounded, abortable scope hydration', () => {
+  function indexedRows(count) {
+    return Array.from({ length: count }, (_, index) => ({
+      address: `CINDEXED${String(index).padStart(3, '0')}`,
+      kind: 'deposit',
+      baseChildren: [],
+    }))
+  }
+
+  async function waitUntil(predicate) {
+    for (let attempts = 0; attempts < 100; attempts += 1) {
+      if (predicate()) return
+      await Promise.resolve()
+    }
+    throw new Error('condition was not reached')
+  }
+
+  it('caps 501 individual scope RPCs at eight and preserves address order and failed-row fallback', async () => {
+    const rows = indexedRows(501)
+    let active = 0
+    let peak = 0
+    const readScope = async (address) => {
+      active += 1
+      peak = Math.max(peak, active)
+      await Promise.resolve()
+      active -= 1
+      if (address === rows[250].address) throw new Error('scope RPC failed')
+      return scope()
+    }
+
+    const result = await discoverOwnerScopes({
+      owner: OWNER,
+      ...seams({ clientResult: client({ status: 'complete', agents: rows }) }),
+      readScope,
+    })
+
+    expect(peak).toBe(8)
+    expect(result.agents.map((row) => row.address)).toEqual(rows.map((row) => row.address))
+    expect(result.agents[250].scopeReadStatus).toBe('failed')
+    expect(result.status).toBe('partial')
+  })
+
+  it('keeps aggregate Stellar activity at eight when vault verification overlaps other discovery channels', async () => {
+    let active = 0
+    let peak = 0
+    const rpc = async (delay = 0) => {
+      active += 1
+      peak = Math.max(peak, active)
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay))
+      else await Promise.resolve()
+      active -= 1
+    }
+    const s = seams({ clientResult: client({ status: 'complete', agents: [] }) })
+    s.fetchRpcEvents = async () => {
+      await rpc(5)
+      return []
+    }
+    s.queryRegistry = async () => {
+      await rpc(5)
+      return []
+    }
+    s.discoverVaultAgents = async () => {
+      await Promise.all(Array.from({ length: 8 }, () => rpc()))
+      return []
+    }
+
+    await discoverOwnerScopes({ owner: OWNER, ...s })
+
+    expect(peak).toBe(8)
+  })
+
+  it('propagates abort and never starts queued scope RPCs for the old owner', async () => {
+    const rows = indexedRows(501)
+    const controller = new AbortController()
+    const started = []
+    const gates = Array.from({ length: 8 }, () => {
+      let resolve
+      const promise = new Promise((res) => {
+        resolve = res
+      })
+      return { promise, resolve }
+    })
+    const operation = discoverOwnerScopes({
+      owner: OWNER,
+      ...seams({ clientResult: client({ status: 'complete', agents: rows }) }),
+      signal: controller.signal,
+      readScope: async (_address, _options) => {
+        const call = started.length
+        started.push(call)
+        if (call < gates.length) await gates[call].promise
+        return scope()
+      },
+    })
+
+    await waitUntil(() => started.length >= 8)
+    const reason = new Error('owner switched')
+    controller.abort(reason)
+    for (const gate of gates) gate.resolve()
+
+    await expect(operation).rejects.toBe(reason)
+    expect(started).toHaveLength(8)
+  })
+})

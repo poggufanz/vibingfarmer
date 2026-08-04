@@ -1723,6 +1723,97 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
   })
 })
 
+describe('readOwnerMoney — globally bounded, abortable Stellar RPC hydration', () => {
+  function rows(count) {
+    return Array.from({ length: count }, (_, index) =>
+      agentRow({ address: `CMONEY${String(index).padStart(3, '0')}` })
+    )
+  }
+
+  async function waitUntil(predicate) {
+    for (let attempts = 0; attempts < 100; attempts += 1) {
+      if (predicate()) return
+      await Promise.resolve()
+    }
+    throw new Error('condition was not reached')
+  }
+
+  it('caps all 1,002 individual balance RPCs at eight and preserves order and one unreadable address', async () => {
+    const agents = rows(501)
+    let active = 0
+    let peak = 0
+    const rpc = async (address) => {
+      active += 1
+      peak = Math.max(peak, active)
+      await Promise.resolve()
+      active -= 1
+      if (address === agents[250].address) throw new Error('balance RPC failed')
+      return 0n
+    }
+    const stellar = {
+      readVaultShares: rpc,
+      readTokenBalance: rpc,
+      readPricePerShare: vi.fn(async () => 10_000_000n),
+      readSupplyAprBps: vi.fn(async () => null),
+    }
+
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(agents),
+      stellar,
+      base: baseDeps(),
+      now: NOW,
+    })
+
+    expect(peak).toBe(8)
+    expect(result.agents.map((row) => row.address)).toEqual(agents.map((row) => row.address))
+    expect(result.agents[250].amount).toBeNull()
+    expect(result.agents[250].problems).toContain('unexpected-error')
+    expect(result.agents[249].amount?.units).toBe('0')
+    expect(result.agents[251].amount?.units).toBe('0')
+  })
+
+  it('propagates abort and starts no queued balance RPCs for the old owner', async () => {
+    const agents = rows(501)
+    const controller = new AbortController()
+    const gates = Array.from({ length: 8 }, () => {
+      let resolve
+      const promise = new Promise((res) => {
+        resolve = res
+      })
+      return { promise, resolve }
+    })
+    const started = []
+    const rpc = async () => {
+      const call = started.length
+      started.push(call)
+      if (call < gates.length) await gates[call].promise
+      return 0n
+    }
+    const operation = readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(agents),
+      signal: controller.signal,
+      stellar: {
+        readVaultShares: rpc,
+        readTokenBalance: rpc,
+        readPricePerShare: vi.fn(async () => 10_000_000n),
+        readSupplyAprBps: vi.fn(async () => null),
+      },
+      base: baseDeps(),
+      now: NOW,
+    })
+
+    await waitUntil(() => started.length >= 8)
+    const reason = new Error('owner switched')
+    controller.abort(reason)
+    for (const gate of gates) gate.resolve()
+
+    await expect(operation).rejects.toBe(reason)
+    expect(started).toHaveLength(8)
+  })
+})
+
 describe('aggregateOwnerPositions', () => {
   const known = (units, custody = 'stellar-vault', executionStatus = 'idle') => ({
     amount: { token: 'USDC', units, decimals: 7 },

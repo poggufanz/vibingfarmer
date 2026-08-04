@@ -487,6 +487,15 @@ export function createEpochBoundRun({ captured, getCurrent, onEvent = () => {} }
   }
 }
 
+/** Replace the owner-scoped money read capability. Aborting the previous controller stops its
+ * downstream queues; the owner/revision commit guards remain a second line of defense. */
+export function replaceMoneyFetchAbortController(controllerRef) {
+  controllerRef.current?.abort()
+  const controller = new AbortController()
+  controllerRef.current = controller
+  return controller
+}
+
 /** Account-epoch-scoped constructor input for the raw recovery orchestrator. Keeping this guard at
  * the App boundary prevents a late recorder callback from reaching React even if an internal
  * orchestrator event source is added later without its own account assertion. */
@@ -936,9 +945,10 @@ export async function fetchMyMoneySnapshot({
   now = Date.now(),
   discoverScopes = discoverOwnerScopes,
   readMoney = readOwnerMoney,
+  signal,
 }) {
-  const discovery = await discoverScopes({ owner })
-  const reads = await readMoney({ owner, discovery, now })
+  const discovery = await discoverScopes(signal ? { owner, signal } : { owner })
+  const reads = await readMoney({ owner, discovery, now, ...(signal ? { signal } : {}) })
   return { discovery, money: buildMoneySnapshot(reads) }
 }
 
@@ -963,12 +973,13 @@ export async function guardedMoneyFetch({
   currentOwnerRef,
   revisionRef,
   onCommit,
+  signal,
 }) {
   const readToken = nextReconciliationToken(revisionRef.current)
   revisionRef.current = readToken
   let snapshot
   try {
-    snapshot = await fetchSnapshot({ owner, now })
+    snapshot = await fetchSnapshot({ owner, now, ...(signal ? { signal } : {}) })
   } catch {
     return false // a failed read leaves the last-good state in place; buildMyMoneyModel's own cache
     // fallback (still fed from moneyCacheRef) is what downgrades it to stale over time.
@@ -1004,9 +1015,9 @@ export async function guardedMoneyFetch({
  */
 export function moneyFetchArgs(
   owner,
-  { currentOwnerRef, revisionRef, fetchSnapshot = fetchMyMoneySnapshot }
+  { currentOwnerRef, revisionRef, fetchSnapshot = fetchMyMoneySnapshot, signal }
 ) {
-  return { owner, now: Date.now(), fetchSnapshot, currentOwnerRef, revisionRef }
+  return { owner, now: Date.now(), fetchSnapshot, currentOwnerRef, revisionRef, signal }
 }
 
 // Task 10, carried finding C1: classifyKeeperAutomation (money/automationEvidence.js:18,33) only
@@ -2555,6 +2566,7 @@ const App = () => {
   const moneyRevisionRef = useR(null) // freshness.js's nextReconciliationToken/isReconciliationCurrent
   const realAddressRef = useR(realAddress)
   const moneyCacheRef = useR({})
+  const moneyFetchAbortRef = useR(null)
 
   function installActiveWalletAccount(next) {
     const previous = activeAccountRef.current
@@ -2595,6 +2607,8 @@ const App = () => {
       setMoneyStopAccessAddress(null)
       setMoneyRecovery(null)
       moneyCacheRef.current = {}
+      moneyFetchAbortRef.current?.abort()
+      moneyFetchAbortRef.current = null
       setScopes([])
       setAgentData({ positions: {}, alerts: [], lastUpdated: null })
       positionsAgentsRef.current = undefined
@@ -2675,6 +2689,7 @@ const App = () => {
   // is a thin wrapper, not a second copy, so a controller-level test on guardedMoneyFetch IS a test
   // of this call site.
   async function refreshMoney(owner) {
+    const controller = replaceMoneyFetchAbortController(moneyFetchAbortRef)
     // REFRESH-MONEY-WIRING:START -- MM13 M5, fix round 2: pinned by a source-scan test
     // (app.money.test.jsx) asserting this call passes the LIVE ref objects, not dead literals, and
     // that nothing after the spread overrides them. moneyFetchArgs itself (exported above) is
@@ -2687,7 +2702,11 @@ const App = () => {
     // `{ current: ... }` literal anywhere in this whole block) now actually covers the space a
     // plausible "add an override" refactor would use.
     await guardedMoneyFetch({
-      ...moneyFetchArgs(owner, { currentOwnerRef: realAddressRef, revisionRef: moneyRevisionRef }),
+      ...moneyFetchArgs(owner, {
+        currentOwnerRef: realAddressRef,
+        revisionRef: moneyRevisionRef,
+        signal: controller.signal,
+      }),
       onCommit: (snapshot) => {
         const protection = moneyProtectionSnapshot()
         const nextCache = { money: snapshot.money, discovery: snapshot.discovery, protection }
@@ -2725,6 +2744,8 @@ const App = () => {
   useE(() => {
     let alive = true
     if (!realAddress) {
+      moneyFetchAbortRef.current?.abort()
+      moneyFetchAbortRef.current = null
       moneyCacheRef.current = {}
       setMoneyDiscovery(null)
       setMoneyRead(null)
@@ -2752,6 +2773,8 @@ const App = () => {
     return () => {
       alive = false
       clearInterval(id)
+      moneyFetchAbortRef.current?.abort()
+      moneyFetchAbortRef.current = null
     }
   }, [realAddress])
   // MONEY-RELOAD-EFFECT:END

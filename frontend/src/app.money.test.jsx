@@ -29,12 +29,14 @@ import {
   fetchMyMoneySnapshot,
   guardedMoneyFetch,
   moneyFetchArgs,
+  replaceMoneyFetchAbortController,
   toKeeperHeartbeatEvents,
   hasLiveScopeForVault,
 } from './app.jsx'
 import { buildMyMoneyModel } from './money/myMoneyModel.js'
 import { nextReconciliationToken } from './money/freshness.js'
 import { classifyKeeperAutomation } from './money/automationEvidence.js'
+import { readOwnerMoney } from './money/readOwnerMoney.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -239,6 +241,25 @@ describe('fetchMyMoneySnapshot — read-only by construction', () => {
     expect(submit).not.toHaveBeenCalled()
   })
 
+  it('threads one abort signal through discovery and money hydration', async () => {
+    const controller = new AbortController()
+    const discovery = { status: 'complete', agents: [] }
+    const discoverScopes = vi.fn(async () => discovery)
+    const readMoney = vi.fn(async () => ({ status: 'complete', agents: [], checkedAt: 1 }))
+
+    await fetchMyMoneySnapshot({
+      owner: 'GA',
+      signal: controller.signal,
+      discoverScopes,
+      readMoney,
+    })
+
+    expect(discoverScopes).toHaveBeenCalledWith({ owner: 'GA', signal: controller.signal })
+    expect(readMoney).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: 'GA', discovery, signal: controller.signal })
+    )
+  })
+
   it('a reload with a warm cache renders the cache marked stale (never current) BEFORE the fresh read resolves', () => {
     // This is the actual reload contract app.jsx's own effect implements: the FIRST render after
     // a reload/reconnect has nothing fresh yet, so it feeds buildMyMoneyModel the CACHED
@@ -264,6 +285,67 @@ describe('fetchMyMoneySnapshot — read-only by construction', () => {
     })
     expect(model.state).toBe('stale')
     expect(model.freshness).toBe('stale')
+  })
+})
+
+describe('owner-switch money cancellation — aborts work, not only stale commits', () => {
+  async function waitUntil(predicate) {
+    for (let attempts = 0; attempts < 100; attempts += 1) {
+      if (predicate()) return
+      await Promise.resolve()
+    }
+    throw new Error('condition was not reached')
+  }
+
+  it('aborts the prior owner controller and prevents its queued money RPCs from starting', async () => {
+    const controllerRef = { current: null }
+    const oldController = replaceMoneyFetchAbortController(controllerRef)
+    const gates = Array.from({ length: 8 }, () => {
+      let resolve
+      const promise = new Promise((res) => {
+        resolve = res
+      })
+      return { promise, resolve }
+    })
+    const started = []
+    const rpc = async () => {
+      const call = started.length
+      started.push(call)
+      if (call < gates.length) await gates[call].promise
+      return 0n
+    }
+    const agents = Array.from({ length: 501 }, (_, index) => ({
+      address: `COLD${String(index).padStart(3, '0')}`,
+      scopeReadStatus: 'ok',
+      vault: 'CVAULT',
+      revoked: false,
+      expiry: 9_999_999_999,
+      authorized: true,
+      association: 'unknown',
+      baseChildren: [],
+    }))
+    const operation = readOwnerMoney({
+      owner: 'GA',
+      discovery: { status: 'complete', agents },
+      signal: oldController.signal,
+      stellar: {
+        readVaultShares: rpc,
+        readTokenBalance: rpc,
+        readPricePerShare: async () => 10_000_000n,
+        readSupplyAprBps: async () => null,
+      },
+      base: { loadIndexedBasePositions: async () => ({ status: 'empty', accounts: [] }) },
+      now: 1,
+    })
+
+    await waitUntil(() => started.length >= 8)
+    const newController = replaceMoneyFetchAbortController(controllerRef)
+    for (const gate of gates) gate.resolve()
+
+    expect(oldController.signal.aborted).toBe(true)
+    expect(newController.signal.aborted).toBe(false)
+    await expect(operation).rejects.toMatchObject({ name: 'AbortError' })
+    expect(started).toHaveLength(8)
   })
 })
 
