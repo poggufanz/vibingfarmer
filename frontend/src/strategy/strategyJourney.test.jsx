@@ -23,6 +23,7 @@ import { ProtectStage } from '../components/strategy/ProtectStage.jsx'
 import { StartStage } from '../components/strategy/StartStage.jsx'
 import { SOROBAN_TOKEN_ADDRESS } from '../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../stellar/cctpBurn.js'
+import { buildPersonaByAddress } from '../app.jsx'
 
 const AMOUNT_UNITS = 1_000_000_000n // 100 USDC, 7dp
 const FUNDED_VAULT = 5_000_000_000n
@@ -876,6 +877,46 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
 })
 
 describe('Strategy journey — shared crew persona identity', () => {
+  it('builds the production exact-address map from indexed discovery evidence only', () => {
+    const indexedAddress = 'CAUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSS3Y4'
+    const invalidOrdinalAddress = 'CAVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCVLQ3'
+    const hintOnlyAddress = 'CBZXCVBNMASDFGHJKLQWERTYUIOPZXCVBNMASDFGHJKLQWERTYUIOPZXCV'
+    const personaByAddress = buildPersonaByAddress({
+      networkId: 'stellar-testnet',
+      agents: [
+        {
+          address: indexedAddress,
+          discoverySources: ['agent-index-api'],
+          runOrdinal: 5,
+        },
+        {
+          address: invalidOrdinalAddress,
+          discoverySources: ['agent-index-api'],
+          runOrdinal: -1,
+        },
+        {
+          address: hintOnlyAddress,
+          discoverySources: ['rpc-router-events'],
+          runOrdinal: 0,
+        },
+      ],
+    })
+
+    expect(Object.keys(personaByAddress)).toEqual([indexedAddress])
+    expect(personaByAddress[indexedAddress]).toEqual({
+      id: 'mochi',
+      name: 'Mochi',
+      ordinal: 2,
+      avatar: '/brand/agents/mochi.svg',
+    })
+    expect(personaByAddress[invalidOrdinalAddress]).toBeUndefined()
+    expect(personaByAddress[hintOnlyAddress]).toBeUndefined()
+    expect(personaByAddress[indexedAddress.toLowerCase()]).toBeUndefined()
+    expect(
+      personaByAddress.CAUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSS3Y5
+    ).toBeUndefined()
+  })
+
   it('switches from the planned persona to one exact reuse-bound persona through Protect and Start', async () => {
     const ref = { current: null }
     const onGenerate = vi.fn().mockResolvedValue(generatedPlan())
