@@ -56,11 +56,11 @@
 import { useMemo, useRef } from 'react'
 import { StatusNotice, TechnicalDetails } from '../pocket/Primitives.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
-import { AgentMark } from '../pocket/AgentMark.jsx'
 import { buildStrategyViewModel, buildAmountDisplayMap } from '../../strategy/planModel.js'
 import { usePocketTransition } from '../../design/usePocketTransition.js'
 import { SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
 import { StrategyReceipt } from './StrategyReceipt.jsx'
+import { CREW_PERSONAS, personaForOrdinal } from '../../crew/personas.js'
 
 const TOKEN_SYMBOLS = Object.freeze({
   [SOROBAN_TOKEN_ADDRESS]: 'USDC',
@@ -446,11 +446,49 @@ function recoveryControl(projection, pending, { baseChild = false } = {}) {
   return { label, disabled: pending || !actionable }
 }
 
+function validAgentAddresses(agentAddresses, expectedLength) {
+  return (
+    Array.isArray(agentAddresses) &&
+    agentAddresses.length === expectedLength &&
+    agentAddresses.every((address) => typeof address === 'string' && address.length > 0) &&
+    new Set(agentAddresses).size === agentAddresses.length
+  )
+}
+
+function confirmedAgentAddresses({ plan, runId, events, receipt }) {
+  const currentRunId = plan.runId || runId
+  const confirmation = [...events]
+    .reverse()
+    .find(
+      (event) =>
+        (event?.name === 'grant-confirmed' || event?.name === 'reuse-confirmed') &&
+        event.data?.runId === currentRunId
+    )
+  if (validAgentAddresses(confirmation?.data?.agentAddresses, plan.agents.length)) {
+    return confirmation.data.agentAddresses
+  }
+  if (
+    receipt?.runId === currentRunId &&
+    validAgentAddresses(receipt.permission?.agentAddresses, plan.agents.length)
+  ) {
+    return receipt.permission.agentAddresses
+  }
+  return null
+}
+
+function addressPersona(personaByAddress, address) {
+  if (typeof address !== 'string' || address.length === 0) return null
+  const candidate =
+    personaByAddress instanceof Map ? personaByAddress.get(address) : personaByAddress?.[address]
+  return CREW_PERSONAS.find((persona) => persona.id === candidate?.id) || null
+}
+
 export function StartStage({
   plan,
   permission = null,
   events = [],
   receipt = null,
+  personaByAddress = null,
   runId,
   stellarVenue,
   recoveryByAllocation = {},
@@ -487,6 +525,10 @@ export function StartStage({
     () => buildLanes({ plan, permission, events, receipt: effectiveReceipt }),
     [plan, permission, events, effectiveReceipt]
   )
+  const agentAddresses = useMemo(
+    () => confirmedAgentAddresses({ plan, runId, events, receipt: effectiveReceipt }),
+    [plan, runId, events, effectiveReceipt]
+  )
 
   const anyFailed = lanes.some((lane) => lane.phase === 'failed')
   const announcement = summarizeLanes(lanes)
@@ -510,6 +552,10 @@ export function StartStage({
             {lanes.map((lane, index) => {
               const isBridge = lane.kind === 'bridge'
               const planAgent = plan.agents[index]
+              const agentAddress = agentAddresses?.[index] || null
+              const assignedPersona = addressPersona(personaByAddress, agentAddress)
+              const persona = assignedPersona || personaForOrdinal(index)
+              const assignmentSyncing = Boolean(agentAddress && !assignedPersona)
               const display = displayByAllocation.get(lane.allocationId)
               const phaseLabel = isBridge
                 ? BRIDGE_PHASE_LABEL[lane.phase]
@@ -520,13 +566,24 @@ export function StartStage({
                   className="pc-agent-lane"
                   data-agent-kind={lane.kind}
                   data-lane-phase={lane.phase}
+                  data-agent-address={agentAddress || undefined}
                 >
-                  <AgentMark
-                    identity={lane.allocationId}
-                    state={laneMarkState(lane.phase)}
-                    label={isBridge ? 'B' : String(index + 1)}
+                  <img
+                    className="pc-start-agent-avatar pc-crew-avatar"
+                    src={persona.avatar}
+                    alt={`${persona.name} agent${
+                      assignmentSyncing ? ', assignment syncing' : agentAddress ? '' : ', planned'
+                    }`}
+                    data-state={laneMarkState(lane.phase)}
+                    width="44"
+                    height="44"
                   />
                   <div className="pc-agent-lane-body" data-pocket-enter>
+                    <p className="pc-worker-name">{persona.name}</p>
+                    {assignmentSyncing && (
+                      <p className="pc-crew-syncing">Crew assignment syncing.</p>
+                    )}
+                    {agentAddress && <p className="pc-lane-address pc-technical">{agentAddress}</p>}
                     <div className="pc-agent-lane-meta">
                       {isBridge ? (
                         <NetworkRoute context={bridgeNetworkContext(lane.phase)} />
@@ -594,7 +651,7 @@ export function StartStage({
                       </ul>
                     )}
                     {lane.txHash && (
-                      <TechnicalDetails summary={`Agent ${index + 1} technical details`}>
+                      <TechnicalDetails summary={`${persona.name} technical details`}>
                         {/* Owner decision #19: the container no longer defaults to mono -- these
                             two raw values are marked .pc-technical individually so they keep
                             rendering in the mono face. */}

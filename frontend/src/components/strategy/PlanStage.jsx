@@ -38,6 +38,7 @@ import {
 import { needsBaseMandateSetup } from '../../mergeFlowHelpers.js'
 import { hashStrategy } from '../../attestation.js'
 import { SOROBAN_DECIMALS, SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
+import { personaForOrdinal } from '../../crew/personas.js'
 
 gsap.registerPlugin(useGSAP)
 
@@ -168,23 +169,6 @@ function tokenSymbol(token) {
   return token === 'USDC' || token === SOROBAN_TOKEN_ADDRESS || token === STELLAR_USDC_SAC
     ? 'USDC'
     : token
-}
-
-// Fix loop N -- item 5 (owner report): crew character names, easily editable in one place. No
-// name data exists anywhere else in the model -- planModel.js only ever produces positional
-// "Worker N" labels -- so this is this fix's own addition: one obvious exported constant, not
-// scattered literals. Indexed by POSITION within a plan's own agent order (0-based) -- decorative
-// crew flavor only, never an identity claim (AgentMark's own crew-color fill/dedup already keys
-// off the agent's real allocationId, never this list).
-export const CREW_NAMES = Object.freeze(['Sprout', 'Clover', 'Mochi', 'Pepper', 'Juniper', 'Basil'])
-const CREW_AVATARS = Object.freeze([
-  '/brand/agents/sprout.svg',
-  '/brand/agents/clover.svg',
-  '/brand/agents/mochi.svg',
-])
-
-function crewNameFor(index) {
-  return CREW_NAMES[index % CREW_NAMES.length]
 }
 
 // Fix loop 1 -- I2 (review finding): the domain has three source states
@@ -710,22 +694,27 @@ export function PlanStage({
               {viewModel.agents.map((agent, i) => {
                 const isBridge = agent.kind === 'bridge'
                 const planAgent = plan.agents[i]
+                const persona = personaForOrdinal(i)
                 return (
-                  <li key={agent.id} className="pc-allocation-row" data-agent-kind={agent.kind}>
+                  <li
+                    key={planAgent.allocationId}
+                    className="pc-allocation-row"
+                    data-agent-kind={agent.kind}
+                  >
                     {/* Item 5 (owner report): at least 36px (was the AgentMark default of 32,
                         measured as reading "nearly invisible" in a real browser), pinned to the
                         row's own start (see strategy.css) so it lines up with the crew-name line
                         that now leads each row's content instead of centering against the whole,
                         much taller, multi-line row. */}
                     <img
-                      className="pc-plan-agent-avatar"
-                      src={CREW_AVATARS[i % CREW_AVATARS.length]}
-                      alt={`${crewNameFor(i)} agent, planned`}
+                      className="pc-plan-agent-avatar pc-crew-avatar"
+                      src={persona.avatar}
+                      alt={`${persona.name} agent, planned`}
                       width="44"
                       height="44"
                     />
                     <div>
-                      <p className="pc-worker-name">{crewNameFor(i)}</p>
+                      <p className="pc-worker-name">{persona.name}</p>
                       {isBridge && <NetworkRoute context={BRIDGE_NETWORK_CONTEXT} />}
                       <MoneyFigure
                         state="current"
@@ -758,10 +747,10 @@ export function PlanStage({
                           sees. Scoped to this component's own local JSX only; the shared
                           `agent.name` field from planModel.js/buildStrategyViewModel is
                           untouched, so StartStage/StrategyReceipt's own displays are unaffected. */}
-                      <TechnicalDetails summary={`${crewNameFor(i)} instructions`}>
+                      <TechnicalDetails summary={`${persona.name} instructions`}>
                         <textarea
                           className="pc-instruction-input"
-                          aria-label={`${crewNameFor(i)} instructions`}
+                          aria-label={`${persona.name} instructions`}
                           value={instructions[agent.id] ?? ''}
                           onChange={(e) =>
                             setInstructions((prev) => ({ ...prev, [agent.id]: e.target.value }))

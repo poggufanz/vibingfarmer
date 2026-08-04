@@ -11,6 +11,7 @@ import React, {
 } from 'react'
 import { lazy, Suspense } from 'react'
 import { isDevMode } from './devFlag.js'
+import { assignCrewPersona } from './crew/personas.js'
 
 import { Icon, Sidebar, TopBar, STEPS } from './components.jsx'
 // Strategy Task 13 (Pocket Crew redesign, Wave 5) — the production `/strategy` route.
@@ -1307,6 +1308,20 @@ const App = () => {
   // `useState` call's textual position doesn't affect hook order/correctness as long as it fires
   // unconditionally every render, same as every other hook in this component.
   const [moneyDiscovery, setMoneyDiscovery] = useS(null)
+  const personaByAddress = useM(() => {
+    const assigned = []
+    const seen = new Set()
+    const networkId = typeof moneyDiscovery?.networkId === 'string' ? moneyDiscovery.networkId : ''
+    for (const discoveryRow of moneyDiscovery?.agents || []) {
+      const address = discoveryRow?.address
+      if (typeof address !== 'string' || address.length === 0 || seen.has(address)) continue
+      const assignment = assignCrewPersona({ networkId, discoveryRow })
+      if (assignment.state !== 'assigned') continue
+      assigned.push([address, assignment.persona])
+      seen.add(address)
+    }
+    return Object.freeze(Object.fromEntries(assigned))
+  }, [moneyDiscovery])
   // Which agents' vault shares a "position" reads. Priority:
   //   view-as (dev) → the impersonated address's OWN shares;
   //   real run      → every agent this owner's discovery envelope has proven belongs to this
@@ -4069,6 +4084,7 @@ const App = () => {
         onCustomizeSkill={() => setSkillDrawerOpen(true)}
         protectProps={{
           owner: realAddress,
+          personaByAddress,
           baseMandateView: baseView.mandateView,
           onConnectWallet,
           onRetryPreflight,
@@ -4078,6 +4094,7 @@ const App = () => {
         }}
         startProps={{
           permission: strategyFlow.permission,
+          personaByAddress,
           events: runEvents,
           receipt: runReceipt,
           runId,

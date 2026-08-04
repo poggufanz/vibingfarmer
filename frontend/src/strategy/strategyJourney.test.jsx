@@ -242,6 +242,7 @@ const Harness = forwardRef(function Harness({ mocks, initialFlowState }, ref) {
           <ProtectStage
             plan={flow.plan}
             owner={mocks.owner ?? 'GOWNER'}
+            personaByAddress={mocks.personaByAddress}
             baseMandateView={mocks.baseMandateView ?? null}
             onConnectWallet={mocks.onConnectWallet || vi.fn()}
             onRetryPreflight={onRetryPreflight}
@@ -256,6 +257,7 @@ const Harness = forwardRef(function Harness({ mocks, initialFlowState }, ref) {
             permission={flow.permission}
             events={events}
             receipt={receipt}
+            personaByAddress={mocks.personaByAddress}
             runId={mocks.runId || 'run-1'}
             stellarVenue={readyStellarVenue}
             onRetryAllocation={mocks.onRetryAllocation || vi.fn()}
@@ -870,6 +872,56 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     expect(isReceiptComplete(state)).toBe(false)
     state = reduce(state, { type: 'DEPOSIT_CONFIRMED', allocationId: 'a' })
     expect(isReceiptComplete(state)).toBe(true)
+  })
+})
+
+describe('Strategy journey — shared crew persona identity', () => {
+  it('switches from the planned persona to one exact reuse-bound persona through Protect and Start', async () => {
+    const ref = { current: null }
+    const onGenerate = vi.fn().mockResolvedValue(generatedPlan())
+    const onRetryPreflight = vi
+      .fn()
+      .mockResolvedValue(reuseDecision('run-1', 'run-1:deposit:0', 'CAGENT1'))
+    const onConfirmReuse = vi.fn().mockResolvedValue({ agentAddresses: ['CAGENT1'] })
+    const utils = render(
+      <Harness
+        ref={ref}
+        mocks={{
+          onGenerate,
+          onRetryPreflight,
+          onConfirmReuse,
+          personaByAddress: {
+            CAGENT1: { id: 'mochi', name: 'Mochi', avatar: '/brand/agents/mochi.svg' },
+          },
+        }}
+      />
+    )
+
+    await buildPlan(utils)
+    await waitFor(() => expect(screen.getByText('Sprout')).toBeTruthy())
+    expect(screen.getByRole('img', { name: 'Sprout agent, planned' }).getAttribute('src')).toBe(
+      '/brand/agents/sprout.svg'
+    )
+    fireEvent.click(screen.getByText('Accept plan'))
+    fireEvent.click(screen.getByText('Check my permission'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeTruthy())
+    const protectRow = screen.getByText('CAGENT1').closest('[data-agent-address]')
+    expect(within(protectRow).getByText('Mochi')).toBeTruthy()
+    expect(within(protectRow).getByRole('img', { name: 'Mochi agent' }).getAttribute('src')).toBe(
+      '/brand/agents/mochi.svg'
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    ref.current.feedEvent('reuse-confirmed', {
+      runId: 'run-1',
+      agentAddresses: ['CAGENT1'],
+    })
+    await waitFor(() => expect(ref.current.getState().moment).toBe('start'))
+    const startRow = screen.getByText('CAGENT1').closest('[data-agent-address]')
+    expect(within(startRow).getByText('Mochi')).toBeTruthy()
+    expect(within(startRow).getByRole('img', { name: 'Mochi agent' }).getAttribute('src')).toBe(
+      '/brand/agents/mochi.svg'
+    )
   })
 })
 

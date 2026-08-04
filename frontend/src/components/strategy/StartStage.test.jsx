@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { StartStage, depositLanePhase, bridgeLanePhase } from './StartStage.jsx'
@@ -241,6 +241,75 @@ function renderStartStage(overrides = {}) {
 }
 
 describe('Start polish', () => {
+  it('uses shared persona names and avatar URLs for every provisional lane', () => {
+    const { container } = renderStartStage()
+    const lanes = container.querySelectorAll('.pc-agent-lane')
+    expect(within(lanes[0]).getByText('Sprout')).toBeTruthy()
+    expect(within(lanes[1]).getByText('Clover')).toBeTruthy()
+    expect(
+      within(lanes[0]).getByRole('img', { name: 'Sprout agent, planned' }).getAttribute('src')
+    ).toBe('/brand/agents/sprout.svg')
+    expect(
+      within(lanes[1]).getByRole('img', { name: 'Clover agent, planned' }).getAttribute('src')
+    ).toBe('/brand/agents/clover.svg')
+    expect(container.textContent).not.toMatch(/Pepper|Juniper|Basil/)
+  })
+
+  it('uses the newest current-run address evidence and keeps a reuse mismatch address-bound', () => {
+    const events = [
+      evt('reuse-confirmed', { runId: 'run-1', agentAddresses: [AGENT_2, AGENT_1] }),
+      evt('reuse-confirmed', { runId: 'other-run', agentAddresses: [AGENT_2, AGENT_1] }),
+      evt('reuse-confirmed', { runId: 'run-1', agentAddresses: [AGENT_1, AGENT_2] }),
+    ]
+    const { container } = renderStartStage({
+      permission: PERMISSION_REUSE,
+      events,
+      personaByAddress: {
+        [AGENT_1]: { id: 'mochi', name: 'Mochi', avatar: '/brand/agents/mochi.svg' },
+        [AGENT_2]: { id: 'clover', name: 'Clover', avatar: '/brand/agents/clover.svg' },
+      },
+    })
+    const firstLane = container.querySelector('.pc-agent-lane')
+    expect(firstLane.getAttribute('data-agent-address')).toBe(AGENT_1)
+    expect(within(firstLane).getByText('Mochi')).toBeTruthy()
+    expect(within(firstLane).queryByText('Sprout')).toBeNull()
+    expect(within(firstLane).getByRole('img', { name: 'Mochi agent' }).getAttribute('src')).toBe(
+      '/brand/agents/mochi.svg'
+    )
+  })
+
+  it('shows the planned persona as syncing for a fresh bound address with no indexed persona', () => {
+    const { container } = renderStartStage({
+      events: [evt('grant-confirmed', { runId: 'run-1', agentAddresses: [AGENT_1, AGENT_2] })],
+      personaByAddress: {},
+    })
+    const firstLane = container.querySelector('.pc-agent-lane')
+    expect(firstLane.getAttribute('data-agent-address')).toBe(AGENT_1)
+    expect(within(firstLane).getByText('Sprout')).toBeTruthy()
+    expect(within(firstLane).getByText('Crew assignment syncing.')).toBeTruthy()
+    expect(
+      within(firstLane)
+        .getByRole('img', { name: 'Sprout agent, assignment syncing' })
+        .getAttribute('src')
+    ).toBe('/brand/agents/sprout.svg')
+  })
+
+  it('rejects a malformed confirmation vector and falls back to a settled receipt vector', () => {
+    const receiptFixture = receiptFor({
+      allocations: [succeededAllocation('run-1:deposit:0'), succeededAllocation('run-1:deposit:1')],
+    })
+    const { container } = renderStartStage({
+      events: [evt('grant-confirmed', { runId: 'run-1', agentAddresses: [AGENT_2] })],
+      receipt: receiptFixture,
+      personaByAddress: {
+        [AGENT_1]: { id: 'mochi', name: 'Mochi', avatar: '/brand/agents/mochi.svg' },
+      },
+    })
+    const firstLane = container.querySelector('.pc-agent-lane')
+    expect(firstLane.getAttribute('data-agent-address')).toBe(AGENT_1)
+    expect(within(firstLane).getByText('Mochi')).toBeTruthy()
+  })
+
   it('renders the safety rail', () => {
     renderStartStage()
     expect(screen.getByText(/if something goes wrong/i)).toBeTruthy()
@@ -662,9 +731,9 @@ describe('StartStage -- evidence-selected recovery actions', () => {
 })
 
 describe('StartStage -- bridge lane: one mark, all Base child destinations, correct network route/custody', () => {
-  it('shows one AgentMark for the bridge leg and lists every child destination inside it', () => {
+  it('shows one persistent crew avatar for the bridge leg and lists every child destination inside it', () => {
     render(<StartStage plan={PLAN_WITH_BRIDGE} permission={PERMISSION_FRESH} events={[]} />)
-    expect(screen.getAllByRole('img', { name: /^B agent/ })).toHaveLength(1)
+    expect(screen.getAllByRole('img', { name: 'Clover agent, planned' })).toHaveLength(1)
     expect(screen.getByText(/aave-v3/)).toBeTruthy()
     expect(screen.getByText(/moonwell/)).toBeTruthy()
   })
@@ -908,7 +977,7 @@ describe('StartStage -- grant/agent explorer links stay inside Technical details
     for (const el of screen.getAllByText(REAL_TX_HASH)) {
       expect(el.closest('.pc-technical-details')).not.toBeNull()
     }
-    fireEvent.click(screen.getByText('Agent 1 technical details'))
+    fireEvent.click(screen.getByText('Sprout technical details'))
     const hashValue = screen.getByText(REAL_TX_HASH)
     expect(hashValue.classList.contains('pc-technical')).toBe(true)
     expect(hashValue.closest('p').textContent).toBe(`Transaction: ${REAL_TX_HASH}`)
@@ -1108,7 +1177,7 @@ describe('StartStage -- 320px real layout guard', () => {
         receipt={receipt}
       />
     )
-    fireEvent.click(screen.getByText('Agent 1 technical details'))
+    fireEvent.click(screen.getByText('Sprout technical details'))
     const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
     expect(scrollWidth).toBe(320)
   }, 20000)

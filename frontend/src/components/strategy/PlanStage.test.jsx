@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
-import { CREW_NAMES, PlanStage } from './PlanStage.jsx'
+import { PlanStage } from './PlanStage.jsx'
 import { StrategyRoute } from './StrategyRoute.jsx'
 import { FIRST_DEPOSIT_MIN_UNITS } from '../../strategy/amountValidation.js'
 import { canonicalizeStrategy } from '../../strategy/canonicalStrategy.js'
@@ -1225,7 +1225,7 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
   it('item 5: replaces numbered marks with three distinct crew SVG avatars', async () => {
     await generateThreeWaySplit()
     expect(screen.queryByText(/^Worker \d/)).toBeNull()
-    for (const name of CREW_NAMES.slice(0, 3)) expect(screen.getByText(name)).toBeTruthy()
+    for (const name of ['Sprout', 'Clover', 'Mochi']) expect(screen.getByText(name)).toBeTruthy()
     const marks = document.querySelectorAll('[data-agent-kind="deposit"] img.pc-plan-agent-avatar')
     expect(marks.length).toBe(3)
     expect(new Set(Array.from(marks, (mark) => mark.getAttribute('src'))).size).toBe(3)
@@ -1233,6 +1233,59 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
       expect(mark.getAttribute('src')).toMatch(/\/brand\/agents\/(sprout|clover|mochi)\.svg$/)
       expect(Number(mark.getAttribute('width'))).toBeGreaterThanOrEqual(40)
       expect(Number(mark.getAttribute('height'))).toBeGreaterThanOrEqual(40)
+    }
+  })
+
+  it('rotates the shared three-persona catalog across six planned allocations', async () => {
+    const originalNormalize = planModel.normalizeStrategyPlan
+    const spy = vi.spyOn(planModel, 'normalizeStrategyPlan').mockImplementation((input) => {
+      const real = originalNormalize(input)
+      const units = ['166666667', '166666667', '166666667', '166666667', '166666666', '166666666']
+      return {
+        ...real,
+        agents: units.map((allocationUnits, index) => ({
+          ...real.agents[0],
+          allocationId: `${real.runId}:deposit:${index}`,
+          allocation: { ...real.agents[0].allocation, units: allocationUnits },
+          cap: { ...real.agents[0].cap, units: allocationUnits },
+        })),
+      }
+    })
+    try {
+      const onGenerate = vi.fn().mockResolvedValue({
+        source: 'deepseek',
+        sourceState: 'live-ai',
+        stellarUnits: '1000000000',
+        baseAllocations: [],
+      })
+      render(
+        <PlanStage
+          vaultTotalShares={FUNDED_VAULT}
+          base={disconnectedBase}
+          onGenerate={onGenerate}
+        />
+      )
+      await fillAndSubmit({ amount: '100', risk: 'Steady' })
+      await screen.findByRole('button', { name: 'Accept plan' })
+
+      expect(
+        Array.from(document.querySelectorAll('.pc-worker-name'), (row) => row.textContent)
+      ).toEqual(['Sprout', 'Clover', 'Mochi', 'Sprout', 'Clover', 'Mochi'])
+      expect(
+        Array.from(document.querySelectorAll('.pc-plan-agent-avatar'), (image) =>
+          image.getAttribute('src')
+        )
+      ).toEqual([
+        '/brand/agents/sprout.svg',
+        '/brand/agents/clover.svg',
+        '/brand/agents/mochi.svg',
+        '/brand/agents/sprout.svg',
+        '/brand/agents/clover.svg',
+        '/brand/agents/mochi.svg',
+      ])
+      expect(document.body.textContent).not.toMatch(/Pepper|Juniper|Basil/)
+    } finally {
+      spy.mockRestore()
     }
   })
 

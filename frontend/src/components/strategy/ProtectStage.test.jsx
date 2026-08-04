@@ -404,9 +404,10 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
 
     const lanes = screen.getByRole('list', { name: 'Reviewed crew permissions' })
     expect(lanes.classList.contains('pc-agent-lanes--review')).toBe(true)
-    expect(within(lanes).getByRole('img', { name: 'Agent 1, planned' }).getAttribute('src')).toBe(
-      '/brand/agents/sprout.svg'
-    )
+    expect(within(lanes).getByText('Sprout')).toBeTruthy()
+    expect(
+      within(lanes).getByRole('img', { name: 'Sprout agent, planned' }).getAttribute('src')
+    ).toBe('/brand/agents/sprout.svg')
     expect(within(lanes).getByText(/Cap per period: 100\.00 USDC/)).toBeTruthy()
     expect(within(lanes).queryByText(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)).toBeNull()
   })
@@ -593,6 +594,27 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
 })
 
 describe('ProtectStage — reuse review content', () => {
+  it('uses the exact reused address persona instead of the provisional plan slot', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionRaw())
+    render(
+      <ProtectStage
+        {...baseProps({ onRetryPreflight })}
+        personaByAddress={{
+          [AGENT_1]: { id: 'mochi', name: 'Mochi', avatar: '/brand/agents/mochi.svg' },
+        }}
+      />
+    )
+    await checkPermission()
+
+    const boundRow = screen.getByText(AGENT_1).closest('[data-agent-address]')
+    expect(boundRow).toBeTruthy()
+    expect(within(boundRow).getByText('Mochi')).toBeTruthy()
+    expect(within(boundRow).queryByText('Sprout')).toBeNull()
+    expect(within(boundRow).getByRole('img', { name: 'Mochi agent' }).getAttribute('src')).toBe(
+      '/brand/agents/mochi.svg'
+    )
+  })
+
   it('shows 0 wallet confirmations and the exact reused agents/headroom/expiry', async () => {
     const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionRaw())
     render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
