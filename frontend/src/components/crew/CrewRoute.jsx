@@ -35,19 +35,20 @@ function shortAddress(address) {
 }
 
 function PendingAmountEvidence({ child }) {
-  if (child.workingTotals.length) {
-    return child.workingTotals.map(formatCrewAmount).join(' · ')
-  }
-
   const sharedLegs = child.workingLegs.filter(
     (leg) => leg.shared && !leg.counted && leg.amount != null
   )
-  if (!sharedLegs.length) return 'Amount unavailable'
+  if (!child.workingTotals.length && !sharedLegs.length) return 'Amount unavailable'
 
   return (
     <span className="pc-crew-pending-amounts">
-      {sharedLegs.map((leg) => (
-        <span className="pc-crew-pending-amount" key={leg.key}>
+      {child.workingTotals.map((amount) => (
+        <span className="pc-crew-pending-amount" key={`counted:${amount.token}:${amount.decimals}`}>
+          <span>{formatCrewAmount(amount)}</span>
+        </span>
+      ))}
+      {sharedLegs.map((leg, index) => (
+        <span className="pc-crew-pending-amount" key={`shared:${leg.key ?? 'unknown'}:${index}`}>
           <span>{formatCrewAmount(leg.amount)}</span>
           <span>shared, counted under another account</span>
         </span>

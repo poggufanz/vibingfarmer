@@ -313,7 +313,7 @@ describe('CrewRoute persona projection', () => {
     expect(screen.queryByText(/no confirmed productive crew accounts/i)).toBeNull()
   })
 
-  it('shows a known shared pending Base amount and where it is counted', () => {
+  it('shows counted Stellar and known shared Base evidence for the same pending child', () => {
     const projected = buildCrewPersonas({
       discovery: discovery([
         discoveryRow(ADDRESSES.first),
@@ -328,14 +328,36 @@ describe('CrewRoute persona projection', () => {
           discoverySources: ['rpc-router-events'],
         }),
       ]),
-      moneyAgents: [moneyAgent(ADDRESSES.first), moneyAgent(ADDRESSES.base)],
+      moneyAgents: [
+        moneyAgent(ADDRESSES.first),
+        moneyAgent(ADDRESSES.base, {
+          custody: { location: 'unknown' },
+          custodyBreakdown: [
+            { location: 'stellar-vault', amount: amount('300000000') },
+            {
+              location: 'base-proxy',
+              amount: amount('700000000'),
+              kernelAddress: '0xKeRnEl',
+              poolAddress: '0xPoOl',
+              asset: '0xUSDC',
+              poolName: 'Aave v3',
+              coverageReason: null,
+            },
+          ],
+        }),
+      ],
     })
 
     renderCrew({ crew: projected })
     const pending = screen.getByRole('status')
+    const sharedBaseAmount = within(pending).getByText('70 USDC')
+    const sharedBaseEvidence = sharedBaseAmount.closest('.pc-crew-pending-amount')
 
-    expect(within(pending).getByText('70 USDC')).toBeTruthy()
-    expect(within(pending).getByText(/shared, counted under another account/i)).toBeTruthy()
+    expect(within(pending).getByText('30 USDC')).toBeTruthy()
+    expect(sharedBaseEvidence).toBeTruthy()
+    expect(
+      within(sharedBaseEvidence).getByText('shared, counted under another account')
+    ).toBeTruthy()
     expect(within(pending).queryByText(/amount unavailable/i)).toBeNull()
   })
 
