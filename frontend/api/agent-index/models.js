@@ -84,9 +84,11 @@ function optionalString(value, field) {
   if (value === null || value === undefined) return null
   return requireString(value, field)
 }
-function optionalInt(value, field) {
+function optionalNonNegativeSafeInt(value, field) {
   if (value === null || value === undefined) return null
-  return requireInt(value, field)
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new Error(`${field} must be a non-negative safe integer`)
+  return value
 }
 // Token amounts are decimal strings end-to-end — never SQLite INTEGER — so a value like
 // "0.0000001" or a unit count above 2^53 never loses precision going through JS number math.
@@ -358,7 +360,7 @@ export function toMembershipRow(record) {
     creation_tx: requireString(r.creationTx, 'creationTx'),
     grant_tx_hash: optionalString(r.grantTxHash, 'grantTxHash'),
     run_id: optionalString(r.runId, 'runId'),
-    run_ordinal: optionalInt(r.runOrdinal, 'runOrdinal'),
+    run_ordinal: optionalNonNegativeSafeInt(r.runOrdinal, 'runOrdinal'),
     provenance: JSON.stringify(r.provenance ?? {}),
   }
 }

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
 import { createAgentIndexStore } from './store.js'
-import { sourceIdFor } from './models.js'
+import { AgentIndexConflictError, sourceIdFor } from './models.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'migrations')
@@ -27,6 +27,7 @@ function fakeD1() {
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0004_agent_associations.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0005_execution_receipts.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0006_base_child_intents.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0007_agent_membership_owner_pages.sql'), 'utf8'))
 
   function bound(sql, args) {
     return {
@@ -205,6 +206,49 @@ describe('upsertMembership / readOwnerMemberships', () => {
     const rows = await store.readOwnerMemberships({ networkId: NETWORK, owner: 'GOWNER1' })
     expect(rows).toHaveLength(1)
     expect(rows[0].provenance).toEqual({ source: 'router-event', updated: true })
+  })
+  it.each([
+    ['ownerAddress', 'GOTHER'],
+    ['creatorAddress', 'COTHER'],
+    ['creationLedger', 999],
+    ['creationTx', 'tx-other'],
+    ['grantTxHash', 'grant-other'],
+    ['runId', 'run-other'],
+    ['runOrdinal', 2],
+  ])('rejects immutable membership conflict in %s', async (field, value) => {
+    const original = membership()
+    await store.upsertMembership(original)
+    const before = db._raw
+      .prepare('SELECT * FROM agent_memberships WHERE network_id = ? AND agent_address = ?')
+      .get(original.networkId, original.agentAddress)
+
+    await expect(store.upsertMembership({ ...original, [field]: value })).rejects.toThrow(
+      AgentIndexConflictError
+    )
+
+    expect(
+      db._raw
+        .prepare('SELECT * FROM agent_memberships WHERE network_id = ? AND agent_address = ?')
+        .get(original.networkId, original.agentAddress)
+    ).toEqual(before)
+    expect(
+      await store.readOwnerMemberships({
+        networkId: NETWORK,
+        owner: original.ownerAddress,
+      })
+    ).toMatchObject([{ address: original.agentAddress, runOrdinal: original.runOrdinal }])
+  })
+  it('uses the owner-creation index for the owner page query', () => {
+    const plan = db._raw
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT * FROM agent_memberships WHERE network_id = ? AND owner_address = ?
+         ORDER BY creation_ledger ASC, agent_address ASC`
+      )
+      .all(NETWORK, 'GOWNER1')
+    expect(plan.map((step) => step.detail).join('\n')).toContain(
+      'idx_agent_memberships_owner_creation'
+    )
   })
   it('never returns another owner or another network', async () => {
     await store.upsertMembership(membership())
@@ -585,6 +629,34 @@ describe('commitSourcePage', () => {
     expect(sources[0].indexedFromLedger).toBe(100)
     expect(sources[0].indexedThroughLedger).toBe(200)
     expect(sources[0].cursor).toBe('c2')
+  })
+
+  it('rolls back cursor advancement when a page conflicts with immutable membership identity', async () => {
+    await store.commitSourcePage({
+      sourceId: SOURCE_ID,
+      fromLedger: 100,
+      throughLedger: 150,
+      finalizedThroughLedger: 148,
+      cursor: 'c1',
+      memberships: [membership()],
+    })
+
+    await expect(
+      store.commitSourcePage({
+        sourceId: SOURCE_ID,
+        fromLedger: 151,
+        throughLedger: 200,
+        finalizedThroughLedger: 198,
+        cursor: 'c2',
+        memberships: [membership({ creationTx: 'tx-conflict' })],
+      })
+    ).rejects.toThrow(/immutable|conflict/i)
+
+    const { sources } = await store.readCoverage({ networkId: NETWORK })
+    expect(sources[0]).toMatchObject({ indexedThroughLedger: 150, cursor: 'c1' })
+    expect(
+      await store.readOwnerMemberships({ networkId: NETWORK, owner: 'GOWNER1' })
+    ).toMatchObject([{ address: 'CAGENT1', createdTxHash: 'tx1' }])
   })
 
   it('rejects a non-contiguous page and leaves prior coverage state untouched', async () => {

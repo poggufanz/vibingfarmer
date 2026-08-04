@@ -900,7 +900,18 @@ export function createAgentIndexStore(db) {
 
   async function upsertMembership(record) {
     const row = toMembershipRow(record)
-    await bindMembershipRow(row).run()
+    try {
+      await bindMembershipRow(row).run()
+    } catch (error) {
+      if (
+        String(error?.message ?? error).includes('immutable agent membership identity conflict')
+      ) {
+        throw new AgentIndexConflictError('immutable agent membership identity conflict', {
+          cause: error,
+        })
+      }
+      throw error
+    }
   }
 
   async function upsertRunAllocation(record) {

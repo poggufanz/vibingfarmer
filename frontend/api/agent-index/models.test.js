@@ -119,6 +119,12 @@ describe('toMembershipRow / parseMembershipRow', () => {
     expect(row.run_ordinal).toBeNull()
     expect(row.provenance).toBe('{}')
   })
+  it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])('rejects unsafe runOrdinal %s', (runOrdinal) => {
+    expect(() => toMembershipRow(membership({ runOrdinal }))).toThrow(/runOrdinal/)
+  })
+  it('preserves an explicit null runOrdinal', () => {
+    expect(toMembershipRow(membership({ runOrdinal: null })).run_ordinal).toBeNull()
+  })
   it('rejects an unknown agent kind', () => {
     expect(() => toMembershipRow(membership({ kind: 'legacy' }))).toThrow(/kind/)
   })
