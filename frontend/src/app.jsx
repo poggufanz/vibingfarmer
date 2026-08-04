@@ -2582,11 +2582,15 @@ const App = () => {
   // child controllers so replacing a poll cannot cancel an action reconciliation; every action
   // read receives this owner controller directly and is stopped immediately on switch/disconnect.
   const moneyOwnerAbortRef = useR(null)
+  const moneyMountedEpochRef = useR({ active: true })
 
   useE(
     () => () => {
-      moneyOwnerAbortRef.current?.abort()
-      moneyOwnerAbortRef.current = null
+      moneyMountedEpochRef.current.active = false
+      if (!moneyOwnerAbortRef.current) moneyOwnerAbortRef.current = new AbortController()
+      moneyOwnerAbortRef.current.abort()
+      activeAccountRef.current = null
+      realAddressRef.current = null
     },
     []
   )
@@ -2715,10 +2719,15 @@ const App = () => {
   // ALL of the guard-then-commit decision now lives in the exported guardedMoneyFetch above — this
   // is a thin wrapper, not a second copy, so a controller-level test on guardedMoneyFetch IS a test
   // of this call site.
-  async function refreshMoney(owner) {
+  async function refreshMoney(
+    owner,
+    { parentSignal = moneyOwnerAbortRef.current?.signal, actionContext = null } = {}
+  ) {
+    if (actionContext) assertMoneyActionContext(actionContext)
     const controller = replaceMoneyFetchAbortController(moneyFetchAbortRef, {
-      parentSignal: moneyOwnerAbortRef.current?.signal,
+      parentSignal,
     })
+    if (actionContext) assertMoneyActionContext(actionContext)
     // REFRESH-MONEY-WIRING:START -- MM13 M5, fix round 2: pinned by a source-scan test
     // (app.money.test.jsx) asserting this call passes the LIVE ref objects, not dead literals, and
     // that nothing after the spread overrides them. moneyFetchArgs itself (exported above) is
@@ -2737,6 +2746,7 @@ const App = () => {
         signal: controller.signal,
       }),
       onCommit: (snapshot) => {
+        if (actionContext) assertMoneyActionContext(actionContext)
         const protection = moneyProtectionSnapshot()
         const nextCache = { money: snapshot.money, discovery: snapshot.discovery, protection }
         moneyCacheRef.current = nextCache
@@ -2777,7 +2787,6 @@ const App = () => {
       moneyFetchAbortRef.current?.abort()
       moneyFetchAbortRef.current = null
       ownerController?.abort()
-      if (moneyOwnerAbortRef.current === ownerController) moneyOwnerAbortRef.current = null
       moneyCacheRef.current = {}
       setMoneyDiscovery(null)
       setMoneyRead(null)
@@ -2808,7 +2817,6 @@ const App = () => {
       moneyFetchAbortRef.current?.abort()
       moneyFetchAbortRef.current = null
       ownerController?.abort()
-      if (moneyOwnerAbortRef.current === ownerController) moneyOwnerAbortRef.current = null
     }
   }, [realAddress])
   // MONEY-RELOAD-EFFECT:END
@@ -2818,29 +2826,27 @@ const App = () => {
   // back to a full refreshMoney() when the action's reconciliation never got a fresh read (e.g.
   // 'not-submitted'). Guarded the same way as refreshMoney — a wallet switch during a pending
   // action must not let its aftermath repaint the new owner's screen.
-  async function refreshMoneyAfterAction(freshReads) {
-    if (
-      !isMoneyFetchForCurrentOwner({
-        fetchOwner: realAddress,
-        currentOwner: realAddressRef.current,
-      })
-    ) {
-      return
-    }
+  async function refreshMoneyAfterAction(actionContext, freshReads) {
+    assertMoneyActionContext(actionContext)
     if (!freshReads) {
-      await refreshMoney(realAddress)
+      await refreshMoney(actionContext.owner, {
+        parentSignal: actionContext.signal,
+        actionContext,
+      })
       return
     }
+    assertMoneyActionContext(actionContext)
     const money = buildMoneySnapshot(freshReads)
     const protection = moneyProtectionSnapshot()
-    const nextCache = { money, discovery: moneyDiscovery, protection }
+    const nextCache = { money, discovery: actionContext.discovery, protection }
+    assertMoneyActionContext(actionContext)
     moneyCacheRef.current = nextCache
-    saveMoneyCache(realAddress, nextCache)
+    saveMoneyCache(actionContext.owner, nextCache)
     setMoneyRead(money)
     setMoneyModel(
       buildMyMoneyModel({
-        owner: realAddress,
-        discovery: moneyDiscovery,
+        owner: actionContext.owner,
+        discovery: actionContext.discovery,
         money,
         protection,
         cache: nextCache,
@@ -2849,13 +2855,53 @@ const App = () => {
     )
   }
 
-  function boundReadOwnerMoney() {
-    return readOwnerMoney({
+  function actionEpochChanged() {
+    return Object.assign(new Error('The active wallet account changed.'), {
+      code: 'ACTIVE_ACCOUNT_CHANGED',
+    })
+  }
+
+  function assertMoneyActionContext(actionContext) {
+    if (
+      !actionContext?.signal ||
+      actionContext.signal.aborted ||
+      !actionContext.mountedEpoch?.active ||
+      activeAccountRef.current !== actionContext.activeAccount ||
+      activeAccountRef.current?.epoch !== actionContext.accountEpoch ||
+      realAddressRef.current !== actionContext.owner
+    ) {
+      throw actionEpochChanged()
+    }
+    return actionContext
+  }
+
+  function isMoneyActionContextCurrent(actionContext) {
+    try {
+      assertMoneyActionContext(actionContext)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  function captureMoneyActionContext() {
+    const actionContext = Object.freeze({
       owner: realAddress,
       discovery: moneyDiscovery,
-      now: Date.now(),
+      activeAccount,
+      accountEpoch: activeAccount?.epoch,
+      mountedEpoch: moneyMountedEpochRef.current,
       signal: moneyOwnerAbortRef.current?.signal,
     })
+    return assertMoneyActionContext(actionContext)
+  }
+
+  function createMoneyActionReader(actionContext) {
+    const { owner, discovery, signal } = assertMoneyActionContext(actionContext)
+    return () => {
+      assertMoneyActionContext(actionContext)
+      return readOwnerMoney({ owner, discovery, now: Date.now(), signal })
+    }
   }
 
   async function handleMoneyPrimaryAction(action) {
@@ -2890,27 +2936,29 @@ const App = () => {
     setMoneyWithdrawOpen(true)
   }
 
-  function openMoneyRecoveryFromOutcomes({ action, outcomes }) {
+  function openMoneyRecoveryFromOutcomes(actionContext, { action, outcomes }) {
+    assertMoneyActionContext(actionContext)
     const bad = outcomes.find((o) => o.outcome === 'unknown' || o.outcome === 'not-submitted')
     if (!bad) return
+    assertMoneyActionContext(actionContext)
     setMoneyRecovery({ action, submission: bad, reconciled: null })
   }
 
   async function handleConfirmFullExit(plan) {
     if (!plan?.ok || !realAddress) return
-    const captured = activeAccount
-    assertActiveAccount(captured)
+    const actionContext = captureMoneyActionContext()
+    const readMoneyForAction = createMoneyActionReader(actionContext)
     setMoneyActionPending(true)
     try {
       const addresses = plan.targets.map((t) => t.address)
       const swept = await sweepAgents({
-        owner: realAddress,
+        owner: actionContext.owner,
         agentAddresses: addresses,
-        to: realAddress,
-        activeAccount: captured,
+        to: actionContext.owner,
+        activeAccount: actionContext.activeAccount,
         getCurrentActiveAccount: () => activeAccountRef.current,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       const perAgent = addresses.map((address, i) => ({
         agentAddress: address,
         ok: swept.errors[i] == null,
@@ -2923,47 +2971,46 @@ const App = () => {
       const reconciled = await reconcileOwnerAction({
         action,
         result: perAgent,
-        readOwnerMoney: boundReadOwnerMoney,
+        readOwnerMoney: readMoneyForAction,
         beforeRevision,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       moneyRevisionRef.current = reconciled.revision
-      await refreshMoneyAfterAction(reconciled.fresh)
-      assertActiveAccount(captured)
+      await refreshMoneyAfterAction(actionContext, reconciled.fresh)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       if (reconciled.complete) setMoneyWithdrawOpen(false)
-      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+      else
+        openMoneyRecoveryFromOutcomes(actionContext, {
+          action,
+          outcomes: reconciled.outcomes,
+        })
     } finally {
-      try {
-        assertActiveAccount(captured)
-        setMoneyActionPending(false)
-      } catch {
-        // The replacement account's transition already cleared this owner-scoped pending state.
-      }
+      if (isMoneyActionContextCurrent(actionContext)) setMoneyActionPending(false)
     }
   }
 
   async function handleConfirmPartialExit(plan) {
     if (!plan?.ok || plan.mode !== 'partial' || !realAddress) return
+    const actionContext = captureMoneyActionContext()
+    const readMoneyForAction = createMoneyActionReader(actionContext)
     setMoneyActionPending(true)
     const action = { kind: 'partial-exit', agentAddress: plan.agentAddress }
-    const captured = activeAccount
-    assertActiveAccount(captured)
     try {
       await ensureExitSigner({
-        owner: realAddress,
+        owner: actionContext.owner,
         agentAddress: plan.agentAddress,
-        activeAccount: captured,
+        activeAccount: actionContext.activeAccount,
         getCurrentActiveAccount: () => activeAccountRef.current,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       await partialWithdraw({
-        owner: realAddress,
+        owner: actionContext.owner,
         agentAddress: plan.agentAddress,
         amountUnits: BigInt(plan.amount.units),
-        activeAccount: captured,
+        activeAccount: actionContext.activeAccount,
         getCurrentActiveAccount: () => activeAccountRef.current,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
         action,
@@ -2973,53 +3020,56 @@ const App = () => {
           status: 'SUCCESS',
           amount: plan.amount,
         },
-        readOwnerMoney: boundReadOwnerMoney,
+        readOwnerMoney: readMoneyForAction,
         beforeRevision,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       moneyRevisionRef.current = reconciled.revision
-      await refreshMoneyAfterAction(reconciled.fresh)
-      assertActiveAccount(captured)
+      await refreshMoneyAfterAction(actionContext, reconciled.fresh)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       if (reconciled.complete) setMoneyWithdrawOpen(false)
-      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+      else
+        openMoneyRecoveryFromOutcomes(actionContext, {
+          action,
+          outcomes: reconciled.outcomes,
+        })
     } catch (err) {
+      if (!isMoneyActionContextCurrent(actionContext)) return
       if (err?.code === 'ACTIVE_ACCOUNT_CHANGED') return
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
         action,
         result: { agentAddress: plan.agentAddress, error: err },
-        readOwnerMoney: boundReadOwnerMoney,
+        readOwnerMoney: readMoneyForAction,
         beforeRevision,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       moneyRevisionRef.current = reconciled.revision
-      await refreshMoneyAfterAction(reconciled.fresh)
-      assertActiveAccount(captured)
-      openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+      await refreshMoneyAfterAction(actionContext, reconciled.fresh)
+      if (!isMoneyActionContextCurrent(actionContext)) return
+      openMoneyRecoveryFromOutcomes(actionContext, {
+        action,
+        outcomes: reconciled.outcomes,
+      })
     } finally {
-      try {
-        assertActiveAccount(captured)
-        setMoneyActionPending(false)
-      } catch {
-        // Cleared atomically by the account transition.
-      }
+      if (isMoneyActionContextCurrent(actionContext)) setMoneyActionPending(false)
     }
   }
 
   async function handleConfirmRevoke(plan) {
     if (!plan?.ok || !realAddress) return
+    const actionContext = captureMoneyActionContext()
+    const readMoneyForAction = createMoneyActionReader(actionContext)
     setMoneyActionPending(true)
     const action = { kind: 'revoke', agentAddress: plan.agentAddress }
-    const captured = activeAccount
-    assertActiveAccount(captured)
     try {
       const result = await revokeAgentOnChain({
-        owner: realAddress,
+        owner: actionContext.owner,
         agent: plan.agentAddress,
-        activeAccount: captured,
+        activeAccount: actionContext.activeAccount,
         getCurrentActiveAccount: () => activeAccountRef.current,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
         action,
@@ -3029,22 +3079,21 @@ const App = () => {
           status: result.status,
           hash: result.hash,
         },
-        readOwnerMoney: boundReadOwnerMoney,
+        readOwnerMoney: readMoneyForAction,
         beforeRevision,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       moneyRevisionRef.current = reconciled.revision
-      await refreshMoneyAfterAction(reconciled.fresh)
-      assertActiveAccount(captured)
+      await refreshMoneyAfterAction(actionContext, reconciled.fresh)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       if (reconciled.complete) setMoneyStopAccessAddress(null)
-      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+      else
+        openMoneyRecoveryFromOutcomes(actionContext, {
+          action,
+          outcomes: reconciled.outcomes,
+        })
     } finally {
-      try {
-        assertActiveAccount(captured)
-        setMoneyActionPending(false)
-      } catch {
-        // Cleared atomically by the account transition.
-      }
+      if (isMoneyActionContextCurrent(actionContext)) setMoneyActionPending(false)
     }
   }
 
@@ -3058,17 +3107,22 @@ const App = () => {
 
   async function handleCheckSubmissionStatus() {
     if (!moneyRecovery?.action) return
+    const actionContext = captureMoneyActionContext()
+    const readMoneyForAction = createMoneyActionReader(actionContext)
+    const recovery = moneyRecovery
     setMoneyActionPending(true)
     try {
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
-        action: moneyRecovery.action,
-        result: moneyRecovery.submission,
-        readOwnerMoney: boundReadOwnerMoney,
+        action: recovery.action,
+        result: recovery.submission,
+        readOwnerMoney: readMoneyForAction,
         beforeRevision,
       })
+      if (!isMoneyActionContextCurrent(actionContext)) return
       moneyRevisionRef.current = reconciled.revision
-      await refreshMoneyAfterAction(reconciled.fresh)
+      await refreshMoneyAfterAction(actionContext, reconciled.fresh)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       setMoneyRecovery((prev) =>
         prev
           ? {
@@ -3082,7 +3136,7 @@ const App = () => {
           : prev
       )
     } finally {
-      setMoneyActionPending(false)
+      if (isMoneyActionContextCurrent(actionContext)) setMoneyActionPending(false)
     }
   }
 

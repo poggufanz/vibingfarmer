@@ -9,6 +9,9 @@ const mountedHarness = vi.hoisted(() => ({
   initialAccount: null,
   routeProps: null,
   moneyRouteProps: null,
+  withdrawDialogProps: null,
+  stopAccessDialogProps: null,
+  recoveryPanelProps: null,
   orchestratorConfig: null,
   dispatch: null,
   movement: null,
@@ -55,6 +58,42 @@ vi.mock('./components/money/MyMoneyRoute.jsx', async () => {
         { 'data-testid': 'mounted-money-state' },
         JSON.stringify({ owner: props.account?.address ?? null, agentCount: props.agents.length })
       )
+    },
+  }
+})
+
+vi.mock('./components/money/WithdrawDialog.jsx', async (importOriginal) => {
+  const actual = await importOriginal()
+  const { createElement } = await import('react')
+  return {
+    ...actual,
+    WithdrawDialog: (props) => {
+      mountedHarness.withdrawDialogProps = props
+      return createElement(actual.WithdrawDialog, props)
+    },
+  }
+})
+
+vi.mock('./components/money/StopAccessDialog.jsx', async (importOriginal) => {
+  const actual = await importOriginal()
+  const { createElement } = await import('react')
+  return {
+    ...actual,
+    StopAccessDialog: (props) => {
+      mountedHarness.stopAccessDialogProps = props
+      return createElement(actual.StopAccessDialog, props)
+    },
+  }
+})
+
+vi.mock('./components/money/RecoveryPanel.jsx', async (importOriginal) => {
+  const actual = await importOriginal()
+  const { createElement } = await import('react')
+  return {
+    ...actual,
+    RecoveryPanel: (props) => {
+      mountedHarness.recoveryPanelProps = props
+      return createElement(actual.RecoveryPanel, props)
     },
   }
 })
@@ -139,6 +178,10 @@ vi.mock('./stellar/partialWithdraw.js', () => ({
   ensureExitSigner: vi.fn(),
   partialWithdraw: vi.fn(),
 }))
+vi.mock('./stellar/exit.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  sweepAgents: vi.fn(),
+}))
 vi.mock('./base/relayerClient.js', async (importOriginal) => ({
   ...(await importOriginal()),
   getMandateStatus: vi.fn(),
@@ -163,6 +206,8 @@ import { preflightPermission } from './strategy/reusePreflight.js'
 import { discoverOwnerScopes } from './stellar/ownerDiscovery.js'
 import { readOwnerMoney } from './money/readOwnerMoney.js'
 import { ensureExitSigner, partialWithdraw } from './stellar/partialWithdraw.js'
+import { sweepAgents } from './stellar/exit.js'
+import { revokeAgentOnChain } from './stellar/index.js'
 import { getMandateStatus } from './base/relayerClient.js'
 import { baseMandateStorageKey } from './wallet/baseBinding.js'
 import { BASE_POOL_CATALOG } from './config.js'
@@ -302,6 +347,80 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
+async function prepareLargeOwnerActionRead() {
+  const { readOwnerMoney: actualReadOwnerMoney } = await vi.importActual(
+    './money/readOwnerMoney.js'
+  )
+  const agentAddress = 'CAGENT1'
+  const amount = { token: 'USDC', units: '10000000000000000', decimals: 7 }
+  const visibleAgent = {
+    address: agentAddress,
+    amount,
+    custody: { location: 'stellar-vault' },
+    custodyBreakdown: [{ location: 'stellar-vault', amount }],
+    executionStatus: 'confirmed',
+    problems: [],
+  }
+  const rows = Array.from({ length: 501 }, (_, index) => ({
+    address: index === 0 ? agentAddress : `COLD${String(index).padStart(3, '0')}`,
+    scopeReadStatus: 'ok',
+    vault: 'CVAULT',
+    revoked: false,
+    expiry: 9_999_999_999,
+    authorized: true,
+    association: 'unknown',
+    baseChildren: [],
+  }))
+  const started = []
+  let actionPhase = false
+  let readBarrier = null
+  const rpc = async () => {
+    started.push(started.length)
+    return 0n
+  }
+
+  discoverOwnerScopes.mockResolvedValue(discoveryWith(rows))
+  readOwnerMoney.mockImplementation(async (args) => {
+    if (!actionPhase || args.owner !== G.address) return moneyReads([visibleAgent])
+    if (readBarrier) await readBarrier
+    return actualReadOwnerMoney({
+      ...args,
+      stellar: {
+        readVaultShares: rpc,
+        readTokenBalance: rpc,
+        readPricePerShare: rpc,
+        readSupplyAprBps: async () => null,
+      },
+      base: {
+        loadIndexedBasePositions: async () => ({ status: 'empty', accounts: [] }),
+      },
+    })
+  })
+
+  return {
+    agentAddress,
+    visibleAgent,
+    started,
+    beginActionReads() {
+      actionPhase = true
+    },
+    holdActionReads(promise) {
+      readBarrier = promise
+    },
+  }
+}
+
+function renderMoneyApp() {
+  return render(
+    <MemoryRouter
+      initialEntries={['/home']}
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
+      <App />
+    </MemoryRouter>
+  )
+}
+
 function mountedState() {
   return JSON.parse(screen.getByTestId('mounted-app-state').textContent)
 }
@@ -314,6 +433,9 @@ beforeEach(() => {
   mountedHarness.initialAccount = G
   mountedHarness.routeProps = null
   mountedHarness.moneyRouteProps = null
+  mountedHarness.withdrawDialogProps = null
+  mountedHarness.stopAccessDialogProps = null
+  mountedHarness.recoveryPanelProps = null
   mountedHarness.orchestratorConfig = null
   mountedHarness.dispatch = deferred()
   mountedHarness.movement = {
@@ -330,6 +452,8 @@ beforeEach(() => {
     redeemHash: 'HREDEEM',
     transferHash: 'HTRANSFER',
   })
+  sweepAgents.mockReset().mockResolvedValue({ errors: [], txHashes: [] })
+  revokeAgentOnChain.mockReset().mockResolvedValue({ status: 'SUCCESS', hash: 'HREVOKE' })
   getMandateStatus.mockReset().mockResolvedValue(null)
   readLifeboatState.mockReset().mockResolvedValue(null)
   grantMandate.mockClear()
@@ -650,6 +774,148 @@ describe('active account application state', () => {
 
     expect(started).toHaveLength(8)
     expect(mountedHarness.moneyRouteProps.account.address).toBe(C.address)
+  })
+
+  it('uses the partial action epoch when a switch happens before VF_SUBMISSION_UNKNOWN', async () => {
+    const probe = await prepareLargeOwnerActionRead()
+    const withdraw = deferred()
+    const unknown = Object.assign(new Error('withdraw response was lost'), {
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+    })
+    partialWithdraw.mockReturnValueOnce(withdraw.promise)
+    renderMoneyApp()
+    await waitFor(() =>
+      expect(mountedHarness.moneyRouteProps?.agents).toEqual([probe.visibleAgent])
+    )
+
+    probe.beginActionReads()
+    let actionPromise
+    await act(async () => {
+      actionPromise = mountedHarness.withdrawDialogProps.onConfirmPartial({
+        ok: true,
+        mode: 'partial',
+        agentAddress: probe.agentAddress,
+        amount: { token: 'USDC', units: '10000000', decimals: 7 },
+      })
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(partialWithdraw).toHaveBeenCalledOnce())
+
+    await act(async () => {
+      mountedHarness.accountListener(C)
+      withdraw.reject(unknown)
+      await actionPromise.catch(() => {})
+    })
+
+    expect(probe.started).toHaveLength(0)
+  })
+
+  it.each(['full', 'partial', 'revoke'])(
+    'does not resume %s action work after App teardown',
+    async (kind) => {
+      const probe = await prepareLargeOwnerActionRead()
+      const pending = deferred()
+      if (kind === 'full') sweepAgents.mockReturnValueOnce(pending.promise)
+      if (kind === 'partial') partialWithdraw.mockReturnValueOnce(pending.promise)
+      if (kind === 'revoke') revokeAgentOnChain.mockReturnValueOnce(pending.promise)
+
+      const view = renderMoneyApp()
+      await waitFor(() =>
+        expect(mountedHarness.moneyRouteProps?.agents).toEqual([probe.visibleAgent])
+      )
+      probe.beginActionReads()
+
+      let actionPromise
+      await act(async () => {
+        if (kind === 'full') {
+          actionPromise = mountedHarness.withdrawDialogProps.onConfirmFull({
+            ok: true,
+            targets: [{ address: probe.agentAddress }],
+          })
+        } else if (kind === 'partial') {
+          actionPromise = mountedHarness.withdrawDialogProps.onConfirmPartial({
+            ok: true,
+            mode: 'partial',
+            agentAddress: probe.agentAddress,
+            amount: { token: 'USDC', units: '10000000', decimals: 7 },
+          })
+        } else {
+          actionPromise = mountedHarness.stopAccessDialogProps.onConfirmRevoke({
+            ok: true,
+            agentAddress: probe.agentAddress,
+          })
+        }
+        await Promise.resolve()
+      })
+      const pendingMock =
+        kind === 'full' ? sweepAgents : kind === 'partial' ? partialWithdraw : revokeAgentOnChain
+      await waitFor(() => expect(pendingMock).toHaveBeenCalledOnce())
+
+      const storageSet = vi.spyOn(Storage.prototype, 'setItem')
+      view.unmount()
+      storageSet.mockClear()
+      discoverOwnerScopes.mockClear()
+      await act(async () => {
+        if (kind === 'full') pending.resolve({ errors: [null], txHashes: ['HFULL'] })
+        if (kind === 'partial') pending.resolve({ status: 'SUCCESS', hash: 'HPARTIAL' })
+        if (kind === 'revoke') pending.resolve({ status: 'SUCCESS', hash: 'HREVOKE' })
+        await actionPromise.catch(() => {})
+      })
+
+      expect(probe.started).toHaveLength(0)
+      expect(discoverOwnerScopes).not.toHaveBeenCalled()
+      expect(storageSet).not.toHaveBeenCalled()
+      storageSet.mockRestore()
+    }
+  )
+
+  it('does not refresh, persist, or start RPCs when status reconciliation resumes after teardown', async () => {
+    const probe = await prepareLargeOwnerActionRead()
+    const unknown = Object.assign(new Error('withdraw response was lost'), {
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+    })
+    partialWithdraw.mockRejectedValueOnce(unknown)
+    const view = renderMoneyApp()
+    await waitFor(() =>
+      expect(mountedHarness.moneyRouteProps?.agents).toEqual([probe.visibleAgent])
+    )
+
+    await act(async () => {
+      await mountedHarness.withdrawDialogProps.onConfirmPartial({
+        ok: true,
+        mode: 'partial',
+        agentAddress: probe.agentAddress,
+        amount: { token: 'USDC', units: '10000000', decimals: 7 },
+      })
+    })
+    await waitFor(() => expect(mountedHarness.recoveryPanelProps.open).toBe(true))
+
+    const pendingRead = deferred()
+    probe.beginActionReads()
+    probe.holdActionReads(pendingRead.promise)
+    readOwnerMoney.mockClear()
+    let statusPromise
+    await act(async () => {
+      statusPromise = mountedHarness.recoveryPanelProps.onCheckStatus()
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(readOwnerMoney).toHaveBeenCalledOnce())
+
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem')
+    view.unmount()
+    storageSet.mockClear()
+    discoverOwnerScopes.mockClear()
+    await act(async () => {
+      pendingRead.resolve()
+      await statusPromise.catch(() => {})
+    })
+
+    expect(probe.started).toHaveLength(0)
+    expect(discoverOwnerScopes).not.toHaveBeenCalled()
+    expect(storageSet).not.toHaveBeenCalled()
+    storageSet.mockRestore()
   })
 
   it('mounted App rechecks a reviewed Base mandate immediately before grant and blocks every movement when it was revoked', async () => {
