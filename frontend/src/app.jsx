@@ -489,9 +489,20 @@ export function createEpochBoundRun({ captured, getCurrent, onEvent = () => {} }
 
 /** Replace the owner-scoped money read capability. Aborting the previous controller stops its
  * downstream queues; the owner/revision commit guards remain a second line of defense. */
-export function replaceMoneyFetchAbortController(controllerRef) {
+export function replaceMoneyFetchAbortController(controllerRef, { parentSignal } = {}) {
   controllerRef.current?.abort()
   const controller = new AbortController()
+  if (parentSignal?.aborted) {
+    controller.abort(parentSignal.reason)
+  } else if (parentSignal) {
+    const abortFromParent = () => controller.abort(parentSignal.reason)
+    parentSignal.addEventListener('abort', abortFromParent, { once: true })
+    controller.signal.addEventListener(
+      'abort',
+      () => parentSignal.removeEventListener('abort', abortFromParent),
+      { once: true }
+    )
+  }
   controllerRef.current = controller
   return controller
 }
@@ -2567,9 +2578,25 @@ const App = () => {
   const realAddressRef = useR(realAddress)
   const moneyCacheRef = useR({})
   const moneyFetchAbortRef = useR(null)
+  // One controller spans the connected account's whole lifetime. Automatic polls get linked
+  // child controllers so replacing a poll cannot cancel an action reconciliation; every action
+  // read receives this owner controller directly and is stopped immediately on switch/disconnect.
+  const moneyOwnerAbortRef = useR(null)
+
+  useE(
+    () => () => {
+      moneyOwnerAbortRef.current?.abort()
+      moneyOwnerAbortRef.current = null
+    },
+    []
+  )
 
   function installActiveWalletAccount(next) {
     const previous = activeAccountRef.current
+    if (previous !== (next || null)) {
+      moneyOwnerAbortRef.current?.abort()
+      moneyOwnerAbortRef.current = new AbortController()
+    }
     if (previous && previous !== next) {
       const changed = Object.assign(new Error('The active wallet account changed.'), {
         code: 'ACTIVE_ACCOUNT_CHANGED',
@@ -2689,7 +2716,9 @@ const App = () => {
   // is a thin wrapper, not a second copy, so a controller-level test on guardedMoneyFetch IS a test
   // of this call site.
   async function refreshMoney(owner) {
-    const controller = replaceMoneyFetchAbortController(moneyFetchAbortRef)
+    const controller = replaceMoneyFetchAbortController(moneyFetchAbortRef, {
+      parentSignal: moneyOwnerAbortRef.current?.signal,
+    })
     // REFRESH-MONEY-WIRING:START -- MM13 M5, fix round 2: pinned by a source-scan test
     // (app.money.test.jsx) asserting this call passes the LIVE ref objects, not dead literals, and
     // that nothing after the spread overrides them. moneyFetchArgs itself (exported above) is
@@ -2743,9 +2772,12 @@ const App = () => {
   // wrapping the effect if you touch it.
   useE(() => {
     let alive = true
+    const ownerController = moneyOwnerAbortRef.current
     if (!realAddress) {
       moneyFetchAbortRef.current?.abort()
       moneyFetchAbortRef.current = null
+      ownerController?.abort()
+      if (moneyOwnerAbortRef.current === ownerController) moneyOwnerAbortRef.current = null
       moneyCacheRef.current = {}
       setMoneyDiscovery(null)
       setMoneyRead(null)
@@ -2775,6 +2807,8 @@ const App = () => {
       clearInterval(id)
       moneyFetchAbortRef.current?.abort()
       moneyFetchAbortRef.current = null
+      ownerController?.abort()
+      if (moneyOwnerAbortRef.current === ownerController) moneyOwnerAbortRef.current = null
     }
   }, [realAddress])
   // MONEY-RELOAD-EFFECT:END
@@ -2816,7 +2850,12 @@ const App = () => {
   }
 
   function boundReadOwnerMoney() {
-    return readOwnerMoney({ owner: realAddress, discovery: moneyDiscovery, now: Date.now() })
+    return readOwnerMoney({
+      owner: realAddress,
+      discovery: moneyDiscovery,
+      now: Date.now(),
+      signal: moneyOwnerAbortRef.current?.signal,
+    })
   }
 
   async function handleMoneyPrimaryAction(action) {

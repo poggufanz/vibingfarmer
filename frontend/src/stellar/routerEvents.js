@@ -24,6 +24,32 @@ const PULLED_V3_TOPIC = 'pulled_v3'
 // runaway backstop, not a real bound. ponytail: bump only if retention windows grow past ~15 days.
 const MAX_PAGES = 250
 
+function abortReason(signal) {
+  return signal?.reason ?? new DOMException('Aborted', 'AbortError')
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortReason(signal)
+}
+
+async function awaitWithAbort(promise, signal) {
+  throwIfAborted(signal)
+  if (!signal) return promise
+
+  let onAbort
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(abortReason(signal))
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    const value = await Promise.race([promise, aborted])
+    throwIfAborted(signal)
+    return value
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
 async function realServer(rpcUrl) {
   const { rpc } = await import('@stellar/stellar-sdk')
   return new rpc.Server(rpcUrl)
@@ -128,13 +154,17 @@ export function decodePulledV3Event(rec) {
 }
 
 /** oldestLedger the RPC still retains — the floor for any startLedger. */
-async function retentionFloor(server) {
+async function retentionFloor(server, signal) {
+  throwIfAborted(signal)
   try {
-    const health = await server.getHealth()
+    const health = await awaitWithAbort(server.getHealth(), signal)
+    throwIfAborted(signal)
     if (Number.isFinite(health?.oldestLedger)) return health.oldestLedger
   } catch {
+    throwIfAborted(signal)
     /* older RPC without getHealth — the -32600 clamp below is the safety net */
   }
+  throwIfAborted(signal)
   return 1
 }
 
@@ -144,10 +174,13 @@ async function retentionFloor(server) {
  * scan (e.g. the last 24h) passes an explicit lookback. NEVER hardcode a ledger count: ledger time
  * can shift (CAP-0070) so a fixed number silently under-scans.
  */
-async function resolveStartLedger(server, lookbackLedgers) {
-  const floor = await retentionFloor(server)
+async function resolveStartLedger(server, lookbackLedgers, signal) {
+  throwIfAborted(signal)
+  const floor = await retentionFloor(server, signal)
+  throwIfAborted(signal)
   if (lookbackLedgers == null) return floor
-  const { sequence } = await server.getLatestLedger()
+  const { sequence } = await awaitWithAbort(server.getLatestLedger(), signal)
+  throwIfAborted(signal)
   return Math.max(floor, Math.max(1, sequence - lookbackLedgers))
 }
 
@@ -166,6 +199,7 @@ function oldestFromRangeError(err) {
  *   owner: string,            // grant owner (G...) — scopes the topic filter
  *   lookbackLedgers?: number, // omit = full retention window
  *   limit?: number,
+ *   signal?: AbortSignal,
  * }} p
  * @returns {Promise<Array<{ owner: string, agent: string, cap: bigint, ledger?: number, txHash?: string }>>}
  */
@@ -176,8 +210,11 @@ export async function fetchRouterDeployedEvents({
   owner,
   lookbackLedgers,
   limit = 1000,
+  signal,
 } = {}) {
-  const s = server || (await realServer(rpcUrl))
+  throwIfAborted(signal)
+  const s = server || (await awaitWithAbort(realServer(rpcUrl), signal))
+  throwIfAborted(signal)
   // 3-segment topic filter: [deployed(lowercase), owner, *]. Base64-XDR strings + '*' wildcard —
   // verified to match exactly the owner's deployed events (no client-side re-filter needed).
   const topics = [
@@ -185,31 +222,43 @@ export async function fetchRouterDeployedEvents({
   ]
   const filters = [{ type: 'contract', contractIds: [routerAddress], topics }]
 
-  let startLedger = await resolveStartLedger(s, lookbackLedgers)
+  let startLedger = await resolveStartLedger(s, lookbackLedgers, signal)
+  throwIfAborted(signal)
   const out = []
   let cursor
   for (let page = 0; page < MAX_PAGES; page++) {
+    throwIfAborted(signal)
     let res
     try {
-      res = cursor
-        ? await s.getEvents({ filters, cursor, limit }) // cursor mode: startLedger MUST be omitted
-        : await s.getEvents({ startLedger, filters, limit })
+      res = await awaitWithAbort(
+        cursor
+          ? s.getEvents({ filters, cursor, limit }) // cursor mode: startLedger MUST be omitted
+          : s.getEvents({ startLedger, filters, limit }),
+        signal
+      )
+      throwIfAborted(signal)
     } catch (err) {
+      throwIfAborted(signal)
       const oldest = oldestFromRangeError(err)
       if (oldest != null && !cursor) {
         startLedger = oldest // fell below retention between probe and call — clamp & retry once
+        throwIfAborted(signal)
         continue
       }
       throw err
     }
     for (const rec of res.events || []) {
+      throwIfAborted(signal)
       const row = decodeDeployedEvent(rec)
+      throwIfAborted(signal)
       if (row) out.push(row)
     }
     // Terminate when the cursor stops advancing (tip reached). Do NOT stop on an empty page —
     // the window may be sparse but still have later ledgers to scan.
+    throwIfAborted(signal)
     if (!res.cursor || res.cursor === cursor) break
     cursor = res.cursor
   }
+  throwIfAborted(signal)
   return out
 }

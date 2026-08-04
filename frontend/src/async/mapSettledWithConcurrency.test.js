@@ -82,6 +82,25 @@ describe('mapSettledWithConcurrency', () => {
     ])
   })
 
+  it.each([NaN, Infinity, 0, -1])(
+    'rejects invalid concurrency %s before starting a mapper',
+    async (concurrency) => {
+      let starts = 0
+
+      await expect(
+        mapSettledWithConcurrency(
+          ['queued'],
+          async () => {
+            starts += 1
+          },
+          { concurrency }
+        )
+      ).rejects.toThrow(/concurrency/i)
+
+      expect(starts).toBe(0)
+    }
+  )
+
   it('rejects the outer operation and prevents queued mappers from starting after abort', async () => {
     const controller = new AbortController()
     const gates = Array.from({ length: 8 }, deferred)

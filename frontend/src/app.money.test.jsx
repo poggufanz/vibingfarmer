@@ -347,6 +347,26 @@ describe('owner-switch money cancellation — aborts work, not only stale commit
     await expect(operation).rejects.toMatchObject({ name: 'AbortError' })
     expect(started).toHaveLength(8)
   })
+
+  it('replaces an automatic-refresh child without aborting the owner-lifetime signal', () => {
+    const ownerController = new AbortController()
+    const controllerRef = { current: null }
+    const firstRefresh = replaceMoneyFetchAbortController(controllerRef, {
+      parentSignal: ownerController.signal,
+    })
+    const secondRefresh = replaceMoneyFetchAbortController(controllerRef, {
+      parentSignal: ownerController.signal,
+    })
+
+    expect(firstRefresh.signal.aborted).toBe(true)
+    expect(secondRefresh.signal.aborted).toBe(false)
+    expect(ownerController.signal.aborted).toBe(false)
+
+    const reason = new Error('owner epoch ended')
+    ownerController.abort(reason)
+    expect(secondRefresh.signal.aborted).toBe(true)
+    expect(secondRefresh.signal.reason).toBe(reason)
+  })
 })
 
 // ---------------------------------------------------------------------------------------------

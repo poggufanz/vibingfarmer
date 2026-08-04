@@ -9,6 +9,9 @@ function abortReason(signal) {
  */
 export async function mapSettledWithConcurrency(items, mapper, { concurrency = 8, signal } = {}) {
   if (signal?.aborted) throw abortReason(signal)
+  if (!Number.isFinite(concurrency) || concurrency <= 0) {
+    throw new TypeError('concurrency must be a finite positive number')
+  }
 
   const input = Array.from(items)
   if (input.length === 0) return []

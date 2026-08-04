@@ -569,6 +569,89 @@ describe('active account application state', () => {
     expect(request.getCurrentActiveAccount()).toBe(G)
   })
 
+  it('aborts a 501-row action reconciliation on account replacement before queued RPCs start', async () => {
+    const { readOwnerMoney: actualReadOwnerMoney } = await vi.importActual(
+      './money/readOwnerMoney.js'
+    )
+    const agentAddress = 'CAGENT1'
+    const amount = { token: 'USDC', units: '10000000000000000', decimals: 7 }
+    const visibleAgent = {
+      address: agentAddress,
+      amount,
+      custody: { location: 'stellar-vault' },
+      custodyBreakdown: [{ location: 'stellar-vault', amount }],
+      executionStatus: 'confirmed',
+      problems: [],
+    }
+    const rows = Array.from({ length: 501 }, (_, index) => ({
+      address: index === 0 ? agentAddress : `COLD${String(index).padStart(3, '0')}`,
+      scopeReadStatus: 'ok',
+      vault: 'CVAULT',
+      revoked: false,
+      expiry: 9_999_999_999,
+      authorized: true,
+      association: 'unknown',
+      baseChildren: [],
+    }))
+    const gates = Array.from({ length: 8 }, deferred)
+    const started = []
+    let actionPhase = false
+    let oldReadSettled = false
+    const heldRpc = async () => {
+      const index = started.length
+      started.push(index)
+      if (index < gates.length) await gates[index].promise
+      return 0n
+    }
+
+    discoverOwnerScopes.mockResolvedValue(discoveryWith(rows))
+    readOwnerMoney.mockImplementation((args) => {
+      if (!actionPhase || args.owner !== G.address)
+        return Promise.resolve(moneyReads([visibleAgent]))
+      return actualReadOwnerMoney({
+        ...args,
+        stellar: {
+          readVaultShares: heldRpc,
+          readTokenBalance: heldRpc,
+          readPricePerShare: heldRpc,
+          readSupplyAprBps: async () => null,
+        },
+        base: {
+          loadIndexedBasePositions: async () => ({ status: 'empty', accounts: [] }),
+        },
+      }).finally(() => {
+        oldReadSettled = true
+      })
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={['/home']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <App />
+      </MemoryRouter>
+    )
+    await waitFor(() => expect(mountedHarness.moneyRouteProps?.agents).toEqual([visibleAgent]))
+
+    actionPhase = true
+    await act(async () => mountedHarness.moneyRouteProps.onAction('review-problem'))
+    fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+    fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+    fireEvent.change(screen.getByRole('textbox', { name: /amount/i }), {
+      target: { value: '1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /withdraw this amount/i }))
+
+    await waitFor(() => expect(started).toHaveLength(8))
+    await act(async () => mountedHarness.accountListener(C))
+    for (const gate of gates) gate.resolve()
+    await waitFor(() => expect(oldReadSettled).toBe(true))
+
+    expect(started).toHaveLength(8)
+    expect(mountedHarness.moneyRouteProps.account.address).toBe(C.address)
+  })
+
   it('mounted App rechecks a reviewed Base mandate immediately before grant and blocks every movement when it was revoked', async () => {
     const reviewedEvidence = activeBaseWireEvidence()
     let remoteEvidence = reviewedEvidence
