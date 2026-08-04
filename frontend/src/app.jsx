@@ -2582,18 +2582,20 @@ const App = () => {
   // child controllers so replacing a poll cannot cancel an action reconciliation; every action
   // read receives this owner controller directly and is stopped immediately on switch/disconnect.
   const moneyOwnerAbortRef = useR(null)
-  const moneyMountedEpochRef = useR({ active: true })
+  const moneyMountedEpochRef = useR(null)
 
-  useE(
-    () => () => {
-      moneyMountedEpochRef.current.active = false
+  useE(() => {
+    const mountedEpoch = { active: true }
+    moneyMountedEpochRef.current = mountedEpoch
+    return () => {
+      mountedEpoch.active = false
+      if (moneyMountedEpochRef.current !== mountedEpoch) return
       if (!moneyOwnerAbortRef.current) moneyOwnerAbortRef.current = new AbortController()
       moneyOwnerAbortRef.current.abort()
       activeAccountRef.current = null
       realAddressRef.current = null
-    },
-    []
-  )
+    }
+  }, [])
 
   function installActiveWalletAccount(next) {
     const previous = activeAccountRef.current

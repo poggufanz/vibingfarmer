@@ -462,6 +462,44 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('active account application state', () => {
+  it('starts an owner action after React StrictMode replays mount effects', async () => {
+    render(
+      <React.StrictMode>
+        <MemoryRouter
+          initialEntries={['/home']}
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
+          <App />
+        </MemoryRouter>
+      </React.StrictMode>
+    )
+    await waitFor(() =>
+      expect(mountedHarness.withdrawDialogProps?.account).toEqual({
+        kind: G.kind,
+        address: G.address,
+      })
+    )
+
+    let actionPromise
+    await act(async () => {
+      actionPromise = mountedHarness.withdrawDialogProps.onConfirmPartial({
+        ok: true,
+        mode: 'partial',
+        agentAddress: 'CAGENT1',
+        amount: { token: 'USDC', units: '10000000', decimals: 7 },
+      })
+      await expect(actionPromise).resolves.toBeUndefined()
+    })
+
+    expect(partialWithdraw).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: G.address,
+        agentAddress: 'CAGENT1',
+        activeAccount: G,
+      })
+    )
+  })
+
   it('projects a renewed lifeboat expiry into the mounted money model', async () => {
     let lifeboat = {
       derisked: false,
