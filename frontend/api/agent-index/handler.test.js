@@ -6,6 +6,7 @@ import { createRequire } from 'node:module'
 import { nativeToScVal, Keypair } from '@stellar/stellar-sdk'
 import { symbolScVal, addrScVal } from '../../src/stellar/scval.js'
 import { createAgentIndexStore } from './store.js'
+import { createOwnerReadCursorCodec } from './readCursor.js'
 import {
   handleIngest,
   handleRead,
@@ -182,6 +183,8 @@ const ROUTER_V1 = AGENT_CREATORS.find(
 )
 const OWNER_A = 'GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H'
 const AGENT_A = 'CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3'
+const AGENT_B = 'CACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINCW'
+const CURSOR_SECRET = 'handler-owner-cursor-secret-with-at-least-32-bytes'
 
 describe('authenticated Base child handlers', () => {
   const secret = 'server-reporter-secret'
@@ -508,7 +511,6 @@ describe('handleRead — limit validation (Minor 7)', () => {
 
   it('truncates the agents array to the requested limit', async () => {
     const store = createAgentIndexStore(fakeD1())
-    const AGENT_C = 'CACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINCW' // valid C-StrKey (used elsewhere as AGENT_B)
     const rec1 = deployedRecord({
       owner: OWNER_A,
       agent: AGENT_A,
@@ -517,7 +519,7 @@ describe('handleRead — limit validation (Minor 7)', () => {
     })
     const rec2 = deployedRecord({
       owner: OWNER_A,
-      agent: AGENT_C,
+      agent: AGENT_B,
       ledger: ROUTER_V1.coverageStartLedger + 2,
       txHash: 'TX2',
     })
@@ -538,8 +540,145 @@ describe('handleRead — limit validation (Minor 7)', () => {
       owner: OWNER_A,
       store,
       limit: 1,
+      cursorCodec: createOwnerReadCursorCodec({ secret: CURSOR_SECRET, now: () => Date.now() }),
     })
     expect(out.body.agents).toHaveLength(1)
+  })
+})
+
+describe('handleRead — authenticated snapshot pages', () => {
+  it('keeps the first truncated page partial while exposing the complete underlying coverage proof', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const now = Date.now()
+    const finalizedThroughLedger = ROUTER_V1.coverageStartLedger + 10
+    await handleIngest({
+      secret: 's',
+      providedSecret: 's',
+      store,
+      sources: [ROUTER_V1],
+      eventSourceFor: async () =>
+        fakeEventSource({
+          events: [
+            deployedRecord({
+              owner: OWNER_A,
+              agent: AGENT_A,
+              ledger: ROUTER_V1.coverageStartLedger + 1,
+              txHash: 'TX-PAGE-1',
+            }),
+            deployedRecord({
+              owner: OWNER_A,
+              agent: AGENT_B,
+              ledger: ROUTER_V1.coverageStartLedger + 2,
+              txHash: 'TX-PAGE-2',
+            }),
+          ],
+          oldestAvailableLedger: ROUTER_V1.coverageStartLedger,
+          latestAvailableLedger: finalizedThroughLedger + 2,
+        }),
+      finalizedLedgerFor: async () => finalizedThroughLedger,
+      now,
+    })
+    const manifest = { ...LIVE_MANIFEST, creators: [ROUTER_V1] }
+    const cursorCodec = createOwnerReadCursorCodec({
+      secret: CURSOR_SECRET,
+      now: () => now,
+      ttlMs: 60_000,
+    })
+    const first = await handleRead({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+      store,
+      manifest,
+      now,
+      limit: 1,
+      cursorCodec,
+    })
+
+    expect(first).toMatchObject({
+      status: 200,
+      body: {
+        status: 'partial',
+        pagination: {
+          hasMore: true,
+          snapshotThroughLedger: finalizedThroughLedger,
+          coverageStatus: 'complete',
+        },
+      },
+    })
+    expect(first.body.agents.map((agent) => agent.address)).toEqual([AGENT_A])
+    expect(first.body.pagination.nextCursor).toEqual(expect.any(String))
+    await expect(
+      cursorCodec.decode(first.body.pagination.nextCursor, {
+        networkId: ROUTER_V1.networkId,
+        owner: OWNER_A,
+        manifestHash: manifest.hash,
+        snapshotThroughLedger: finalizedThroughLedger,
+      })
+    ).resolves.toMatchObject({
+      afterLedger: ROUTER_V1.coverageStartLedger + 1,
+      afterAddress: AGENT_A,
+      expiresAt: now + 60_000,
+    })
+
+    const second = await handleRead({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+      store,
+      manifest,
+      now,
+      limit: 1,
+      cursor: first.body.pagination.nextCursor,
+      cursorCodec,
+    })
+    expect(second.body).toMatchObject({
+      status: 'partial',
+      pagination: {
+        hasMore: false,
+        nextCursor: null,
+        snapshotThroughLedger: finalizedThroughLedger,
+        coverageStatus: 'complete',
+      },
+    })
+    expect(second.body.agents.map((agent) => agent.address)).toEqual([AGENT_B])
+  })
+
+  it('fails closed when a truncated first page cannot be signed with a cursor secret', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    await handleIngest({
+      secret: 's',
+      providedSecret: 's',
+      store,
+      sources: [ROUTER_V1],
+      eventSourceFor: async () =>
+        fakeEventSource({
+          events: [
+            deployedRecord({
+              owner: OWNER_A,
+              agent: AGENT_A,
+              ledger: ROUTER_V1.coverageStartLedger + 1,
+              txHash: 'TX-MISSING-SECRET-1',
+            }),
+            deployedRecord({
+              owner: OWNER_A,
+              agent: AGENT_B,
+              ledger: ROUTER_V1.coverageStartLedger + 2,
+              txHash: 'TX-MISSING-SECRET-2',
+            }),
+          ],
+          oldestAvailableLedger: ROUTER_V1.coverageStartLedger,
+        }),
+      finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
+      now: 2_000_000_000_000,
+    })
+    const out = await handleRead({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+      store,
+      now: 2_000_000_000_000,
+      limit: 1,
+      cursorCodec: null,
+    })
+    expect(out).toMatchObject({ status: 200, body: { status: 'unavailable', agents: [] } })
   })
 })
 
@@ -950,8 +1089,8 @@ describe('handleRead — Base association envelope', () => {
     })
   })
 
-  // Defect caught: limit slicing dropped a child whose valid membership existed later in the owner set.
-  it('fails closed when limit excludes the membership for an authoritative Base child', async () => {
+  // Defect caught: joining all owner associations against one page made every truncated page unavailable.
+  it('joins Base associations only for memberships on the current page', async () => {
     const store = createAgentIndexStore(fakeD1())
     const now = Date.now()
     const limitedAgent = 'CACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINCW'
@@ -992,8 +1131,16 @@ describe('handleRead — Base association envelope', () => {
       manifest: { ...LIVE_MANIFEST, creators: [ROUTER_V1] },
       now,
       limit: 1,
+      cursorCodec: createOwnerReadCursorCodec({ secret: CURSOR_SECRET, now: () => now }),
     })
-    expect(out).toMatchObject({ status: 200, body: { status: 'unavailable', agents: [] } })
+    expect(out).toMatchObject({
+      status: 200,
+      body: {
+        status: 'partial',
+        agents: [{ address: AGENT_A, association: 'unknown' }],
+        pagination: { hasMore: true, coverageStatus: 'complete' },
+      },
+    })
   })
 
   // Defect caught: the expected orphan validation boundary also swallowed unrelated join bugs.

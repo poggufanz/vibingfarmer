@@ -118,6 +118,8 @@ describe('createAgentIndexStore', () => {
         'hasAssociationEvent',
         'commitAssociation',
         'readOwnerMemberships',
+        'readOwnerMembershipsPage',
+        'readOwnerMaximumCreationLedger',
         'readMembershipsByAgentAddresses',
         'readCoverage',
         'ensureSourceRow',
@@ -280,6 +282,99 @@ describe('upsertMembership / readOwnerMemberships', () => {
         )
         .run()
     ).toThrow(/NOT NULL/)
+  })
+})
+
+describe('readOwnerMembershipsPage', () => {
+  async function seedOwnerRows(count, { ledgerFor = (ordinal) => ordinal + 1 } = {}) {
+    for (let ordinal = 0; ordinal < count; ordinal += 1) {
+      const suffix = String(ordinal).padStart(4, '0')
+      await store.upsertMembership(
+        membership({
+          agentAddress: `CAGENT${suffix}`,
+          creationLedger: ledgerFor(ordinal),
+          creationTx: `tx-${suffix}`,
+          grantTxHash: `grant-${suffix}`,
+          runId: `run-${suffix}`,
+          runOrdinal: ordinal,
+        })
+      )
+    }
+  }
+
+  it.each([
+    [201, 200],
+    [501, 500],
+  ])('returns a stable bounded page for %i owner rows at limit %i', async (count, limit) => {
+    await seedOwnerRows(count)
+    const first = await store.readOwnerMembershipsPage({
+      networkId: NETWORK,
+      owner: 'GOWNER1',
+      limit,
+      afterLedger: -1,
+      afterAddress: '',
+      snapshotThroughLedger: count + 10,
+    })
+    expect(first.rows).toHaveLength(limit)
+    expect(first.hasMore).toBe(true)
+    expect(first.rows.map((row) => row.address)).toEqual(
+      Array.from({ length: limit }, (_, ordinal) => `CAGENT${String(ordinal).padStart(4, '0')}`)
+    )
+
+    const boundary = first.rows.at(-1)
+    const second = await store.readOwnerMembershipsPage({
+      networkId: NETWORK,
+      owner: 'GOWNER1',
+      limit,
+      afterLedger: boundary.createdLedger,
+      afterAddress: boundary.address,
+      snapshotThroughLedger: count + 10,
+    })
+    expect(second.rows.map((row) => row.address)).toEqual([
+      `CAGENT${String(limit).padStart(4, '0')}`,
+    ])
+    expect(second.hasMore).toBe(false)
+  })
+
+  it('uses the address as the exclusive boundary for rows created in the same ledger', async () => {
+    await seedOwnerRows(3, { ledgerFor: () => 77 })
+    const page = await store.readOwnerMembershipsPage({
+      networkId: NETWORK,
+      owner: 'GOWNER1',
+      limit: 2,
+      afterLedger: 77,
+      afterAddress: 'CAGENT0000',
+      snapshotThroughLedger: 77,
+    })
+    expect(page).toMatchObject({ hasMore: false })
+    expect(page.rows.map((row) => [row.createdLedger, row.address])).toEqual([
+      [77, 'CAGENT0001'],
+      [77, 'CAGENT0002'],
+    ])
+  })
+
+  it('uses one look-ahead row for hasMore without returning it', async () => {
+    await seedOwnerRows(3)
+    const page = await store.readOwnerMembershipsPage({
+      networkId: NETWORK,
+      owner: 'GOWNER1',
+      limit: 2,
+      afterLedger: -1,
+      afterAddress: '',
+      snapshotThroughLedger: 3,
+    })
+    expect(page.rows.map((row) => row.address)).toEqual(['CAGENT0000', 'CAGENT0001'])
+    expect(page.hasMore).toBe(true)
+  })
+
+  it('reads the owner maximum creation ledger without loading its memberships', async () => {
+    await seedOwnerRows(3, { ledgerFor: (ordinal) => [10, 99, 42][ordinal] })
+    await store.upsertMembership(
+      membership({ agentAddress: 'COTHER', ownerAddress: 'GOWNER2', creationLedger: 500 })
+    )
+    await expect(
+      store.readOwnerMaximumCreationLedger({ networkId: NETWORK, owner: 'GOWNER1' })
+    ).resolves.toBe(99)
   })
 })
 

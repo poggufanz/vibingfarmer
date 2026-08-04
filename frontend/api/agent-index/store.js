@@ -1226,6 +1226,67 @@ export function createAgentIndexStore(db) {
     return (results ?? []).map(parseMembershipRow)
   }
 
+  async function readOwnerMembershipsPage({
+    networkId,
+    owner,
+    limit,
+    afterLedger,
+    afterAddress,
+    snapshotThroughLedger,
+  }) {
+    if (!networkId || !owner) {
+      throw new Error('readOwnerMembershipsPage requires networkId and owner')
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error('readOwnerMembershipsPage requires limit from 1 to 500')
+    }
+    if (
+      !Number.isSafeInteger(afterLedger) ||
+      afterLedger < -1 ||
+      typeof afterAddress !== 'string'
+    ) {
+      throw new Error('readOwnerMembershipsPage requires a valid keyset boundary')
+    }
+    if (!Number.isSafeInteger(snapshotThroughLedger) || snapshotThroughLedger < 0) {
+      throw new Error('readOwnerMembershipsPage requires snapshotThroughLedger')
+    }
+    const { results } = await db
+      .prepare(
+        `SELECT * FROM agent_memberships
+         WHERE network_id = ? AND owner_address = ?
+           AND creation_ledger <= ?
+           AND (creation_ledger > ? OR (creation_ledger = ? AND agent_address > ?))
+         ORDER BY creation_ledger ASC, agent_address ASC
+         LIMIT ?`
+      )
+      .bind(
+        networkId,
+        owner,
+        snapshotThroughLedger,
+        afterLedger,
+        afterLedger,
+        afterAddress,
+        limit + 1
+      )
+      .all()
+    const rows = results ?? []
+    return { rows: rows.slice(0, limit).map(parseMembershipRow), hasMore: rows.length > limit }
+  }
+
+  async function readOwnerMaximumCreationLedger({ networkId, owner }) {
+    if (!networkId || !owner) {
+      throw new Error('readOwnerMaximumCreationLedger requires networkId and owner')
+    }
+    const row = await db
+      .prepare(
+        `SELECT MAX(creation_ledger) AS maximum_creation_ledger
+         FROM agent_memberships WHERE network_id = ? AND owner_address = ?`
+      )
+      .bind(networkId, owner)
+      .first()
+    return row?.maximum_creation_ledger == null ? null : Number(row.maximum_creation_ledger)
+  }
+
   async function readCoverage({ networkId }) {
     if (!networkId) throw new Error('readCoverage requires networkId')
     const [sourcesRes, gapsRes, auditsRes] = await Promise.all([
@@ -1498,6 +1559,8 @@ export function createAgentIndexStore(db) {
     hasAssociationEvent,
     commitAssociation,
     readOwnerMemberships,
+    readOwnerMembershipsPage,
+    readOwnerMaximumCreationLedger,
     readMembershipsByAgentAddresses,
     readCoverage,
     ensureSourceRow,

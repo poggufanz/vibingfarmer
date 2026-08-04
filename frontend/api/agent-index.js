@@ -23,6 +23,7 @@ import {
 } from './agent-index/handler.js'
 import { AgentIndexUnavailableError, AgentIndexValidationError } from './agent-index/models.js'
 import { scanRpcEventsPage } from './agent-index/indexer.js'
+import { createOwnerReadCursorCodec } from './agent-index/readCursor.js'
 import { rateLimit } from './_guard.js'
 import { symbolScVal } from '../src/stellar/scval.js'
 import { readContract } from '../src/stellar/client.js'
@@ -44,6 +45,7 @@ function setting(req, key, fallback = '') {
 const RPC_URL = (req) => setting(req, 'SOROBAN_RPC_URL', 'https://soroban-testnet.stellar.org')
 const INGEST_SECRET = () => process.env.AGENT_INDEX_INGEST_SECRET || ''
 const REPORTER_SECRET = (req) => setting(req, 'AGENT_INDEX_REPORTER_SECRET')
+const CURSOR_SECRET = (req) => setting(req, 'AGENT_INDEX_CURSOR_SECRET')
 const POOL_TARGETS = new Map([
   ['0x389250872044368759d3db5c09b2706a6628d4e0', 'aave-v3'],
   ['0x5e843a639f0555e2a6669601621befc887bdb479', 'morpho-blue'],
@@ -252,8 +254,23 @@ export default async function handler(req, res) {
     const networkId = url.searchParams.get('network') || ''
     const owner = url.searchParams.get('owner') || ''
     const limitParam = url.searchParams.get('limit')
+    const cursorParam = url.searchParams.get('cursor')
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
-    const out = await handleRead({ networkId, owner, store, limit: limitParam ?? undefined })
+    let cursorCodec = null
+    try {
+      const cursorSecret = CURSOR_SECRET(req)
+      if (cursorSecret) cursorCodec = createOwnerReadCursorCodec({ secret: cursorSecret })
+    } catch {
+      cursorCodec = null
+    }
+    const out = await handleRead({
+      networkId,
+      owner,
+      store,
+      limit: limitParam ?? undefined,
+      cursor: cursorParam ?? undefined,
+      cursorCodec,
+    })
     return json(res, out.status, out.body)
   }
 

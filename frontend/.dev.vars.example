@@ -104,6 +104,9 @@ AGENT_INDEX_INGEST_SECRET=
 # Generate: openssl rand -hex 32
 AGENT_INDEX_REPORTER_SECRET=
 
+# Signs read-only owner pagination cursors. Server-only; use at least 32 random bytes.
+AGENT_INDEX_CURSOR_SECRET=
+
 # D1 binding: these routes need the `VF_DB` binding (see wrangler.jsonc) with migrations 0001-0006
 # applied. Migrations 0005 (execution receipts) and 0006 (base child intents) are required before a
 # production relayer can boot — see "Release prerequisites" in GETTING_STARTED.md.

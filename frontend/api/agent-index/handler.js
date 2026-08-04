@@ -791,7 +791,7 @@ export async function handleAssociationReport({
   }
 }
 
-function unavailableBody({ networkId, owner, manifest, now }) {
+function unavailableBody({ networkId, owner, manifest, now, pagination }) {
   return {
     version: 1,
     networkId,
@@ -811,6 +811,12 @@ function unavailableBody({ networkId, owner, manifest, now }) {
       requiredFinalityLedgers: AGENT_INDEX_FINALITY_LEDGERS,
       checkedAt: now,
     },
+    pagination: pagination ?? {
+      hasMore: false,
+      nextCursor: null,
+      snapshotThroughLedger: null,
+      coverageStatus: 'unavailable',
+    },
   }
 }
 
@@ -818,7 +824,8 @@ const DEFAULT_READ_LIMIT = 200
 const MAX_READ_LIMIT = 500
 
 /**
- * `GET /api/agent-index?network=<networkId>&owner=<G-or-C-StrKey>&limit=<n>`. Public, read-only,
+ * `GET /api/agent-index?network=<networkId>&owner=<G-or-C-StrKey>&limit=<n>&cursor=<token>`.
+ * Public, read-only,
  * on-chain-derived data. An unreachable store returns a STRUCTURED `unavailable` response —
  * never `agents: []` mislabeled `complete`.
  * @param {object} p
@@ -838,6 +845,8 @@ export async function handleRead({
   manifest = LIVE_MANIFEST,
   now = Date.now(),
   limit,
+  cursor,
+  cursorCodec,
 }) {
   if (typeof networkId !== 'string' || !networkId) {
     return { status: 400, body: { error: 'Invalid network' } }
@@ -864,42 +873,95 @@ export async function handleRead({
   // Missing either reader is a deploy/version skew and must never look like a complete empty set.
   if (
     typeof store.readOwnerBaseChildIntents !== 'function' ||
-    typeof store.readOwnerRunAllocations !== 'function'
+    typeof store.readOwnerRunAllocations !== 'function' ||
+    typeof store.readOwnerMembershipsPage !== 'function' ||
+    typeof store.readOwnerMaximumCreationLedger !== 'function'
   ) {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
 
-  let memberships
+  const startedFromCursor = cursor !== undefined && cursor !== null && cursor !== ''
+  if (cursor !== undefined && cursor !== null && typeof cursor !== 'string') {
+    return { status: 400, body: { error: 'Invalid cursor' } }
+  }
+  if (startedFromCursor && !cursorCodec) {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
+
   let coverage
-  let associations
+  let proof
   try {
-    const [membershipRows, coverageRows, authoritativeChildren, legacyAssociations] =
-      await Promise.all([
-        store.readOwnerMemberships({ networkId, owner }),
-        store.readCoverage({ networkId }),
-        store.readOwnerBaseChildIntents({ networkId, owner }),
-        store.readOwnerRunAllocations({ networkId, owner }),
-      ])
-    memberships = membershipRows
-    coverage = coverageRows
-    associations = mergeOwnerBaseAssociations({ authoritativeChildren, legacyAssociations })
+    coverage = await store.readCoverage({ networkId })
+    proof = coverageProof({
+      manifest,
+      sources: coverage.sources,
+      gaps: coverage.gaps,
+      backfillAudit: coverage.backfillAudits,
+      now,
+    })
   } catch {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
 
-  const proof = coverageProof({
-    manifest,
-    sources: coverage.sources,
-    gaps: coverage.gaps,
-    backfillAudit: coverage.backfillAudits,
-    now,
-  })
-  const { status, ...coverageOut } = proof
+  let afterLedger = -1
+  let afterAddress = ''
+  let snapshotThroughLedger
+  if (startedFromCursor) {
+    try {
+      const decoded = await cursorCodec.decode(cursor, {
+        networkId,
+        owner,
+        manifestHash: manifest.hash,
+      })
+      snapshotThroughLedger = decoded.snapshotThroughLedger
+      afterLedger = decoded.afterLedger
+      afterAddress = decoded.afterAddress
+    } catch {
+      return { status: 400, body: { error: 'Invalid cursor' } }
+    }
+  } else if (Number.isSafeInteger(proof.finalizedThroughLedger)) {
+    snapshotThroughLedger = proof.finalizedThroughLedger
+  } else if (proof.status !== 'complete') {
+    try {
+      snapshotThroughLedger =
+        (await store.readOwnerMaximumCreationLedger({ networkId, owner })) ?? 0
+    } catch {
+      return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+    }
+  } else {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
+
+  let memberships
+  let hasMore
+  let authoritativeChildren
+  let legacyAssociations
+  try {
+    const [page, children, legacy] = await Promise.all([
+      store.readOwnerMembershipsPage({
+        networkId,
+        owner,
+        limit: effectiveLimit,
+        afterLedger,
+        afterAddress,
+        snapshotThroughLedger,
+      }),
+      store.readOwnerBaseChildIntents({ networkId, owner }),
+      store.readOwnerRunAllocations({ networkId, owner }),
+    ])
+    memberships = page.rows
+    hasMore = page.hasMore
+    authoritativeChildren = children
+    legacyAssociations = legacy
+  } catch {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
+
+  const { status: coverageStatus, ...coverageOut } = proof
   // Never trust stored rows blindly to be well-formed StrKeys — a membership whose address or
   // creator fails validation is dropped from the response, never guessed or coerced (Minor 7).
   const agents = memberships
     .filter((m) => isValidAddress(m.address) && isValidAddress(m.creator))
-    .slice(0, effectiveLimit)
     .map((m) => ({
       address: m.address,
       kind: m.kind,
@@ -911,6 +973,23 @@ export async function handleRead({
       grantTxHash: m.grantTxHash,
       provenance: m.provenance,
     }))
+  const pageAddresses = new Set(agents.map((agent) => agent.address))
+  const pageOnlyJoin = startedFromCursor || hasMore
+  const selectedChildren = pageOnlyJoin
+    ? authoritativeChildren.filter((child) => pageAddresses.has(child.agent))
+    : authoritativeChildren
+  const selectedLegacy = pageOnlyJoin
+    ? legacyAssociations.filter((row) => pageAddresses.has(row.bridgeAgentAddress))
+    : legacyAssociations
+  let associations
+  try {
+    associations = mergeOwnerBaseAssociations({
+      authoritativeChildren: selectedChildren,
+      legacyAssociations: selectedLegacy,
+    })
+  } catch {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
   let associatedAgents
   try {
     associatedAgents = joinBaseAssociations({ agents, associations, now })
@@ -918,8 +997,65 @@ export async function handleRead({
     if (!(error instanceof AgentIndexValidationError)) throw error
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
+
+  let nextCursor = null
+  if (hasMore) {
+    if (!cursorCodec) {
+      return {
+        status: 200,
+        body: unavailableBody({
+          networkId,
+          owner,
+          manifest,
+          now,
+          pagination: {
+            hasMore: true,
+            nextCursor: null,
+            snapshotThroughLedger,
+            coverageStatus,
+          },
+        }),
+      }
+    }
+    const boundary = memberships.at(-1)
+    try {
+      nextCursor = await cursorCodec.encode({
+        version: 1,
+        networkId,
+        owner,
+        manifestHash: manifest.hash,
+        snapshotThroughLedger,
+        afterLedger: boundary.createdLedger,
+        afterAddress: boundary.address,
+      })
+    } catch {
+      return {
+        status: 200,
+        body: unavailableBody({
+          networkId,
+          owner,
+          manifest,
+          now,
+          pagination: {
+            hasMore: true,
+            nextCursor: null,
+            snapshotThroughLedger,
+            coverageStatus,
+          },
+        }),
+      }
+    }
+  }
   return {
     status: 200,
-    body: { version: 1, networkId, owner, status, agents: associatedAgents, coverage: coverageOut },
+    body: {
+      version: 1,
+      networkId,
+      owner,
+      status: hasMore || startedFromCursor ? 'partial' : coverageStatus,
+      agents: associatedAgents,
+      coverage: coverageOut,
+      pagination: { hasMore, nextCursor, snapshotThroughLedger, coverageStatus },
+    },
   }
 }

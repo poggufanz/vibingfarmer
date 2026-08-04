@@ -62,6 +62,7 @@ function env(overrides = {}) {
     STELLAR_NETWORK_ID: NETWORK,
     STELLAR_NETWORK_PASSPHRASE: Networks.TESTNET,
     AGENT_INDEX_REPORTER_SECRET: 'server-reporter-secret',
+    AGENT_INDEX_CURSOR_SECRET: 'adapter-owner-cursor-secret-with-at-least-32-bytes',
     ...overrides,
   }
 }
@@ -985,5 +986,82 @@ describe('/api/agent-index operational evidence routes', () => {
     expect(res.statusCode).toBe(500)
     expect(body).toEqual({ error: 'Internal agent-index error' })
     expect(JSON.stringify(body)).not.toMatch(/sqlite|password|secret/i)
+  })
+})
+
+describe('/api/agent-index owner pagination adapter', () => {
+  function membershipRow(address, createdLedger) {
+    return {
+      address,
+      owner: OWNER,
+      kind: 'deposit',
+      creator: ROUTER_V1,
+      schemaVersion: 1,
+      createdLedger,
+      createdTxHash: `tx-${createdLedger}`,
+      grantTxHash: `grant-${createdLedger}`,
+      runId: `run-${createdLedger}`,
+      runOrdinal: 0,
+      provenance: { source: 'adapter-test' },
+    }
+  }
+
+  function pagedStore() {
+    return fakeStore({
+      readCoverage: vi.fn(async () => ({ sources: [], gaps: [], backfillAudits: [] })),
+      readOwnerMaximumCreationLedger: vi.fn(async () => 20),
+      readOwnerMembershipsPage: vi.fn(async ({ afterLedger }) =>
+        afterLedger < 0
+          ? { rows: [membershipRow(AGENT, 10)], hasMore: true }
+          : { rows: [membershipRow(OTHER_AGENT, 20)], hasMore: false }
+      ),
+      readOwnerBaseChildIntents: vi.fn(async () => []),
+      readOwnerRunAllocations: vi.fn(async () => []),
+    })
+  }
+
+  it('parses and authenticates the cursor query parameter across owner pages', async () => {
+    mocked.store = pagedStore()
+    const first = await call(
+      mockReq({ url: `/api/agent-index?network=${NETWORK}&owner=${OWNER}&limit=1` })
+    )
+    expect(first.res.statusCode).toBe(200)
+    expect(first.body).toMatchObject({
+      status: 'partial',
+      agents: [{ address: AGENT }],
+      pagination: { hasMore: true, snapshotThroughLedger: 20, coverageStatus: 'partial' },
+    })
+    expect(first.body.pagination.nextCursor).toEqual(expect.any(String))
+
+    const second = await call(
+      mockReq({
+        url:
+          `/api/agent-index?network=${NETWORK}&owner=${OWNER}&limit=1&cursor=` +
+          encodeURIComponent(first.body.pagination.nextCursor),
+      })
+    )
+    expect(second.res.statusCode).toBe(200)
+    expect(second.body).toMatchObject({
+      status: 'partial',
+      agents: [{ address: OTHER_AGENT }],
+      pagination: {
+        hasMore: false,
+        nextCursor: null,
+        snapshotThroughLedger: 20,
+        coverageStatus: 'partial',
+      },
+    })
+  })
+
+  it('returns structured unavailable when a required continuation cannot be signed', async () => {
+    mocked.store = pagedStore()
+    const out = await call(
+      mockReq({
+        url: `/api/agent-index?network=${NETWORK}&owner=${OWNER}&limit=1`,
+        requestEnv: env({ AGENT_INDEX_CURSOR_SECRET: '' }),
+      })
+    )
+    expect(out.res.statusCode).toBe(200)
+    expect(out.body).toMatchObject({ status: 'unavailable', agents: [] })
   })
 })
