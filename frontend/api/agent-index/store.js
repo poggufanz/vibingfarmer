@@ -33,6 +33,10 @@ import {
   AGENT_INDEX_SCHEMA_VERSION,
 } from '../../src/stellar/agentCreatorManifest.js'
 
+export const D1_TOTAL_BIND_PARAMETER_LIMIT = 100
+// Network-scoped address queries reserve one D1 bind for networkId.
+export const D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE = D1_TOTAL_BIND_PARAMETER_LIMIT - 1
+
 function parseSourceId(sourceId) {
   if (typeof sourceId !== 'string' || !sourceId)
     throw new Error('sourceId must be a non-empty string')

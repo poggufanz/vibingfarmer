@@ -11,6 +11,7 @@ import { decodeDeployedEvent } from '../../src/stellar/routerEvents.js'
 import { decodeEvent } from '../../src/stellar/events.js'
 import { fromScVal } from '../../src/stellar/scval.js'
 import { AgentIndexConflictError, sourceIdFor } from './models.js'
+import { D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE } from './store.js'
 import {
   AGENT_INDEX_FINALITY_LEDGERS,
   AGENT_INDEX_MAX_LAG_MS,
@@ -212,23 +213,41 @@ function compareDecodedEventOrder(a, b) {
   )
 }
 
-function toMembership(source, decoded, generation, runOrdinal, provenanceSource) {
+function immutableMembershipIdentity(source, decoded) {
   const isFundingRouter = source.kind === 'funding-router'
+  return {
+    ownerAddress: decoded.ownerAddress,
+    creatorAddress: source.address,
+    creationLedger: decoded.ledger,
+    creationTx: decoded.txHash,
+    grantTxHash: isFundingRouter ? decoded.txHash : null,
+    runId: isFundingRouter ? `${source.networkId}:${source.address}:${decoded.txHash}` : null,
+    runOrdinal: isFundingRouter ? decoded.runOrdinal : null,
+  }
+}
+
+function isExactImmutableMembershipReplay(priorRow, identity) {
+  return (
+    priorRow.owner === identity.ownerAddress &&
+    priorRow.creator === identity.creatorAddress &&
+    priorRow.createdLedger === identity.creationLedger &&
+    priorRow.createdTxHash === identity.creationTx &&
+    priorRow.grantTxHash === identity.grantTxHash &&
+    priorRow.runId === identity.runId &&
+    priorRow.runOrdinal === identity.runOrdinal
+  )
+}
+
+function toMembership(source, decoded, generation, provenanceSource) {
   return {
     networkId: source.networkId,
     agentAddress: decoded.agentAddress,
-    ownerAddress: decoded.ownerAddress,
-    creatorAddress: source.address,
+    ...immutableMembershipIdentity(source, decoded),
     schemaVersion: source.schemaVersion,
     // v3-bridge is the only generation whose wasm can be EITHER deposit or bridge kind
     // (AgentScope.kind, agent_account/src/types.rs) — the Deployed/agent_authorized event schema
     // never carries that field, so 'unknown' is the honest value, never a guessed 'bridge'.
     kind: generation === 'agent-v3-bridge' ? 'unknown' : 'deposit',
-    creationLedger: decoded.ledger,
-    creationTx: decoded.txHash,
-    grantTxHash: isFundingRouter ? decoded.txHash : null,
-    runId: isFundingRouter ? `${source.networkId}:${source.address}:${decoded.txHash}` : null,
-    runOrdinal: isFundingRouter ? runOrdinal : null,
     provenance: {
       source: provenanceSource,
       providerId: source._providerId,
@@ -236,6 +255,25 @@ function toMembership(source, decoded, generation, runOrdinal, provenanceSource)
       generation,
     },
   }
+}
+
+async function readExistingMemberships({ store, networkId, agentAddresses }) {
+  const byAddress = new Map()
+  for (
+    let offset = 0;
+    offset < agentAddresses.length;
+    offset += D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE
+  ) {
+    const rows = await store.readMembershipsByAgentAddresses({
+      networkId,
+      agentAddresses: agentAddresses.slice(offset, offset + D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE),
+    })
+    for (const row of rows) byAddress.set(row.address, row)
+  }
+  return agentAddresses.flatMap((address) => {
+    const row = byAddress.get(address)
+    return row ? [row] : []
+  })
 }
 
 /**
@@ -411,29 +449,35 @@ export async function ingestAgentIndexPage({
 
   // Spec-partial 6: a duplicate `deployed`/`agent_authorized` event for an agent ALREADY indexed
   // by a prior page must never rewrite its identity via commitSourcePage's ON CONFLICT DO UPDATE.
-  // Drop (and count) any candidate whose agent address already has a membership row — an
-  // identical re-emission has nothing to change (a harmless no-op skip); one with different
-  // immutable fields (owner/creator/creation ledger/tx — a spoof or corrupt replay) is exactly
-  // the rewrite this guard exists to prevent.
+  // An exact immutable-identity replay is a harmless no-op. Any mismatch is source corruption:
+  // record it and fail before commitSourcePage can advance coverage.
   const candidateAddresses = [...byAgent.keys()]
   const existingMemberships = candidateAddresses.length
-    ? await store.readMembershipsByAgentAddresses({
+    ? await readExistingMemberships({
+        store,
         networkId: source.networkId,
         agentAddresses: candidateAddresses,
       })
     : []
   const existingByAddress = new Map(existingMemberships.map((m) => [m.address, m]))
-  let duplicateCount = 0
   const toResolve = []
   for (const decoded of byAgent.values()) {
     const priorRow = existingByAddress.get(decoded.agentAddress)
     if (priorRow) {
-      const isIdentical =
-        priorRow.owner === decoded.ownerAddress &&
-        priorRow.creator === source.address &&
-        priorRow.createdLedger === decoded.ledger &&
-        priorRow.createdTxHash === decoded.txHash
-      if (!isIdentical) duplicateCount += 1
+      const identity = immutableMembershipIdentity(source, decoded)
+      if (!isExactImmutableMembershipReplay(priorRow, identity)) {
+        const error = new AgentIndexConflictError(
+          `immutable agent membership identity conflict for ${decoded.agentAddress}`
+        )
+        await store.recordSourceError({
+          sourceId,
+          networkId: source.networkId,
+          creatorAddress: source.address,
+          fromLedger,
+          message: error.message,
+        })
+        throw error
+      }
       continue
     }
     toResolve.push(decoded)
@@ -451,7 +495,6 @@ export async function ingestAgentIndexPage({
           `(source ${sourceId}) — refusing to guess`
       )
     }
-    const runOrdinal = source.kind === 'funding-router' ? decoded.runOrdinal : null
     memberships.push(
       toMembership(
         {
@@ -461,7 +504,6 @@ export async function ingestAgentIndexPage({
         },
         decoded,
         generation,
-        runOrdinal,
         provenanceSource
       )
     )
@@ -501,7 +543,6 @@ export async function ingestAgentIndexPage({
     fromLedger,
     throughLedger,
     membershipCount: memberships.length,
-    ...(duplicateCount > 0 ? { duplicateCount } : {}),
   }
 }
 

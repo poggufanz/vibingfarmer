@@ -21,6 +21,7 @@ import {
   receiptRequestDigest,
 } from './executionReceipts.js'
 import { selectRecoveryAction } from './recovery.js'
+import { D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE } from './store.js'
 import {
   AgentIndexConflictError,
   AgentIndexStoreError,
@@ -822,9 +823,6 @@ function unavailableBody({ networkId, owner, manifest, now, pagination }) {
 
 const DEFAULT_READ_LIMIT = 200
 const MAX_READ_LIMIT = 500
-const D1_TOTAL_BIND_PARAMETER_LIMIT = 100
-// The targeted membership SQL always binds networkId once; every remaining D1 bind is an address.
-const ASSOCIATION_MEMBERSHIP_CHUNK_SIZE = D1_TOTAL_BIND_PARAMETER_LIMIT - 1
 
 async function validateOwnerAssociationMemberships({
   associations,
@@ -839,11 +837,11 @@ async function validateOwnerAssociationMemberships({
     throw new AgentIndexValidationError('Base association agent address is invalid')
   }
   const memberships = []
-  for (let offset = 0; offset < addresses.length; offset += ASSOCIATION_MEMBERSHIP_CHUNK_SIZE) {
+  for (let offset = 0; offset < addresses.length; offset += D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE) {
     memberships.push(
       ...(await store.readMembershipsByAgentAddresses({
         networkId,
-        agentAddresses: addresses.slice(offset, offset + ASSOCIATION_MEMBERSHIP_CHUNK_SIZE),
+        agentAddresses: addresses.slice(offset, offset + D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE),
       }))
     )
   }

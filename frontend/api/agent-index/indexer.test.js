@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
-import { nativeToScVal } from '@stellar/stellar-sdk'
+import { nativeToScVal, StrKey } from '@stellar/stellar-sdk'
 import { symbolScVal, addrScVal } from '../../src/stellar/scval.js'
 import { createAgentIndexStore } from './store.js'
 import { ingestAgentIndexPage, coverageProof, scanRpcEventsPage } from './indexer.js'
@@ -23,7 +23,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'migrations')
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
 
-function fakeD1() {
+function fakeD1({ maxBindParameters = Infinity, onBind } = {}) {
   const sqlite = new DatabaseSync(':memory:')
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0001_vf_gate.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
@@ -48,7 +48,15 @@ function fakeD1() {
   }
   return {
     prepare(sql) {
-      return { bind: (...args) => bound(sql, args) }
+      return {
+        bind(...args) {
+          onBind?.(sql, args)
+          if (args.length > maxBindParameters) {
+            throw new Error(`D1 bind parameter limit exceeded: ${args.length}`)
+          }
+          return bound(sql, args)
+        },
+      }
     },
     batch(statements) {
       sqlite.exec('BEGIN')
@@ -92,6 +100,12 @@ const OWNER_B = 'GABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEJXA'
 const AGENT_A = 'CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3'
 const AGENT_B = 'CACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINCW'
 const AGENT_C = 'CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB'
+
+function generatedAgentAddress(ordinal) {
+  const raw = new Uint8Array(32)
+  new DataView(raw.buffer).setUint32(28, ordinal)
+  return StrKey.encodeContract(raw)
+}
 
 function deployedRecord({
   owner,
@@ -348,6 +362,54 @@ describe('ingestAgentIndexPage — empty pages advance only to the RPC-confirmed
     const { sources } = await store.readCoverage({ networkId: ROUTER_V1.networkId })
     expect(sources[0].indexedThroughLedger).toBe(start + 2_500)
   })
+})
+
+describe('ingestAgentIndexPage — D1 existing-membership bind budget', () => {
+  it.each([
+    [99, [100]],
+    [100, [100, 2]],
+    [200, [100, 100, 3]],
+  ])(
+    'keeps every existing-membership query within 100 total D1 binds for %i candidates',
+    async (count, expectedParameterCounts) => {
+      const effectiveParameterCounts = []
+      const store = createAgentIndexStore(
+        fakeD1({
+          maxBindParameters: 100,
+          onBind(sql, args) {
+            if (/agent_address IN/.test(sql)) effectiveParameterCounts.push(args.length)
+          },
+        })
+      )
+      const start = ROUTER_V1.coverageStartLedger
+      const ledger = start + 1
+      const events = Array.from({ length: count }, (_, index) =>
+        deployedRecord({
+          owner: OWNER_A,
+          agent: generatedAgentAddress(index + 1),
+          ledger,
+          txHash: `TX-BIND-${index + 1}`,
+          pagingToken: String(index + 1),
+        })
+      )
+
+      const out = await ingestAgentIndexPage({
+        source: ROUTER_V1,
+        store,
+        eventSource: fakeEventSource({
+          events,
+          oldestAvailableLedger: start,
+          latestAvailableLedger: ledger,
+          scannedThroughLedger: ledger,
+        }),
+        finalizedLedger: ledger,
+      })
+
+      expect(out).toMatchObject({ status: 'committed', membershipCount: count })
+      expect(effectiveParameterCounts).toEqual(expectedParameterCounts)
+      expect(effectiveParameterCounts.every((parameterCount) => parameterCount <= 100)).toBe(true)
+    }
+  )
 })
 
 describe('ingestAgentIndexPage — canonical router deployment order', () => {
@@ -634,7 +696,7 @@ describe('ingestAgentIndexPage — duplicate/replay safety', () => {
     expect(ownedByB.map((r) => r.address)).toEqual([AGENT_B])
   })
 
-  it('a duplicate deployed event in a LATER page can never rewrite an already-indexed agent (Spec-partial 6)', async () => {
+  it('fails closed when a later replay changes only the already-indexed owner', async () => {
     const store = freshStore()
     const start = ROUTER_V1.coverageStartLedger
     const first = deployedRecord({
@@ -656,27 +718,32 @@ describe('ingestAgentIndexPage — duplicate/replay safety', () => {
     })
     expect(out1.membershipCount).toBe(1)
 
-    // A LATER page (later ledger, cross-tick) re-emits AGENT_A under a different owner — a spoof
-    // or a corrupt replay. It must be dropped, never flow into commitSourcePage's ON CONFLICT.
+    const before = await store.readOwnerMemberships({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+    })
+    // A later page re-emits the exact creation tuple under a different owner. This pre-read
+    // mismatch must fail the source before commitSourcePage can advance coverage.
     const spoof = deployedRecord({
       owner: OWNER_B,
       agent: AGENT_A,
-      ledger: start + 6,
-      txHash: 'TX-SPOOF',
+      ledger: start + 1,
+      txHash: 'TX-REAL',
+      pagingToken: 'later-owner-conflict',
     })
     const es2 = fakeEventSource({
       events: [spoof],
       oldestAvailableLedger: start,
       scannedThroughLedger: start + 10,
     })
-    const out2 = await ingestAgentIndexPage({
-      source: ROUTER_V1,
-      store,
-      eventSource: es2,
-      finalizedLedger: start + 100,
-    })
-    expect(out2.membershipCount).toBe(0)
-    expect(out2.duplicateCount).toBe(1)
+    await expect(
+      ingestAgentIndexPage({
+        source: ROUTER_V1,
+        store,
+        eventSource: es2,
+        finalizedLedger: start + 100,
+      })
+    ).rejects.toThrow(AgentIndexConflictError)
 
     const ownedByA = await store.readOwnerMemberships({
       networkId: ROUTER_V1.networkId,
@@ -686,8 +753,15 @@ describe('ingestAgentIndexPage — duplicate/replay safety', () => {
       networkId: ROUTER_V1.networkId,
       owner: OWNER_B,
     })
-    expect(ownedByA.map((r) => r.address)).toEqual([AGENT_A]) // ownership never moved
+    expect(ownedByA).toEqual(before)
     expect(ownedByB).toEqual([])
+    const { sources } = await store.readCoverage({ networkId: ROUTER_V1.networkId })
+    expect(sources[0]).toMatchObject({
+      status: 'error',
+      indexedThroughLedger: start + 5,
+      cursor: null,
+      lastErrorMessage: expect.stringMatching(/immutable agent membership identity conflict/i),
+    })
   })
 
   it('an identical re-emission in a later page is a harmless no-op, not counted as a rewrite', async () => {
@@ -710,6 +784,10 @@ describe('ingestAgentIndexPage — duplicate/replay safety', () => {
       eventSource: es1,
       finalizedLedger: start + 100,
     })
+    const beforeEcho = await store.readOwnerMemberships({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+    })
 
     const echo = deployedRecord({
       owner: OWNER_A,
@@ -731,6 +809,12 @@ describe('ingestAgentIndexPage — duplicate/replay safety', () => {
     })
     expect(out2.membershipCount).toBe(0)
     expect(out2.duplicateCount).toBeUndefined() // identical — nothing to flag
+    expect(
+      await store.readOwnerMemberships({
+        networkId: ROUTER_V1.networkId,
+        owner: OWNER_A,
+      })
+    ).toEqual(beforeEcho)
   })
 })
 
@@ -772,6 +856,133 @@ describe('ingestAgentIndexPage — decode failure fails closed (Important 4)', (
 })
 
 describe('ingestAgentIndexPage — immutable membership conflict diagnostics', () => {
+  it('fails closed when the pre-read membership has a different creator', async () => {
+    const store = freshStore()
+    const start = ROUTER_V1.coverageStartLedger
+    const ledger = start + 1
+    const txHash = 'TX-CREATOR-CONFLICT'
+    await store.upsertMembership({
+      networkId: ROUTER_V1.networkId,
+      agentAddress: AGENT_A,
+      ownerAddress: OWNER_A,
+      creatorAddress: ROUTER_LEGACY.address,
+      schemaVersion: ROUTER_V1.schemaVersion,
+      kind: 'deposit',
+      creationLedger: ledger,
+      creationTx: txHash,
+      grantTxHash: txHash,
+      runId: `${ROUTER_V1.networkId}:${ROUTER_V1.address}:${txHash}`,
+      runOrdinal: 0,
+      provenance: { source: 'router-event', generation: 'agent-v1-hardened' },
+    })
+    const before = await store.readOwnerMemberships({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+    })
+
+    await expect(
+      ingestAgentIndexPage({
+        source: ROUTER_V1,
+        store,
+        eventSource: fakeEventSource({
+          events: [
+            deployedRecord({
+              owner: OWNER_A,
+              agent: AGENT_A,
+              ledger,
+              txHash,
+              pagingToken: 'creator-conflict',
+            }),
+          ],
+          oldestAvailableLedger: start,
+          scannedThroughLedger: ledger,
+        }),
+        finalizedLedger: ledger,
+      })
+    ).rejects.toThrow(AgentIndexConflictError)
+
+    expect(
+      await store.readOwnerMemberships({
+        networkId: ROUTER_V1.networkId,
+        owner: OWNER_A,
+      })
+    ).toEqual(before)
+    const { sources } = await store.readCoverage({ networkId: ROUTER_V1.networkId })
+    expect(sources[0]).toMatchObject({
+      status: 'error',
+      indexedThroughLedger: start - 1,
+      cursor: null,
+      lastErrorMessage: expect.stringMatching(/immutable agent membership identity conflict/i),
+    })
+  })
+
+  it('fails closed when canonical replay ordering changes an immutable run ordinal', async () => {
+    const store = freshStore()
+    const start = ROUTER_V2_BRIDGE.coverageStartLedger
+    const ledger = start + 1
+    const txHash = 'TX-ORDINAL-CONFLICT'
+    const original = deployedRecord({
+      owner: OWNER_A,
+      agent: AGENT_A,
+      ledger,
+      txHash,
+      pagingToken: '20',
+    })
+    await ingestAgentIndexPage({
+      source: ROUTER_V2_BRIDGE,
+      store,
+      eventSource: fakeEventSource({
+        events: [original],
+        cursor: 'page-1',
+        oldestAvailableLedger: start,
+        scannedThroughLedger: ledger,
+      }),
+      finalizedLedger: ledger + 10,
+    })
+    const before = await store.readOwnerMemberships({
+      networkId: ROUTER_V2_BRIDGE.networkId,
+      owner: OWNER_A,
+    })
+    expect(before[0].runOrdinal).toBe(0)
+
+    await expect(
+      ingestAgentIndexPage({
+        source: ROUTER_V2_BRIDGE,
+        store,
+        eventSource: fakeEventSource({
+          events: [
+            deployedRecord({
+              owner: OWNER_A,
+              agent: AGENT_B,
+              ledger,
+              txHash,
+              pagingToken: '10',
+            }),
+            original,
+          ],
+          cursor: 'page-2',
+          oldestAvailableLedger: start,
+          scannedThroughLedger: ledger + 1,
+        }),
+        finalizedLedger: ledger + 10,
+      })
+    ).rejects.toThrow(AgentIndexConflictError)
+
+    expect(
+      await store.readOwnerMemberships({
+        networkId: ROUTER_V2_BRIDGE.networkId,
+        owner: OWNER_A,
+      })
+    ).toEqual(before)
+    const { sources } = await store.readCoverage({ networkId: ROUTER_V2_BRIDGE.networkId })
+    expect(sources[0]).toMatchObject({
+      status: 'error',
+      indexedThroughLedger: ledger,
+      cursor: 'page-1',
+      lastErrorMessage: expect.stringMatching(/immutable agent membership identity conflict/i),
+    })
+  })
+
   it('records the source error without advancing coverage or mutating the original membership', async () => {
     const store = freshStore()
     const start = ROUTER_V2_BRIDGE.coverageStartLedger
