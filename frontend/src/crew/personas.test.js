@@ -72,7 +72,7 @@ describe('assignCrewPersona', () => {
     })
   })
 
-  it('allows the legacy fallback for validated indexed creator and creation evidence', () => {
+  it('allows the legacy fallback for complete live indexed provenance', () => {
     expect(
       assignCrewPersona({
         networkId: 'stellar-testnet',
@@ -81,6 +81,37 @@ describe('assignCrewPersona', () => {
           creator: 'CINDEXEDCREATOR',
           createdLedger: 0,
           createdTxHash: 'creation-tx',
+          provenance: {
+            source: 'router-event',
+            providerId: 'live-rpc',
+            endpointClass: 'live',
+            generation: 'agent-v3',
+          },
+          runOrdinal: null,
+        },
+      })
+    ).toEqual({
+      state: 'assigned',
+      persona: CREW_PERSONAS[0],
+      source: 'legacy-fnv1a',
+      runOrdinal: null,
+    })
+  })
+
+  it('allows the legacy fallback for complete backfill-audit provenance', () => {
+    expect(
+      assignCrewPersona({
+        networkId: 'stellar-testnet',
+        discoveryRow: {
+          address: ADDRESS_B,
+          creator: 'CINDEXEDCREATOR',
+          createdLedger: 0,
+          createdTxHash: 'creation-tx',
+          provenance: {
+            source: 'backfill-audit',
+            evidenceKind: 'relayer-log',
+            evidenceHash: '0x1234',
+          },
           runOrdinal: null,
         },
       })
@@ -103,6 +134,23 @@ describe('assignCrewPersona', () => {
         assignCrewPersona({
           networkId: 'stellar-testnet',
           discoveryRow: { address: ADDRESS_A, discoverySources, runOrdinal: null },
+        })
+      ).toEqual({ state: 'pending', reason: 'unverified-discovery-row' })
+    }
+  })
+  it('keeps a cache or hint lookalike with identity fields pending without indexed provenance', () => {
+    for (const discoverySources of [['local-cache'], ['rpc-router-events']]) {
+      expect(
+        assignCrewPersona({
+          networkId: 'stellar-testnet',
+          discoveryRow: {
+            address: ADDRESS_A,
+            creator: 'CINDEXEDCREATOR',
+            createdLedger: 42,
+            createdTxHash: 'cache-lookalike-tx',
+            discoverySources,
+            runOrdinal: null,
+          },
         })
       ).toEqual({ state: 'pending', reason: 'unverified-discovery-row' })
     }

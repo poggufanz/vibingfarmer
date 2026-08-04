@@ -36,12 +36,7 @@ function isD1Proven(discoveryRow) {
     discoveryRow.discoverySources.includes('agent-index-api')
   if (indexedByApi) return true
 
-  return (
-    isNonEmptyString(discoveryRow.address) &&
-    isNonEmptyString(discoveryRow.creator) &&
-    isNonNegativeSafeInteger(discoveryRow.createdLedger) &&
-    isNonEmptyString(discoveryRow.createdTxHash)
-  )
+  return hasIndexedIdentity(discoveryRow) && hasIndexedProvenance(discoveryRow.provenance)
 }
 
 export function personaForOrdinal(ordinal) {
@@ -76,4 +71,27 @@ export function assignCrewPersona({ networkId, discoveryRow } = {}) {
     source: 'legacy-fnv1a',
     runOrdinal: null,
   }
+}
+function hasIndexedIdentity(discoveryRow) {
+  return (
+    isNonEmptyString(discoveryRow.address) &&
+    isNonEmptyString(discoveryRow.creator) &&
+    isNonNegativeSafeInteger(discoveryRow.createdLedger) &&
+    isNonEmptyString(discoveryRow.createdTxHash)
+  )
+}
+
+function hasIndexedProvenance(provenance) {
+  if (!provenance || typeof provenance !== 'object') return false
+
+  if (provenance.source === 'backfill-audit') {
+    return isNonEmptyString(provenance.evidenceKind) && isNonEmptyString(provenance.evidenceHash)
+  }
+
+  return (
+    ['router-event', 'registry-event'].includes(provenance.source) &&
+    isNonEmptyString(provenance.providerId) &&
+    isNonEmptyString(provenance.endpointClass) &&
+    isNonEmptyString(provenance.generation)
+  )
 }
