@@ -866,6 +866,35 @@ describe('PlanStage — C2: the reviewed amount must reconcile with the typed am
   })
 })
 
+describe('PlanStage — generation error layout', () => {
+  it('keeps one spacing token between the error notice and the retry button', async () => {
+    const onGenerate = vi.fn().mockRejectedValue(new Error('Strategy provider unavailable'))
+    const { container } = render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+    )
+    await fillAndSubmit({ amount: '100', risk: 'Steady' })
+    await screen.findByRole('alert')
+
+    const browser = await launchRealChromium()
+    try {
+      const page = await browser.newPage()
+      await page.setViewportSize({ width: 656, height: 480 })
+      await page.setContent(buildLayoutHarnessHtml(container.innerHTML))
+      const gap = await page.evaluate(() => {
+        const notice = document.querySelector('.pc-status-notice')
+        const retry = Array.from(document.querySelectorAll('button')).find(
+          (button) => button.textContent.trim() === 'Build my plan'
+        )
+        return retry.getBoundingClientRect().top - notice.getBoundingClientRect().bottom
+      })
+
+      expect(gap).toBe(16)
+    } finally {
+      await browser.close()
+    }
+  })
+})
+
 describe('PlanStage — I2: the cached source state is never mislabeled as the deterministic fallback', () => {
   it('shows a distinct "cached" badge and freshness, never "Safe default plan"/"Fallback"', async () => {
     const onGenerate = vi.fn().mockResolvedValue({

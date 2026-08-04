@@ -623,9 +623,11 @@ export function PlanStage({
             <StatusNotice state="danger" title="Could not build a plan">
               <p>{generationError}</p>
             </StatusNotice>
-            <button type="button" className="pc-button pc-button--primary" onClick={handleSubmit}>
-              Build my plan
-            </button>
+            <div className="pc-plan-error-actions">
+              <button type="button" className="pc-button pc-button--primary" onClick={handleSubmit}>
+                Build my plan
+              </button>
+            </div>
           </>
         )}
 

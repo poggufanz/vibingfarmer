@@ -144,6 +144,14 @@ function computeProofMessage({ networkId, owner, agent, challengeId, expiresAt, 
   ].join('|')
 }
 
+function encodeBase64Url(bytes) {
+  return Buffer.from(bytes)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}
+
 /** Classifies a failed (status, body) pair into a stable code, using only distinctions the wire
  * itself makes (see handler.js's agentIndexFailure + handleReceiptChallenge/handleReceiptWrite). */
 function classifyFailure(step, status, errorText) {
@@ -317,7 +325,7 @@ export async function postReceiptEvidence({
     requestDigest,
   })
   const signatureBytes = sessionKey.sign(Buffer.from(proofMessage, 'utf8'))
-  const signature = Buffer.from(signatureBytes).toString('base64url')
+  const signature = encodeBase64Url(signatureBytes)
 
   await beforeWrite?.()
   const { res: writeRes, body: writeBody } = await postJson({

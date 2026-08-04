@@ -605,13 +605,15 @@ export function buildFallbackForParams(amount, riskLevel) {
     destination: venue?.destination || venue?.name,
   })
   const count = agents.length || 1
+  const vaults = agents.map(() => ({
+    address: venue?.address,
+    name: venue?.name,
+    allocation: 1 / count,
+    expectedApy: venue?.apy ?? null,
+  }))
   return {
-    vaults: agents.map(() => ({
-      address: venue?.address,
-      name: venue?.name,
-      allocation: 1 / count,
-      expectedApy: venue?.apy ?? null,
-    })),
+    selected_vaults: vaults,
+    vaults,
     rationale:
       'No model response was available, so funds are split evenly across the truthful venue.',
     generatedBy: 'fallback',

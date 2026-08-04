@@ -1171,6 +1171,42 @@ describe('StartStage -- 320px real layout guard', () => {
   }, 20000)
 })
 
+describe('StartStage -- settled receipt spacing', () => {
+  it('keeps 24px between the completed-run panel and Your receipt', async () => {
+    const settledReceipt = receiptFor({
+      allocations: [succeededAllocation('run-1:deposit:0'), succeededAllocation('run-1:deposit:1')],
+    })
+    const { container } = renderInRoute(
+      <StartStage
+        plan={PLAN_TWO_DEPOSITS}
+        permission={PERMISSION_FRESH}
+        events={[]}
+        receipt={settledReceipt}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+        onViewCrew={() => {}}
+      />
+    )
+
+    const browser = await launchRealChromium()
+    try {
+      const page = await browser.newPage()
+      await page.setViewportSize({ width: 1178, height: 1200 })
+      await page.setContent(buildLayoutHarnessHtml(container.innerHTML))
+      const gap = await page.evaluate(() => {
+        const runPanel = document.querySelector('.pc-strategy-layout')
+        const receiptPanel = document.querySelector('.pc-strategy-receipt')
+        return receiptPanel.getBoundingClientRect().top - runPanel.getBoundingClientRect().bottom
+      })
+
+      expect(gap).toBe(24)
+    } finally {
+      await browser.close()
+    }
+  }, 20000)
+})
+
 // Fix round 1 -- F2 real-layout guard. `.pc-strategy-aside` is `display: grid; gap: var(--pc-space-6)`
 // and becomes a 2-column grid specifically at `@media (max-width: 1023px)` (strategy.css) -- at
 // 767px and below it collapses back to `1fr` (strategy.css:1018-1020), so the EXISTING 320px guards

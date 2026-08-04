@@ -131,7 +131,7 @@ import { MyMoneyRoute } from './components/money/MyMoneyRoute.jsx'
 import { WithdrawDialog } from './components/money/WithdrawDialog.jsx'
 import { StopAccessDialog } from './components/money/StopAccessDialog.jsx'
 import { RecoveryPanel } from './components/money/RecoveryPanel.jsx'
-import { CrewRoute } from './components/crew/CrewRoute.jsx'
+import { CrewRoute, selectSuccessfulCrewAgents } from './components/crew/CrewRoute.jsx'
 import { selectCrewDecisions } from './components/crew/selectCrewDecisions.js'
 import { discoverOwnerScopes } from './stellar/ownerDiscovery.js'
 import { readOwnerMoney, aggregateOwnerPositions } from './money/readOwnerMoney.js'
@@ -4280,11 +4280,12 @@ const App = () => {
   const moneyBasePlan = { available: basePositions.length > 0, positions: basePositions }
   const moneyStopAccessAgent =
     moneyRead?.agents?.find((a) => a.address === moneyStopAccessAddress) ?? null
+  const crewAgents = selectSuccessfulCrewAgents(moneyRead?.agents ?? [])
   // Fix round 1, M9: this MUST stay byte-identical to CrewRoute.jsx's own `activeCount` predicate
   // (`!a?.scope?.value?.revoked && !a?.problems?.length`) -- the badge used to count only
   // `!revoked`, so an agent with problems made the rail say one more than the crew page's own
   // "Working for you" stat for the exact same word, "active".
-  const activeAgentCount = (moneyRead?.agents ?? []).filter(
+  const activeAgentCount = crewAgents.filter(
     (a) => !a?.scope?.value?.revoked && !a?.problems?.length
   ).length
 
@@ -4369,7 +4370,7 @@ const App = () => {
             path="/agent"
             element={
               <CrewRoute
-                agents={moneyRead?.agents ?? []}
+                agents={crewAgents}
                 model={moneyModel}
                 keeper={moneyKeeper}
                 keeperEvents={keeperActivity}

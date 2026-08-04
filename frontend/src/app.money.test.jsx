@@ -615,12 +615,17 @@ describe('/home & /agent route source: MyMoneyRoute moved to /home, /agent is no
   }
 
   it('the /home route element mounts <MyMoneyRoute', () => {
-    expect(routeBlock('/home')).toMatch(/<MyMoneyRoute/)
+    const homeRoute = routeBlock('/home')
+    expect(homeRoute).toMatch(/<MyMoneyRoute/)
+    expect(homeRoute).toMatch(/agents=\{moneyRead\?\.agents \?\? \[\]\}/)
+    expect(homeRoute).not.toMatch(/agents=\{crewAgents\}/)
   })
 
   it('the /agent route element mounts <CrewRoute, never <MyMoneyRoute', () => {
-    expect(routeBlock('/agent')).toMatch(/<CrewRoute/)
-    expect(routeBlock('/agent')).not.toMatch(/<MyMoneyRoute/)
+    const agentRoute = routeBlock('/agent')
+    expect(agentRoute).toMatch(/<CrewRoute/)
+    expect(agentRoute).toMatch(/agents=\{crewAgents\}/)
+    expect(agentRoute).not.toMatch(/<MyMoneyRoute/)
   })
 
   it('neither /home nor /agent ever mounts <OpsConsole', () => {
@@ -712,6 +717,7 @@ describe('activeAgentCount (Task 10 M9 fix): matches CrewRoute.jsx\'s own "activ
 
   it('counts !revoked && !problems.length, not !revoked alone', () => {
     const expr = exprBody('activeAgentCount')
+    expect(expr).toMatch(/crewAgents\.filter/)
     expect(expr).toMatch(/!a\?\.scope\?\.value\?\.revoked/)
     expect(expr).toMatch(/!a\?\.problems\?\.length/)
   })

@@ -312,6 +312,19 @@ describe('allocateBasePools', () => {
 })
 
 describe('buildFallbackForParams (one truthful destination allocation + crew expansion)', () => {
+  it('returns the selected_vaults contract consumed by the production plan builder', () => {
+    const result = buildFallbackForParams(300, 'high')
+
+    expect(result.selected_vaults).toHaveLength(RISK_PROFILES.high.targetSlots)
+    expect(
+      result.selected_vaults.every((vault) => vault.address === VAULT_CATALOG[0].address)
+    ).toBe(true)
+    expect(result.selected_vaults.reduce((sum, vault) => sum + vault.allocation, 0)).toBeCloseTo(
+      1,
+      6
+    )
+  })
+
   it('expands into RISK_PROFILES.targetSlots crew, not a silent 1-vault collapse', () => {
     for (const [riskLevel, risk] of [
       ['low', 'low'],

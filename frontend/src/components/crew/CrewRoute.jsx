@@ -1,6 +1,6 @@
 // frontend/src/components/crew/CrewRoute.jsx
 // Task 9 (Pocket Crew design alignment). New user-facing surface: the crew, live -- one console
-// showing every deployed agent, the emergency guard, and the activity/decision feeds. Pure
+// showing every successfully working agent, the emergency guard, and the activity/decision feeds. Pure
 // composition, no app state (Task 10 wires real `agents`/`model`/`keeper`/`keeperEvents`/
 // `decisions` in from app.jsx); follows the `components/money/*` pattern (props in, data-*-driven
 // styling) and does NOT import anything from `components/console/*` (retired, D-28.3).
@@ -22,11 +22,32 @@ function unitsToDisplay(units, decimals) {
   return Number(BigInt(units)) / 10 ** decimals
 }
 
+const PRODUCTIVE_CUSTODY_LOCATIONS = new Set(['stellar-vault', 'base-proxy'])
+
+function productiveCustodyUnits(model) {
+  if (!model?.custodyBreakdown || typeof model.custodyBreakdown !== 'object') return null
+
+  let units = 0n
+  try {
+    for (const location of PRODUCTIVE_CUSTODY_LOCATIONS) {
+      units += BigInt(model.custodyBreakdown[location] ?? 0)
+    }
+  } catch {
+    return null
+  }
+  return units
+}
+
 // Mirrors AgentTeam.jsx's own `${value.toLocaleString()} USDC` string convention for a known
-// amount -- never a new formatter, just this file's own copy of the same one-liner.
-function formatTotal(confirmedTotal) {
+// amount. Prefer the owner-wide, de-duplicated custody breakdown so failed/stranded funds do not
+// inflate "Total working"; a snapshot without that evidence fails closed.
+function formatWorkingTotal(model) {
+  const confirmedTotal = model?.confirmedTotal
   if (confirmedTotal?.state !== 'known' || !confirmedTotal.amount) return '—'
-  const { units, decimals, token } = confirmedTotal.amount
+
+  const { decimals, token } = confirmedTotal.amount
+  const units = productiveCustodyUnits(model)
+  if (units == null) return '—'
   return `${unitsToDisplay(units, decimals).toLocaleString()} ${token}`
 }
 
@@ -35,17 +56,45 @@ function liveApy(model) {
   return typeof apy === 'number' && Number.isFinite(apy) ? apy : null
 }
 
+// Deployment is not success: the grant creates every scoped account before any worker deposits.
+// Crew membership therefore requires confirmed positive money at a productive destination.
+// Failed/stranded rows stay in My Money's unfiltered owner read so recovery remains possible.
+function hasPositiveAmount(amount) {
+  try {
+    return amount != null && BigInt(amount.units) > 0n
+  } catch {
+    return false
+  }
+}
+
+export function selectSuccessfulCrewAgents(agents = []) {
+  if (!Array.isArray(agents)) return []
+  return agents.filter((agent) => {
+    if (
+      PRODUCTIVE_CUSTODY_LOCATIONS.has(agent?.custody?.location) &&
+      hasPositiveAmount(agent?.amount)
+    ) {
+      return true
+    }
+    return (agent?.custodyBreakdown ?? []).some(
+      (leg) => PRODUCTIVE_CUSTODY_LOCATIONS.has(leg?.location) && hasPositiveAmount(leg?.amount)
+    )
+  })
+}
+
 // Fix round 1, F4: `agents.length === 0` alone cannot tell "genuinely no crew" apart from "the
 // read failed/never finished", and both produce the same empty array (readOwnerMoney.js falls
 // back to `discovery?.agents ?? []`). `model.state === 'empty'` is buildMyMoneyModel's own
-// authoritatively-empty verdict (myMoneyModel.js:272-299: PROVEN-complete fresh discovery, a known
-// zero total, no unattributed doubt) -- the one signal that actually earns the confident "no crew
-// members are deployed yet" claim. Every other state (loading/unavailable/disconnected/
-// partial-discovery/problem/stale/current-with-a-stale-zero) with zero agents renders an honestly
-// uncertain line instead, never a confident claim manufactured from an absent or incomplete read.
+// authoritatively-empty verdict; a fresh `current` read with known-zero productive custody is also
+// enough to prove that only failed/stranded money remains. Incomplete, stale, or malformed reads
+// render an honestly uncertain line instead of manufacturing a confident claim.
 function emptyStateCopy(model) {
-  if (model?.state === 'empty') {
-    return 'No crew members are deployed yet. Hire one first — one signature, hard limits.'
+  const freshCurrentReadProvesNoProductiveCustody =
+    model?.state === 'current' &&
+    model?.confirmedTotal?.state === 'known' &&
+    productiveCustodyUnits(model) === 0n
+  if (model?.state === 'empty' || freshCurrentReadProvesNoProductiveCustody) {
+    return 'No successful crew members are working yet. Start a new plan to put one to work.'
   }
   return 'We could not confirm your crew on this read — this may not mean you have none. Try again shortly, or start a new one below.'
 }
@@ -61,19 +110,22 @@ export function CrewRoute({
   onStartStrategy,
   actionPending = false,
 }) {
-  const activeCount = agents.filter((a) => !a?.scope?.value?.revoked && !a?.problems?.length).length
+  const crewAgents = selectSuccessfulCrewAgents(agents)
+  const activeCount = crewAgents.filter(
+    (a) => !a?.scope?.value?.revoked && !a?.problems?.length
+  ).length
   const apy = liveApy(model)
   const running = keeper?.label === 'healthy'
-  const totalText = formatTotal(model?.confirmedTotal)
+  const totalText = formatWorkingTotal(model)
 
   // 2026-08-02 polish (motion pass): the same restrained entrance MyMoneyRoute/StartStage share,
   // keyed on the crew's real size -- it replays only when the crew genuinely gains or loses a
   // member (or first appears), never on a timer. Lanes opt in per-row in CrewLanes.jsx so they
   // arrive staggered.
   const rootRef = useRef(null)
-  usePocketTransition(rootRef, agents.length)
+  usePocketTransition(rootRef, crewAgents.length)
 
-  if (!agents.length) {
+  if (!crewAgents.length) {
     return (
       <div className="pc-route pc-crew-route">
         <header className="pc-route-header">
@@ -111,7 +163,7 @@ export function CrewRoute({
         <div className="pc-crew-stat">
           <p className="pc-crew-stat-label">Active permissions</p>
           <p className="pc-crew-stat-value">
-            {activeCount} of {agents.length}
+            {activeCount} of {crewAgents.length}
           </p>
         </div>
         <div className="pc-crew-stat">
@@ -125,7 +177,11 @@ export function CrewRoute({
       </div>
 
       <div className="pc-crew-console">
-        <CrewLanes agents={agents} onCancelAgent={onCancelAgent} actionPending={actionPending} />
+        <CrewLanes
+          agents={crewAgents}
+          onCancelAgent={onCancelAgent}
+          actionPending={actionPending}
+        />
         <div className="pc-crew-side" data-pocket-enter>
           <CrewGuard
             protection={model?.protection}

@@ -55,6 +55,9 @@ function env(overrides = {}) {
   return {
     VF_DB: { binding: 'test-d1' },
     SOROBAN_RPC_URL: 'https://rpc.example.test',
+    // Keep this fixture isolated from vite.config.js loading a developer's `.env.local` plural
+    // router list into process.env. Individual plural-router tests override it explicitly.
+    SOROBAN_ROUTER_ADDRESSES: '',
     SOROBAN_ROUTER_ADDRESS: ROUTER,
     STELLAR_NETWORK_ID: NETWORK,
     STELLAR_NETWORK_PASSPHRASE: Networks.TESTNET,

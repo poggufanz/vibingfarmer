@@ -100,6 +100,11 @@
   gap: var(--pc-route-gap);
 }
 
+.pc-start-stage {
+  display: grid;
+  gap: var(--pc-space-6);
+}
+
 /* Task 2 (Pocket Crew design alignment) -- the route-level header: the single h1 ("Hire a crew,
  * once.") plus the "Step N of 3" counter for the current stage, sitting above StrategyProgress's
  * tabs. Mirrors the mock's `.pc-rhead`. Mobile collapse (`grid-template-columns: 1fr`) is already
@@ -936,6 +941,13 @@
   min-height: var(--pc-touch-target);
   padding-inline: var(--pc-space-5);
   font-size: var(--pc-type-label);
+}
+
+.pc-plan-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-4);
 }
 
 .pc-field-error {

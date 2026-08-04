@@ -8,8 +8,8 @@
 // Status mapping (all three branches), decision `tone` -> `data-tone` (including 'rejected'), the
 // per-lane amount path (known + null->Unavailable), `data-revoked`, and an exact lane COUNT (the
 // old `getAllByRole('listitem').length > 0` was satisfied by the decision list alone). Fix round 1,
-// F4: model.state === 'empty' is the only state allowed to show the confident "no crew members"
-// claim; every other state with zero agents shows an honestly uncertain line instead.
+// F4: only a fresh authoritative empty model or a fresh current model with known-zero productive
+// custody may show the confident "no successful crew" claim; incomplete reads stay uncertain.
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -33,6 +33,7 @@ const agentRow = (over = {}) => ({
 const model = {
   state: 'current',
   confirmedTotal: { state: 'known', amount: { token: 'USDC', units: '2500000000', decimals: 7 } },
+  custodyBreakdown: { 'stellar-vault': '2500000000' },
   yield: { state: 'live', apy: 8.1 },
   protection: {
     state: 'armed',
@@ -60,6 +61,103 @@ const renderCrew = (over = {}) =>
   )
 
 describe('CrewRoute', () => {
+  it('shows only successfully working agents from a mixed three-agent execution', () => {
+    const STELLAR_SUCCESS = 'C' + 'S'.repeat(55)
+    const FAILED_AT_AGENT = 'C' + 'F'.repeat(55)
+    const BASE_SUCCESS = 'C' + 'B'.repeat(55)
+    const { container } = renderCrew({
+      model: {
+        ...model,
+        confirmedTotal: {
+          state: 'known',
+          amount: { token: 'USDC', units: '7500000000', decimals: 7 },
+        },
+        custodyBreakdown: {
+          'stellar-vault': '2500000000',
+          'base-proxy': '2500000000',
+          agent: '2500000000',
+        },
+      },
+      agents: [
+        agentRow({ address: STELLAR_SUCCESS }),
+        agentRow({
+          address: FAILED_AT_AGENT,
+          executionStatus: 'failed',
+          custody: { location: 'agent' },
+          problems: [],
+        }),
+        agentRow({
+          address: BASE_SUCCESS,
+          executionStatus: 'succeeded',
+          custody: { location: 'unknown' },
+          custodyBreakdown: [
+            {
+              location: 'base-proxy',
+              amount: { token: 'USDC', units: '2500000000', decimals: 7 },
+            },
+          ],
+        }),
+      ],
+    })
+
+    const lanes = [...container.querySelectorAll('.pc-crew-lane')]
+    expect(lanes).toHaveLength(2)
+    expect(lanes.map((lane) => lane.querySelector('.pc-crew-lane-address').textContent)).toEqual([
+      'CSSS…SSSS',
+      'CBBB…BBBB',
+    ])
+    expect(screen.getByText('Active permissions').nextElementSibling.textContent).toBe('2 of 2')
+    expect(screen.getByText('Total working').nextElementSibling.textContent).toBe('500 USDC')
+  })
+
+  it('shows a truthful empty state when all three deployed agents failed', () => {
+    const failedAgent = (suffix) =>
+      agentRow({
+        address: 'C' + suffix.repeat(55),
+        amount: { token: 'USDC', units: '0', decimals: 7 },
+        executionStatus: 'failed',
+        custody: { location: 'agent' },
+        problems: [],
+      })
+    const { container } = renderCrew({
+      agents: [failedAgent('F'), failedAgent('G'), failedAgent('H')],
+      model: {
+        ...model,
+        state: 'empty',
+        agentCount: 3,
+        confirmedTotal: {
+          state: 'known',
+          amount: { token: 'USDC', units: '0', decimals: 7 },
+        },
+      },
+    })
+
+    expect(container.querySelector('.pc-crew-lane')).toBeNull()
+    expect(screen.getByText(/no successful crew members are working yet/i)).toBeTruthy()
+    expect(screen.queryByText(/no crew members are deployed yet/i)).toBeNull()
+  })
+
+  it('confidently reports no successful crew after a fresh complete read finds only stranded funds', () => {
+    const { container } = renderCrew({
+      agents: [
+        agentRow({
+          amount: { token: 'USDC', units: '2500000000', decimals: 7 },
+          executionStatus: 'failed',
+          custody: { location: 'agent' },
+        }),
+      ],
+      model: {
+        ...model,
+        state: 'current',
+        custodyBreakdown: { agent: '2500000000' },
+      },
+    })
+
+    expect(container.querySelector('.pc-crew-lane')).toBeNull()
+    expect(screen.getByText(/no successful crew members are working yet/i)).toBeTruthy()
+    expect(screen.queryByText(/could not confirm your crew/i)).toBeNull()
+  })
+
   it('renders the route h1 and exactly one lane per agent', () => {
     const AGENT_2 = 'C' + 'E'.repeat(55)
     const { container } = renderCrew({ agents: [agentRow(), agentRow({ address: AGENT_2 })] })
@@ -112,6 +210,12 @@ describe('CrewRoute', () => {
     expect(totalValue.textContent).toBe('—')
   })
 
+  it('shows an honest dash when a legacy snapshot lacks productive custody evidence', () => {
+    renderCrew({ model: { ...model, custodyBreakdown: null } })
+    const totalValue = screen.getByText('Total working').nextElementSibling
+    expect(totalValue.textContent).toBe('—')
+  })
+
   it('maps keeper.label to the real Status word and tone: healthy, stale, and anything else', () => {
     const { unmount: unmountHealthy } = renderCrew({ keeper: { label: 'healthy' } })
     const healthyStatus = screen.getByText('Status').nextElementSibling
@@ -131,15 +235,18 @@ describe('CrewRoute', () => {
     expect(unavailableStatus.dataset.tone).toBe('warn')
   })
 
-  it('renders the real per-agent amount, and an honest Unavailable for a null amount read', () => {
+  it('renders a confirmed amount and never promotes an unavailable read into the successful crew', () => {
     const { unmount } = renderCrew({
       agents: [agentRow({ amount: { token: 'USDC', units: '750000000', decimals: 7 } })],
     })
     expect(screen.getByText('75 USDC')).toBeTruthy()
     unmount()
 
-    const { container } = renderCrew({ agents: [agentRow({ amount: null })] })
-    expect(container.querySelector('.pc-crew-lane').textContent).toMatch(/Unavailable/)
+    const { container } = renderCrew({
+      agents: [agentRow({ amount: null, custody: { location: 'unknown' } })],
+    })
+    expect(container.querySelector('.pc-crew-lane')).toBeNull()
+    expect(screen.getByText(/could not confirm your crew/i)).toBeTruthy()
   })
 
   it('renders both real keeper event kinds, and the honest empty line when there are none', () => {
@@ -218,14 +325,14 @@ describe('CrewRoute', () => {
     expect(onStartStrategy).toHaveBeenCalled()
   })
 
-  it('shows the confident "no crew members" claim only when model.state is authoritatively empty', () => {
+  it('shows the confident successful-crew empty state only when model.state is authoritatively empty', () => {
     renderCrew({ agents: [], model: { ...model, state: 'empty' } })
-    expect(screen.getByText(/no crew members are deployed yet/i)).toBeTruthy()
+    expect(screen.getByText(/no successful crew members are working yet/i)).toBeTruthy()
   })
 
-  it('never claims "no crew members" for an incomplete/failed read that merely produced zero agents', () => {
+  it('never claims there is no successful crew when an incomplete read merely produced zero agents', () => {
     renderCrew({ agents: [], model: { ...model, state: 'unavailable' } })
-    expect(screen.queryByText(/no crew members are deployed yet/i)).toBeNull()
+    expect(screen.queryByText(/no successful crew members are working yet/i)).toBeNull()
     expect(screen.getByText(/could not confirm your crew/i)).toBeTruthy()
   })
 
