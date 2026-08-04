@@ -237,6 +237,14 @@ jobs:
           VITE_ZERODEV_PASSKEY_SERVER_URL: ${{ secrets.VITE_ZERODEV_PASSKEY_SERVER_URL }}
       - name: Readiness check (no secrets -- confirms the build produced output before touching traffic)
         run: test -f dist/index.html
+      - name: Apply D1 migrations before publishing Functions
+        uses: cloudflare/wrangler-action@v3
+        with:
+          wranglerVersion: "4.100.0"
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          command: d1 migrations apply vf-gate --remote
       - uses: cloudflare/wrangler-action@v3
         with:
           # Pin to the version in frontend/package.json devDependencies — the

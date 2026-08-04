@@ -59,7 +59,20 @@ import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
 import { AgentMark } from '../pocket/AgentMark.jsx'
 import { buildStrategyViewModel, buildAmountDisplayMap } from '../../strategy/planModel.js'
 import { usePocketTransition } from '../../design/usePocketTransition.js'
+import { SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
 import { StrategyReceipt } from './StrategyReceipt.jsx'
+
+const TOKEN_SYMBOLS = Object.freeze({
+  [SOROBAN_TOKEN_ADDRESS]: 'USDC',
+  [STELLAR_USDC_SAC]: 'Circle USDC',
+})
+
+function tokenSymbol(token) {
+  if (TOKEN_SYMBOLS[token]) return TOKEN_SYMBOLS[token]
+  if (typeof token === 'string' && token.length > 12)
+    return `${token.slice(0, 4)}…${token.slice(-4)}`
+  return token
+}
 
 // Rank 0 is shared by two DIFFERENT labels depending on permission mode -- 'creating' (fresh: the
 // grant transaction just deployed this agent) vs 'pending' (reuse: the agent already existed;
@@ -496,6 +509,7 @@ export function StartStage({
           <ul className="pc-agent-lanes">
             {lanes.map((lane, index) => {
               const isBridge = lane.kind === 'bridge'
+              const planAgent = plan.agents[index]
               const display = displayByAllocation.get(lane.allocationId)
               const phaseLabel = isBridge
                 ? BRIDGE_PHASE_LABEL[lane.phase]
@@ -512,23 +526,26 @@ export function StartStage({
                     state={laneMarkState(lane.phase)}
                     label={isBridge ? 'B' : String(index + 1)}
                   />
-                  <div data-pocket-enter>
-                    {isBridge ? (
-                      <NetworkRoute context={bridgeNetworkContext(lane.phase)} />
-                    ) : (
-                      <NetworkBadge networkId="stellar-testnet" />
-                    )}
-                    <p>{phaseLabel || lane.phase}</p>
-                    {/* Fix round 1 (F1): the formatted 2dp figure (capDisplay, keyed by
-                        allocationId), never the raw `display.allocation` float -- see capDisplay's
-                        own comment above. Bridge child rows a few lines below intentionally stay
-                        raw (`childDisplay?.allocation`): PlanStage.jsx's own sibling bridge-child
-                        row (line 676) also renders that field raw, so those two already agree. */}
-                    {display && (
-                      <p className="pc-lane-cap">
-                        {capDisplay[lane.allocationId]} {plan.amount.token}
-                      </p>
-                    )}
+                  <div className="pc-agent-lane-body" data-pocket-enter>
+                    <div className="pc-agent-lane-meta">
+                      {isBridge ? (
+                        <NetworkRoute context={bridgeNetworkContext(lane.phase)} />
+                      ) : (
+                        <NetworkBadge networkId="stellar-testnet" />
+                      )}
+                      {/* Fix round 1 (F1): the formatted 2dp figure (capDisplay, keyed by
+                          allocationId), never the raw `display.allocation` float -- see capDisplay's
+                          own comment above. Bridge child rows a few lines below intentionally stay
+                          raw (`childDisplay?.allocation`): PlanStage.jsx's own sibling bridge-child
+                          row (line 676) also renders that field raw, so those two already agree. */}
+                      {display && (
+                        <p className="pc-lane-cap">
+                          {capDisplay[lane.allocationId]}{' '}
+                          {tokenSymbol(planAgent?.allocation.token ?? plan.amount.token)}
+                        </p>
+                      )}
+                    </div>
+                    <p className="pc-lane-phase">{phaseLabel || lane.phase}</p>
                     <div className="pc-agent-lane-progress">
                       <span />
                     </div>
@@ -556,7 +573,8 @@ export function StartStage({
                                     sibling bridge-child row, which always names the currency
                                     alongside the amount -- this one silently omitted it. */}
                                 {child.proxyTarget || child.destination}:{' '}
-                                {childDisplay?.allocation ?? ''} {plan.amount.token}
+                                {childDisplay?.allocation ?? ''}{' '}
+                                {tokenSymbol(planAgent?.allocation.token ?? plan.amount.token)}
                               </span>
                               {child.custodyLabel && <span> {child.custodyLabel}</span>}
                               {child.error && <span role="alert"> {child.error}</span>}

@@ -425,6 +425,24 @@ test('workflow: deploy runs a non-secret readiness step before the traffic-shift
   assert.ok(readinessIdx !== -1 && readinessIdx < wranglerIdx, 'a non-secret readiness step must run before the wrangler deploy step')
 })
 
+test('workflow: deploy applies remote D1 migrations before publishing Pages Functions', () => {
+  const workflow = loadWorkflow()
+  const steps = workflow.jobs.deploy.steps
+  const migrationIdx = steps.findIndex(
+    (step) =>
+      step.uses?.startsWith('cloudflare/wrangler-action') &&
+      step.with?.command === 'd1 migrations apply vf-gate --remote'
+  )
+  const deployIdx = steps.findIndex(
+    (step) =>
+      step.uses?.startsWith('cloudflare/wrangler-action') &&
+      String(step.with?.command).startsWith('pages deploy ')
+  )
+  assert.ok(migrationIdx !== -1, 'deploy must apply the remote vf-gate D1 migrations')
+  assert.ok(deployIdx !== -1, 'deploy must publish Pages')
+  assert.ok(migrationIdx < deployIdx, 'D1 migrations must finish before Pages Functions are published')
+})
+
 test('workflow: playwright upload-artifact path is a scalar naming both report directories (not a YAML sequence)', () => {
   // Action inputs under `with:` become INPUT_* env vars — they must be scalar strings. A YAML
   // sequence there either invalidates the whole workflow file or silently resolves to nothing,

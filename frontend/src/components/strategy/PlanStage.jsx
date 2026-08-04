@@ -894,12 +894,20 @@ export function PlanStage({
             Stellar deposit leg at all -- rendering "Stellar truth" / "0 live venue" beside the
             live-venue disclosure would be a false claim. */}
         {plan && plan.truth.stellarVenueCount > 0 && (
-          <div className="pc-support">
+          <div className="pc-support pc-stellar-truth">
             <div className="pc-support-content">
-              <h2>Stellar truth</h2>
-              <p>{plan.truth.agentIsolationCount} isolated accounts</p>
-              <p>{plan.truth.stellarVenueCount} live venue</p>
-              <VenueTruth kind="live" venue={stellarVenue?.name} />
+              <div className="pc-stellar-truth-header">
+                <h2>Stellar truth</h2>
+                <span className="pc-stellar-truth-status">Live on testnet</span>
+              </div>
+              <div className="pc-stellar-truth-facts">
+                <p>{plan.truth.agentIsolationCount} isolated accounts</p>
+                <p>{plan.truth.stellarVenueCount} live venue</p>
+              </div>
+              <div className="pc-stellar-truth-route">
+                <p className="pc-stellar-truth-label">Verified yield route</p>
+                <VenueTruth kind="live" venue={stellarVenue?.name} />
+              </div>
             </div>
           </div>
         )}

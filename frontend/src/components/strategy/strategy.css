@@ -631,9 +631,10 @@
  * unported because "no in-flight worker progress exists to draw" on Plan/Protect -- Start is
  * exactly the surface it was reserved for. */
 .pc-agent-lane-progress {
-  height: 3px;
+  height: 6px;
   margin-top: var(--pc-space-2);
-  background: var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background: color-mix(in srgb, currentcolor 24%, transparent);
   overflow: hidden;
 }
 
@@ -641,7 +642,8 @@
   display: block;
   width: var(--pc-progress, 0%);
   height: 100%;
-  background: var(--pc-harvest);
+  border-radius: inherit;
+  background: currentcolor;
   transform-origin: left center;
 }
 
@@ -775,9 +777,60 @@
 }
 
 .pc-lane-cap {
+  margin: 0;
   font-family: var(--pc-font-mono);
   font-size: var(--pc-type-technical);
   text-align: right;
+}
+
+.pc-start-stage .pc-strategy-question:focus {
+  outline: 0;
+}
+
+.pc-start-stage .pc-agent-lane {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  padding-block: var(--pc-space-5);
+  border-bottom-width: 2px;
+  border-bottom-color: color-mix(in srgb, currentcolor 34%, transparent);
+}
+
+.pc-start-stage .pc-agent-lane:first-child {
+  padding-top: 0;
+}
+
+.pc-start-stage .pc-agent-lane:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.pc-start-stage .pc-agent-mark {
+  margin-top: var(--pc-space-1);
+}
+
+.pc-agent-lane-body {
+  display: grid;
+  min-width: 0;
+  gap: var(--pc-space-3);
+}
+
+.pc-agent-lane-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+}
+
+.pc-lane-phase {
+  margin: 0;
+  font-size: var(--pc-type-body-small);
+  font-weight: 700;
+}
+
+.pc-start-stage .pc-agent-lane > .pc-button {
+  grid-column: 2;
+  justify-self: start;
 }
 
 /* Task 12 -- lanes render agent addresses/allocationIds and the receipt renders tx hashes and full
@@ -1106,6 +1159,100 @@
   padding: var(--pc-space-5);
 }
 
+/* The Stellar proof block carries live execution facts, so it gets stronger hierarchy than the
+ * generic supporting surface without becoming another dominant card. */
+.pc-stellar-truth {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  background: color-mix(in srgb, var(--pc-harvest) 4%, var(--pc-workspace));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--pc-ink) 10%, transparent);
+}
+
+.pc-stellar-truth::before {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 92px;
+  height: 4px;
+  background: var(--pc-harvest);
+  content: '';
+}
+
+.pc-stellar-truth .pc-support-content {
+  display: grid;
+  gap: var(--pc-space-5);
+  padding: var(--pc-space-6);
+}
+
+.pc-stellar-truth-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pc-stellar-truth-header h2 {
+  margin: 0;
+  font-size: var(--pc-type-section);
+  letter-spacing: -0.025em;
+}
+
+.pc-stellar-truth-status {
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+  font-size: var(--pc-type-label);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pc-stellar-truth-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: color-mix(in srgb, var(--pc-ink) 5%, transparent);
+}
+
+.pc-stellar-truth-facts p {
+  min-width: 0;
+  margin: 0;
+  padding: var(--pc-space-4);
+  font-size: var(--pc-type-body-small);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+.pc-stellar-truth-facts p + p {
+  border-left: 1px solid var(--pc-line);
+}
+
+.pc-stellar-truth-route {
+  display: grid;
+  gap: var(--pc-space-1);
+  padding-top: var(--pc-space-4);
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-stellar-truth-label,
+.pc-stellar-truth-route .pc-venue-truth-copy {
+  margin: 0;
+}
+
+.pc-stellar-truth-label {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+.pc-stellar-truth-route .pc-venue-truth-copy {
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
 /* Strategy Task 14 fix loop N -- owner report, items 1/6/8. Two new, scoped flex rows (neither is
  * a locked contract selector -- `.pc-plan-summary-header`/`.pc-plan-facts` don't exist in the
  * contract at all, this route's own addition): the source badge, the optional Retry-live-check
@@ -1137,6 +1284,7 @@
 }
 
 .pc-plan-facts .network-badge,
+.pc-start-stage .network-badge,
 .pc-agent-lanes--review .network-badge {
   display: inline-flex;
   align-items: center;
@@ -1152,6 +1300,7 @@
 }
 
 .pc-plan-facts .network-mark,
+.pc-start-stage .network-mark,
 .pc-agent-lanes--review .network-mark {
   display: block;
   flex: none;

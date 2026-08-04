@@ -41,7 +41,8 @@ function amount(token, units, decimals = 7) {
 const PLAN_TWO_DEPOSITS = Object.freeze({
   runId: 'run-1',
   planFingerprint: '0xplan1',
-  amount: amount('USDC', '2000000000'),
+  // Production carries the Stellar SAC contract address here, not a friendly symbol.
+  amount: amount(TOKEN_ADDR, '2000000000'),
   agents: [
     {
       allocationId: 'run-1:deposit:0',
@@ -276,6 +277,7 @@ describe('Start polish', () => {
     for (const cap of caps) {
       expect(cap.textContent).toBe('100.00 USDC')
     }
+    expect(container.textContent).not.toContain(TOKEN_ADDR)
   })
 
   it('formats a non-divisible per-agent split to 2dp, never the raw float (F1 regression)', () => {
@@ -314,7 +316,7 @@ describe('Start polish', () => {
   it('renders a formatted cap on the bridge lane too (the parent total, never a child figure)', () => {
     const { container } = renderStartStage({ plan: PLAN_WITH_BRIDGE })
     const caps = [...container.querySelectorAll('.pc-lane-cap')].map((c) => c.textContent)
-    expect(caps).toEqual(['100.00 USDC', '100.00 USDC'])
+    expect(caps).toEqual(['100.00 USDC', '100.00 Circle USDC'])
   })
 })
 
@@ -934,6 +936,17 @@ describe('StartStage -- no inline style or inline animation (rejection checklist
     const css = fs.readFileSync(path.resolve(here, './strategy.css'), 'utf8')
     expect(css).not.toMatch(/@keyframes/i)
     expect(css).not.toMatch(/gradient/i)
+  })
+
+  it('uses dark current-color separators and progress on the Harvest surface', () => {
+    const css = fs.readFileSync(path.resolve(here, './strategy.css'), 'utf8')
+    expect(css).toMatch(
+      /\.pc-start-stage \.pc-agent-lane\s*\{[^}]*border-bottom-color:\s*color-mix\(in srgb, currentcolor 34%, transparent\)/
+    )
+    expect(css).toMatch(
+      /\.pc-agent-lane-progress\s*\{[^}]*background:\s*color-mix\(in srgb, currentcolor 24%, transparent\)/
+    )
+    expect(css).toMatch(/\.pc-agent-lane-progress > span\s*\{[^}]*background:\s*currentcolor/)
   })
 })
 
