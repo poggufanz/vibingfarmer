@@ -1,372 +1,325 @@
-// frontend/src/components/crew/CrewRoute.test.jsx
-// Task 9 (Pocket Crew design alignment). CrewRoute composition test -- route heading, stat strip
-// sourced from real model fields, per-agent cancel wiring, revoked-agent dimming, empty-state CTA,
-// and the decision log. Accessibility sweep mirrors MyMoneyRoute.a11y.test.jsx's own axe pattern.
-//
-// Fix round 1, F5: closes the coverage gaps the review named -- the "Total working" stat (and its
-// honest '—' fallback), the keeper feed (both event kinds + the empty line), the keeper.label ->
-// Status mapping (all three branches), decision `tone` -> `data-tone` (including 'rejected'), the
-// per-lane amount path (known + null->Unavailable), `data-revoked`, and an exact lane COUNT (the
-// old `getAllByRole('listitem').length > 0` was satisfied by the decision list alone). Fix round 1,
-// F4: only a fresh authoritative empty model or a fresh current model with known-zero productive
-// custody may show the confident "no successful crew" claim; incomplete reads stay uncertain.
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { CrewRoute } from './CrewRoute.jsx'
+import { CrewLanes } from './CrewLanes.jsx'
 
 expect.extend(axeMatchers)
 afterEach(cleanup)
 
-const AGENT = 'C' + 'A'.repeat(55)
-const agentRow = (over = {}) => ({
-  address: AGENT,
-  scope: { state: 'known', value: { vault: 'CVAULT', revoked: false, expiry: 0 } },
-  amount: { token: 'USDC', units: '2500000000', decimals: 7 },
-  executionStatus: 'idle',
-  custody: { location: 'stellar-vault' },
-  problems: [],
-  ...over,
+const ADDRESSES = Object.freeze({
+  first: `C${'A'.repeat(55)}`,
+  second: `C${'B'.repeat(55)}`,
+  base: `C${'C'.repeat(55)}`,
+  fourth: `C${'D'.repeat(55)}`,
 })
+
+function amount(units, token = 'USDC', decimals = 7) {
+  return { token, units, decimals }
+}
+
+function child(address, units, overrides = {}) {
+  const workingAmount = amount(units)
+  return {
+    agent: {
+      address,
+      scope: { state: 'known', value: { revoked: false, vault: 'CVAULT' } },
+      executionStatus: 'succeeded',
+      problems: [],
+    },
+    discoveryRow: {
+      runId: `run-${address.slice(-4)}`,
+      runOrdinal: 0,
+      createdLedger: 1234,
+      createdTxHash: `create-${address.slice(-4)}`,
+    },
+    workingLegs: [
+      {
+        location: 'stellar-vault',
+        amount: workingAmount,
+        shared: false,
+        counted: true,
+      },
+    ],
+    workingTotals: [workingAmount],
+    idleAmount: amount('50000000'),
+    hasWithdrawableStellar: true,
+    active: true,
+    incomplete: false,
+    ...overrides,
+  }
+}
+
+function persona(id, name, avatar, children = [], totals = [], totalState = 'known') {
+  return { id, name, avatar, children, totals, totalState }
+}
+
+function crew(overrides = {}) {
+  const first = child(ADDRESSES.first, '1000000000')
+  const second = child(ADDRESSES.second, '500000000', {
+    discoveryRow: {
+      runId: 'run-second',
+      runOrdinal: 3,
+      createdLedger: 1300,
+      createdTxHash: 'create-second',
+    },
+  })
+  return {
+    status: 'complete',
+    personas: [
+      persona(
+        'sprout',
+        'Sprout',
+        '/brand/agents/sprout.svg',
+        [first, second],
+        [amount('1500000000')]
+      ),
+      persona('clover', 'Clover', '/brand/agents/clover.svg'),
+      persona('mochi', 'Mochi', '/brand/agents/mochi.svg'),
+    ],
+    pendingAssignments: [],
+    productiveAgentCount: 2,
+    activeCount: 2,
+    totals: [amount('1500000000')],
+    ...overrides,
+  }
+}
+
 const model = {
-  state: 'current',
-  confirmedTotal: { state: 'known', amount: { token: 'USDC', units: '2500000000', decimals: 7 } },
-  custodyBreakdown: { 'stellar-vault': '2500000000' },
   yield: { state: 'live', apy: 8.1 },
   protection: {
     state: 'armed',
-    authority: 'G'.repeat(56),
+    ownerIsAuthority: true,
     mandateExpiry: Math.floor(Date.now() / 1000) + 3600,
   },
 }
-const keeper = { label: 'healthy', lastHeartbeatAt: Date.now() - 30_000, evidence: {} }
+const keeper = { label: 'healthy' }
 
-const renderCrew = (over = {}) =>
-  render(
+function renderCrew(overrides = {}) {
+  return render(
     <CrewRoute
-      agents={[agentRow()]}
+      crew={crew()}
       model={model}
       keeper={keeper}
       keeperEvents={[]}
-      decisions={[
-        { id: 1, tone: 'kept', title: 'Council proposal', detail: 'hold', time: '12:00' },
-      ]}
+      decisions={[]}
       onRenewMandate={vi.fn()}
       onCancelAgent={vi.fn()}
       onStartStrategy={vi.fn()}
-      {...over}
+      {...overrides}
     />
   )
+}
 
-describe('CrewRoute', () => {
-  it('shows only successfully working agents from a mixed three-agent execution', () => {
-    const STELLAR_SUCCESS = 'C' + 'S'.repeat(55)
-    const FAILED_AT_AGENT = 'C' + 'F'.repeat(55)
-    const BASE_SUCCESS = 'C' + 'B'.repeat(55)
-    const { container } = renderCrew({
-      model: {
-        ...model,
-        confirmedTotal: {
-          state: 'known',
-          amount: { token: 'USDC', units: '7500000000', decimals: 7 },
-        },
-        custodyBreakdown: {
-          'stellar-vault': '2500000000',
-          'base-proxy': '2500000000',
-          agent: '2500000000',
-        },
-      },
-      agents: [
-        agentRow({ address: STELLAR_SUCCESS }),
-        agentRow({
-          address: FAILED_AT_AGENT,
-          executionStatus: 'failed',
-          custody: { location: 'agent' },
-          problems: [],
-        }),
-        agentRow({
-          address: BASE_SUCCESS,
-          executionStatus: 'succeeded',
-          custody: { location: 'unknown' },
-          custodyBreakdown: [
-            {
-              location: 'base-proxy',
-              amount: { token: 'USDC', units: '2500000000', decimals: 7 },
-            },
-          ],
-        }),
-      ],
+describe('CrewRoute persona projection', () => {
+  it('renders exactly Sprout, Clover, and Mochi in stable order, including empty personas', () => {
+    const { container } = renderCrew()
+    const cards = [...container.querySelectorAll('[data-persona-id]')]
+
+    expect(cards.map((card) => card.dataset.personaId)).toEqual(['sprout', 'clover', 'mochi'])
+    expect(cards).toHaveLength(3)
+    expect(within(cards[0]).getByRole('heading', { name: 'Sprout' })).toBeTruthy()
+    expect(within(cards[1]).getByText(/no productive accounts assigned yet/i)).toBeTruthy()
+    expect(within(cards[2]).getByText(/no productive accounts assigned yet/i)).toBeTruthy()
+    expect(
+      within(cards[1])
+        .getByRole('img', { name: /clover/i })
+        .getAttribute('src')
+    ).toBe('/brand/agents/clover.svg')
+  })
+
+  it('keeps two physical children under Sprout and sums only the supplied exact productive total', () => {
+    const { container } = renderCrew()
+    const sprout = container.querySelector('[data-persona-id="sprout"]')
+    const rows = [...sprout.querySelectorAll('[data-child-address]')]
+
+    expect(rows.map((row) => row.dataset.childAddress)).toEqual([ADDRESSES.first, ADDRESSES.second])
+    expect(within(sprout).getByText('150 USDC')).toBeTruthy()
+    expect(within(sprout).getByText('2 accounts')).toBeTruthy()
+    expect(screen.getByText('Total working').nextElementSibling.textContent).toContain('150 USDC')
+  })
+
+  it('never creates a fourth persona card when more child deployments arrive', () => {
+    const many = crew()
+    many.personas = many.personas.map((entry) => ({ ...entry, children: [...entry.children] }))
+    many.personas[0].children.push(child(ADDRESSES.fourth, '250000000'))
+    many.personas[1].children.push(child(`C${'E'.repeat(55)}`, '250000000'))
+    many.personas[2].children.push(child(`C${'F'.repeat(55)}`, '250000000'))
+
+    const { container } = renderCrew({ crew: many })
+    expect(container.querySelectorAll('[data-persona-id]')).toHaveLength(3)
+  })
+
+  it('renders each token/decimal total independently and labels partial coverage', () => {
+    const partial = crew({
+      status: 'partial',
+      totals: [amount('1500000000'), amount('1234567', 'USDC', 6), amount('42', 'EURC', 2)],
     })
+    partial.personas[0] = {
+      ...partial.personas[0],
+      totalState: 'partial',
+      totals: [amount('1500000000'), amount('1234567', 'USDC', 6), amount('42', 'EURC', 2)],
+    }
+    const { container } = renderCrew({ crew: partial })
+    const total = screen.getByText('Total working').nextElementSibling
+    const sprout = container.querySelector('[data-persona-id="sprout"]')
 
-    const lanes = [...container.querySelectorAll('.pc-crew-lane')]
-    expect(lanes).toHaveLength(2)
-    expect(lanes.map((lane) => lane.querySelector('.pc-crew-lane-address').textContent)).toEqual([
-      'CSSS…SSSS',
-      'CBBB…BBBB',
-    ])
-    expect(screen.getByText('Active permissions').nextElementSibling.textContent).toBe('2 of 2')
-    expect(screen.getByText('Total working').nextElementSibling.textContent).toBe('500 USDC')
+    expect(total.textContent).toContain('150 USDC')
+    expect(total.textContent).toContain('1.234567 USDC')
+    expect(total.textContent).toContain('0.42 EURC')
+    expect(within(sprout).getByText(/partial coverage/i)).toBeTruthy()
   })
 
-  it('shows a truthful empty state when all three deployed agents failed', () => {
-    const failedAgent = (suffix) =>
-      agentRow({
-        address: 'C' + suffix.repeat(55),
-        amount: { token: 'USDC', units: '0', decimals: 7 },
-        executionStatus: 'failed',
-        custody: { location: 'agent' },
-        problems: [],
-      })
-    const { container } = renderCrew({
-      agents: [failedAgent('F'), failedAgent('G'), failedAgent('H')],
-      model: {
-        ...model,
-        state: 'empty',
-        agentCount: 3,
-        confirmedTotal: {
-          state: 'known',
-          amount: { token: 'USDC', units: '0', decimals: 7 },
-        },
-      },
+  it('shows pending productive evidence as syncing without assigning it or claiming confirmed empty', () => {
+    const pendingChild = child(ADDRESSES.base, '700000000', {
+      assignment: { state: 'pending', reason: 'unverified-discovery-row' },
+      active: false,
     })
-
-    expect(container.querySelector('.pc-crew-lane')).toBeNull()
-    expect(screen.getByText(/no successful crew members are working yet/i)).toBeTruthy()
-    expect(screen.queryByText(/no crew members are deployed yet/i)).toBeNull()
-  })
-
-  it('confidently reports no successful crew after a fresh complete read finds only stranded funds', () => {
-    const { container } = renderCrew({
-      agents: [
-        agentRow({
-          amount: { token: 'USDC', units: '2500000000', decimals: 7 },
-          executionStatus: 'failed',
-          custody: { location: 'agent' },
-        }),
-      ],
-      model: {
-        ...model,
-        state: 'current',
-        custodyBreakdown: { agent: '2500000000' },
-      },
+    const pendingCrew = crew({
+      status: 'partial',
+      personas: crew().personas.map((entry) => ({ ...entry, children: [], totals: [] })),
+      pendingAssignments: [pendingChild],
+      productiveAgentCount: 1,
+      activeCount: 0,
+      totals: [amount('700000000')],
     })
+    const { container } = renderCrew({ crew: pendingCrew })
 
-    expect(container.querySelector('.pc-crew-lane')).toBeNull()
-    expect(screen.getByText(/no successful crew members are working yet/i)).toBeTruthy()
-    expect(screen.queryByText(/could not confirm your crew/i)).toBeNull()
+    expect(screen.getByText(/crew assignment syncing/i)).toBeTruthy()
+    expect(
+      screen.getByText(new RegExp(`${ADDRESSES.base.slice(0, 4)}.*${ADDRESSES.base.slice(-4)}`))
+    ).toBeTruthy()
+    expect(container.querySelectorAll('[data-persona-id]')).toHaveLength(0)
+    expect(screen.queryByText(/no successful crew members are working yet/i)).toBeNull()
   })
 
-  it('renders the route h1 and exactly one lane per agent', () => {
-    const AGENT_2 = 'C' + 'E'.repeat(55)
-    const { container } = renderCrew({ agents: [agentRow(), agentRow({ address: AGENT_2 })] })
-    expect(screen.getByRole('heading', { level: 1, name: /the crew, live/i })).toBeTruthy()
-    const lanes = container.querySelectorAll('.pc-crew-lane')
-    expect(lanes.length).toBe(2)
-    // Fix round 2, F6: AgentMark's `label` is now the short 1-based lane number (not the address),
-    // so an unscoped `getByText` on this address substring is unambiguous again. Kept scoped to
-    // `lanes[0]`'s own address paragraph anyway -- it is the STRICTER check: it also catches a
-    // lane-ordering regression (e.g. the array rendered reversed) that an unscoped, page-wide
-    // `getByText` would miss entirely, since the same address text would still be found somewhere
-    // on the page, just in the wrong lane.
-    expect(lanes[0].querySelector('.pc-crew-lane-address').textContent).toMatch(
-      new RegExp(AGENT.slice(0, 4))
-    )
-  })
-
-  it("gives each AgentMark a distinct accessible name via its own lane number (M11, fix round 2: was the full short address, which overflowed AgentMark's visible <text> glyph -- F6)", () => {
-    const AGENT_2 = 'C' + 'F'.repeat(55)
-    const { container } = renderCrew({ agents: [agentRow(), agentRow({ address: AGENT_2 })] })
-    const marks = container.querySelectorAll('.pc-agent-mark')
-    expect(marks[0].getAttribute('aria-label')).not.toBe(marks[1].getAttribute('aria-label'))
-  })
-
-  it('shows the stat strip from real model fields, including the real confirmed total', () => {
-    // A distinct per-agent amount (100 USDC) from the model's own confirmedTotal (250 USDC) so the
-    // two don't render identical text -- otherwise `getByText('250 USDC')` would be ambiguous.
-    renderCrew({
-      agents: [agentRow({ amount: { token: 'USDC', units: '1000000000', decimals: 7 } })],
+  it('uses the projection status for a confident empty versus uncertain empty result', () => {
+    const emptyPersonas = crew().personas.map((entry) => ({ ...entry, children: [], totals: [] }))
+    const complete = crew({
+      personas: emptyPersonas,
+      pendingAssignments: [],
+      productiveAgentCount: 0,
+      activeCount: 0,
+      totals: [],
     })
-    expect(screen.getByText(/active permissions/i)).toBeTruthy()
-    expect(screen.getByText(/1 of 1/)).toBeTruthy()
-    expect(screen.getByText(/8\.1%/)).toBeTruthy()
-    expect(screen.getByText('250 USDC')).toBeTruthy()
-  })
-
-  it('shows an honest dash for Total working when confirmedTotal is not known, never a fabricated number', () => {
-    // `amount` is present (a real partial/unconfirmed reading), only `state` says it isn't known --
-    // proves the component checks `state`, not merely "is amount present".
-    renderCrew({
-      model: {
-        ...model,
-        confirmedTotal: {
-          state: 'partial',
-          amount: { token: 'USDC', units: '999000000', decimals: 7 },
-        },
-      },
-    })
-    const totalValue = screen.getByText('Total working').nextElementSibling
-    expect(totalValue.textContent).toBe('—')
-  })
-
-  it('shows an honest dash when a legacy snapshot lacks productive custody evidence', () => {
-    renderCrew({ model: { ...model, custodyBreakdown: null } })
-    const totalValue = screen.getByText('Total working').nextElementSibling
-    expect(totalValue.textContent).toBe('—')
-  })
-
-  it('maps keeper.label to the real Status word and tone: healthy, stale, and anything else', () => {
-    const { unmount: unmountHealthy } = renderCrew({ keeper: { label: 'healthy' } })
-    const healthyStatus = screen.getByText('Status').nextElementSibling
-    expect(healthyStatus.textContent).toBe('Running')
-    expect(healthyStatus.dataset.tone).toBe('good')
-    unmountHealthy()
-
-    const { unmount: unmountStale } = renderCrew({ keeper: { label: 'stale' } })
-    const staleStatus = screen.getByText('Status').nextElementSibling
-    expect(staleStatus.textContent).toBe('Quiet')
-    expect(staleStatus.dataset.tone).toBe('warn')
-    unmountStale()
-
-    renderCrew({ keeper: { label: 'unavailable' } })
-    const unavailableStatus = screen.getByText('Status').nextElementSibling
-    expect(unavailableStatus.textContent).toBe('Unavailable')
-    expect(unavailableStatus.dataset.tone).toBe('warn')
-  })
-
-  it('renders a confirmed amount and never promotes an unavailable read into the successful crew', () => {
-    const { unmount } = renderCrew({
-      agents: [agentRow({ amount: { token: 'USDC', units: '750000000', decimals: 7 } })],
-    })
-    expect(screen.getByText('75 USDC')).toBeTruthy()
+    const { unmount } = renderCrew({ crew: complete })
+    expect(screen.getByText(/no confirmed productive crew accounts are working yet/i)).toBeTruthy()
     unmount()
 
-    const { container } = renderCrew({
-      agents: [agentRow({ amount: null, custody: { location: 'unknown' } })],
-    })
-    expect(container.querySelector('.pc-crew-lane')).toBeNull()
+    renderCrew({ crew: { ...complete, status: 'partial' } })
+    expect(screen.queryByText(/no confirmed productive crew accounts are working yet/i)).toBeNull()
     expect(screen.getByText(/could not confirm your crew/i)).toBeTruthy()
   })
 
-  it('renders both real keeper event kinds, and the honest empty line when there are none', () => {
-    const { unmount: unmountCompound } = renderCrew({
+  it('preserves the Emergency guard and Activity side column', () => {
+    renderCrew({
       keeperEvents: [
         {
           id: 'compound:1',
           kind: 'compound_executed',
-          totalGainUsdc: '12.34',
+          totalGainUsdc: '4.82',
           txHash: 'abcdef1234567890',
-          timestamp: Date.now() - 5000,
+          timestamp: Date.now(),
         },
       ],
+      decisions: [{ id: 'd1', tone: 'kept', title: 'Hold position', detail: '', time: '12:00' }],
     })
-    expect(screen.getByText('Compounded, +12.34 USDC')).toBeTruthy()
-    unmountCompound()
 
-    const { unmount: unmountRebalance } = renderCrew({
-      keeperEvents: [
-        {
-          id: 'rebalance:1',
-          kind: 'rebalance_executed',
-          fromLabel: 'VaultA',
-          toLabel: 'VaultB',
-          amountUsdc: '5.00',
-          txHash: 'abcdef1234567890',
-          timestamp: Date.now() - 5000,
-        },
-      ],
-    })
-    expect(screen.getByText('Rebalanced, VaultA to VaultB, 5.00 USDC')).toBeTruthy()
-    unmountRebalance()
-
-    renderCrew({ keeperEvents: [] })
-    expect(screen.getByText('No keeper activity yet on this device.')).toBeTruthy()
-  })
-
-  it("stamps data-tone from each decision row's own tone, including 'rejected'", () => {
-    const { container } = renderCrew({
-      decisions: [
-        { id: 1, tone: 'kept', title: 'Council proposal', detail: 'hold', time: '12:00' },
-        { id: 2, tone: 'watch', title: 'Keeper rebalance created', detail: '', time: '12:05' },
-        { id: 3, tone: 'rejected', title: 'Rejected a candidate pool', detail: '', time: '12:10' },
-      ],
-    })
-    const rows = container.querySelectorAll('.pc-crew-decision-row')
-    expect(rows[0].dataset.tone).toBe('kept')
-    expect(rows[1].dataset.tone).toBe('watch')
-    expect(rows[2].dataset.tone).toBe('rejected')
-  })
-
-  it('cancel button reports the agent address', () => {
-    const onCancelAgent = vi.fn()
-    renderCrew({ onCancelAgent })
-    fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
-    expect(onCancelAgent).toHaveBeenCalledWith(AGENT)
-  })
-
-  it('revoked agents render dimmed (data-revoked) without a cancel button', () => {
-    const { container } = renderCrew({
-      agents: [
-        agentRow({
-          scope: { state: 'known', value: { vault: 'CVAULT', revoked: true, expiry: 0 } },
-        }),
-      ],
-    })
-    expect(screen.queryByRole('button', { name: /^cancel/i })).toBeNull()
-    expect(screen.getByText(/cancelled/i)).toBeTruthy()
-    expect(container.querySelector('.pc-crew-lane').dataset.revoked).toBe('true')
-  })
-
-  it('empty state points to the strategy', () => {
-    const onStartStrategy = vi.fn()
-    renderCrew({ agents: [], onStartStrategy })
-    fireEvent.click(screen.getByRole('button', { name: /put it to work/i }))
-    expect(onStartStrategy).toHaveBeenCalled()
-  })
-
-  it('shows the confident successful-crew empty state only when model.state is authoritatively empty', () => {
-    renderCrew({ agents: [], model: { ...model, state: 'empty' } })
-    expect(screen.getByText(/no successful crew members are working yet/i)).toBeTruthy()
-  })
-
-  it('never claims there is no successful crew when an incomplete read merely produced zero agents', () => {
-    renderCrew({ agents: [], model: { ...model, state: 'unavailable' } })
-    expect(screen.queryByText(/no successful crew members are working yet/i)).toBeNull()
-    expect(screen.getByText(/could not confirm your crew/i)).toBeTruthy()
-  })
-
-  it('renders decision log rows', () => {
-    renderCrew()
-    // Final-review fix, M6: "Every decision, written down" overclaimed completeness the
-    // selector cannot honour (dropped AgentFailed rows, allowlist-neutralized verdicts).
-    expect(screen.getByText(/decisions we logged/i)).toBeTruthy()
-    expect(screen.getByText('Council proposal')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: /emergency guard/i })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: /keeper activity/i })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: /decisions we logged/i })).toBeTruthy()
+    expect(screen.getByText('Compounded, +4.82 USDC')).toBeTruthy()
+    expect(screen.getByText('Hold position')).toBeTruthy()
   })
 })
 
-describe('CrewRoute — accessibility', () => {
-  it('has zero axe violations for the active crew view', async () => {
-    const { container } = renderCrew()
-    expect(await axe(container)).toHaveNoViolations()
-  })
-
-  it('has zero axe violations for the empty-crew view', async () => {
-    const { container } = renderCrew({ agents: [] })
-    expect(await axe(container)).toHaveNoViolations()
-  })
-
-  it('has zero axe violations for a revoked/mixed-problem crew view', async () => {
-    const { container } = renderCrew({
-      agents: [
-        agentRow(),
-        agentRow({
-          address: 'C' + 'B'.repeat(55),
-          scope: { state: 'known', value: { vault: 'CVAULT', revoked: true, expiry: 0 } },
-        }),
-        agentRow({ address: 'C' + 'D'.repeat(55), problems: ['scope-revoked'] }),
-      ],
+describe('CrewLanes exact-address actions and evidence', () => {
+  it('emits exact child addresses, offers Withdraw only for an eligible Stellar child, and exposes technical facts', () => {
+    const onCancelAgent = vi.fn()
+    const onWithdrawAgent = vi.fn()
+    const stellar = child(ADDRESSES.first, '1000000000', {
+      agent: {
+        address: ADDRESSES.first,
+        scope: { state: 'known', value: { revoked: false, vault: 'CVAULT' } },
+        executionStatus: 'failed',
+        problems: ['base-read-unavailable'],
+      },
     })
-    expect(await axe(container)).toHaveNoViolations()
+    const baseOnly = child(ADDRESSES.base, '500000000', {
+      workingLegs: [
+        {
+          location: 'base-proxy',
+          amount: amount('500000000'),
+          poolName: 'Aave v3',
+          shared: false,
+          counted: true,
+        },
+      ],
+      workingTotals: [amount('500000000')],
+      idleAmount: null,
+      hasWithdrawableStellar: false,
+    })
+    render(
+      <CrewLanes
+        personas={[
+          persona(
+            'sprout',
+            'Sprout',
+            '/brand/agents/sprout.svg',
+            [stellar, baseOnly],
+            [amount('1500000000')]
+          ),
+        ]}
+        onCancelAgent={onCancelAgent}
+        onWithdrawAgent={onWithdrawAgent}
+      />
+    )
+
+    const stellarRow = document.querySelector(`[data-child-address="${ADDRESSES.first}"]`)
+    const baseRow = document.querySelector(`[data-child-address="${ADDRESSES.base}"]`)
+    fireEvent.click(within(stellarRow).getByRole('button', { name: /withdraw/i }))
+    fireEvent.click(within(baseRow).getByRole('button', { name: /cancel/i }))
+
+    expect(onWithdrawAgent).toHaveBeenCalledWith(ADDRESSES.first)
+    expect(onCancelAgent).toHaveBeenCalledWith(ADDRESSES.base)
+    expect(within(baseRow).queryByRole('button', { name: /withdraw/i })).toBeNull()
+    expect(within(stellarRow).getByText(ADDRESSES.first)).toBeTruthy()
+    expect(within(stellarRow).getByText('run-AAAA')).toBeTruthy()
+    expect(within(stellarRow).getByText(/stellar vault/i)).toBeTruthy()
+    expect(within(stellarRow).getByText('5 USDC')).toBeTruthy()
+    expect(within(stellarRow).getByText('base-read-unavailable')).toBeTruthy()
+    expect(within(stellarRow).queryByText(/plan id/i)).toBeNull()
+  })
+})
+
+describe('CrewRoute accessibility', () => {
+  it('has zero axe violations for assigned, pending, and empty persona states', async () => {
+    const active = renderCrew()
+    expect(await axe(active.container)).toHaveNoViolations()
+    active.unmount()
+
+    const pending = crew({
+      status: 'partial',
+      personas: crew().personas.map((entry) => ({ ...entry, children: [], totals: [] })),
+      pendingAssignments: [child(ADDRESSES.base, '700000000', { active: false })],
+      productiveAgentCount: 1,
+      activeCount: 0,
+      totals: [amount('700000000')],
+    })
+    const pendingView = renderCrew({ crew: pending })
+    expect(await axe(pendingView.container)).toHaveNoViolations()
+    pendingView.unmount()
+
+    const empty = crew({
+      personas: crew().personas.map((entry) => ({ ...entry, children: [], totals: [] })),
+      pendingAssignments: [],
+      productiveAgentCount: 0,
+      activeCount: 0,
+      totals: [],
+    })
+    const emptyView = renderCrew({ crew: empty })
+    expect(await axe(emptyView.container)).toHaveNoViolations()
   })
 })

@@ -8,6 +8,8 @@ const mountedHarness = vi.hoisted(() => ({
   accountListener: null,
   initialAccount: null,
   routeProps: null,
+  crewRouteProps: null,
+  sidebarProps: null,
   moneyRouteProps: null,
   withdrawDialogProps: null,
   stopAccessDialogProps: null,
@@ -16,6 +18,18 @@ const mountedHarness = vi.hoisted(() => ({
   dispatch: null,
   movement: null,
 }))
+
+vi.mock('./components.jsx', async (importOriginal) => {
+  const actual = await importOriginal()
+  const { createElement } = await import('react')
+  return {
+    ...actual,
+    Sidebar: (props) => {
+      mountedHarness.sidebarProps = props
+      return createElement(actual.Sidebar, props)
+    },
+  }
+})
 
 vi.mock('./stellar/index.js', () => ({
   connectActiveAccount: vi.fn(async () => mountedHarness.initialAccount),
@@ -58,6 +72,16 @@ vi.mock('./components/money/MyMoneyRoute.jsx', async () => {
         { 'data-testid': 'mounted-money-state' },
         JSON.stringify({ owner: props.account?.address ?? null, agentCount: props.agents.length })
       )
+    },
+  }
+})
+
+vi.mock('./components/crew/CrewRoute.jsx', async () => {
+  const { createElement } = await import('react')
+  return {
+    CrewRoute: (props) => {
+      mountedHarness.crewRouteProps = props
+      return createElement('output', { 'data-testid': 'mounted-crew-state' }, 'crew')
     },
   }
 })
@@ -432,6 +456,8 @@ beforeEach(() => {
   mountedHarness.accountListener = null
   mountedHarness.initialAccount = G
   mountedHarness.routeProps = null
+  mountedHarness.crewRouteProps = null
+  mountedHarness.sidebarProps = null
   mountedHarness.moneyRouteProps = null
   mountedHarness.withdrawDialogProps = null
   mountedHarness.stopAccessDialogProps = null
@@ -462,6 +488,94 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('active account application state', () => {
+  it('builds one unfiltered Crew projection for the route and sidebar without wiring Withdraw', async () => {
+    const assignedAddress = `C${'S'.repeat(55)}`
+    const pendingAddress = `C${'P'.repeat(55)}`
+    const strandedAddress = `C${'F'.repeat(55)}`
+    const productiveAmount = { token: 'USDC', units: '1000000000', decimals: 7 }
+    const assignedRow = {
+      address: assignedAddress,
+      creator: 'CINDEXCREATOR',
+      createdLedger: 1200,
+      createdTxHash: 'create-assigned',
+      runId: 'run-assigned',
+      runOrdinal: 0,
+      provenance: {
+        source: 'router-event',
+        providerId: 'rpc',
+        endpointClass: 'live',
+        generation: 'agent-v3',
+      },
+      discoverySources: ['agent-index-api'],
+      scopeReadStatus: 'ok',
+      vault: 'CVAULT',
+      revoked: false,
+      expiry: 0,
+      authorized: true,
+      baseChildren: [],
+    }
+    const pendingRow = {
+      ...assignedRow,
+      address: pendingAddress,
+      creator: null,
+      createdLedger: null,
+      createdTxHash: null,
+      runId: null,
+      runOrdinal: null,
+      provenance: null,
+      discoverySources: ['rpc-router-events'],
+    }
+    const productiveAgent = (address) => ({
+      address,
+      scope: { state: 'known', value: { vault: 'CVAULT', revoked: false } },
+      amount: productiveAmount,
+      custody: { location: 'stellar-vault' },
+      custodyBreakdown: [{ location: 'stellar-vault', amount: productiveAmount }],
+      executionStatus: 'succeeded',
+      problems: [],
+    })
+    const strandedAgent = {
+      ...productiveAgent(strandedAddress),
+      custody: { location: 'agent' },
+      custodyBreakdown: [{ location: 'agent', amount: productiveAmount }],
+      executionStatus: 'failed',
+    }
+
+    discoverOwnerScopes.mockResolvedValue({
+      ...discoveryWith([assignedRow, pendingRow, { ...assignedRow, address: strandedAddress }]),
+      status: 'partial',
+    })
+    readOwnerMoney.mockResolvedValue(
+      moneyReads([productiveAgent(assignedAddress), productiveAgent(pendingAddress), strandedAgent])
+    )
+
+    render(
+      <MemoryRouter
+        initialEntries={['/agent']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <App />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => expect(mountedHarness.crewRouteProps).not.toBeNull())
+    await waitFor(() => expect(mountedHarness.crewRouteProps?.crew?.productiveAgentCount).toBe(2))
+    const projectedCrew = mountedHarness.crewRouteProps.crew
+    expect(projectedCrew.personas).toHaveLength(3)
+    expect(projectedCrew.personas[0].children.map((row) => row.agent.address)).toEqual([
+      assignedAddress,
+    ])
+    expect(projectedCrew.pendingAssignments.map((row) => row.agent.address)).toEqual([
+      pendingAddress,
+    ])
+    expect(projectedCrew.personas.flatMap((entry) => entry.children)).not.toContainEqual(
+      expect.objectContaining({ agent: expect.objectContaining({ address: strandedAddress }) })
+    )
+    expect(mountedHarness.sidebarProps.agentCount).toBe(projectedCrew.activeCount)
+    expect(mountedHarness.sidebarProps.agentCount).toBe(1)
+    expect(mountedHarness.crewRouteProps.onWithdrawAgent).toBeUndefined()
+  })
+
   it('starts an owner action after React StrictMode replays mount effects', async () => {
     render(
       <React.StrictMode>
