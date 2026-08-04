@@ -86,6 +86,48 @@ function deeplyNestedJson(depth) {
   return root
 }
 
+function nestedWideJson(depth, width) {
+  let child = 0
+  for (let level = 0; level < depth; level += 1) {
+    const parent = Array(width).fill(0)
+    parent[0] = child
+    child = parent
+  }
+  return child
+}
+
+function bodyWithThrowingOwner() {
+  const body = pagedBody({ agents: [indexedAgent(2)], hasMore: false })
+  Object.defineProperty(body, 'owner', {
+    enumerable: true,
+    get() {
+      throw new Error('body owner accessor must not run')
+    },
+  })
+  return body
+}
+
+function bodyWithThrowingPagination() {
+  const body = pagedBody({ agents: [indexedAgent(2)], hasMore: false })
+  Object.defineProperty(body.pagination, 'hasMore', {
+    enumerable: true,
+    get() {
+      throw new Error('pagination accessor must not run')
+    },
+  })
+  return body
+}
+
+function bodyWithThrowingAgentIterator() {
+  const body = pagedBody({ agents: [indexedAgent(2)], hasMore: false })
+  body.agents[Symbol.iterator] = () => ({
+    next() {
+      throw new Error('agents iterator must not run')
+    },
+  })
+  return body
+}
+
 function legacyCompleteBody(coverage) {
   return {
     version: 1,
@@ -486,6 +528,102 @@ describe('fetchOwnerAgentIndex', () => {
       status: 'partial',
       agents: [{ address: 'CAGENT0001' }],
     })
+  })
+
+  it('keeps pending canonical scheduler work proportional to depth for wide boundary JSON', async () => {
+    // Agent object depth 0 + 63 nested arrays + primitive leaves reaches the depth-64 boundary.
+    // 63 * 400 array entries exceeds the 20,000-node budget while staying far below 2 MB JSON.
+    const declaredArrayNodes = 63 * 400
+    const serialized = JSON.stringify(
+      pagedBody({
+        agents: [indexedAgent(1, { extra: nestedWideJson(63, 400) })],
+        hasMore: false,
+      })
+    )
+    expect(declaredArrayNodes).toBeGreaterThan(20_000)
+    expect(serialized.length).toBeLessThan(2_000_000)
+    const body = JSON.parse(serialized)
+    const pendingFrames = []
+
+    const res = await fetchOwnerAgentIndex({
+      owner: OWNER,
+      networkId: NETWORK,
+      fetchImpl: fakeFetch(body),
+      __testCanonicalSchedulerObserver: ({ pendingFrames: pending }) => {
+        pendingFrames.push(pending)
+      },
+    })
+
+    expect(res.status).toBe('unavailable')
+    expect(pendingFrames.length).toBeGreaterThan(0)
+    expect(Math.max(...pendingFrames)).toBeLessThanOrEqual(66)
+  })
+
+  it.each([
+    ['throwing body accessor', bodyWithThrowingOwner],
+    ['throwing pagination accessor', bodyWithThrowingPagination],
+    ['throwing agents iterator', bodyWithThrowingAgentIterator],
+  ])('contains first- and later-page %s without rejecting', async (_name, makeInvalidBody) => {
+    const firstPagePromise = fetchOwnerAgentIndex({
+      owner: OWNER,
+      networkId: NETWORK,
+      fetchImpl: fakeFetch(makeInvalidBody()),
+    })
+    await expect(firstPagePromise).resolves.toMatchObject({ status: 'unavailable', agents: [] })
+
+    const laterFetch = vi.fn(async (url) =>
+      response(
+        cursorFrom(url) === null
+          ? pagedBody({ agents: [indexedAgent(1)], hasMore: true, nextCursor: 'invalid-page' })
+          : makeInvalidBody()
+      )
+    )
+    const laterPagePromise = fetchOwnerAgentIndex({
+      owner: OWNER,
+      networkId: NETWORK,
+      fetchImpl: laterFetch,
+    })
+    await expect(laterPagePromise).resolves.toMatchObject({
+      status: 'partial',
+      agents: [{ address: 'CAGENT0001' }],
+    })
+  })
+
+  it('rejects array index accessors without invoking them on first or later pages', async () => {
+    let getterCalls = 0
+    const makeInvalidBody = () => {
+      const body = pagedBody({ agents: [indexedAgent(2)], hasMore: false })
+      const row = body.agents[0]
+      Object.defineProperty(body.agents, '0', {
+        enumerable: true,
+        get() {
+          getterCalls += 1
+          return row
+        },
+      })
+      return body
+    }
+
+    const first = await fetchOwnerAgentIndex({
+      owner: OWNER,
+      networkId: NETWORK,
+      fetchImpl: fakeFetch(makeInvalidBody()),
+    })
+    expect(first).toMatchObject({ status: 'unavailable', agents: [] })
+
+    const later = await fetchOwnerAgentIndex({
+      owner: OWNER,
+      networkId: NETWORK,
+      fetchImpl: vi.fn(async (url) =>
+        response(
+          cursorFrom(url) === null
+            ? pagedBody({ agents: [indexedAgent(1)], hasMore: true, nextCursor: 'array-accessor' })
+            : makeInvalidBody()
+        )
+      ),
+    })
+    expect(later).toMatchObject({ status: 'partial', agents: [{ address: 'CAGENT0001' }] })
+    expect(getterCalls).toBe(0)
   })
 
   it('returns a complete response verbatim when owner/network/manifest all validate', async () => {
