@@ -25,7 +25,7 @@ const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
 
 function applyMigrations(sqlite) {
   const migrations = readdirSync(MIGRATIONS_DIR)
-    .filter((name) => /^000[2-6]_.*\.sql$/.test(name))
+    .filter((name) => /^000[2-7]_.*\.sql$/.test(name))
     .sort()
   expect(migrations.map((name) => name.slice(0, 4))).toEqual([
     '0002',
@@ -33,6 +33,7 @@ function applyMigrations(sqlite) {
     '0004',
     '0005',
     '0006',
+    '0007',
   ])
   for (const migration of migrations) {
     sqlite.exec(readFileSync(join(MIGRATIONS_DIR, migration), 'utf8'))
@@ -212,7 +213,7 @@ beforeEach(() => {
 })
 
 describe('execution receipt migrations and projection repository', () => {
-  it('loads migrations 0002 through 0006 numerically on a fresh database', () => {
+  it('loads migrations 0002 through 0007 numerically on a fresh database', () => {
     const tables = db._raw
       .prepare(
         `SELECT name FROM sqlite_master
