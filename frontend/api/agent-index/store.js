@@ -1427,7 +1427,18 @@ export function createAgentIndexStore(db) {
     // reject the page (e.g. finalized_through_ledger's lower bound, which depends on state read
     // above and so isn't pre-validated in JS), the memberships that already "succeeded" earlier
     // in this same transaction are rolled back too — genuine all-or-nothing, not just early exit.
-    await db.batch([...rows.map((row) => bindMembershipRow(row)), sourceStatement])
+    try {
+      await db.batch([...rows.map((row) => bindMembershipRow(row)), sourceStatement])
+    } catch (error) {
+      if (
+        String(error?.message ?? error).includes('immutable agent membership identity conflict')
+      ) {
+        throw new AgentIndexConflictError('immutable agent membership identity conflict', {
+          cause: error,
+        })
+      }
+      throw error
+    }
   }
 
   async function recordGap(gap) {

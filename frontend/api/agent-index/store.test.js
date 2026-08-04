@@ -650,7 +650,7 @@ describe('commitSourcePage', () => {
         cursor: 'c2',
         memberships: [membership({ creationTx: 'tx-conflict' })],
       })
-    ).rejects.toThrow(/immutable|conflict/i)
+    ).rejects.toThrow(AgentIndexConflictError)
 
     const { sources } = await store.readCoverage({ networkId: NETWORK })
     expect(sources[0]).toMatchObject({ indexedThroughLedger: 150, cursor: 'c1' })

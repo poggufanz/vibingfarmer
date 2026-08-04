@@ -10,7 +10,7 @@
 import { decodeDeployedEvent } from '../../src/stellar/routerEvents.js'
 import { decodeEvent } from '../../src/stellar/events.js'
 import { fromScVal } from '../../src/stellar/scval.js'
-import { sourceIdFor } from './models.js'
+import { AgentIndexConflictError, sourceIdFor } from './models.js'
 import {
   AGENT_INDEX_FINALITY_LEDGERS,
   AGENT_INDEX_MAX_LAG_MS,
@@ -36,6 +36,14 @@ function decodeSourceEvent(source, rec) {
       return { matched: false }
     }
     if (topic0 !== 'deployed') return { matched: false }
+    if (rec.pagingToken == null || String(rec.pagingToken).length === 0) {
+      return {
+        matched: true,
+        error: new Error(
+          "decodeSourceEvent: 'deployed' event missing required paging token — cannot prove canonical order"
+        ),
+      }
+    }
     const d = decodeDeployedEvent(rec)
     if (!d || !d.agent || !d.owner || !d.txHash) {
       return {
@@ -47,7 +55,13 @@ function decodeSourceEvent(source, rec) {
     }
     return {
       matched: true,
-      decoded: { agentAddress: d.agent, ownerAddress: d.owner, ledger: d.ledger, txHash: d.txHash },
+      decoded: {
+        agentAddress: d.agent,
+        ownerAddress: d.owner,
+        ledger: d.ledger,
+        txHash: d.txHash,
+        pagingToken: String(rec.pagingToken),
+      },
     }
   }
   if (source.kind === 'registry') {
@@ -178,6 +192,24 @@ function nextOrdinal(map, txHash) {
   const n = map.get(txHash) ?? 0
   map.set(txHash, n + 1)
   return n
+}
+
+function comparePagingToken(a, b) {
+  try {
+    const left = BigInt(a)
+    const right = BigInt(b)
+    return left < right ? -1 : left > right ? 1 : 0
+  } catch {
+    return String(a).localeCompare(String(b))
+  }
+}
+
+function compareDecodedEventOrder(a, b) {
+  return (
+    a.ledger - b.ledger ||
+    String(a.txHash).localeCompare(String(b.txHash)) ||
+    comparePagingToken(a.pagingToken, b.pagingToken)
+  )
 }
 
 function toMembership(source, decoded, generation, runOrdinal, provenanceSource) {
@@ -337,19 +369,11 @@ export async function ingestAgentIndexPage({
     ? res.latestLedger
     : reportedLatestAvailable
 
-  // Stable paging-token order → dedupe by pagingToken (raw duplicate records) then by agent
-  // address (a LATER duplicate for an already-seen agent can never change its owner/creator —
-  // first occurrence wins within this page; everything else is dropped for that agent). A
-  // matching-topic record that fails to decode is fail-closed: abort the WHOLE page rather than
-  // silently dropping membership while coverage still advances (Important 4).
-  const seenPagingToken = new Set()
-  const byAgent = new Map()
+  // Decode before ordering so only records that actually match this source participate. Router
+  // deployments require their RPC paging token: without it response order cannot prove a stable
+  // ordinal. Any matched record that cannot decode or prove order aborts the whole page.
+  const decodedEvents = []
   for (const rec of res.events || []) {
-    const pt = rec.pagingToken
-    if (pt != null) {
-      if (seenPagingToken.has(pt)) continue
-      seenPagingToken.add(pt)
-    }
     const result = decodeSourceEvent(source, rec)
     if (result.error) {
       await store.recordSourceError({
@@ -362,8 +386,27 @@ export async function ingestAgentIndexPage({
       throw result.error
     }
     if (!result.decoded) continue
-    if (!byAgent.has(result.decoded.agentAddress))
-      byAgent.set(result.decoded.agentAddress, result.decoded)
+    decodedEvents.push(result.decoded)
+  }
+
+  // RPC response arrays are not authoritative order. Canonicalize first, then dedupe paging-token
+  // replays and agent re-emissions. Router ordinals are assigned exactly once across each complete
+  // transaction group, before prior-page rows are filtered, so replay cannot renumber a survivor.
+  decodedEvents.sort(compareDecodedEventOrder)
+  const seenPagingToken = new Set()
+  const byAgent = new Map()
+  for (const decoded of decodedEvents) {
+    if (decoded.pagingToken != null) {
+      if (seenPagingToken.has(decoded.pagingToken)) continue
+      seenPagingToken.add(decoded.pagingToken)
+    }
+    if (!byAgent.has(decoded.agentAddress)) byAgent.set(decoded.agentAddress, decoded)
+  }
+  const ordinalByTx = new Map()
+  if (source.kind === 'funding-router') {
+    for (const decoded of byAgent.values()) {
+      decoded.runOrdinal = nextOrdinal(ordinalByTx, decoded.txHash)
+    }
   }
 
   // Spec-partial 6: a duplicate `deployed`/`agent_authorized` event for an agent ALREADY indexed
@@ -399,7 +442,6 @@ export async function ingestAgentIndexPage({
   const provenanceSource =
     source.discoverySources?.[0] ??
     (source.kind === 'funding-router' ? 'router-event' : 'registry-event')
-  const ordinalByTx = new Map()
   const memberships = []
   for (const decoded of toResolve) {
     const generation = await resolveAgentGeneration(source, decoded.agentAddress, eventSource)
@@ -409,8 +451,7 @@ export async function ingestAgentIndexPage({
           `(source ${sourceId}) — refusing to guess`
       )
     }
-    const runOrdinal =
-      source.kind === 'funding-router' ? nextOrdinal(ordinalByTx, decoded.txHash) : null
+    const runOrdinal = source.kind === 'funding-router' ? decoded.runOrdinal : null
     memberships.push(
       toMembership(
         {
@@ -427,20 +468,33 @@ export async function ingestAgentIndexPage({
   }
 
   const finalizedThroughLedger = Math.max(fromLedger - 1, Math.min(throughLedger, finalizedLedger))
-  await store.commitSourcePage({
-    sourceId,
-    fromLedger,
-    throughLedger,
-    finalizedThroughLedger,
-    cursor: res.cursor ?? null,
-    memberships,
-    providerId: eventSource.providerId,
-    endpointClass: eventSource.endpointClass,
-    reportedOldestLedger: Number.isInteger(eventSource.oldestAvailableLedger)
-      ? eventSource.oldestAvailableLedger
-      : null,
-    reportedLatestLedger,
-  })
+  try {
+    await store.commitSourcePage({
+      sourceId,
+      fromLedger,
+      throughLedger,
+      finalizedThroughLedger,
+      cursor: res.cursor ?? null,
+      memberships,
+      providerId: eventSource.providerId,
+      endpointClass: eventSource.endpointClass,
+      reportedOldestLedger: Number.isInteger(eventSource.oldestAvailableLedger)
+        ? eventSource.oldestAvailableLedger
+        : null,
+      reportedLatestLedger,
+    })
+  } catch (error) {
+    if (error instanceof AgentIndexConflictError) {
+      await store.recordSourceError({
+        sourceId,
+        networkId: source.networkId,
+        creatorAddress: source.address,
+        fromLedger,
+        message: error.message,
+      })
+    }
+    throw error
+  }
   return {
     sourceId,
     status: 'committed',
