@@ -447,6 +447,22 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
     expect(out.personas[0].totalState).toBe('partial')
   })
 
+  it('marks a readable stale Base association partial', () => {
+    const out = buildCrewPersonas({
+      discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+      moneyAgents: [
+        moneyAgent(ADDRESS_A, {
+          custody: { location: 'base-proxy' },
+          custodyBreakdown: [baseLeg('500000000', { coverageReason: 'stale' })],
+        }),
+      ],
+    })
+
+    expect(out.totals).toEqual([{ token: 'USDC', units: '500000000', decimals: 7 }])
+    expect(out.status).toBe('partial')
+    expect(out.personas[0].totalState).toBe('partial')
+  })
+
   it('9. retains an unreadable productive leg as evidence without inventing units', () => {
     const out = buildCrewPersonas({
       discovery: discovery([indexedRow(ADDRESS_A, 0)]),
@@ -471,6 +487,23 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
     ])
     expect(out.status).toBe('partial')
     expect(out.personas[0].totalState).toBe('partial')
+  })
+
+  it('rejects unsafe numeric productive units instead of converting them through BigInt', () => {
+    const out = buildCrewPersonas({
+      discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+      moneyAgents: [
+        moneyAgent(ADDRESS_A, {
+          custodyBreakdown: [stellarLeg(9007199254740992)],
+        }),
+      ],
+    })
+    const child = out.personas[0].children[0]
+
+    expect(child.workingLegs[0]).toMatchObject({ amount: null, counted: false })
+    expect(child.workingTotals).toEqual([])
+    expect(out.totals).toEqual([])
+    expect(out.status).toBe('partial')
   })
 })
 

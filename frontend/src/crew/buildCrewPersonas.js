@@ -45,6 +45,7 @@ function readPositiveAmount(amount) {
     !amount ||
     typeof amount.token !== 'string' ||
     amount.token.length === 0 ||
+    typeof amount.units !== 'string' ||
     !Number.isSafeInteger(amount.decimals) ||
     amount.decimals < 0
   ) {
@@ -102,6 +103,7 @@ function extractMoneyEvidence(agent, networkId) {
   const workingLegs = []
   const idleAmounts = []
   let hasUnreadableProductiveLeg = false
+  let hasCoverageUncertainty = false
 
   for (const leg of custodyEvidence(agent)) {
     const amountRead = readPositiveAmount(leg?.amount)
@@ -112,6 +114,7 @@ function extractMoneyEvidence(agent, networkId) {
     }
     if (!PRODUCTIVE_LOCATIONS.has(leg?.location)) continue
     if (amountRead.state === 'non-positive') continue
+    if (leg.coverageReason != null) hasCoverageUncertainty = true
 
     const keyToken =
       leg.location === 'base-proxy'
@@ -138,6 +141,7 @@ function extractMoneyEvidence(agent, networkId) {
     idleAmount: idleTotals.length === 1 ? idleTotals[0] : null,
     idleEvidenceAmbiguous: idleTotals.length > 1,
     hasUnreadableProductiveLeg,
+    hasCoverageUncertainty,
   }
 }
 
@@ -148,6 +152,7 @@ function hasIncompleteEvidence(agent, evidence) {
     (Array.isArray(agent.problems) &&
       agent.problems.some((problem) => INCOMPLETE_MONEY_PROBLEMS.has(problem))) ||
     evidence.hasUnreadableProductiveLeg ||
+    evidence.hasCoverageUncertainty ||
     evidence.idleEvidenceAmbiguous
   )
 }
