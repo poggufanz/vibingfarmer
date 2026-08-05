@@ -6,6 +6,7 @@ import { CCTP_DOMAIN, STELLAR_TESTNET, BASE_SEPOLIA } from './cctp/constants.mjs
 import { createFileStore } from './store.mjs';
 import { loadDeploymentFacts } from './deploymentFacts.mjs';
 import { createAgentIndexConfig } from './agentIndexConfig.mjs';
+import { createSecretEnvelope, parseSecretKeyring } from './secretEnvelope.mjs';
 
 function need(env, key) {
   const value = env[key];
@@ -104,6 +105,13 @@ export function loadConfig(env = process.env) {
   const reporterSecret = production ? need(env, 'AGENT_INDEX_REPORTER_SECRET') : optional(env, 'AGENT_INDEX_REPORTER_SECRET');
   const storePath = env.RELAYER_STORE_PATH || './.relayer-store.dev.json';
   const dbPath = production ? need(env, 'RELAYER_DB_PATH') : optional(env, 'RELAYER_DB_PATH');
+  const sessionKeyringRaw = optional(env, 'RELAYER_SESSION_KEY_ENCRYPTION_KEYS');
+  if (dbPath && !sessionKeyringRaw) {
+    throw new Error('env RELAYER_SESSION_KEY_ENCRYPTION_KEYS missing/unfilled');
+  }
+  const sessionKeyCipher = sessionKeyringRaw
+    ? createSecretEnvelope(parseSecretKeyring(sessionKeyringRaw))
+    : undefined;
   const agentIndex = createAgentIndexConfig({
     endpoint: reporterUrl,
     secret: reporterSecret,
@@ -129,6 +137,7 @@ export function loadConfig(env = process.env) {
     zeroDevProject: Boolean(zerodevProjectId),
     proxyAuth: Boolean(proxyKey),
     reporterAuth: Boolean(reporterSecret),
+    sessionKeyEncryption: Boolean(sessionKeyCipher),
   });
   const readiness = Object.freeze({
     stellarRelay: secrets.stellarRelayer,
@@ -204,6 +213,7 @@ export function loadConfig(env = process.env) {
   };
   nonEnumerable(config, 'store', createFileStore(storePath));
   nonEnumerable(config, 'agentIndex', agentIndex);
+  nonEnumerable(config, 'sessionKeyCipher', sessionKeyCipher);
   nonEnumerable(config, 'runtime', Object.freeze({ proxyKey, reporterSecret, debugErrors: env.RELAYER_DEBUG_ERRORS === '1' }));
   nonEnumerable(config, 'toJSON', () => publicRuntime);
   return Object.freeze(config);
