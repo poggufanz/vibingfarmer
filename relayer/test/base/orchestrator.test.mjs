@@ -318,4 +318,20 @@ describe('activateMandate', () => {
     expect(onSubmitted).not.toHaveBeenCalled();
     expect(kernelClient.waitForUserOperationReceipt).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [{ success: true, receipt: { status: 'reverted', transactionHash: TX_HASH } }],
+    [{ success: false, receipt: { status: 'success', transactionHash: TX_HASH } }],
+  ])('rejects a mandate activation when receipt success is only one-sided', async (receipt) => {
+    const kernelClient = buildMockKernelClient();
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(receipt);
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    await expect(orchestrator.activateMandate('serialized-approval')).rejects.toThrow();
+  });
 });
