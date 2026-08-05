@@ -8,7 +8,7 @@ import {
 
 const KEYRING_ERROR = 'env RELAYER_SESSION_KEY_ENCRYPTION_KEYS is invalid';
 const ENVELOPE_ERROR = 'encrypted session key envelope is invalid';
-const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
@@ -91,7 +91,9 @@ export function createSecretEnvelope(keyring) {
 
   return Object.freeze({
     seal(plaintext, aad) {
-      if (typeof plaintext !== 'string' || typeof aad !== 'string') throw envelopeError();
+      if (typeof plaintext !== 'string' || plaintext.length === 0 || typeof aad !== 'string') {
+        throw envelopeError();
+      }
       const iv = randomBytes(12);
       const cipher = createCipheriv('aes-256-gcm', activeKey, iv);
       cipher.setAAD(Buffer.from(aad, 'utf8'));

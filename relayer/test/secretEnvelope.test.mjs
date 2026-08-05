@@ -23,9 +23,10 @@ describe('parseSecretKeyring', () => {
   it.each([
     ['', 'an empty keyring'],
     ['missing-colon', 'an entry without a key separator'],
-    ['same:not-base64,same:not-base64', 'duplicate key IDs'],
+    [`same:${ACTIVE_KEY.toString('base64')},same:${PREVIOUS_KEY.toString('base64')}`, 'duplicate key IDs'],
     [`short:${Buffer.alloc(31).toString('base64')}`, 'a key that is not 32 bytes'],
     [`bad key:${ACTIVE_KEY.toString('base64')}`, 'a malformed key ID'],
+    [`key.id:${ACTIVE_KEY.toString('base64')}`, 'a key ID that cannot be serialized canonically'],
   ])('rejects %s', (raw) => {
     expect(() => parseSecretKeyring(raw)).toThrow(/RELAYER_SESSION_KEY_ENCRYPTION_KEYS/i);
   });
@@ -47,6 +48,12 @@ describe('createSecretEnvelope', () => {
     const cipher = createSecretEnvelope(keyring());
 
     expect(cipher.seal('same secret', 'same aad')).not.toBe(cipher.seal('same secret', 'same aad'));
+  });
+
+  it('rejects empty plaintext because session secrets must be nonempty', () => {
+    const cipher = createSecretEnvelope(keyring());
+
+    expect(() => cipher.seal('', 'bound aad')).toThrow(/encrypted session key envelope/i);
   });
 
   it.each([
