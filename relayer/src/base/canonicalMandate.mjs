@@ -390,8 +390,7 @@ export function parseCanonicalMandate({
     || decoded.validityData.validAfter !== 0 || decoded.validityData.validUntil !== 0) {
     fail('APPROVAL_MALFORMED', 'serialized approval account validity mismatch');
   }
-  if (decoded.enableSignature !== undefined
-    && !boundedHex(decoded.enableSignature, MAX_ENABLE_SIGNATURE_BYTES, { allowEmpty: false })) {
+  if (!boundedHex(decoded.enableSignature, MAX_ENABLE_SIGNATURE_BYTES, { allowEmpty: false })) {
     fail('APPROVAL_MALFORMED', 'serialized approval enable signature mismatch');
   }
   if (decoded.eip7702Auth != null || (decoded.isPreInstalled !== undefined && decoded.isPreInstalled !== false)) {

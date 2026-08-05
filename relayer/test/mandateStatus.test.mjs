@@ -264,8 +264,25 @@ describe('evaluateBaseMandateStatus', () => {
       args: [h.approved.permissionId],
       blockNumber: 1234n,
     }));
+    expect(h.publicClient.getStorageAt).toHaveBeenCalledWith(expect.objectContaining({
+      address: KERNEL,
+      blockNumber: 1234n,
+    }));
     expect(JSON.stringify(result)).not.toContain(SESSION_PRIVATE_KEY);
     expect(JSON.stringify(result)).not.toContain(h.record.serializedApproval);
+  });
+
+  it('rejects a missing enable signature before RPC or reconstruction', async () => {
+    const h = makeHarness();
+    const decoded = JSON.parse(Buffer.from(h.record.serializedApproval, 'base64').toString('utf8'));
+    delete decoded.enableSignature;
+    h.record.serializedApproval = serialize(decoded);
+
+    const result = await h.evaluate();
+
+    expect(result).toMatchObject({ status: 'mismatch', reasonCodes: ['APPROVAL_MALFORMED'] });
+    expect(h.makePublicClient).not.toHaveBeenCalled();
+    expect(h.reconstructSessionClientFn).not.toHaveBeenCalled();
   });
 
   it.each([

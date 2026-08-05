@@ -233,6 +233,7 @@ describe('parseCanonicalMandate', () => {
     ['wrong action address', () => fixture({ topLevel: { action: { selector: DEFAULT_ACTION_SELECTOR, address: ROUTER } } })],
     ['extra action field', () => fixture({ topLevel: { action: { selector: DEFAULT_ACTION_SELECTOR, address: ZERO_ADDRESS, hook: ROUTER } } })],
     ['account validity drift', () => fixture({ topLevel: { validityData: { validAfter: 1, validUntil: 0 } } })],
+    ['missing enable signature', () => fixture({ mutate: (v) => { delete v.enableSignature; } })],
     ['unbounded enable signature', () => fixture({ topLevel: { enableSignature: `0x${'00'.repeat(16_385)}` } })],
     ['malformed enable signature', () => fixture({ topLevel: { enableSignature: 'not-hex' } })],
     ['EIP-7702 authorization', () => fixture({ topLevel: { eip7702Auth: { address: ROUTER } } })],
