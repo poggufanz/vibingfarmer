@@ -36,6 +36,9 @@ export async function verifyRelayerReadiness({ sqlite, reporter }) {
   if (!sqlite?.probe || !reporter?.probe) throw new Error('relayer durable readiness is not configured');
   const local = await sqlite.probe();
   if (local?.writable !== true) throw new Error('relayer SQLite store is not writable');
+  if (Array.isArray(local.legacyMandateTables) && local.legacyMandateTables.length > 0) {
+    throw new Error('plaintext legacy mandate tables require offline migration');
+  }
   const remote = await reporter.probe();
   if (
     remote?.ready !== true
@@ -83,12 +86,19 @@ export function withProxyKeyAuth(handler, key) {
  * @param {ReturnType<typeof import('./config.mjs').loadConfig>} config
  * @returns {{ handler: Function, listen: (port: number) => Promise<import('node:http').Server> }}
  */
-export function createRelayerServer(config) {
+export function createRelayerServer(config, { openSqlite = createSqliteStores } = {}) {
+  if (process.env.RELAYER_OFFLINE_KEY_MIGRATION === '1') {
+    throw new Error('RELAYER_OFFLINE_KEY_MIGRATION cannot run in the HTTP relayer process');
+  }
+  const sessionKeyCipher = config?.sessionKeyCipher;
+  if (typeof sessionKeyCipher?.seal !== 'function' || typeof sessionKeyCipher?.open !== 'function') {
+    throw new Error('session-key encryption cipher is required before relayer startup');
+  }
   const runtimeConfig = runtimeServerConfig(config);
   // When RELAYER_DB_PATH is set, sqlite backs the idempotency store + jobs + mandates so a restart
   // loses nothing (session keys still die at their 1h TTL either way). Build BEFORE createWatcher so
   // the watcher gets the sqlite-backed idempotency store rather than the file store.
-  const sqlite = config.dbPath ? createSqliteStores(config.dbPath) : null;
+  const sqlite = config.dbPath ? openSqlite(config.dbPath, { sessionKeyCipher }) : null;
   if (sqlite) config = { ...config, store: sqlite.store };
   const watcher = createWatcher(config);
   const jobs = sqlite ? sqlite.jobs : new Map();
