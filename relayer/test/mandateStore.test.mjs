@@ -179,6 +179,39 @@ describe.each(implementations)('$name mandate activation lifecycle parity', ({ o
     }
   });
 
+  it('looks up only capability-bound authority metadata by mandate ID without exposing approval or key material', () => {
+    const clock = { value: NOW_SECONDS };
+    const { stores, close } = open(clock);
+    try {
+      stores.mandateActivations.enqueue({ record: record() });
+
+      const authority = stores.mandatesV3.authority(MANDATE_ID);
+      expect(authority).toMatchObject({
+        mandateId: MANDATE_ID,
+        stellarOwner: OWNER,
+        kernelAddress: KERNEL.toLowerCase(),
+        status: 'pending_activation',
+        bindingId: 'binding-1',
+        bindingHash: BINDING_HASH,
+      });
+      expect(authority.capabilityHash).toBe(CAPABILITY_HASH);
+      expect(Object.keys(authority)).not.toContain('capabilityHash');
+      expect(Reflect.ownKeys(authority)).not.toEqual(expect.arrayContaining([
+        'serializedApproval', 'sessionPrivateKey', 'sessionKeyDigest', 'sessionKeyAddress',
+      ]));
+      expect(JSON.stringify(authority)).not.toContain(APPROVAL);
+      expect(JSON.stringify(authority)).not.toContain(SESSION_PRIVATE_KEY);
+
+      clock.value = VALID_UNTIL_SECONDS;
+      const expired = stores.mandatesV3.authority(MANDATE_ID);
+      expect(expired).toMatchObject({ mandateId: MANDATE_ID, status: 'expired' });
+      expect(expired.capabilityHash).toBe(CAPABILITY_HASH);
+      expect(stores.mandatesV3.authority('0'.repeat(32))).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
   it('requires a capability hash on every newly enqueued mandate', () => {
     const clock = { value: NOW_SECONDS };
     const { stores, close } = open(clock);

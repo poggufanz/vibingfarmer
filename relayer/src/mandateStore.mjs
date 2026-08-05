@@ -307,6 +307,27 @@ function internalMandateV3(record, { includeSession = true } = {}) {
   return result;
 }
 
+function internalMandateAuthorityV3(record, status = record?.status) {
+  if (!record) return null;
+  const result = {
+    mandateId: record.mandateId,
+    stellarOwner: record.stellarOwner,
+    kernelAddress: record.kernelAddress,
+    relayerOrigin: record.relayerOrigin ?? null,
+    validUntilSeconds: record.validUntilSeconds ?? null,
+    status,
+    bindingId: record.bindingId ?? null,
+    bindingHash: record.bindingHash ?? null,
+  };
+  if (record.capabilityHash) {
+    Object.defineProperty(result, 'capabilityHash', {
+      value: record.capabilityHash,
+      enumerable: false,
+    });
+  }
+  return result;
+}
+
 function publicActivationWork(work) {
   if (!work) return null;
   return {
@@ -399,6 +420,12 @@ export function createMandateStoresV3({
   }
 
   const mandatesV3 = {
+    authority(mandateId) {
+      const record = records.get(mandateId);
+      if (!record) return null;
+      const expired = expireRecord(record, effectiveNow());
+      return internalMandateAuthorityV3(record, expired ? 'expired' : record.status);
+    },
     get(identity) {
       const record = recordFor(identity);
       if (!record) return null;

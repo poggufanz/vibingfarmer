@@ -5,20 +5,18 @@
 // requests), and running standalone keeps relayer secrets out of the Vite dev process.
 
 import { createServer } from 'node:http';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createWatcher } from './cctp/watcher.mjs';
 import { createOrchestrator } from './base/orchestrator.mjs';
 import { createFarmFlow } from './flows/farm.mjs';
 import { createRelayerRouter } from './httpRouter.mjs';
-import { createMandateStoreV2, createMandateStoresV3 } from './mandateStore.mjs';
+import { createMandateStoresV3 } from './mandateStore.mjs';
 import { createSqliteStores } from './sqliteStores.mjs';
 import { startAssociationOutboxWorker } from './associationOutbox.mjs';
 import {
   BASE_SEPOLIA_POOL_TARGETS,
   createAgentIndexReporter,
 } from './agentIndexReporter.mjs';
-
-const MANDATE_SWEEP_MS = 10 * 60 * 1000; // evict expired session keys every 10 min
 
 export function runtimeServerConfig(config) {
   return {
@@ -115,20 +113,15 @@ export function createRelayerServer(config, {
   if (sqlite) config = { ...config, store: sqlite.store };
   const watcher = createWatcher(config);
   const jobs = sqlite ? sqlite.jobs : new Map();
-  // VF Wallet Task 7: owner/kernel-bound mandate store, keyed on (approval, stellarOwner,
-  // kernelAddress) together — never logged, never returned to a caller. Memory (or sqlite when
-  // RELAYER_DB_PATH is set) — TTL so session keys don't linger past the mandate's lifetime. The
-  // legacy approval-only store (mandateStore.mjs's createMandateStore / sqliteStores.mjs's
-  // `mandates` table) is deliberately no longer wired in here at all: any row still sitting there
-  // stays untouched for rollback, but this server never reads or writes it again.
-  const mandatesV2 = sqlite ? sqlite.mandatesV2 : createMandateStoreV2();
+  // Capability-bound encrypted mandate authority is the sole live registration/farm path.
+  // Legacy approval-bearing stores remain migration artifacts and are never wired into HTTP.
   const mandateStoresV3 = sqlite ?? createMandateStoresV3();
   const mandatesV3 = mandateStoresV3.mandatesV3;
   const mandateActivations = mandateStoresV3.mandateActivations;
   // This server's own public origin, compared against every stored mandate's relayerOrigin on
   // every operation (httpRouter.mjs's Step 2 "compare relayer origin to server configuration").
   // Unset = local dev, no compare performed — same "empty = open" posture as RELAYER_PROXY_KEY
-  // below. Also what every /mandate + /mandate/valid response reports as `relayerOrigin`, so the
+  // below. Also what every /mandate response reports as `relayerOrigin`, so the
   // client (frontend/src/wallet/baseBinding.js) can start enforcing it.
   const relayerOrigin = runtimeConfig.relayerOrigin;
   const agentIndexReporter = createAgentIndexReporter({
@@ -172,7 +165,7 @@ export function createRelayerServer(config, {
   }
 
   // Sanitize client-facing error messages unless explicitly debugging (RELAYER_DEBUG_ERRORS=1),
-  // so a public deploy never leaks internal error strings via GET /status. The smoke harness runs
+  // so a public deploy never leaks internal error strings via protected POST /status. The smoke harness runs
   // localhost and sets the flag to keep full detail.
   // The Cloudflare Pages proxy (functions/api/vf-cross) sends x-vf-relayer-key on every request;
   // the VM is otherwise tunnel-only, so this shared secret is what makes the tunnel non-open.
@@ -181,11 +174,10 @@ export function createRelayerServer(config, {
       buildFarm,
       relayUnwindMint,
       jobs,
-      mandatesV2,
       mandatesV3,
       mandateActivations,
       buildMandateActivator,
-      genId: randomUUID,
+      genId: () => randomBytes(16).toString('hex'),
       usdcAddress: config.base.usdcAddress,
       yieldRouterAddress: config.base.yieldRouterAddress,
       relayerOrigin,
@@ -219,10 +211,6 @@ export function createRelayerServer(config, {
         return server;
       },
     });
-    // Periodically drop expired session keys so they don't wait for a matching /farm to be evicted.
-    const sweep = setInterval(() => mandatesV2.sweep(), MANDATE_SWEEP_MS);
-    sweep.unref?.(); // never keep the process alive just for the sweep
-    started.server.on('close', () => clearInterval(sweep));
     started.server.on('close', () => started.worker?.stop());
     return started.server;
   }

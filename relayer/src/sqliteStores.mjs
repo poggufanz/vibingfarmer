@@ -811,6 +811,14 @@ export function createSqliteStores(path, {
     return db.prepare('SELECT * FROM mandates_v3 WHERE mandate_id = ?').get(mandateId);
   }
 
+  function mandateAuthorityRow(mandateId) {
+    return db.prepare(`
+      SELECT mandate_id, stellar_owner, kernel_address, relayer_origin,
+             valid_until_seconds, status, binding_id, binding_hash, capability_hash
+      FROM mandates_v3 WHERE mandate_id = ?
+    `).get(mandateId);
+  }
+
   function identityRow({ mandateId, stellarOwner, kernelAddress }) {
     return db.prepare(`
       SELECT * FROM mandates_v3
@@ -877,6 +885,27 @@ export function createSqliteStores(path, {
       quarantineReason: row.quarantine_reason ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+    };
+    if (row.capability_hash) {
+      Object.defineProperty(result, 'capabilityHash', {
+        value: row.capability_hash,
+        enumerable: false,
+      });
+    }
+    return result;
+  }
+
+  function internalMandateAuthority(row, status = row?.status) {
+    if (!row) return null;
+    const result = {
+      mandateId: row.mandate_id,
+      stellarOwner: row.stellar_owner,
+      kernelAddress: row.kernel_address,
+      relayerOrigin: row.relayer_origin ?? null,
+      validUntilSeconds: row.valid_until_seconds ?? null,
+      status,
+      bindingId: row.binding_id ?? null,
+      bindingHash: row.binding_hash ?? null,
     };
     if (row.capability_hash) {
       Object.defineProperty(result, 'capabilityHash', {
@@ -1035,6 +1064,17 @@ export function createSqliteStores(path, {
 
   let leaseCounter = 0;
   const mandatesV3 = {
+    authority(mandateId) {
+      let row = mandateAuthorityRow(mandateId);
+      if (!row) return null;
+      const at = safeNow();
+      const expired = Number.isSafeInteger(row.valid_until_seconds) && at >= row.valid_until_seconds;
+      if (expired) {
+        cleanupExpired(row, at);
+        row = mandateAuthorityRow(mandateId);
+      }
+      return internalMandateAuthority(row, expired ? 'expired' : row.status);
+    },
     get(identity) {
       const row = identityRow(identity);
       if (!row) return null;

@@ -11,9 +11,8 @@
 // frontend/src/base/withdrawBatch.js), so no relayer-side burn construction is imported or
 // called from here.
 //
-// Mandate registration uses the capability-bound v3 stores whenever those dependencies are
-// composed. The v2 branch remains isolated for the migration slice that still owns the older
-// farm/status routes; a v3 registration never consults or mutates mandatesV2.
+// Mandates use only the capability-bound v3 authority and activation stores. Legacy approval-
+// bearing v2 routes are deliberately absent from this surface.
 
 import { createHash } from 'node:crypto';
 import { validateMandateBinding, MAX_CALL_CAP_UNITS } from './base/session.mjs';
@@ -23,15 +22,14 @@ import {
 } from './base/canonicalMandate.mjs';
 import {
   capabilityMatches,
+  clearMandateCapabilityCookie,
   hashCapability,
+  parseBearerCapability,
   requireCapability,
   requireMandateId,
   serializeMandateCapabilityCookie,
 } from './capability.mjs';
-import {
-  evaluateBaseMandateStatus,
-  permissionIdFromSerializedApproval,
-} from './mandateStatus.mjs';
+import { evaluateBaseMandateStatus } from './mandateStatus.mjs';
 
 async function ensureBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return;
@@ -66,7 +64,7 @@ const WIRE_ALLOCATION_FIELDS = new Set(['allocationId', 'poolAddress', 'amount',
 const WIRE_AMOUNT_FIELDS = new Set(['token', 'units', 'decimals']);
 const FARM_FIELDS = new Set([
   'sourceDomain',
-  'serializedApproval',
+  'mandateId',
   'allocations',
   'stellarOwner',
   'kernelAddress',
@@ -77,10 +75,14 @@ const FARM_FIELDS = new Set([
 const FARM_ATTACH_FIELDS = new Set([
   'jobId',
   'burnTxHash',
-  'serializedApproval',
+  'mandateId',
   'stellarOwner',
   'kernelAddress',
 ]);
+const MANDATE_STATUS_FIELDS = new Set(['mandateId', 'stellarOwner', 'kernelAddress']);
+const FARM_STATUS_FIELDS = new Set(['mandateId', 'jobId']);
+const UNWIND_FIELDS = new Set(['unwindTxHash', 'stellarRecipient']);
+const JOB_ID_PATTERN = /^[0-9a-f]{32}$/;
 const FARM_LEASE_MS = 30_000;
 const FARM_HEARTBEAT_MS = 10_000;
 const MANDATE_ACTIVATION_LEASE_SECONDS = 30;
@@ -136,13 +138,9 @@ const REVOKE_NOTE = 'This relayer deleted its own copy of the session key. The s
  *   flow factory (constructs orchestrator + createFarmFlow); never persists the key it's given.
  * @param {(params: { unwindTxHash: string, stellarRecipient: string }) => Promise<{status:string, mintTxHash?:string}>} deps.relayUnwindMint
  * @param {Map<string, {status:string, steps:Array<object>}>} deps.jobs - jobId -> job record
- * @param {object} deps.mandatesV2 - the owner/kernel-bound mandate store (mandateStore.mjs's
- *   createMandateStoreV2 or sqliteStores.mjs's mandatesV2): set/get/status/delete/sweep, all
- *   keyed on {serializedApproval, stellarOwner, kernelAddress} together. get() returns the FULL
- *   record (including sessionPrivateKey) — internal use only; status() never does.
- * @param {object} [deps.mandatesV3] - encrypted mandate authority store.
- * @param {object} [deps.mandateActivations] - paired activation work/CAS store.
- * @param {(sessionPrivateKey: string) => {activateMandate: Function}} [deps.buildMandateActivator]
+ * @param {object} deps.mandatesV3 - encrypted mandate authority store.
+ * @param {object} deps.mandateActivations - paired activation work/CAS store.
+ * @param {(sessionPrivateKey: string) => {activateMandate: Function}} deps.buildMandateActivator
  * @param {() => string} deps.genId
  * @param {string} deps.usdcAddress - canonical Base USDC address, for approval-policy validation
  * @param {string} deps.yieldRouterAddress - deployed YieldRouter address, for approval-policy validation
@@ -151,13 +149,13 @@ const REVOKE_NOTE = 'This relayer deleted its own copy of the session key. The s
  *   origin to server configuration" (Step 2). null/'' = not configured (open dev posture, no
  *   compare performed), matching the withProxyKeyAuth "empty key = open" convention in server.mjs.
  * @param {boolean} [deps.sanitizeErrors=false] - when true, error job records (returned verbatim by
- *   GET /status) carry a generic message and the real error is logged server-side only. Off by
+ *   protected POST /status) carry a generic message and the real error is logged server-side only. Off by
  *   default so local dev / the smoke harness keep full detail; the standalone server turns it ON
  *   unless RELAYER_DEBUG_ERRORS=1 (see server.mjs), so a public deploy never leaks internal error
  *   strings (RPC URLs, addresses) to whoever holds a jobId.
  */
 export function createRelayerRouter({
-  buildFarm, relayUnwindMint, jobs, mandatesV2, genId, usdcAddress, yieldRouterAddress,
+  buildFarm, relayUnwindMint, jobs, genId,
   mandatesV3 = null, mandateActivations = null, buildMandateActivator = null,
   relayerOrigin = null, sanitizeErrors = false, networkId = 'stellar-testnet',
   publicRuntime = null,
@@ -188,45 +186,6 @@ export function createRelayerRouter({
   // reuse the mandate with zero wallet ceremony; this cap just bounds how far out a client may
   // push it (a compromised/buggy client asking for a 10-year key would otherwise be honored).
   const MAX_MANDATE_WINDOW_SECONDS = 30 * 24 * 3600;
-
-  function handleMandateV2(req, res) {
-    const {
-      serializedApproval, sessionPrivateKey, sessionKeyAddress, expiresAt, stellarOwner, kernelAddress,
-    } = req.body || {};
-    if (!serializedApproval || !sessionPrivateKey || !sessionKeyAddress || !stellarOwner || !kernelAddress) {
-      return sendJson(res, 400, {
-        error: 'serializedApproval, sessionPrivateKey, sessionKeyAddress, expiresAt, stellarOwner and kernelAddress are all required',
-      });
-    }
-    const nowSeconds = Date.now() / 1000;
-    if (typeof expiresAt !== 'number' || expiresAt <= nowSeconds || expiresAt > nowSeconds + MAX_MANDATE_WINDOW_SECONDS) {
-      return sendJson(res, 400, {
-        error: 'expiresAt must be a unix-seconds timestamp in the future, at most 30 days out',
-      });
-    }
-
-    // Validate BEFORE storing (Step 2): derive+compare the session address, decode+compare the
-    // approval's own kernel, validate its embedded call/timestamp policy. Never store a key for a
-    // binding that couldn't be spent anyway.
-    const check = validateMandateBinding({
-      serializedApproval, sessionPrivateKey, sessionKeyAddress, stellarOwner, kernelAddress,
-      usdcAddress, yieldRouterAddress, now: Math.floor(nowSeconds),
-    });
-    if (!check.ok) return sendJson(res, 400, { error: check.reason });
-
-    const bindingId = genId();
-    const bindingHash = computeBindingHash({ stellarOwner, kernelAddress, sessionKeyAddress, expiresAt });
-
-    // The key is sent exactly once and lives only in this store for the mandate's lifetime —
-    // NEVER logged, NEVER echoed back. expiresAt arrives in unix SECONDS; the store wants ms.
-    mandatesV2.set({
-      serializedApproval, sessionPrivateKey, sessionKeyAddress, stellarOwner, kernelAddress,
-      relayerOrigin, expiresAt: expiresAt * 1000, status: 'active', bindingId, bindingHash,
-      createdAt: Date.now(),
-    });
-
-    return sendJson(res, 200, { ok: true, relayerOrigin, bindingId, bindingHash });
-  }
 
   function activationIdentityKey(identity) {
     return `${identity.mandateId}|${identity.stellarOwner}|${String(identity.kernelAddress).toLowerCase()}`;
@@ -706,13 +665,10 @@ export function createRelayerRouter({
   }
 
   function handleMandate(req, res) {
-    if (mandatesV3 || mandateActivations || buildMandateActivator) {
-      if (!mandatesV3 || !mandateActivations || !buildMandateActivator || !mandateStatusConfig) {
-        return sendJson(res, 503, { error: 'mandate activation is unavailable' });
-      }
-      return handleMandateV3(req, res);
+    if (!mandatesV3 || !mandateActivations || !buildMandateActivator || !mandateStatusConfig) {
+      return sendJson(res, 503, { error: 'mandate activation is unavailable' });
     }
-    return handleMandateV2(req, res);
+    return handleMandateV3(req, res);
   }
 
   async function resumeMandateActivations() {
@@ -726,8 +682,8 @@ export function createRelayerRouter({
     })));
   }
 
-  // Lets the client check whether a previously-registered mandate is still reusable WITHOUT ever
-  // getting the session key back. Returns the canonical BaseMandateStatusV2 shape.
+  // Public permission evidence never contains authority material. A failed fresh read is mapped
+  // to one fixed unknown shape so RPC/provider diagnostics cannot cross the HTTP boundary.
   function unknownMandateStatus(reasonCode) {
     return {
       version: 2,
@@ -739,53 +695,137 @@ export function createRelayerRouter({
     };
   }
 
-  async function evaluateStoredMandate(record, allocation) {
+  async function evaluateStoredMandate(record) {
     if (!record || !mandateStatusConfig) return unknownMandateStatus(record ? 'STATUS_UNAVAILABLE' : 'MANDATE_MISSING');
-    const permissionId = permissionIdFromSerializedApproval(record.serializedApproval);
-    if (!permissionId) return unknownMandateStatus('APPROVAL_MALFORMED');
     try {
       return await evaluateMandateStatusFn({
-        record: { ...record, permissionId },
+        record: cloneForMandateEvaluation(record),
         config: mandateStatusConfig,
-        allocation,
       });
     } catch {
       return unknownMandateStatus('STATUS_ERROR');
     }
   }
 
-  async function handleMandateValid(req, res) {
-    res.setHeader('Cache-Control', 'no-store');
-    const q = new URL(req.url, 'http://local').searchParams;
-    const approval = q.get('approval');
-    const stellarOwner = q.get('stellarOwner');
-    const kernelAddress = q.get('kernelAddress');
-    if (!approval || !stellarOwner || !kernelAddress) {
-      return sendJson(res, 400, { error: 'approval, stellarOwner and kernelAddress query params are all required' });
-    }
-    let allocation;
+  function mandateIdentity(body) {
     try {
-      allocation = JSON.parse(q.get('allocation') || 'null');
-      if (!allocation) throw new Error('missing allocation');
+      return {
+        mandateId: requireMandateId(body?.mandateId),
+        stellarOwner: body?.stellarOwner,
+        kernelAddress: body?.kernelAddress,
+      };
     } catch {
-      return sendJson(res, 400, { error: 'allocation query param must be canonical JSON' });
+      return null;
     }
-    const record = mandatesV2.get({ serializedApproval: approval, stellarOwner, kernelAddress });
-    return sendJson(res, 200, await evaluateStoredMandate(record, allocation));
   }
 
-  // Design spec §5.5 — Task 7 owns this endpoint. Deletes the exact v2 binding via mandatesV2's
-  // existing delete() (owner-authenticated: only the caller who supplies the matching approval +
-  // stellarOwner + kernelAddress triple can remove it). Always 200 — deleted:false for a
-  // never-registered/already-gone triple avoids leaking whether a binding exists for someone
-  // else. Never returns key material.
-  function handleMandateRevoke(req, res) {
-    const { serializedApproval, stellarOwner, kernelAddress } = req.body || {};
-    if (!serializedApproval || !stellarOwner || !kernelAddress) {
-      return sendJson(res, 400, { error: 'serializedApproval, stellarOwner and kernelAddress are all required' });
+  async function authenticateMandate(
+    req,
+    identity,
+    { activeOnly = false, loadRecord = true } = {},
+  ) {
+    const capability = parseBearerCapability(req?.headers?.authorization);
+    if (!capability || !identity?.mandateId || !identity?.stellarOwner || !identity?.kernelAddress) {
+      return null;
     }
-    const deleted = mandatesV2.delete({ serializedApproval, stellarOwner, kernelAddress });
-    return sendJson(res, 200, { ok: true, deleted, scope: 'relayer-key-copy', note: REVOKE_NOTE });
+    try {
+      const authority = await mandatesV3.authority(identity.mandateId);
+      if (!authority || !capabilityMatches(capability, authority.capabilityHash)
+        || authority.stellarOwner !== identity.stellarOwner
+        || String(authority.kernelAddress).toLowerCase() !== String(identity.kernelAddress).toLowerCase()
+        || (activeOnly && authority.status !== 'active')) {
+        return null;
+      }
+      const durable = await mandatesV3.status(identity);
+      if (activeOnly && durable.status !== 'active') return null;
+      if (!loadRecord) {
+        return { authority, capability, durable, identity, record: null };
+      }
+      const record = await mandatesV3.get(identity);
+      if (!record) return null;
+      const durableAfterLoad = await mandatesV3.status(identity);
+      if (activeOnly && durableAfterLoad.status !== 'active') return null;
+      return { authority, capability, durable: durableAfterLoad, identity, record };
+    } catch {
+      return null;
+    }
+  }
+
+  async function authenticateMandateAuthority(req, mandateId, { activeOnly = false } = {}) {
+    const capability = parseBearerCapability(req?.headers?.authorization);
+    if (!capability) return null;
+    try {
+      const authority = await mandatesV3.authority(mandateId);
+      if (!authority || !capabilityMatches(capability, authority.capabilityHash)) return null;
+      if (activeOnly && authority.status !== 'active') return null;
+      return { authority, capability };
+    } catch {
+      return null;
+    }
+  }
+
+  function unauthorized(res) {
+    return sendJson(res, 401, { error: 'unauthorized' });
+  }
+
+  async function authenticateBodyMandate(
+    req,
+    res,
+    { activeOnly = false, loadRecord = true } = {},
+  ) {
+    const identity = mandateIdentity(req.body || {});
+    const authenticated = await authenticateMandate(req, identity, { activeOnly, loadRecord });
+    if (!authenticated) {
+      unauthorized(res);
+      return null;
+    }
+    return authenticated;
+  }
+
+  async function handleMandateStatus(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    const authenticated = await authenticateBodyMandate(req, res, { loadRecord: false });
+    if (!authenticated) return;
+    try {
+      requireExactFields(req.body || {}, MANDATE_STATUS_FIELDS, 'mandate status');
+    } catch (err) {
+      return sendJson(res, 400, { error: errorMessage(err) });
+    }
+    const { durable } = authenticated;
+    if (durable.status !== 'active') return sendJson(res, 200, durable);
+    let record;
+    try {
+      record = await mandatesV3.get(authenticated.identity);
+      const durableAfterLoad = await mandatesV3.status(authenticated.identity);
+      if (durableAfterLoad.status !== 'active') return sendJson(res, 200, durableAfterLoad);
+    } catch {
+      return sendJson(res, 200, unknownMandateStatus('STATUS_ERROR'));
+    }
+    if (!record) return sendJson(res, 200, unknownMandateStatus('STATUS_ERROR'));
+    if (!canonicalStoredBinding(record, authenticated.identity)) {
+      return sendJson(res, 200, unknownMandateStatus('BINDING_INVALID'));
+    }
+    return sendJson(res, 200, await evaluateStoredMandate(record));
+  }
+
+  async function handleMandateRevoke(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    const authenticated = await authenticateBodyMandate(req, res, { loadRecord: false });
+    if (!authenticated) return;
+    try {
+      requireExactFields(req.body || {}, MANDATE_STATUS_FIELDS, 'mandate revoke');
+    } catch (err) {
+      return sendJson(res, 400, { error: errorMessage(err) });
+    }
+    const revoked = await mandatesV3.revoke(authenticated.identity);
+    if (!revoked || !['revoked', 'expired'].includes(revoked.status)) return unauthorized(res);
+    res.setHeader('Set-Cookie', clearMandateCapabilityCookie({ mandateId: authenticated.identity.mandateId }));
+    return sendJson(res, 200, {
+      ok: true,
+      status: revoked.status,
+      scope: 'relayer-key-copy',
+      note: REVOKE_NOTE,
+    });
   }
 
   // Wire shape from frontend/src/base/relayerClient.js's toWireAllocations: {allocationId,
@@ -828,23 +868,63 @@ export function createRelayerRouter({
     });
   }
 
-  function revalidatedMandate({ serializedApproval, stellarOwner, kernelAddress }) {
-    const record = mandatesV2.get({ serializedApproval, stellarOwner, kernelAddress });
-    if (!record) return { error: 'unknown mandate' };
-    if (relayerOrigin && record.relayerOrigin !== relayerOrigin) {
-      return { error: 'relayer origin mismatch' };
+  function activeAuthorityMatches(authority, expected, identity) {
+    return Boolean(authority && expected && identity
+      && authority.status === 'active'
+      && authority.mandateId === identity.mandateId
+      && authority.mandateId === expected.mandateId
+      && authority.stellarOwner === identity.stellarOwner
+      && authority.stellarOwner === expected.stellarOwner
+      && String(authority.kernelAddress).toLowerCase() === String(identity.kernelAddress).toLowerCase()
+      && String(authority.kernelAddress).toLowerCase() === String(expected.kernelAddress).toLowerCase()
+      && authority.bindingId === expected.bindingId
+      && authority.bindingHash === expected.bindingHash
+      && authority.relayerOrigin === (expected.relayerOrigin ?? null)
+      && authority.validUntilSeconds === expected.validUntilSeconds
+      && CAPABILITY_HASH_PATTERN.test(authority.capabilityHash || '')
+      && CAPABILITY_HASH_PATTERN.test(expected.capabilityHash || '')
+      && authority.capabilityHash === expected.capabilityHash);
+  }
+
+  function activeDurableMatches(durable, authority) {
+    return Boolean(durable && authority
+      && durable.status === 'active'
+      && durable.mandateId === authority.mandateId
+      && durable.stellarOwner === authority.stellarOwner
+      && String(durable.kernelAddress).toLowerCase() === String(authority.kernelAddress).toLowerCase()
+      && durable.bindingId === authority.bindingId
+      && durable.bindingHash === authority.bindingHash
+      && durable.relayerOrigin === authority.relayerOrigin
+      && durable.validUntilSeconds === authority.validUntilSeconds);
+  }
+
+  async function reloadActiveAuthority(identity, expected, capability = null) {
+    try {
+      const authority = await mandatesV3.authority(identity.mandateId);
+      if (!activeAuthorityMatches(authority, expected, identity)
+        || (capability && !capabilityMatches(capability, authority.capabilityHash))) {
+        return null;
+      }
+      const durable = await mandatesV3.status(identity);
+      if (!activeDurableMatches(durable, authority)) return null;
+      return { authority, durable };
+    } catch {
+      return null;
     }
-    const recheck = validateMandateBinding({
-      serializedApproval,
-      sessionPrivateKey: record.sessionPrivateKey,
-      sessionKeyAddress: record.sessionKeyAddress,
-      stellarOwner,
-      kernelAddress,
-      usdcAddress,
-      yieldRouterAddress,
-      now: Math.floor(Date.now() / 1000),
-    });
-    return recheck.ok ? { record } : { error: recheck.reason };
+  }
+
+  async function freshActiveMandateGate(authenticated) {
+    const canonical = canonicalStoredBinding(authenticated.record, authenticated.identity);
+    if (!canonical) return { error: 'mandate binding is not active' };
+    const evidence = await evaluateStoredMandate(authenticated.record);
+    if (evidence.status !== 'active') return { error: 'mandate evidence is not active' };
+    const reloaded = await reloadActiveAuthority(
+      authenticated.identity,
+      authenticated.record,
+      authenticated.capability,
+    );
+    if (!reloaded) return { error: 'mandate authority changed during evaluation' };
+    return { ...authenticated, ...reloaded, canonical, evidence };
   }
 
   function storedWireAllocations(allocations) {
@@ -970,6 +1050,19 @@ export function createRelayerRouter({
     }));
   }
 
+  // Recovery must not depend on reparsing mutable execution inputs. These identities were
+  // durably acknowledged before the burn was attached, so they remain the authoritative set
+  // to terminalize if pool configuration or a persisted allocation later becomes unreadable.
+  function allocationsFromAssociations(context) {
+    const seen = new Set();
+    if (!Array.isArray(context?.associations)) return [];
+    return context.associations.flatMap(({ allocationId } = {}) => {
+      if (typeof allocationId !== 'string' || !allocationId || seen.has(allocationId)) return [];
+      seen.add(allocationId);
+      return [{ allocationId }];
+    });
+  }
+
   function persistenceUncertain(jobId, job, err) {
     if (sanitizeErrors) {
       console.error(`[relayer] job ${jobId} terminal association persistence failed:`, err);
@@ -1057,42 +1150,222 @@ export function createRelayerRouter({
     return () => clearInterval(timer);
   }
 
-  async function runFarmJobBody(jobId, sessionPrivateKey, farmParams, attachContext, leaseToken) {
+  function activeRecordMatchesFarmContext(record, identity, attachContext) {
+    const canonical = canonicalStoredBinding(record, identity);
+    if (!canonical
+      || record.status !== 'active'
+      || attachContext.bindingId !== record.bindingId
+      || attachContext.bindingHash !== record.bindingHash
+      || attachContext.stellarOwner !== record.stellarOwner
+      || String(attachContext.kernelAddress).toLowerCase() !== String(record.kernelAddress).toLowerCase()) {
+      return null;
+    }
+    return canonical;
+  }
+
+  async function revalidateFarmAuthority(attachContext, { loadRecord = true } = {}) {
+    const identity = mandateIdentity(attachContext);
+    if (!identity) return { error: 'mandate identity is invalid' };
+    let record;
+    try {
+      record = await mandatesV3.get(identity);
+    } catch {
+      return { error: 'mandate authority is unavailable' };
+    }
+    if (!record || record.status !== 'active') return { error: 'mandate authority is not active' };
+    let canonical = activeRecordMatchesFarmContext(record, identity, attachContext);
+    if (!canonical) return { error: 'mandate binding is invalid' };
+    const evidence = await evaluateStoredMandate(record);
+    if (evidence.status !== 'active') return { error: 'mandate evidence is not active' };
+    const reloaded = await reloadActiveAuthority(identity, record);
+    if (!reloaded) return { error: 'mandate authority changed during evaluation' };
+    if (!loadRecord) return { identity, record: null, evidence, ...reloaded };
+
+    // The pre-evaluation record is deliberately discarded. Reopen the key only after the
+    // post-await authority fence, then check once more so a revoked envelope is never handed to
+    // buildFarm merely because an earlier evaluator result was active.
+    try {
+      record = await mandatesV3.get(identity);
+    } catch {
+      return { error: 'mandate authority is unavailable' };
+    }
+    canonical = activeRecordMatchesFarmContext(record, identity, attachContext);
+    if (!canonical) return { error: 'mandate binding is invalid' };
+    const finalReload = await reloadActiveAuthority(identity, reloaded.authority);
+    if (!finalReload || !activeAuthorityMatches(finalReload.authority, record, identity)) {
+      return { error: 'mandate authority changed before key use' };
+    }
+    return { identity, record, evidence, ...finalReload };
+  }
+
+  function failedFarmContext(attachContext, terminalSequence) {
+    return {
+      ...attachContext,
+      associations: associationsWithTerminal(attachContext, terminalSequence),
+    };
+  }
+
+  function finishFarmAuthorityFailure({ jobId, job, attachContext, leaseToken, allocations, message }) {
+    const terminalContext = failedFarmContext(attachContext, 2);
+    const failedJob = {
+      ...job,
+      status: 'error',
+      _attach: terminalContext,
+      steps: [{
+        step: 'farm',
+        status: 'error',
+        message: sanitizeErrors ? 'internal error' : message,
+      }],
+    };
+    try {
+      finishWork({
+        jobId,
+        leaseToken,
+        job: failedJob,
+        reports: lifecycleReports(terminalContext, allocations, 2, 'failed', 'unknown', null),
+      });
+    } catch (error) {
+      persistenceUncertain(jobId, failedJob, error);
+    }
+  }
+
+  function heldAfterMintError(message = 'mandate authority changed after mint') {
+    const error = new Error(message);
+    error.code = 'VF_MANDATE_HELD_AFTER_MINT';
+    return error;
+  }
+
+  function missingMintEvidenceError() {
+    const error = new Error('mint confirmation evidence is missing');
+    error.code = 'VF_MINT_EVIDENCE_MISSING';
+    return error;
+  }
+
+  async function runFarmJobBody(jobId, mandateRecord, farmParams, attachContext, leaseToken) {
     let mintCheckpointed = false;
+    let observedMintResult = null;
+    let observedMintReports = null;
     const onMintConfirmed = async (mintResult) => {
-      if (mintCheckpointed || !mintResult?.mintTxHash) return;
-      const reports = lifecycleReports(
+      if (mintCheckpointed) return;
+      if (typeof mintResult?.mintTxHash !== 'string' || !mintResult.mintTxHash) {
+        throw missingMintEvidenceError();
+      }
+      observedMintResult = {
+        status: mintResult.status,
+        mintTxHash: mintResult.mintTxHash,
+      };
+      observedMintReports = lifecycleReports(
         attachContext, farmParams.allocations, 2, 'minted', 'agent', mintResult.mintTxHash,
       );
       const current = jobs.get(jobId) || { status: 'pending', steps: [] };
-      checkpointWork({
-        jobId,
-        leaseToken,
-        reports,
-        job: {
-          ...current,
-          status: 'depositing',
-          steps: [{ step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash }],
-          _attach: attachContext,
-        },
-      });
+      try {
+        checkpointWork({
+          jobId,
+          leaseToken,
+          reports: observedMintReports,
+          job: {
+            ...current,
+            status: 'depositing',
+            steps: [{ step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash }],
+            _attach: attachContext,
+          },
+        });
+      } catch {
+        throw heldAfterMintError('mint checkpoint persistence is uncertain');
+      }
       mintCheckpointed = true;
+      const authority = await revalidateFarmAuthority(attachContext, { loadRecord: false });
+      if (authority.error) throw heldAfterMintError();
     };
 
     let result;
     try {
-      const { farm } = buildFarm(sessionPrivateKey);
+      const { farm } = buildFarm(mandateRecord.sessionPrivateKey);
       result = await farm({ ...farmParams, onMintConfirmed });
       await onMintConfirmed(result.mintResult);
     } catch (err) {
       const current = jobs.get(jobId) || { status: 'pending', steps: [] };
-      const observedMintTxHash = current.steps
-        ?.find((step) => step.step === 'mint' && step.mintTxHash)?.mintTxHash ?? null;
+      const durableMint = current.steps
+        ?.find((step) => step.step === 'mint' && step.mintTxHash);
+      const observedMintTxHash = durableMint?.mintTxHash
+        ?? observedMintResult?.mintTxHash
+        ?? null;
+      if (err?.code === 'VF_MANDATE_HELD_AFTER_MINT' && observedMintTxHash) {
+        const heldContext = failedFarmContext(attachContext, 3);
+        const mintStep = durableMint ?? {
+          step: 'mint',
+          status: observedMintResult?.status,
+          mintTxHash: observedMintTxHash,
+        };
+        const heldJob = {
+          runId: farmParams.runId,
+          bridgeAgent: farmParams.bridgeAgent,
+          grantTxHash: farmParams.grantTxHash,
+          status: 'error',
+          executionStatus: 'held',
+          custodyLocation: 'agent',
+          steps: [mintStep],
+          _attach: heldContext,
+        };
+        try {
+          const heldReports = lifecycleReports(
+            heldContext,
+            farmParams.allocations,
+            3,
+            'held',
+            'agent',
+            observedMintTxHash,
+          );
+          finishWork({
+            jobId,
+            leaseToken,
+            job: heldJob,
+            reports: mintCheckpointed
+              ? heldReports
+              : [...(observedMintReports ?? []), ...heldReports],
+          });
+        } catch (finishError) {
+          persistenceUncertain(jobId, heldJob, finishError);
+        }
+        return;
+      }
+      if (err?.code === 'VF_MINT_EVIDENCE_MISSING') {
+        const uncertainContext = failedFarmContext(attachContext, 2);
+        const uncertainJob = {
+          runId: farmParams.runId,
+          bridgeAgent: farmParams.bridgeAgent,
+          grantTxHash: farmParams.grantTxHash,
+          status: 'error',
+          executionStatus: 'unknown',
+          custodyLocation: 'unknown',
+          steps: [{
+            step: 'mint',
+            status: 'uncertain',
+            message: sanitizeErrors ? 'internal error' : errorMessage(err),
+          }],
+          _attach: uncertainContext,
+        };
+        try {
+          finishWork({
+            jobId,
+            leaseToken,
+            job: uncertainJob,
+            reports: lifecycleReports(
+              uncertainContext,
+              farmParams.allocations,
+              2,
+              'unknown',
+              'unknown',
+              null,
+            ),
+          });
+        } catch (finishError) {
+          persistenceUncertain(jobId, uncertainJob, finishError);
+        }
+        return;
+      }
       const terminalSequence = observedMintTxHash ? 3 : 2;
-      const failedContext = {
-        ...attachContext,
-        associations: associationsWithTerminal(attachContext, terminalSequence),
-      };
+      const failedContext = failedFarmContext(attachContext, terminalSequence);
       const failedJob = {
         runId: farmParams.runId,
         bridgeAgent: farmParams.bridgeAgent,
@@ -1158,21 +1431,6 @@ export function createRelayerRouter({
     }
   }
 
-  async function runFarmJob(jobId, sessionPrivateKey, farmParams, attachContext, leaseToken) {
-    const stopHeartbeat = startFarmLeaseHeartbeat(jobId, leaseToken);
-    try {
-      return await runFarmJobBody(
-        jobId,
-        sessionPrivateKey,
-        farmParams,
-        attachContext,
-        leaseToken,
-      );
-    } finally {
-      stopHeartbeat();
-    }
-  }
-
   function dispatchFarmWork(jobId) {
     if (activeFarmJobs.has(jobId)) return false;
     const job = jobs.get(jobId);
@@ -1180,48 +1438,50 @@ export function createRelayerRouter({
     if (!job || !attachContext?.attachedBurnTxHash) return false;
     const claimed = claimWork(jobId);
     if (!claimed) return false;
-    const mandate = revalidatedMandate({
-      serializedApproval: attachContext.serializedApproval,
-      stellarOwner: attachContext.stellarOwner,
-      kernelAddress: attachContext.kernelAddress,
-    });
-    let parsedAllocations;
-    try {
-      if (mandate.error) throw new Error(mandate.error);
-      parsedAllocations = parseWireAllocations(attachContext.allocations, job.runId);
-    } catch (err) {
-      const terminalContext = {
-        ...attachContext,
-        associations: associationsWithTerminal(attachContext, 2),
-      };
-      const failedJob = {
-        ...job,
-        status: 'error',
-        _attach: terminalContext,
-        steps: [{ step: 'farm', status: 'error', message: sanitizeErrors ? 'internal error' : errorMessage(err) }],
-      };
-      try {
-        finishWork({
-          jobId,
-          leaseToken: claimed.leaseToken,
-          job: failedJob,
-          reports: lifecycleReports(terminalContext, [], 2, 'failed', 'unknown', null),
-        });
-      } catch (finishError) {
-        persistenceUncertain(jobId, failedJob, finishError);
-      }
-      return false;
-    }
     activeFarmJobs.add(jobId);
-    void runFarmJob(jobId, mandate.record.sessionPrivateKey, {
-      burnTxHash: attachContext.attachedBurnTxHash,
-      execId: attachContext.attachedBurnTxHash,
-      approval: attachContext.serializedApproval,
-      allocations: parsedAllocations,
-      runId: job.runId,
-      bridgeAgent: job.bridgeAgent,
-      grantTxHash: job.grantTxHash,
-    }, attachContext, claimed.leaseToken).finally(() => activeFarmJobs.delete(jobId));
+    const stopHeartbeat = startFarmLeaseHeartbeat(jobId, claimed.leaseToken);
+    void (async () => {
+      let parsedAllocations;
+      try {
+        parsedAllocations = parseWireAllocations(attachContext.allocations, job.runId);
+      } catch (error) {
+        finishFarmAuthorityFailure({
+          jobId,
+          job,
+          attachContext,
+          leaseToken: claimed.leaseToken,
+          allocations: allocationsFromAssociations(attachContext),
+          message: errorMessage(error),
+        });
+        return;
+      }
+
+      const authority = await revalidateFarmAuthority(attachContext);
+      if (authority.error) {
+        finishFarmAuthorityFailure({
+          jobId,
+          job,
+          attachContext,
+          leaseToken: claimed.leaseToken,
+          allocations: parsedAllocations,
+          message: authority.error,
+        });
+        return;
+      }
+
+      await runFarmJobBody(jobId, authority.record, {
+        burnTxHash: attachContext.attachedBurnTxHash,
+        execId: attachContext.attachedBurnTxHash,
+        approval: authority.record.serializedApproval,
+        allocations: parsedAllocations,
+        runId: job.runId,
+        bridgeAgent: job.bridgeAgent,
+        grantTxHash: job.grantTxHash,
+      }, attachContext, claimed.leaseToken);
+    })().finally(() => {
+      stopHeartbeat();
+      activeFarmJobs.delete(jobId);
+    });
     return true;
   }
 
@@ -1233,7 +1493,7 @@ export function createRelayerRouter({
     try {
       allocations = parseWireAllocations(context.allocations, job.runId);
     } catch {
-      return;
+      allocations = allocationsFromAssociations(context);
     }
     const mintTxHash = job.steps?.find((step) => step.step === 'mint')?.mintTxHash ?? null;
     const terminalSequence = mintTxHash ? 3 : 2;
@@ -1274,27 +1534,27 @@ export function createRelayerRouter({
   }
 
   async function handleFarm(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    const authenticated = await authenticateBodyMandate(req, res, { activeOnly: true });
+    if (!authenticated) return;
     try {
       requireExactFields(req.body || {}, FARM_FIELDS, 'farm');
     } catch (err) {
       return sendJson(res, 400, { error: errorMessage(err) });
     }
     const {
-      serializedApproval, allocations, stellarOwner, kernelAddress,
+      sourceDomain, mandateId, allocations, stellarOwner, kernelAddress,
       bridgeAgent = null, runId = null, grantTxHash = null,
     } = req.body || {};
-    if (!serializedApproval || !stellarOwner || !kernelAddress
+    if (sourceDomain !== 27) {
+      return sendJson(res, 400, { error: 'sourceDomain must be the Stellar domain 27' });
+    }
+    if (!mandateId || !stellarOwner || !kernelAddress
       || !Array.isArray(allocations) || allocations.length === 0) {
       return sendJson(res, 400, {
-        error: 'serializedApproval, stellarOwner, kernelAddress and allocations are all required',
+        error: 'mandateId, stellarOwner, kernelAddress and allocations are all required',
       });
     }
-
-    // Exact-bound lookup — approval alone is never enough. The same full validation runs again
-    // on /farm/attach before a queued job can gain a burn hash.
-    const mandate = revalidatedMandate({ serializedApproval, stellarOwner, kernelAddress });
-    if (mandate.error) return sendJson(res, 400, { error: mandate.error });
-    const { record } = mandate;
     if (!bridgeAgent || !runId || !grantTxHash) {
       return sendJson(res, 400, {
         error: 'bridgeAgent, runId and grantTxHash are required for exact farm association',
@@ -1310,18 +1570,15 @@ export function createRelayerRouter({
     const overCap = parsedAllocations.find((a) => a.amount > MAX_CALL_CAP_UNITS);
     if (overCap) return sendJson(res, 400, { error: 'allocation exceeds the 10,000 USDC per-call cap' });
 
-    // This is the last relayer-side seam before the browser is acknowledged and allowed to burn.
-    // Verify every exact durable allocation and prepare its exact approve+deposit operation.
-    const mandateEvidence = [];
-    for (const allocation of storedWireAllocations(parsedAllocations)) {
-      const evidence = await evaluateStoredMandate(record, allocation);
-      if (evidence.status !== 'active') {
-        return sendJson(res, 409, { error: 'Base mandate evidence is not active', evidence });
-      }
-      mandateEvidence.push(evidence);
-    }
+    // Amounts are intentionally absent from the permission read. The disclosed per-call cap is
+    // enforced above; authority freshness is one mandate-level read regardless of allocation
+    // count, followed by durable child-intent acknowledgements.
+    const gate = await freshActiveMandateGate(authenticated);
+    if (gate.error) return sendJson(res, 409, { error: 'Base mandate evidence is not active' });
+    const { record } = gate;
 
     const jobId = genId();
+    if (!JOB_ID_PATTERN.test(jobId)) return sendJson(res, 503, { error: 'Base child intent is unavailable' });
     if (!agentIndexReporter?.commitIntent || !associationOutbox?.enqueue) {
       return sendJson(res, 503, { error: 'Base child intent is unavailable' });
     }
@@ -1342,7 +1599,7 @@ export function createRelayerRouter({
       bridgeAgent,
       grantTxHash,
       _attach: {
-        serializedApproval,
+        mandateId,
         stellarOwner,
         kernelAddress,
         bindingId: record.bindingId,
@@ -1350,7 +1607,6 @@ export function createRelayerRouter({
         networkId,
         jobId,
         allocations: storedWireAllocations(parsedAllocations),
-        mandateEvidence,
         associations: parsedAllocations.map(({ allocationId }) => ({
           allocationId,
           terminalSequence: null,
@@ -1366,37 +1622,37 @@ export function createRelayerRouter({
     });
   }
 
-  function handleFarmAttach(req, res) {
+  async function handleFarmAttach(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    const authenticated = await authenticateBodyMandate(req, res, { activeOnly: true });
+    if (!authenticated) return;
     try {
       requireExactFields(req.body || {}, FARM_ATTACH_FIELDS, 'farm attach');
     } catch (err) {
       return sendJson(res, 400, { error: errorMessage(err) });
     }
-    const { jobId, burnTxHash, serializedApproval, stellarOwner, kernelAddress } = req.body || {};
-    if (!jobId || !isValidBurnTxHash(burnTxHash) || !serializedApproval || !stellarOwner || !kernelAddress) {
+    const {
+      jobId, burnTxHash, mandateId, stellarOwner, kernelAddress,
+    } = req.body || {};
+    if (!JOB_ID_PATTERN.test(jobId || '') || !isValidBurnTxHash(burnTxHash)
+      || !mandateId || !stellarOwner || !kernelAddress) {
       return sendJson(res, 400, {
-        error: 'jobId, burnTxHash, serializedApproval, stellarOwner and kernelAddress are required',
+        error: 'jobId, burnTxHash, mandateId, stellarOwner and kernelAddress are required',
       });
     }
     const job = jobs.get(jobId);
     if (!job) return sendJson(res, 404, { error: 'unknown jobId' });
     const context = job._attach;
     if (!context) return sendJson(res, 409, { error: 'job does not accept a burn attachment' });
-    if (
-      context.serializedApproval !== serializedApproval
+    const gate = await freshActiveMandateGate(authenticated);
+    if (gate.error) return sendJson(res, 409, { error: 'Base mandate evidence is not active' });
+    const { record } = gate;
+    if (context.mandateId !== mandateId
       || context.stellarOwner !== stellarOwner
-      || context.kernelAddress !== kernelAddress
-    ) {
-      return sendJson(res, 400, { error: 'farm attach approval, owner, or kernel mismatch' });
-    }
-    const mandate = revalidatedMandate({ serializedApproval, stellarOwner, kernelAddress });
-    if (mandate.error) return sendJson(res, 400, { error: mandate.error });
-    const { record } = mandate;
-    if (
-      record.bindingId !== context.bindingId
-      || record.bindingHash !== context.bindingHash
-    ) {
-      return sendJson(res, 400, { error: 'farm attach mandate binding mismatch' });
+      || String(context.kernelAddress).toLowerCase() !== String(kernelAddress).toLowerCase()
+      || context.bindingId !== record.bindingId
+      || context.bindingHash !== record.bindingHash) {
+      return sendJson(res, 409, { error: 'farm attach mandate binding mismatch' });
     }
     if (context.attachedBurnTxHash) {
       if (context.attachedBurnTxHash !== burnTxHash) {
@@ -1449,10 +1705,43 @@ export function createRelayerRouter({
     return sendJson(res, 200, { jobId, attached: true, status: 'pending' });
   }
 
-  function handleStatus(res, jobId) {
-    const job = jobs.get(jobId);
+  async function handleStatus(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    const body = req.body || {};
+    if (Object.keys(body).length === 1 && Object.hasOwn(body, 'jobId')) {
+      return sendJson(res, 400, { error: 'unsupported status identity' });
+    }
+
+    let mandateId;
+    try {
+      mandateId = requireMandateId(body.mandateId);
+    } catch {
+      return unauthorized(res);
+    }
+    const authenticated = await authenticateMandateAuthority(req, mandateId, { activeOnly: true });
+    if (!authenticated) return unauthorized(res);
+    try {
+      requireExactFields(body, FARM_STATUS_FIELDS, 'farm status');
+    } catch (err) {
+      return sendJson(res, 400, { error: errorMessage(err) });
+    }
+    if (typeof body.jobId !== 'string' || !JOB_ID_PATTERN.test(body.jobId)) {
+      return sendJson(res, 400, { error: 'invalid jobId' });
+    }
+
+    const job = jobs.get(body.jobId);
     if (!job) return sendJson(res, 404, { error: 'unknown jobId' });
-    return sendJson(res, 200, publicJob(job, jobId));
+    const authority = job._attach;
+    const mandate = authenticated.authority;
+    if (!authority
+      || authority.mandateId !== mandateId
+      || authority.stellarOwner !== mandate.stellarOwner
+      || String(authority.kernelAddress).toLowerCase() !== String(mandate.kernelAddress).toLowerCase()
+      || authority.bindingId !== mandate.bindingId
+      || authority.bindingHash !== mandate.bindingHash) {
+      return unauthorized(res);
+    }
+    return sendJson(res, 200, publicJob(job, body.jobId));
   }
 
   async function runUnwindJob(jobId, unwindTxHash, stellarRecipient) {
@@ -1468,12 +1757,19 @@ export function createRelayerRouter({
   }
 
   function handleUnwind(req, res) {
+    try {
+      requireExactFields(req.body || {}, UNWIND_FIELDS, 'unwind');
+    } catch (err) {
+      return sendJson(res, 400, { error: errorMessage(err) });
+    }
     const { unwindTxHash, stellarRecipient } = req.body || {};
-    if (!unwindTxHash || !stellarRecipient) {
+    if (!isValidBurnTxHash(unwindTxHash)
+      || typeof stellarRecipient !== 'string' || !stellarRecipient) {
       return sendJson(res, 400, { error: 'unwindTxHash and stellarRecipient are required' });
     }
 
     const jobId = genId();
+    if (!JOB_ID_PATTERN.test(jobId)) return sendJson(res, 503, { error: 'unwind relay is unavailable' });
     jobs.set(jobId, { status: 'pending', steps: [] });
     sendJson(res, 200, { jobId });
 
@@ -1484,7 +1780,7 @@ export function createRelayerRouter({
   const relayerRouter = async function relayerRouter(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     if (req.method === 'OPTIONS') {
       res.statusCode = 204;
       return res.end('');
@@ -1494,17 +1790,16 @@ export function createRelayerRouter({
     const path = subPath(req);
 
     if (req.method === 'POST' && path === '/mandate') return handleMandate(req, res);
+    if (req.method === 'POST' && path === '/mandate/status') return handleMandateStatus(req, res);
     if (req.method === 'POST' && path === '/mandate/revoke') return handleMandateRevoke(req, res);
     if (req.method === 'POST' && path === '/farm') return handleFarm(req, res);
     if (req.method === 'POST' && path === '/farm/attach') return handleFarmAttach(req, res);
+    if (req.method === 'POST' && path === '/status') return handleStatus(req, res);
     if (req.method === 'POST' && path === '/unwind') return handleUnwind(req, res);
     if (req.method === 'GET') {
       if (path === '/config') {
         return sendJson(res, 200, publicRuntime ?? { networkId, readiness: { ready: false } });
       }
-      const statusMatch = path.match(/^\/status\/([^/]+)$/);
-      if (statusMatch) return handleStatus(res, decodeURIComponent(statusMatch[1]));
-      if (path === '/mandate/valid') return handleMandateValid(req, res);
     }
 
     return sendJson(res, 404, { error: 'Not found' });
