@@ -2,14 +2,18 @@ import { describe, expect, it } from 'vitest'
 import {
   isVerifiedBaseMandateStatus,
   materialBaseMandateStatusChange,
+  normalizeBaseMandateStatus,
   publicBaseMandateEvidence,
-  toMandateStatusAllocation,
 } from './mandateStatus.js'
 
+const USER_OP_HASH = `0x${'33'.repeat(32)}`
+const TX_HASH = `0x${'44'.repeat(32)}`
+
 const active = (overrides = {}) => ({
-  version: 2,
+  version: 3,
   status: 'active',
   reasonCodes: [],
+  expiresAt: 2_000_007_200,
   expected: {
     owner: 'GOWNER',
     kernelAddress: '0x0000000000000000000000000000000000000AA1',
@@ -24,7 +28,11 @@ const active = (overrides = {}) => ({
     blockTime: 2_000_000_000_000,
     implementation: '0x0000000000000000000000000000000000000CC3',
     permission: { digest: 'permission-1' },
-    preparedCallDigest: 'prepared-1',
+    activation: {
+      userOpHash: USER_OP_HASH,
+      txHash: TX_HASH,
+      activatedAt: 2_000_000_000,
+    },
   },
   checks: {
     chain: true,
@@ -36,17 +44,17 @@ const active = (overrides = {}) => ({
     binding: true,
     origin: true,
     implementation: true,
-    allocation: true,
     freshness: true,
     reconstruction: true,
-    prepared: true,
+    activation: true,
   },
   ...overrides,
 })
 
 describe('Base mandate evidence gates', () => {
-  it('accepts only active, complete read+prepare evidence', () => {
+  it('accepts only v3 active evidence with durable activation and every live check', () => {
     expect(isVerifiedBaseMandateStatus(active())).toBe(true)
+    expect(isVerifiedBaseMandateStatus(active({ version: 2 }))).toBe(false)
     for (const status of [
       'not_yet_valid',
       'expiring',
@@ -58,11 +66,19 @@ describe('Base mandate evidence gates', () => {
       expect(isVerifiedBaseMandateStatus(active({ status }))).toBe(false)
     }
     expect(
-      isVerifiedBaseMandateStatus(active({ checks: { ...active().checks, prepared: false } }))
+      isVerifiedBaseMandateStatus(active({ checks: { ...active().checks, activation: false } }))
+    ).toBe(false)
+    expect(
+      isVerifiedBaseMandateStatus(active({ observed: { ...active().observed, activation: null } }))
     ).toBe(false)
     expect(
       isVerifiedBaseMandateStatus(
-        active({ observed: { ...active().observed, preparedCallDigest: null } })
+        active({
+          observed: {
+            ...active().observed,
+            activation: { ...active().observed.activation, userOpHash: `0x${'AA'.repeat(32)}` },
+          },
+        })
       )
     ).toBe(false)
   })
@@ -77,15 +93,11 @@ describe('Base mandate evidence gates', () => {
     'binding',
     'origin',
     'implementation',
-    'allocation',
     'freshness',
     'reconstruction',
-    'prepared',
+    'activation',
   ])('rejects active evidence when the mandatory %s check is absent', (missing) => {
-    const complete = {
-      ...active().checks,
-      reconstruction: true,
-    }
+    const complete = { ...active().checks }
     delete complete[missing]
 
     expect(isVerifiedBaseMandateStatus(active({ checks: complete }))).toBe(false)
@@ -126,42 +138,39 @@ describe('Base mandate evidence gates', () => {
     ).toBe(true)
   })
 
-  it('builds the exact durable allocation and rejects mutation fields', () => {
-    expect(
-      toMandateStatusAllocation({
-        allocationId: 'run-1:bridge:aave-v3',
-        poolAddress: '0x0000000000000000000000000000000000000AA1',
-        units: 123n,
-        minShares: 120n,
-      })
-    ).toEqual({
-      allocationId: 'run-1:bridge:aave-v3',
-      poolAddress: '0x0000000000000000000000000000000000000AA1',
-      amount: { token: 'USDC', units: '123', decimals: 6 },
-      minShares: '120',
+  it('normalizes only the v3 HTTP contract and fails closed otherwise', () => {
+    expect(normalizeBaseMandateStatus(active())).toEqual(active())
+    expect(normalizeBaseMandateStatus(active({ version: 2 }))).toEqual({
+      version: 3,
+      status: 'unknown',
+      reasonCodes: ['EVIDENCE_MISSING'],
+      expected: {},
+      observed: {},
+      checks: {},
     })
-    expect(() =>
-      toMandateStatusAllocation({
-        poolAddress: '0x0000000000000000000000000000000000000AA1',
-        units: 123n,
-        minShares: 120n,
-        paymaster: '0x0000000000000000000000000000000000000BB2',
-      })
-    ).toThrow(/unexpected/i)
   })
 
   it('persists/returns only public observation evidence and removes nested secrets', () => {
     const evidence = publicBaseMandateEvidence(
       active({
         sessionPrivateKey: 'TOP-SECRET',
+        serializedApproval: 'SERIALIZED-APPROVAL',
+        approvalBlob: 'APPROVAL-BLOB',
         observed: {
           ...active().observed,
           relaySecret: 'RELAY-SECRET',
-          nested: { ownerPrivateKey: 'OWNER-SECRET', safe: 'kept' },
+          nested: {
+            ownerPrivateKey: 'OWNER-SECRET',
+            enableSignature: 'ENABLE-SIGNATURE',
+            sessionMaterial: 'SESSION-MATERIAL',
+            deeper: { serializedApproval: 'NESTED-APPROVAL', safe: 'kept' },
+          },
         },
       })
     )
-    expect(evidence.observed.nested.safe).toBe('kept')
-    expect(JSON.stringify(evidence)).not.toMatch(/TOP-SECRET|RELAY-SECRET|OWNER-SECRET/)
+    expect(evidence.observed.nested.deeper.safe).toBe('kept')
+    expect(JSON.stringify(evidence)).not.toMatch(
+      /TOP-SECRET|SERIALIZED-APPROVAL|APPROVAL-BLOB|RELAY-SECRET|OWNER-SECRET|ENABLE-SIGNATURE|SESSION-MATERIAL|NESTED-APPROVAL/
+    )
   })
 })
