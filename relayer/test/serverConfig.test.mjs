@@ -217,6 +217,7 @@ describe('runtimeServerConfig', () => {
       expect(sqlite.probe()).toMatchObject({ mandateMigrationCleanupPending: true });
       await expect(serverModule.startVerifiedRelayer({
         verifyReadiness: () => serverModule.verifyRelayerReadiness({ sqlite, reporter }),
+        resumeMandateActivations: async () => {},
         resumeFarmJobs: async () => { calls.resume += 1; },
         startWorker: () => { calls.worker += 1; return { stop() {} }; },
         openListener: () => { calls.listener += 1; return { close() {} }; },
@@ -318,6 +319,7 @@ describe('runtimeServerConfig', () => {
     try {
       await expect(serverModule.startVerifiedRelayer({
         verifyReadiness: () => serverModule.verifyRelayerReadiness({ sqlite, reporter }),
+        resumeMandateActivations: async () => {},
         resumeFarmJobs: async () => {},
         startWorker: () => ({ stop() {} }),
         openListener: () => { listenerOpened = true; return { close() {} }; },
@@ -344,28 +346,145 @@ describe('runtimeServerConfig', () => {
     }
   });
 
-  // Defect caught: merely exporting readiness checks did not stop eager construction from starting
-  // the outbox/execution workers and socket before those checks had succeeded.
-  it('starts reconciliation, delivery, and the listener only after readiness succeeds', async () => {
-    const order = [];
-    const dependencies = {
-      verifyReadiness: async () => { order.push('ready'); },
-      resumeFarmJobs: async () => { order.push('reconcile'); },
-      startWorker: () => { order.push('worker'); return { stop() {} }; },
-      openListener: () => { order.push('listen'); return { close() {} }; },
-    };
-    expect(typeof serverModule.startVerifiedRelayer).toBe('function');
-    await expect(serverModule.startVerifiedRelayer(dependencies)).resolves.toMatchObject({
-      worker: expect.any(Object),
-      server: expect.any(Object),
-    });
-    expect(order).toEqual(['ready', 'reconcile', 'worker', 'listen']);
+  describe('activation recovery startup', () => {
+    // Defect caught: farm recovery, the outbox worker, or the listener can begin before pending
+    // mandate activation recovery has completed after a relayer restart.
+    it('recovers activations before farm work, worker delivery, and listening', async () => {
+      const order = [];
 
-    order.length = 0;
-    await expect(serverModule.startVerifiedRelayer({
-      ...dependencies,
-      verifyReadiness: async () => { order.push('rejected'); throw new Error('remote unavailable'); },
-    })).rejects.toThrow(/remote unavailable/);
-    expect(order).toEqual(['rejected']);
+      await expect(serverModule.startVerifiedRelayer({
+        verifyReadiness: async () => { order.push('ready'); },
+        resumeMandateActivations: async () => {
+          order.push('activation-start');
+          await Promise.resolve();
+          order.push('activation-done');
+        },
+        resumeFarmJobs: async () => {
+          order.push('farm-start');
+          await Promise.resolve();
+          order.push('farm-done');
+        },
+        startWorker: () => { order.push('worker'); return { stop() {} }; },
+        openListener: () => { order.push('listen'); return { close() {} }; },
+      })).resolves.toMatchObject({
+        worker: expect.any(Object),
+        server: expect.any(Object),
+      });
+
+      expect(order).toEqual([
+        'ready',
+        'activation-start',
+        'activation-done',
+        'farm-start',
+        'farm-done',
+        'worker',
+        'listen',
+      ]);
+    });
+
+    // Defect caught: startup continues to farm recovery or accepts traffic after activation
+    // recovery fails, leaving pending mandate activation state unexamined.
+    it('does not recover farm work, start delivery, or listen when activation recovery rejects', async () => {
+      const order = [];
+
+      await expect(serverModule.startVerifiedRelayer({
+        verifyReadiness: async () => { order.push('ready'); },
+        resumeMandateActivations: async () => {
+          order.push('activation');
+          throw new Error('activation recovery unavailable');
+        },
+        resumeFarmJobs: async () => { order.push('farm'); },
+        startWorker: () => { order.push('worker'); return { stop() {} }; },
+        openListener: () => { order.push('listen'); return { close() {} }; },
+      })).rejects.toThrow(/activation recovery unavailable/);
+
+      expect(order).toEqual(['ready', 'activation']);
+    });
+
+    // Defect caught: the process accepts traffic or starts asynchronous delivery despite farm
+    // recovery having failed after activation recovery completed.
+    it('does not start delivery or listen when farm recovery rejects', async () => {
+      const order = [];
+
+      await expect(serverModule.startVerifiedRelayer({
+        verifyReadiness: async () => { order.push('ready'); },
+        resumeMandateActivations: async () => { order.push('activation'); },
+        resumeFarmJobs: async () => {
+          order.push('farm');
+          throw new Error('farm recovery unavailable');
+        },
+        startWorker: () => { order.push('worker'); return { stop() {} }; },
+        openListener: () => { order.push('listen'); return { close() {} }; },
+      })).rejects.toThrow(/farm recovery unavailable/);
+
+      expect(order).toEqual(['ready', 'activation', 'farm']);
+    });
+
+    // Defect caught: createRelayerServer.listen can forget to forward the router's real v3
+    // recovery method even while the lower-level startVerifiedRelayer ordering tests stay green.
+    it('wires and awaits the actual router activation recovery before farm recovery and socket creation', async () => {
+      const order = [];
+      let routerDeps;
+      const closeCallbacks = [];
+      const router = async () => {};
+      router.resumeMandateActivations = async () => {
+        order.push('activation-start');
+        await Promise.resolve();
+        order.push('activation-done');
+      };
+      router.resumeFarmJobs = async () => {
+        order.push('farm-start');
+        await Promise.resolve();
+        order.push('farm-done');
+      };
+      const fakeServer = {
+        listen(port) {
+          expect(port).toBe(0);
+          order.push('listen');
+        },
+        on(event, callback) {
+          if (event === 'close') closeCallbacks.push(callback);
+          return this;
+        },
+        close() {
+          for (const callback of closeCallbacks) callback();
+        },
+      };
+
+      const relayer = serverModule.createRelayerServer(serverConfig({ dbPath: null }), {
+        createRouter(deps) {
+          routerDeps = deps;
+          return router;
+        },
+        createHttpServer(handler) {
+          expect(typeof handler).toBe('function');
+          order.push('socket-create');
+          return fakeServer;
+        },
+      });
+      let started;
+      try {
+        started = await relayer.listen(0);
+        expect(started).toBe(fakeServer);
+        expect(order).toEqual([
+          'activation-start',
+          'activation-done',
+          'farm-start',
+          'farm-done',
+          'socket-create',
+          'listen',
+        ]);
+        expect(routerDeps).toMatchObject({
+          mandatesV3: expect.objectContaining({ get: expect.any(Function) }),
+          mandateActivations: expect.objectContaining({
+            reconcileExpired: expect.any(Function),
+            listRecoverable: expect.any(Function),
+          }),
+          buildMandateActivator: expect.any(Function),
+        });
+      } finally {
+        started?.close();
+      }
+    });
   });
 });

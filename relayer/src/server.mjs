@@ -10,7 +10,7 @@ import { createWatcher } from './cctp/watcher.mjs';
 import { createOrchestrator } from './base/orchestrator.mjs';
 import { createFarmFlow } from './flows/farm.mjs';
 import { createRelayerRouter } from './httpRouter.mjs';
-import { createMandateStoreV2 } from './mandateStore.mjs';
+import { createMandateStoreV2, createMandateStoresV3 } from './mandateStore.mjs';
 import { createSqliteStores } from './sqliteStores.mjs';
 import { startAssociationOutboxWorker } from './associationOutbox.mjs';
 import {
@@ -59,11 +59,13 @@ export async function verifyRelayerReadiness({ sqlite, reporter }) {
 
 export async function startVerifiedRelayer({
   verifyReadiness,
+  resumeMandateActivations,
   resumeFarmJobs,
   startWorker,
   openListener,
 }) {
   await verifyReadiness();
+  await resumeMandateActivations();
   await resumeFarmJobs();
   const worker = startWorker();
   const server = openListener();
@@ -92,7 +94,11 @@ export function withProxyKeyAuth(handler, key) {
  * @param {ReturnType<typeof import('./config.mjs').loadConfig>} config
  * @returns {{ handler: Function, listen: (port: number) => Promise<import('node:http').Server> }}
  */
-export function createRelayerServer(config, { openSqlite = createSqliteStores } = {}) {
+export function createRelayerServer(config, {
+  openSqlite = createSqliteStores,
+  createRouter = createRelayerRouter,
+  createHttpServer = createServer,
+} = {}) {
   if (process.env.RELAYER_OFFLINE_KEY_MIGRATION === '1') {
     throw new Error('RELAYER_OFFLINE_KEY_MIGRATION cannot run in the HTTP relayer process');
   }
@@ -116,6 +122,9 @@ export function createRelayerServer(config, { openSqlite = createSqliteStores } 
   // `mandates` table) is deliberately no longer wired in here at all: any row still sitting there
   // stays untouched for rollback, but this server never reads or writes it again.
   const mandatesV2 = sqlite ? sqlite.mandatesV2 : createMandateStoreV2();
+  const mandateStoresV3 = sqlite ?? createMandateStoresV3();
+  const mandatesV3 = mandateStoresV3.mandatesV3;
+  const mandateActivations = mandateStoresV3.mandateActivations;
   // This server's own public origin, compared against every stored mandate's relayerOrigin on
   // every operation (httpRouter.mjs's Step 2 "compare relayer origin to server configuration").
   // Unset = local dev, no compare performed — same "empty = open" posture as RELAYER_PROXY_KEY
@@ -143,6 +152,17 @@ export function createRelayerServer(config, { openSqlite = createSqliteStores } 
     return createFarmFlow({ watcher, orchestrator, domains: config.domains });
   }
 
+  function buildMandateActivator(sessionPrivateKey) {
+    return createOrchestrator({
+      chain: config.base.chain,
+      rpcUrl: config.base.rpcUrl,
+      bundlerRpcUrl: config.base.bundlerRpcUrl,
+      yieldRouterAddress: config.base.yieldRouterAddress,
+      usdcAddress: config.base.usdcAddress,
+      sessionPrivateKey,
+    });
+  }
+
   // Reverse leg: relay ONLY the mint. `stellarRecipient` is already encoded in the burn's
   // hookData (see cctp/reverse.mjs) — accepted here for logging/idempotency, not for routing.
   // The withdraw+burn happens client-side via BaseExitSweeper.exitAllAndBurn; the relayer never
@@ -157,11 +177,14 @@ export function createRelayerServer(config, { openSqlite = createSqliteStores } 
   // The Cloudflare Pages proxy (functions/api/vf-cross) sends x-vf-relayer-key on every request;
   // the VM is otherwise tunnel-only, so this shared secret is what makes the tunnel non-open.
   // Empty key = local dev (no gate).
-  const router = createRelayerRouter({
+  const router = createRouter({
       buildFarm,
       relayUnwindMint,
       jobs,
       mandatesV2,
+      mandatesV3,
+      mandateActivations,
+      buildMandateActivator,
       genId: randomUUID,
       usdcAddress: config.base.usdcAddress,
       yieldRouterAddress: config.base.yieldRouterAddress,
@@ -185,12 +208,13 @@ export function createRelayerServer(config, { openSqlite = createSqliteStores } 
       verifyReadiness: production
         ? () => verifyRelayerReadiness({ sqlite, reporter: agentIndexReporter })
         : async () => ({ writable: Boolean(sqlite), reporterSchema: runtimeConfig.reporterSchema }),
+      resumeMandateActivations: () => router.resumeMandateActivations(),
       resumeFarmJobs: () => router.resumeFarmJobs(),
       startWorker: () => (associationOutbox
         ? startAssociationOutboxWorker({ outbox: associationOutbox, reporter: agentIndexReporter })
         : null),
       openListener: () => {
-        const server = createServer(handler);
+        const server = createHttpServer(handler);
         server.listen(port);
         return server;
       },
