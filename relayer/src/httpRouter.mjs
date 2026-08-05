@@ -11,15 +11,23 @@
 // frontend/src/base/withdrawBatch.js), so no relayer-side burn construction is imported or
 // called from here.
 //
-// VF Wallet Task 7: the /mandate* endpoints and /farm now operate EXCLUSIVELY against
-// `mandatesV2` (the owner/kernel-bound store — see mandateStore.mjs's createMandateStoreV2 /
-// sqliteStores.mjs's mandatesV2). The legacy approval-only `mandates` store (server.mjs no longer
-// wires it in here at all) is left completely alone for rollback — any row still sitting in it is
-// simply never looked at by this router again, i.e. "never executable; the client must
-// reactivate" by POSTing a fresh /mandate with the full v2 field set.
+// Mandate registration uses the capability-bound v3 stores whenever those dependencies are
+// composed. The v2 branch remains isolated for the migration slice that still owns the older
+// farm/status routes; a v3 registration never consults or mutates mandatesV2.
 
 import { createHash } from 'node:crypto';
 import { validateMandateBinding, MAX_CALL_CAP_UNITS } from './base/session.mjs';
+import {
+  canonicalTxHash,
+  canonicalUserOpHash,
+} from './base/canonicalMandate.mjs';
+import {
+  capabilityMatches,
+  hashCapability,
+  requireCapability,
+  requireMandateId,
+  serializeMandateCapabilityCookie,
+} from './capability.mjs';
 import {
   evaluateBaseMandateStatus,
   permissionIdFromSerializedApproval,
@@ -75,6 +83,9 @@ const FARM_ATTACH_FIELDS = new Set([
 ]);
 const FARM_LEASE_MS = 30_000;
 const FARM_HEARTBEAT_MS = 10_000;
+const MANDATE_ACTIVATION_LEASE_SECONDS = 30;
+const MANDATE_ACTIVATION_HEARTBEAT_MS = 10_000;
+const CAPABILITY_HASH_PATTERN = /^[0-9a-f]{64}$/;
 
 function requireExactFields(value, allowed, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -129,6 +140,9 @@ const REVOKE_NOTE = 'This relayer deleted its own copy of the session key. The s
  *   createMandateStoreV2 or sqliteStores.mjs's mandatesV2): set/get/status/delete/sweep, all
  *   keyed on {serializedApproval, stellarOwner, kernelAddress} together. get() returns the FULL
  *   record (including sessionPrivateKey) — internal use only; status() never does.
+ * @param {object} [deps.mandatesV3] - encrypted mandate authority store.
+ * @param {object} [deps.mandateActivations] - paired activation work/CAS store.
+ * @param {(sessionPrivateKey: string) => {activateMandate: Function}} [deps.buildMandateActivator]
  * @param {() => string} deps.genId
  * @param {string} deps.usdcAddress - canonical Base USDC address, for approval-policy validation
  * @param {string} deps.yieldRouterAddress - deployed YieldRouter address, for approval-policy validation
@@ -144,14 +158,18 @@ const REVOKE_NOTE = 'This relayer deleted its own copy of the session key. The s
  */
 export function createRelayerRouter({
   buildFarm, relayUnwindMint, jobs, mandatesV2, genId, usdcAddress, yieldRouterAddress,
+  mandatesV3 = null, mandateActivations = null, buildMandateActivator = null,
   relayerOrigin = null, sanitizeErrors = false, networkId = 'stellar-testnet',
   publicRuntime = null,
   evaluateMandateStatusFn = evaluateBaseMandateStatus,
   mandateStatusConfig = publicRuntime?.mandateStatusConfig ?? null,
+  nowSeconds = () => Math.floor(Date.now() / 1000),
   poolTargets = new Map(), agentIndexReporter = null, associationOutbox = null,
   farmExecutions = null,
 }) {
   const activeFarmJobs = new Set();
+  const activeMandateActivations = new Map();
+  const activeMandateRegistrations = new Map();
   const memoryFarmWork = new Map();
   // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
   // error is always available server-side (console.error) for debugging. Never stores the key.
@@ -171,7 +189,7 @@ export function createRelayerRouter({
   // push it (a compromised/buggy client asking for a 10-year key would otherwise be honored).
   const MAX_MANDATE_WINDOW_SECONDS = 30 * 24 * 3600;
 
-  function handleMandate(req, res) {
+  function handleMandateV2(req, res) {
     const {
       serializedApproval, sessionPrivateKey, sessionKeyAddress, expiresAt, stellarOwner, kernelAddress,
     } = req.body || {};
@@ -208,6 +226,504 @@ export function createRelayerRouter({
     });
 
     return sendJson(res, 200, { ok: true, relayerOrigin, bindingId, bindingHash });
+  }
+
+  function activationIdentityKey(identity) {
+    return `${identity.mandateId}|${identity.stellarOwner}|${String(identity.kernelAddress).toLowerCase()}`;
+  }
+
+  function cloneForMandateEvaluation(record) {
+    const descriptors = Object.getOwnPropertyDescriptors(record);
+    // evaluateBaseMandateStatus's canonical parser consumes a shallow copy. Make the key visible
+    // only on this trusted, in-process evaluator object; the durable/public records remain
+    // non-enumerable and no HTTP/storage serialization sees this clone.
+    if (descriptors.sessionPrivateKey) {
+      descriptors.sessionPrivateKey = {
+        ...descriptors.sessionPrivateKey,
+        enumerable: true,
+      };
+    }
+    return Object.create(Object.getPrototypeOf(record), descriptors);
+  }
+
+  function sha256(value) {
+    return createHash('sha256').update(value).digest('hex');
+  }
+
+  function isImmutableMandateConflict(error) {
+    return error?.message === 'immutable mandate conflict';
+  }
+
+  function canonicalStoredBinding(record, identity) {
+    try {
+      requireMandateId(record?.mandateId);
+    } catch {
+      return null;
+    }
+    if (!CAPABILITY_HASH_PATTERN.test(record.capabilityHash || '')
+      || record.mandateId !== identity.mandateId
+      || record.stellarOwner !== identity.stellarOwner
+      || String(record.kernelAddress).toLowerCase() !== String(identity.kernelAddress).toLowerCase()
+      || typeof record.sessionPrivateKey !== 'string' || !record.sessionPrivateKey) {
+      return null;
+    }
+
+    const base = {
+      serializedApproval: record.serializedApproval,
+      sessionPrivateKey: record.sessionPrivateKey,
+      sessionKeyAddress: record.sessionKeyAddress,
+      stellarOwner: record.stellarOwner,
+      kernelAddress: record.kernelAddress,
+      permissionId: record.permissionId,
+      validUntilSeconds: record.validUntilSeconds,
+      expiresAt: record.validUntilSeconds,
+      relayerOrigin: record.relayerOrigin,
+      config: mandateStatusConfig,
+      now: nowSeconds(),
+    };
+    const parsed = validateMandateBinding(base);
+    if (!parsed.ok) return null;
+
+    // The stores normalize EVM addresses for identity matching. Rebuild the binding with the
+    // canonical address spellings recovered from the approval/private key so case normalization
+    // cannot turn an otherwise immutable binding into a false mismatch.
+    const checked = validateMandateBinding({
+      ...base,
+      kernelAddress: parsed.mandate.accountAddress,
+      sessionKeyAddress: parsed.mandate.sessionKeyAddress,
+      bindingId: record.bindingId,
+      bindingHash: record.bindingHash,
+    });
+    if (!checked.ok
+      || record.approvalDigest !== sha256(record.serializedApproval)
+      || record.policyDigest !== checked.mandate.policyDigest
+      || record.permissionId !== checked.mandate.permissionId) {
+      return null;
+    }
+    return checked.mandate;
+  }
+
+  function startMandateActivationHeartbeat(identity, leaseToken) {
+    const timer = setInterval(() => {
+      try {
+        mandateActivations.renew({
+          ...identity,
+          leaseToken,
+          nowSeconds: nowSeconds(),
+          leaseSeconds: MANDATE_ACTIVATION_LEASE_SECONDS,
+        });
+      } catch {
+        // A local revoke, expiry, or terminal CAS owns the durable truth. The worker's next
+        // fenced operation observes it and must never resurrect the mandate.
+      }
+    }, MANDATE_ACTIVATION_HEARTBEAT_MS);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
+
+  async function finishActivationUncertain({
+    identity, leaseToken, userOpHash, txHash,
+  }) {
+    const input = {
+      ...identity,
+      leaseToken,
+      nowSeconds: nowSeconds(),
+    };
+    if (canonicalUserOpHash(userOpHash)) input.userOpHash = userOpHash;
+    if (canonicalTxHash(txHash) && input.userOpHash) input.txHash = txHash;
+    try {
+      await mandateActivations.finishUncertain(input);
+    } catch {
+      // Revocation/expiry/another terminal CAS is stronger than this worker's stale result.
+    }
+  }
+
+  async function runMandateActivation(claimed) {
+    const identity = {
+      mandateId: claimed.mandateId,
+      stellarOwner: claimed.stellarOwner,
+      kernelAddress: claimed.kernelAddress,
+    };
+    const leaseToken = claimed.leaseToken;
+    const stopHeartbeat = startMandateActivationHeartbeat(identity, leaseToken);
+    let submitting = false;
+    let submittedUserOpHash = null;
+    let receiptTxHash = null;
+
+    try {
+      const stored = await mandatesV3.get(identity);
+      if (!canonicalStoredBinding(stored, identity)) {
+        await mandatesV3.revoke(identity);
+        return;
+      }
+
+      await mandateActivations.checkpoint({
+        ...identity,
+        leaseToken,
+        status: 'submitting',
+        nowSeconds: nowSeconds(),
+      });
+      submitting = true;
+
+      const { activateMandate } = buildMandateActivator(stored.sessionPrivateKey);
+      const receipt = await activateMandate(stored.serializedApproval, {
+        onSubmitted: async (candidateHash) => {
+          const hash = canonicalUserOpHash(candidateHash);
+          if (!hash) throw new Error('activation submission evidence is invalid');
+          // Retain callback evidence before persistence so a callback checkpoint failure can
+          // still be fenced uncertain with the only trustworthy hash the worker observed.
+          submittedUserOpHash = hash;
+          await mandateActivations.checkpoint({
+            ...identity,
+            leaseToken,
+            status: 'submitted',
+            userOpHash: hash,
+            nowSeconds: nowSeconds(),
+          });
+        },
+      });
+
+      const returnedUserOpHash = canonicalUserOpHash(receipt?.userOpHash);
+      if (!returnedUserOpHash || !submittedUserOpHash
+        || returnedUserOpHash !== submittedUserOpHash) {
+        throw new Error('activation receipt disagrees with submission evidence');
+      }
+      const returnedTxHash = canonicalTxHash(receipt?.txHash);
+      if (!returnedTxHash) throw new Error('activation receipt evidence is invalid');
+      receiptTxHash = returnedTxHash;
+
+      const activatedAt = nowSeconds();
+      if (!Number.isSafeInteger(activatedAt) || activatedAt <= 0
+        || activatedAt >= stored.validUntilSeconds) {
+        throw new Error('activation receipt time is outside the mandate window');
+      }
+
+      await mandateActivations.renew({
+        ...identity,
+        leaseToken,
+        nowSeconds: nowSeconds(),
+        leaseSeconds: MANDATE_ACTIVATION_LEASE_SECONDS,
+      });
+      const beforeEvaluation = await mandatesV3.get(identity);
+      const canonical = canonicalStoredBinding(beforeEvaluation, identity);
+      if (!canonical) {
+        await mandatesV3.revoke(identity);
+        return;
+      }
+      if (beforeEvaluation.status !== 'pending_activation') return;
+
+      const evaluationRecord = cloneForMandateEvaluation(beforeEvaluation);
+      Object.assign(evaluationRecord, {
+        kernelAddress: canonical.accountAddress,
+        sessionKeyAddress: canonical.sessionKeyAddress,
+        activationUserOpHash: submittedUserOpHash,
+        activationTxHash: receiptTxHash,
+        activatedAt,
+      });
+      const evidence = await evaluateMandateStatusFn({
+        record: evaluationRecord,
+        config: mandateStatusConfig,
+      });
+
+      await mandateActivations.renew({
+        ...identity,
+        leaseToken,
+        nowSeconds: nowSeconds(),
+        leaseSeconds: MANDATE_ACTIVATION_LEASE_SECONDS,
+      });
+      const afterEvaluation = await mandatesV3.get(identity);
+      if (!canonicalStoredBinding(afterEvaluation, identity)) {
+        await mandatesV3.revoke(identity);
+        return;
+      }
+      if (afterEvaluation.status !== 'pending_activation') return;
+
+      const terminal = {
+        ...identity,
+        leaseToken,
+        userOpHash: submittedUserOpHash,
+        txHash: receiptTxHash,
+        activatedAt,
+        nowSeconds: nowSeconds(),
+      };
+      if (evidence?.status === 'active') {
+        await mandateActivations.finishActive(terminal);
+      } else if (evidence?.status === 'revoked') {
+        await mandateActivations.finishRevoked(terminal);
+      } else {
+        await finishActivationUncertain({
+          identity,
+          leaseToken,
+          userOpHash: submittedUserOpHash,
+          txHash: receiptTxHash,
+        });
+      }
+    } catch {
+      if (submitting) {
+        await finishActivationUncertain({
+          identity,
+          leaseToken,
+          userOpHash: submittedUserOpHash,
+          txHash: receiptTxHash,
+        });
+      }
+    } finally {
+      stopHeartbeat();
+    }
+  }
+
+  function dispatchMandateActivation(identity) {
+    const key = activationIdentityKey(identity);
+    const active = activeMandateActivations.get(key);
+    if (active) return active;
+
+    let claimed;
+    try {
+      claimed = mandateActivations.claim({
+        ...identity,
+        nowSeconds: nowSeconds(),
+        leaseSeconds: MANDATE_ACTIVATION_LEASE_SECONDS,
+      });
+    } catch {
+      return Promise.resolve(false);
+    }
+    if (!claimed) return Promise.resolve(false);
+
+    const running = Promise.resolve()
+      .then(() => runMandateActivation(claimed))
+      .finally(() => activeMandateActivations.delete(key));
+    activeMandateActivations.set(key, running);
+    return running;
+  }
+
+  function scheduleMandateActivation(identity) {
+    queueMicrotask(() => {
+      void dispatchMandateActivation(identity).catch(() => {});
+    });
+  }
+
+  function registrationResponse(result, capability, at) {
+    const mandate = result.mandate;
+    return {
+      cookie: serializeMandateCapabilityCookie({
+        mandateId: mandate.mandateId,
+        capability,
+        maxAgeSeconds: mandate.validUntilSeconds - at,
+      }),
+      body: {
+        ok: true,
+        status: 'pending_activation',
+        mandateId: mandate.mandateId,
+        bindingId: mandate.bindingId,
+        bindingHash: mandate.bindingHash,
+        relayerOrigin: mandate.relayerOrigin,
+      },
+    };
+  }
+
+  async function handleMandateV3Locked(body, identity, res) {
+    const { mandateId } = identity;
+    let existing;
+    try {
+      existing = await mandatesV3.get(identity);
+    } catch {
+      return sendJson(res, 500, { error: 'internal error' });
+    }
+    if (existing && !capabilityMatches(body.capability, existing.capabilityHash)) {
+      return sendJson(res, 401, { error: 'unauthorized' });
+    }
+
+    let capability;
+    if (existing) {
+      capability = body.capability;
+    } else {
+      try {
+        capability = requireCapability(body.capability);
+      } catch {
+        return sendJson(res, 400, { error: 'invalid mandate registration' });
+      }
+    }
+
+    if (existing) {
+      let current;
+      try {
+        current = await mandatesV3.status(identity);
+      } catch {
+        return sendJson(res, 500, { error: 'internal error' });
+      }
+      if (!['pending_activation', 'active'].includes(current.status)) {
+        return sendJson(res, 409, { error: 'mandate cannot be activated' });
+      }
+    }
+
+    const at = nowSeconds();
+    if (!Number.isSafeInteger(at)
+      || !body.serializedApproval || !body.sessionPrivateKey || !body.sessionKeyAddress
+      || !body.stellarOwner || !body.kernelAddress
+      || !Number.isSafeInteger(body.expiresAt)
+      || body.expiresAt <= at
+      || body.expiresAt > at + MAX_MANDATE_WINDOW_SECONDS) {
+      return sendJson(res, 400, { error: 'invalid mandate registration' });
+    }
+
+    const bindingId = existing?.bindingId ?? genId();
+    const validationInput = {
+      serializedApproval: body.serializedApproval,
+      sessionPrivateKey: body.sessionPrivateKey,
+      sessionKeyAddress: body.sessionKeyAddress,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
+      validUntilSeconds: body.expiresAt,
+      expiresAt: body.expiresAt,
+      relayerOrigin,
+      config: mandateStatusConfig,
+      now: at,
+    };
+    const parsed = validateMandateBinding(validationInput);
+    if (!parsed.ok) {
+      return sendJson(res, 400, { error: 'invalid mandate registration' });
+    }
+    const bindingHash = computeBindingHash({
+      stellarOwner: body.stellarOwner,
+      kernelAddress: parsed.mandate.accountAddress,
+      sessionKeyAddress: parsed.mandate.sessionKeyAddress,
+      expiresAt: body.expiresAt,
+    });
+    const validation = validateMandateBinding({
+      ...validationInput,
+      sessionKeyAddress: parsed.mandate.sessionKeyAddress,
+      kernelAddress: parsed.mandate.accountAddress,
+      bindingId,
+      bindingHash,
+    });
+    if (!validation.ok) {
+      return sendJson(res, 400, { error: 'invalid mandate registration' });
+    }
+
+    const registrationRecord = {
+      mandateId,
+      approvalDigest: sha256(body.serializedApproval),
+      policyDigest: validation.mandate.policyDigest,
+      serializedApproval: body.serializedApproval,
+      sessionPrivateKey: body.sessionPrivateKey,
+      sessionKeyAddress: validation.mandate.sessionKeyAddress,
+      capabilityHash: hashCapability(capability),
+      stellarOwner: body.stellarOwner,
+      kernelAddress: validation.mandate.accountAddress,
+      relayerOrigin,
+      validUntilSeconds: body.expiresAt,
+      bindingId,
+      bindingHash,
+      permissionId: validation.mandate.permissionId,
+    };
+
+    let result;
+    try {
+      result = await mandateActivations.enqueue({ record: registrationRecord });
+    } catch (error) {
+      if (existing) {
+        return sendJson(
+          res,
+          isImmutableMandateConflict(error) ? 409 : 500,
+          { error: isImmutableMandateConflict(error) ? 'immutable mandate conflict' : 'internal error' },
+        );
+      }
+
+      // Another router/process may have won the atomic enqueue after this request's pre-read.
+      // Re-read and authenticate that durable winner before retrying immutable comparison with
+      // its binding ID. A wrong-capability loser never receives state and never becomes a replay.
+      let winner;
+      let winnerStatus;
+      try {
+        winner = await mandatesV3.get(identity);
+        if (!winner) return sendJson(res, 500, { error: 'internal error' });
+        if (!capabilityMatches(capability, winner.capabilityHash)) {
+          return sendJson(res, 401, { error: 'unauthorized' });
+        }
+        winnerStatus = await mandatesV3.status(identity);
+      } catch {
+        return sendJson(res, 500, { error: 'internal error' });
+      }
+      if (!['pending_activation', 'active'].includes(winnerStatus.status)) {
+        return sendJson(res, 409, { error: 'mandate cannot be activated' });
+      }
+      try {
+        result = await mandateActivations.enqueue({
+          record: { ...registrationRecord, bindingId: winner.bindingId },
+        });
+      } catch (retryError) {
+        return sendJson(
+          res,
+          isImmutableMandateConflict(retryError) ? 409 : 500,
+          { error: isImmutableMandateConflict(retryError) ? 'immutable mandate conflict' : 'internal error' },
+        );
+      }
+    }
+
+    if (!['pending_activation', 'active'].includes(result.mandate.status)) {
+      return sendJson(res, 409, { error: 'mandate cannot be activated' });
+    }
+    const response = registrationResponse(result, capability, at);
+    res.setHeader('Set-Cookie', response.cookie);
+    sendJson(res, 202, response.body);
+    if (result.work?.status === 'pending') scheduleMandateActivation(identity);
+  }
+
+  async function withMandateRegistrationLock(mandateId, action) {
+    const previous = activeMandateRegistrations.get(mandateId) ?? Promise.resolve();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const tail = previous.then(() => gate);
+    activeMandateRegistrations.set(mandateId, tail);
+    await previous;
+    try {
+      return await action();
+    } finally {
+      release();
+      if (activeMandateRegistrations.get(mandateId) === tail) {
+        activeMandateRegistrations.delete(mandateId);
+      }
+    }
+  }
+
+  async function handleMandateV3(req, res) {
+    const body = req.body || {};
+    let mandateId;
+    try {
+      mandateId = requireMandateId(body.mandateId);
+    } catch {
+      return sendJson(res, 400, { error: 'invalid mandate registration' });
+    }
+    const identity = {
+      mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
+    };
+    return withMandateRegistrationLock(
+      mandateId,
+      () => handleMandateV3Locked(body, identity, res),
+    );
+  }
+
+  function handleMandate(req, res) {
+    if (mandatesV3 || mandateActivations || buildMandateActivator) {
+      if (!mandatesV3 || !mandateActivations || !buildMandateActivator || !mandateStatusConfig) {
+        return sendJson(res, 503, { error: 'mandate activation is unavailable' });
+      }
+      return handleMandateV3(req, res);
+    }
+    return handleMandateV2(req, res);
+  }
+
+  async function resumeMandateActivations() {
+    if (!mandateActivations) return;
+    await mandateActivations.reconcileExpired({ nowSeconds: nowSeconds() });
+    const recoverable = await mandateActivations.listRecoverable({ nowSeconds: nowSeconds() });
+    await Promise.all(recoverable.map((work) => dispatchMandateActivation({
+      mandateId: work.mandateId,
+      stellarOwner: work.stellarOwner,
+      kernelAddress: work.kernelAddress,
+    })));
   }
 
   // Lets the client check whether a previously-registered mandate is still reusable WITHOUT ever
@@ -993,6 +1509,7 @@ export function createRelayerRouter({
 
     return sendJson(res, 404, { error: 'Not found' });
   };
+  relayerRouter.resumeMandateActivations = resumeMandateActivations;
   relayerRouter.resumeFarmJobs = resumeFarmJobs;
   return relayerRouter;
 }

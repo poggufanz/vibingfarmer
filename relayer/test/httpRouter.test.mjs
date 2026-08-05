@@ -1,12 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Keypair } from '@stellar/stellar-sdk';
+import {
+  concatHex,
+  encodeAbiParameters,
+  keccak256,
+  pad,
+  slice,
+} from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { toCallPolicy, toTimestampPolicy, CallPolicyVersion } from '@zerodev/permissions/policies';
+import {
+  toCallPolicy,
+  toTimestampPolicy,
+  CallPolicyVersion,
+  ParamCondition,
+} from '@zerodev/permissions/policies';
 import { createRelayerRouter } from '../src/httpRouter.mjs';
-import { createMandateStoreV2 } from '../src/mandateStore.mjs';
-import { MAX_CALL_CAP_UNITS } from '../src/base/session.mjs';
+import { createMandateStoreV2, createMandateStoresV3 } from '../src/mandateStore.mjs';
+import { MAX_CALL_CAP_UNITS, validateMandateBinding } from '../src/base/session.mjs';
 import { APPROVE_ABI, YIELD_ROUTER_ABI } from '../src/base/orchestrator.mjs';
 import { buildFarmPermissions } from '../../frontend/src/base/policyEngine.js';
 import { createSqliteStores } from '../src/sqliteStores.mjs';
@@ -1964,5 +1978,1017 @@ describe('createRelayerRouter', () => {
       expect(JSON.stringify(jobs.get(jobId))).not.toContain('iris.internal');
       expect(jobs.get(jobId).steps[0].message).toBe('internal error');
     });
+  });
+});
+
+describe('v3 mandate registration and activation worker', () => {
+  const NOW_SECONDS = 2_000_000_000;
+  const VALID_UNTIL_SECONDS = NOW_SECONDS + 7_200;
+  const MANDATE_ID = '0123456789abcdef0123456789abcdef';
+  const CAPABILITY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const CAPABILITY_HASH = 'a8ae6e6ee929abea3afcfc5258c8ccd6f85273e0d4626d26c7279f3250f77c8e';
+  const OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7)).publicKey();
+  const KERNEL = `0x${'11'.repeat(20)}`;
+  const SESSION_KEY = `0x${'22'.repeat(32)}`;
+  const SESSION = privateKeyToAccount(SESSION_KEY).address;
+  const USER_OP_HASH = `0x${'33'.repeat(32)}`;
+  const TX_HASH = `0x${'44'.repeat(32)}`;
+  const CALL_POLICY = '0x9a52283276A0ec8740DF50bF01B28A80D880eaf2';
+  const TIMESTAMP_POLICY = '0xB9f8f524bE6EcD8C945b1b87f9ae5C192FdCE20F';
+  const ECDSA_SIGNER = '0x6A6F069E2a08c2468e7724Ab3250CdBFBA14D4FF';
+  const CANONICAL_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+  const CANONICAL_ROUTER = '0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d';
+  const DEFAULT_ACTION_SELECTOR = '0xe9ae5c53';
+  const ZERO_ADDRESS = `0x${'00'.repeat(20)}`;
+  const POLICY = Object.freeze({
+    chainId: 84532,
+    kernelVersion: '0.3.1',
+    kernelImplementation: '0xBAC849bB641841b44E965fB01A4Bf5F074f84b4D',
+    entryPointVersion: '0.7',
+    entryPointAddress: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
+    callPolicyVersion: '0.0.4',
+    callPolicyAddress: CALL_POLICY,
+    timestampPolicyAddress: TIMESTAMP_POLICY,
+    ecdsaSignerAddress: ECDSA_SIGNER,
+    usdcAddress: CANONICAL_USDC,
+    yieldRouterAddress: CANONICAL_ROUTER,
+    approveSelector: '0x095ea7b3',
+    depositSelector: '0x0efe6a8b',
+    callType: 'call',
+    nativeValue: '0',
+    executionHorizonSeconds: 2_700,
+  });
+  const CONFIG = Object.freeze({
+    publicOrigin: 'https://relayer.example',
+    base: { chain: { id: 84532 }, mandatePolicy: POLICY },
+  });
+
+  function sha256(value) {
+    return createHash('sha256').update(value).digest('hex');
+  }
+
+  function serializeCanonical(value) {
+    return Buffer.from(JSON.stringify(value, (_, child) => (
+      typeof child === 'bigint' ? child.toString() : child
+    )), 'utf8').toString('base64');
+  }
+
+  function canonicalPermissions(cap = MAX_CALL_CAP_UNITS) {
+    const encodedCap = pad(`0x${cap.toString(16)}`, { size: 32 });
+    return [
+      {
+        target: CANONICAL_USDC,
+        valueLimit: '0',
+        functionName: 'approve',
+        args: [
+          { condition: ParamCondition.EQUAL, value: CANONICAL_ROUTER },
+          { condition: ParamCondition.LESS_THAN_OR_EQUAL, value: cap.toString() },
+        ],
+        callType: '0x00',
+        selector: '0x095ea7b3',
+        rules: [
+          { params: [pad(CANONICAL_ROUTER, { size: 32 })], offset: 0, condition: ParamCondition.EQUAL },
+          { params: [encodedCap], offset: 32, condition: ParamCondition.LESS_THAN_OR_EQUAL },
+        ],
+      },
+      {
+        target: CANONICAL_ROUTER,
+        valueLimit: '0',
+        functionName: 'deposit',
+        args: [null, { condition: ParamCondition.LESS_THAN_OR_EQUAL, value: cap.toString() }, null],
+        callType: '0x00',
+        selector: '0x0efe6a8b',
+        rules: [
+          { params: [encodedCap], offset: 32, condition: ParamCondition.LESS_THAN_OR_EQUAL },
+        ],
+      },
+    ];
+  }
+
+  function canonicalPermissionId(entries) {
+    const policiesData = encodeAbiParameters(
+      [{ name: 'policiesData', type: 'bytes[]' }],
+      [entries.map((entry) => concatHex([entry.getPolicyInfoInBytes(), entry.getPolicyData()]))],
+    );
+    const signerData = encodeAbiParameters(
+      [{ name: 'signerData', type: 'bytes' }],
+      [concatHex([ECDSA_SIGNER, SESSION])],
+    );
+    return slice(keccak256(encodeAbiParameters(
+      [{ name: 'policyAndSignerData', type: 'bytes[]' }],
+      [[policiesData, '0x0000', signerData]],
+    )), 0, 4).toLowerCase();
+  }
+
+  function canonicalApproval(validUntilSeconds = VALID_UNTIL_SECONDS) {
+    const call = toCallPolicy({
+      policyVersion: '0.0.4',
+      permissions: canonicalPermissions(),
+    });
+    const timestamp = toTimestampPolicy({ validAfter: 0, validUntil: validUntilSeconds });
+    return serializeCanonical({
+      permissionParams: {
+        permissionId: canonicalPermissionId([call, timestamp]),
+        policies: [call, timestamp],
+      },
+      action: { selector: DEFAULT_ACTION_SELECTOR, address: ZERO_ADDRESS },
+      validityData: { validAfter: 0, validUntil: 0 },
+      accountParams: { initCode: '0x', accountAddress: KERNEL },
+      enableSignature: '0x1234',
+      isPreInstalled: false,
+    });
+  }
+
+  function mandateIdAt(index) {
+    return index.toString(16).padStart(32, '0');
+  }
+
+  function capabilityAt(index) {
+    return index.toString(16).padStart(64, '0');
+  }
+
+  function registrationBody(overrides = {}) {
+    const expiresAt = overrides.expiresAt ?? VALID_UNTIL_SECONDS;
+    return {
+      mandateId: MANDATE_ID,
+      capability: CAPABILITY,
+      serializedApproval: canonicalApproval(expiresAt),
+      sessionPrivateKey: SESSION_KEY,
+      sessionKeyAddress: SESSION,
+      expiresAt,
+      stellarOwner: OWNER,
+      kernelAddress: KERNEL,
+      ...overrides,
+    };
+  }
+
+  function identityOf(body) {
+    return {
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
+    };
+  }
+
+  function canonicalRecord(body, bindingId = 'binding-1') {
+    const bindingHash = sha256(
+      `${body.stellarOwner}|${body.kernelAddress}|${body.sessionKeyAddress}|${body.expiresAt}`,
+    );
+    const validation = validateMandateBinding({
+      serializedApproval: body.serializedApproval,
+      sessionPrivateKey: body.sessionPrivateKey,
+      sessionKeyAddress: body.sessionKeyAddress,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
+      validUntilSeconds: body.expiresAt,
+      expiresAt: body.expiresAt,
+      relayerOrigin: CONFIG.publicOrigin,
+      bindingId,
+      bindingHash,
+      config: CONFIG,
+      now: NOW_SECONDS,
+    });
+    if (!validation.ok) throw new Error(`invalid Task-4 fixture: ${validation.reason}`);
+    return {
+      mandateId: body.mandateId,
+      approvalDigest: sha256(body.serializedApproval),
+      policyDigest: validation.mandate.policyDigest,
+      serializedApproval: body.serializedApproval,
+      sessionPrivateKey: body.sessionPrivateKey,
+      sessionKeyAddress: body.sessionKeyAddress,
+      capabilityHash: sha256(body.capability),
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
+      relayerOrigin: CONFIG.publicOrigin,
+      validUntilSeconds: body.expiresAt,
+      bindingId,
+      bindingHash,
+      permissionId: validation.mandate.permissionId,
+    };
+  }
+
+  function tracedStores(real, events, { transformMandateGet, enqueueError } = {}) {
+    const mandatesV3 = {
+      get(identity) {
+        events.push('store:get');
+        const record = real.mandatesV3.get(identity);
+        return transformMandateGet?.(record, identity) ?? record;
+      },
+      status(identity) {
+        events.push('store:status');
+        return real.mandatesV3.status(identity);
+      },
+      revoke(identity) {
+        events.push('store:revoke');
+        return real.mandatesV3.revoke(identity);
+      },
+      get size() { return real.mandatesV3.size; },
+    };
+    const mandateActivations = {
+      enqueue(input) {
+        events.push('store:enqueue');
+        if (enqueueError) throw enqueueError;
+        return real.mandateActivations.enqueue(input);
+      },
+      get(identity) {
+        events.push('store:work:get');
+        return real.mandateActivations.get(identity);
+      },
+      claim(input) {
+        events.push('store:claim');
+        return real.mandateActivations.claim(input);
+      },
+      renew(input) {
+        events.push('store:renew');
+        return real.mandateActivations.renew(input);
+      },
+      checkpoint(input) {
+        events.push(`store:checkpoint:${input.status}`);
+        return real.mandateActivations.checkpoint(input);
+      },
+      finishActive(input) {
+        events.push('store:finishActive');
+        return real.mandateActivations.finishActive(input);
+      },
+      finishUncertain(input) {
+        events.push('store:finishUncertain');
+        return real.mandateActivations.finishUncertain(input);
+      },
+      finishRevoked(input) {
+        events.push('store:finishRevoked');
+        return real.mandateActivations.finishRevoked(input);
+      },
+      listRecoverable(input) {
+        events.push('store:listRecoverable');
+        return real.mandateActivations.listRecoverable(input);
+      },
+      reconcileExpired(input) {
+        events.push('store:reconcileExpired');
+        return real.mandateActivations.reconcileExpired(input);
+      },
+    };
+    return { mandatesV3, mandateActivations };
+  }
+
+  function makeHarness({
+    clock = { value: NOW_SECONDS },
+    activateMandate,
+    evaluateMandateStatusFn,
+    transformMandateGet,
+    enqueueError,
+    realStores = null,
+    bindingPrefix = 'binding',
+  } = {}) {
+    const events = [];
+    const real = realStores ?? createMandateStoresV3({
+      nowSeconds: () => clock.value,
+      leaseToken: (() => {
+        let value = 0;
+        return () => `activation-lease-${++value}`;
+      })(),
+    });
+    const traced = tracedStores(real, events, { transformMandateGet, enqueueError });
+    const evaluatorCalls = [];
+    const activatorCalls = [];
+    const activator = activateMandate ?? (async (approval, { onSubmitted } = {}) => {
+      activatorCalls.push(approval);
+      events.push('activator:called');
+      events.push('activator:onSubmitted');
+      await onSubmitted(USER_OP_HASH);
+      events.push('activator:receipt');
+      return { userOpHash: USER_OP_HASH, txHash: TX_HASH };
+    });
+    const evaluator = evaluateMandateStatusFn ?? (async (args) => {
+      evaluatorCalls.push(args);
+      events.push('evaluator:called');
+      return { status: 'active', reasonCodes: [] };
+    });
+    let nextId = 0;
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(() => ({ farm: vi.fn() })),
+      relayUnwindMint: vi.fn(),
+      jobs: new Map(),
+      mandatesV2: new Proxy({}, {
+        get() { throw new Error('v2 mandate store must not be consulted by the v3 router'); },
+      }),
+      mandatesV3: traced.mandatesV3,
+      mandateActivations: traced.mandateActivations,
+      buildMandateActivator: (sessionPrivateKey) => ({
+        activateMandate: async (...args) => {
+          events.push(`activator:key:${sessionPrivateKey}`);
+          return activator(...args);
+        },
+      }),
+      genId: () => `${bindingPrefix}-${++nextId}`,
+      usdcAddress: CANONICAL_USDC,
+      yieldRouterAddress: CANONICAL_ROUTER,
+      relayerOrigin: CONFIG.publicOrigin,
+      mandateStatusConfig: CONFIG,
+      evaluateMandateStatusFn: evaluator,
+      nowSeconds: () => clock.value,
+      publicRuntime: { networkId: 'stellar-testnet', mandateStatusConfig: CONFIG },
+    });
+    return {
+      clock,
+      events,
+      real,
+      mandatesV3: traced.mandatesV3,
+      mandateActivations: traced.mandateActivations,
+      evaluatorCalls,
+      activatorCalls,
+      router,
+    };
+  }
+
+  function request(body, capability) {
+    return {
+      method: 'POST',
+      url: '/api/vf-cross/mandate',
+      body,
+      headers: capability === undefined
+        ? {}
+        : { authorization: `Bearer ${capability}` },
+    };
+  }
+
+  async function postMandate(harness, body, { response, bearer } = {}) {
+    const res = response ?? mockRes();
+    await harness.router(request(body, bearer), res);
+    return { res, json: jsonOf(res) };
+  }
+
+  async function waitForStatus(harness, body, status) {
+    await vi.waitFor(() => {
+      expect(harness.real.mandatesV3.status(identityOf(body)).status).toBe(status);
+    });
+  }
+
+  function expectOrdered(events, checkpoints) {
+    let cursor = -1;
+    for (const checkpoint of checkpoints) {
+      const next = events.indexOf(checkpoint, cursor + 1);
+      expect(next, `missing or out-of-order checkpoint ${checkpoint}`).toBeGreaterThan(cursor);
+      cursor = next;
+    }
+  }
+
+  it.each([
+    ['short mandate ID', { mandateId: MANDATE_ID.slice(1) }],
+    ['uppercase mandate ID', { mandateId: MANDATE_ID.toUpperCase() }],
+    ['non-hex mandate ID', { mandateId: `${MANDATE_ID.slice(0, -1)}g` }],
+    ['short capability', { capability: CAPABILITY.slice(1) }],
+    ['uppercase capability', { capability: CAPABILITY.toUpperCase() }],
+    ['non-hex capability', { capability: `${CAPABILITY.slice(0, -1)}g` }],
+  ])('rejects a %s at the exact 32/64 lowercase-hex registration boundary', async (_label, change) => {
+    const harness = makeHarness();
+    const body = registrationBody(change);
+
+    const { res } = await postMandate(harness, body);
+
+    expect(res.statusCode).toBe(400);
+    expect(harness.real.mandatesV3.size).toBe(0);
+    expect(res.body).not.toContain(String(change.mandateId ?? change.capability));
+    expect(res.body).not.toContain(body.serializedApproval);
+    expect(res.body).not.toContain(CAPABILITY);
+    expect(res.body).not.toContain(SESSION_KEY);
+  });
+
+  it('atomically enqueues before the exact private 202 response and stores only capability/key hashes publicly', async () => {
+    const harness = makeHarness();
+    const body = registrationBody();
+    let endSnapshot;
+    const res = {
+      ...mockRes(),
+      end(payload) {
+        this.body = payload ?? '';
+        endSnapshot = {
+          mandate: harness.real.mandatesV3.status(identityOf(body)),
+          work: harness.real.mandateActivations.get(identityOf(body)),
+        };
+        return this;
+      },
+    };
+
+    await postMandate(harness, body, { response: res });
+
+    const bindingHash = sha256(`${OWNER}|${KERNEL}|${SESSION}|${VALID_UNTIL_SECONDS}`);
+    expect(res.statusCode).toBe(202);
+    expect(jsonOf(res)).toEqual({
+      ok: true,
+      status: 'pending_activation',
+      mandateId: MANDATE_ID,
+      bindingId: 'binding-1',
+      bindingHash,
+      relayerOrigin: CONFIG.publicOrigin,
+    });
+    expect(res.headers['Set-Cookie']).toBe(
+      `__Host-vf-mandate-${MANDATE_ID}=${CAPABILITY}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=7200`,
+    );
+    expect(endSnapshot).toMatchObject({
+      mandate: { mandateId: MANDATE_ID, status: 'pending_activation' },
+      work: { mandateId: MANDATE_ID, status: 'pending', attempts: 0 },
+    });
+    const internal = harness.real.mandatesV3.get(identityOf(body));
+    expect(internal.capabilityHash).toBe(CAPABILITY_HASH);
+    expect(internal.sessionPrivateKey).toBe(SESSION_KEY);
+    expect(Object.keys(internal)).not.toContain('capabilityHash');
+    expect(JSON.stringify(harness.real.mandatesV3.status(identityOf(body)))).not.toContain(CAPABILITY);
+    expect(JSON.stringify(harness.real.mandatesV3.status(identityOf(body)))).not.toContain(SESSION_KEY);
+    expect(res.body).not.toContain(CAPABILITY);
+    expect(res.body).not.toContain(body.serializedApproval);
+    expect(res.body).not.toContain(SESSION_KEY);
+  });
+
+  it('returns a generic failure without a cookie or partial row when atomic enqueue fails', async () => {
+    const harness = makeHarness({
+      enqueueError: new Error(`storage unavailable for ${CAPABILITY} ${SESSION_KEY}`),
+    });
+    const body = registrationBody();
+
+    const { res } = await postMandate(harness, body);
+
+    expect(res.statusCode).toBe(500);
+    expect(res.headers['Set-Cookie']).toBeUndefined();
+    expect(harness.real.mandatesV3.size).toBe(0);
+    expect(harness.real.mandateActivations.get(identityOf(body))).toBeNull();
+    expect(res.body).not.toContain(CAPABILITY);
+    expect(res.body).not.toContain(SESSION_KEY);
+    expect(res.body).not.toContain(body.serializedApproval);
+
+    const duplicateFailure = makeHarness({
+      enqueueError: new Error(`duplicate storage unavailable for ${CAPABILITY} ${SESSION_KEY}`),
+    });
+    duplicateFailure.real.mandateActivations.enqueue({ record: canonicalRecord(body) });
+    const duplicate = await postMandate(duplicateFailure, { ...body });
+    expect(duplicate.res.statusCode).toBe(500);
+    expect(duplicate.res.headers['Set-Cookie']).toBeUndefined();
+    expect(duplicate.res.body).not.toContain(CAPABILITY);
+    expect(duplicate.res.body).not.toContain(SESSION_KEY);
+    expect(duplicate.res.body).not.toContain(body.serializedApproval);
+  });
+
+  it('authenticates exact duplicates before comparison and never reactivates pending or active bindings', async () => {
+    let releaseActivation;
+    const activationGate = new Promise((resolve) => { releaseActivation = resolve; });
+    let sends = 0;
+    const harness = makeHarness({
+      activateMandate: async (_approval, { onSubmitted }) => {
+        sends += 1;
+        await onSubmitted(USER_OP_HASH);
+        await activationGate;
+        return { userOpHash: USER_OP_HASH, txHash: TX_HASH };
+      },
+    });
+    const body = registrationBody();
+    const first = await postMandate(harness, body);
+    await vi.waitFor(() => expect(sends).toBe(1));
+
+    const secondBody = registrationBody({
+      mandateId: mandateIdAt(2),
+      capability: capabilityAt(2),
+    });
+    const second = await postMandate(harness, secondBody);
+    expect(second.res.statusCode).toBe(202);
+    await vi.waitFor(() => expect(sends).toBe(2));
+
+    const pendingDuplicate = await postMandate(harness, { ...body });
+    expect(pendingDuplicate.res.statusCode).toBe(202);
+    expect(pendingDuplicate.json).toEqual(first.json);
+    expect(pendingDuplicate.res.headers['Set-Cookie']).toBe(first.res.headers['Set-Cookie']);
+    expect(sends).toBe(2);
+
+    const crossMandateCapability = await postMandate(harness, {
+      ...body,
+      capability: secondBody.capability,
+    });
+    expect(crossMandateCapability.res.statusCode).toBe(401);
+    expect(crossMandateCapability.res.body).not.toContain(secondBody.capability);
+    expect(crossMandateCapability.res.body).not.toContain(body.serializedApproval);
+    expect(sends).toBe(2);
+
+    const wrong = capabilityAt(99);
+    const wrongCapability = await postMandate(harness, { ...body, capability: wrong });
+    expect(wrongCapability.res.statusCode).toBe(401);
+    expect(wrongCapability.res.body).not.toContain(wrong);
+    expect(wrongCapability.res.body).not.toContain(CAPABILITY);
+    expect(sends).toBe(2);
+
+    const missingCapability = await postMandate(harness, { ...body, capability: undefined });
+    expect(missingCapability.res.statusCode).toBe(401);
+    expect(sends).toBe(2);
+
+    releaseActivation();
+    await waitForStatus(harness, body, 'active');
+    await waitForStatus(harness, secondBody, 'active');
+    const activeDuplicate = await postMandate(harness, { ...body });
+    expect(activeDuplicate.res.statusCode).toBe(202);
+    expect(activeDuplicate.json).toEqual(first.json);
+    expect(activeDuplicate.json.status).toBe('pending_activation');
+    expect(sends).toBe(2);
+  });
+
+  it('returns 409 for exact duplicates whose durable state is uncertain, revoked, or expired', async () => {
+    const uncertain = makeHarness({
+      activateMandate: async () => { throw new Error(`bundler rejected ${SESSION_KEY}`); },
+    });
+    const uncertainBody = registrationBody();
+    await postMandate(uncertain, uncertainBody);
+    await waitForStatus(uncertain, uncertainBody, 'activation_uncertain');
+    const uncertainRetry = await postMandate(uncertain, { ...uncertainBody });
+    expect(uncertainRetry.res.statusCode).toBe(409);
+    expect(uncertainRetry.res.body).not.toContain(SESSION_KEY);
+
+    const revoked = makeHarness();
+    const revokedBody = registrationBody();
+    await postMandate(revoked, revokedBody);
+    await waitForStatus(revoked, revokedBody, 'active');
+    revoked.real.mandatesV3.revoke(identityOf(revokedBody));
+    const revokedRetry = await postMandate(revoked, { ...revokedBody });
+    expect(revokedRetry.res.statusCode).toBe(409);
+
+    const clock = { value: NOW_SECONDS };
+    const expired = makeHarness({ clock });
+    const expiredBody = registrationBody();
+    await postMandate(expired, expiredBody);
+    await waitForStatus(expired, expiredBody, 'active');
+    clock.value = VALID_UNTIL_SECONDS;
+    expect(expired.real.mandatesV3.status(identityOf(expiredBody)).status).toBe('expired');
+    const expiredRetry = await postMandate(expired, { ...expiredBody });
+    expect(expiredRetry.res.statusCode).toBe(409);
+  });
+
+  it('fails closed without activating when the stored immutable binding is corrupted before worker use', async () => {
+    let corruptNextRead = true;
+    let sends = 0;
+    const harness = makeHarness({
+      transformMandateGet(record) {
+        if (!record || !corruptNextRead) return record;
+        corruptNextRead = false;
+        const corrupted = { ...record, bindingHash: 'ff'.repeat(32) };
+        Object.defineProperty(corrupted, 'sessionPrivateKey', {
+          value: record.sessionPrivateKey,
+          enumerable: false,
+        });
+        Object.defineProperty(corrupted, 'capabilityHash', {
+          value: record.capabilityHash,
+          enumerable: false,
+        });
+        return corrupted;
+      },
+      activateMandate: async () => {
+        sends += 1;
+        return { userOpHash: USER_OP_HASH, txHash: TX_HASH };
+      },
+    });
+    const body = registrationBody();
+
+    const { res } = await postMandate(harness, body);
+    expect(res.statusCode).toBe(202);
+    await vi.waitFor(() => {
+      expect(['activation_uncertain', 'revoked'])
+        .toContain(harness.real.mandatesV3.status(identityOf(body)).status);
+    });
+
+    expect(sends).toBe(0);
+    expect(harness.events).not.toContain('store:checkpoint:submitted');
+    expect(harness.events).not.toContain('evaluator:called');
+    expect(harness.events).not.toContain('store:finishActive');
+    await harness.router.resumeMandateActivations();
+    expect(sends).toBe(0);
+  });
+
+  it('orders claim, submitting fence, activation submission, strict receipt, fresh evidence, and active finish', async () => {
+    const harness = makeHarness();
+    // Address comparisons are case-insensitive, so a lowercase equivalent accepted at the wire
+    // boundary must not be tombstoned later when the store normalizes it or the parser derives a
+    // checksummed spelling.
+    const body = registrationBody({ sessionKeyAddress: SESSION.toLowerCase() });
+
+    const { res } = await postMandate(harness, body);
+    expect(res.statusCode).toBe(202);
+    await waitForStatus(harness, body, 'active');
+
+    expectOrdered(harness.events, [
+      'store:claim',
+      'store:get',
+      'store:checkpoint:submitting',
+      'activator:called',
+      'activator:onSubmitted',
+      'store:checkpoint:submitted',
+      'activator:receipt',
+      'evaluator:called',
+      'store:finishActive',
+    ]);
+    const evaluatorIndex = harness.events.indexOf('evaluator:called');
+    const recordReads = harness.events
+      .map((event, index) => ({ event, index }))
+      .filter(({ event }) => event === 'store:get')
+      .map(({ index }) => index);
+    expect(recordReads.filter((index) => index < evaluatorIndex).length).toBeGreaterThanOrEqual(2);
+    expect(recordReads.some((index) => index > evaluatorIndex)).toBe(true);
+    expect(harness.events).toContain(`activator:key:${SESSION_KEY}`);
+    expect(harness.evaluatorCalls).toHaveLength(1);
+    expect(harness.evaluatorCalls[0]).toMatchObject({
+      config: CONFIG,
+      record: {
+        mandateId: MANDATE_ID,
+        activationUserOpHash: USER_OP_HASH,
+        activationTxHash: TX_HASH,
+        activatedAt: NOW_SECONDS,
+        sessionPrivateKey: SESSION_KEY,
+      },
+    });
+    // The real evaluator's canonical parser consumes a shallow copy of this trusted internal
+    // record. The key must therefore remain visible to that parser even though no public/store
+    // serialization may expose it.
+    expect({ ...harness.evaluatorCalls[0].record }.sessionPrivateKey).toBe(SESSION_KEY);
+    expect(harness.evaluatorCalls[0]).not.toHaveProperty('allocation');
+    expect(harness.real.mandatesV3.status(identityOf(body))).toMatchObject({
+      status: 'active',
+      activationUserOpHash: USER_OP_HASH,
+      activationTxHash: TX_HASH,
+      activatedAt: NOW_SECONDS,
+    });
+  });
+
+  it.each([
+    ['before onSubmitted', false, null],
+    ['after onSubmitted', true, USER_OP_HASH],
+  ])('makes an activation failure %s uncertain without inventing evidence', async (_label, submitFirst, expectedHash) => {
+    const harness = makeHarness({
+      activateMandate: async (_approval, { onSubmitted }) => {
+        if (submitFirst) await onSubmitted(USER_OP_HASH);
+        throw new Error(`private activation failure ${SESSION_KEY}`);
+      },
+    });
+    const body = registrationBody();
+
+    const { res } = await postMandate(harness, body);
+    expect(res.statusCode).toBe(202);
+    expect(res.body).not.toContain(SESSION_KEY);
+    await waitForStatus(harness, body, 'activation_uncertain');
+
+    expect(harness.real.mandateActivations.get(identityOf(body))).toMatchObject({
+      status: 'uncertain',
+      userOpHash: expectedHash,
+      txHash: null,
+      leaseToken: null,
+    });
+    expect(harness.events).toContain('store:finishUncertain');
+    expect(JSON.stringify(harness.real.mandatesV3.status(identityOf(body))))
+      .not.toContain('private activation failure');
+  });
+
+  it('rejects a mismatched strict activator result without evaluation, active finish, or resend', async () => {
+    const mismatchedHash = `0x${'55'.repeat(32)}`;
+    let sends = 0;
+    let evaluations = 0;
+    const harness = makeHarness({
+      activateMandate: async (_approval, { onSubmitted }) => {
+        sends += 1;
+        await onSubmitted(USER_OP_HASH);
+        return { userOpHash: mismatchedHash, txHash: TX_HASH };
+      },
+      evaluateMandateStatusFn: async () => {
+        evaluations += 1;
+        return { status: 'active', reasonCodes: [] };
+      },
+    });
+    const body = registrationBody();
+
+    await postMandate(harness, body);
+    await waitForStatus(harness, body, 'activation_uncertain');
+
+    expect(harness.real.mandateActivations.get(identityOf(body))).toMatchObject({
+      status: 'uncertain',
+      userOpHash: USER_OP_HASH,
+      txHash: null,
+    });
+    expect(evaluations).toBe(0);
+    expect(harness.events).not.toContain('store:finishActive');
+    await harness.router.resumeMandateActivations();
+    expect(sends).toBe(1);
+  });
+
+  it('retains both receipt hashes as uncertain when fresh post-receipt evidence is nonactive', async () => {
+    const harness = makeHarness({
+      evaluateMandateStatusFn: async () => ({ status: 'unknown', reasonCodes: ['RPC_ERROR'] }),
+    });
+    const body = registrationBody();
+
+    await postMandate(harness, body);
+    await waitForStatus(harness, body, 'activation_uncertain');
+
+    expect(harness.real.mandateActivations.get(identityOf(body))).toMatchObject({
+      status: 'uncertain',
+      userOpHash: USER_OP_HASH,
+      txHash: TX_HASH,
+    });
+    expect(harness.events).not.toContain('store:finishActive');
+  });
+
+  it('atomically tombstones and erases the key when fresh receipt evidence says revoked', async () => {
+    const harness = makeHarness({
+      evaluateMandateStatusFn: async () => ({ status: 'revoked', reasonCodes: ['PERMISSION_REVOKED'] }),
+    });
+    const body = registrationBody();
+
+    await postMandate(harness, body);
+    await waitForStatus(harness, body, 'revoked');
+
+    expect(harness.real.mandatesV3.status(identityOf(body))).toMatchObject({
+      status: 'revoked',
+      activationUserOpHash: USER_OP_HASH,
+      activationTxHash: TX_HASH,
+    });
+    expect(harness.real.mandateActivations.get(identityOf(body))).toBeNull();
+    const internal = harness.real.mandatesV3.get(identityOf(body));
+    expect(internal.sessionPrivateKey).toBeUndefined();
+    expect(internal.capabilityHash).toBe(CAPABILITY_HASH);
+    expect(harness.events).toContain('store:finishRevoked');
+  });
+
+  it('reconciles restart leases and resumes only stale-running and untouched-pending work once', async () => {
+    const clock = { value: NOW_SECONDS };
+    const invalidCapabilityId = mandateIdAt(5);
+    const harness = makeHarness({
+      clock,
+      transformMandateGet(record, identity) {
+        if (!record || identity.mandateId !== invalidCapabilityId) return record;
+        const descriptors = Object.getOwnPropertyDescriptors(record);
+        descriptors.capabilityHash = {
+          ...descriptors.capabilityHash,
+          value: 'not-a-canonical-capability-hash',
+        };
+        return Object.create(Object.getPrototypeOf(record), descriptors);
+      },
+    });
+    const bodies = [1, 2, 3, 4].map((index) => registrationBody({
+      mandateId: mandateIdAt(index),
+      capability: capabilityAt(index),
+    }));
+    for (const [index, body] of bodies.entries()) {
+      harness.real.mandateActivations.enqueue({
+        record: canonicalRecord(body, `resume-binding-${index + 1}`),
+      });
+    }
+    const legacyBody = registrationBody({
+      mandateId: 'legacy-uuid-mandate-id',
+      capability: capabilityAt(5),
+    });
+    harness.real.mandateActivations.enqueue({
+      record: canonicalRecord(legacyBody, 'legacy-binding'),
+    });
+    const invalidCapabilityBody = registrationBody({
+      mandateId: invalidCapabilityId,
+      capability: capabilityAt(5),
+    });
+    harness.real.mandateActivations.enqueue({
+      record: canonicalRecord(invalidCapabilityBody, 'invalid-capability-binding'),
+    });
+    const [running, submitting, submitted, pending] = bodies;
+    const runningLease = harness.real.mandateActivations.claim({
+      ...identityOf(running), nowSeconds: NOW_SECONDS, leaseSeconds: 5,
+    });
+    const submittingLease = harness.real.mandateActivations.claim({
+      ...identityOf(submitting), nowSeconds: NOW_SECONDS, leaseSeconds: 5,
+    });
+    harness.real.mandateActivations.checkpoint({
+      ...identityOf(submitting), leaseToken: submittingLease.leaseToken,
+      status: 'submitting', nowSeconds: NOW_SECONDS,
+    });
+    const submittedLease = harness.real.mandateActivations.claim({
+      ...identityOf(submitted), nowSeconds: NOW_SECONDS, leaseSeconds: 5,
+    });
+    harness.real.mandateActivations.checkpoint({
+      ...identityOf(submitted), leaseToken: submittedLease.leaseToken,
+      status: 'submitting', nowSeconds: NOW_SECONDS,
+    });
+    harness.real.mandateActivations.checkpoint({
+      ...identityOf(submitted), leaseToken: submittedLease.leaseToken,
+      status: 'submitted', userOpHash: USER_OP_HASH, nowSeconds: NOW_SECONDS,
+    });
+    expect(runningLease.status).toBe('running');
+    expect(harness.real.mandateActivations.get(identityOf(pending)).status).toBe('pending');
+    clock.value = NOW_SECONDS + 6;
+
+    await harness.router.resumeMandateActivations();
+    await waitForStatus(harness, running, 'active');
+    await waitForStatus(harness, pending, 'active');
+
+    expect(harness.real.mandatesV3.status(identityOf(submitting)).status)
+      .toBe('activation_uncertain');
+    expect(harness.real.mandatesV3.status(identityOf(submitted)).status)
+      .toBe('activation_uncertain');
+    expect(harness.real.mandateActivations.get(identityOf(submitting))).toMatchObject({
+      status: 'uncertain', userOpHash: null,
+    });
+    expect(harness.real.mandateActivations.get(identityOf(submitted))).toMatchObject({
+      status: 'uncertain', userOpHash: USER_OP_HASH,
+    });
+    expect(harness.events.filter((event) => event === 'activator:called')).toHaveLength(2);
+    expect(harness.events.filter((event) => event === 'store:reconcileExpired')).toHaveLength(1);
+    expect(harness.real.mandatesV3.status(identityOf(legacyBody)).status).toBe('revoked');
+    expect(harness.real.mandatesV3.status(identityOf(invalidCapabilityBody)).status).toBe('revoked');
+  });
+
+  it('deduplicates concurrent restart resumes and duplicate HTTP registration', async () => {
+    let releaseActivation;
+    const gate = new Promise((resolve) => { releaseActivation = resolve; });
+    let sends = 0;
+    const harness = makeHarness({
+      activateMandate: async (_approval, { onSubmitted }) => {
+        sends += 1;
+        await onSubmitted(USER_OP_HASH);
+        await gate;
+        return { userOpHash: USER_OP_HASH, txHash: TX_HASH };
+      },
+    });
+    const body = registrationBody();
+
+    const firstResponse = mockRes();
+    const retryResponse = mockRes();
+    const work = [
+      harness.router(request({ ...body }), firstResponse),
+      harness.router(request({ ...body }), retryResponse),
+      harness.router.resumeMandateActivations(),
+      harness.router.resumeMandateActivations(),
+    ];
+    await vi.waitFor(() => expect(sends).toBe(1));
+    expect(firstResponse.statusCode).toBe(202);
+    expect(retryResponse.statusCode).toBe(202);
+    expect(jsonOf(retryResponse)).toEqual(jsonOf(firstResponse));
+    expect(retryResponse.headers['Set-Cookie']).toBe(firstResponse.headers['Set-Cookie']);
+    releaseActivation();
+    await Promise.all(work);
+    await waitForStatus(harness, body, 'active');
+
+    expect(sends).toBe(1);
+    expect(harness.real.mandateActivations.get(identityOf(body)).attempts).toBe(1);
+
+    const authorityRace = makeHarness();
+    const correctResponse = mockRes();
+    const wrongResponse = mockRes();
+    const wrongCapability = capabilityAt(99);
+    await Promise.all([
+      authorityRace.router(request({ ...body }), correctResponse),
+      authorityRace.router(request({ ...body, capability: wrongCapability }), wrongResponse),
+    ]);
+    await waitForStatus(authorityRace, body, 'active');
+    expect(correctResponse.statusCode).toBe(202);
+    expect(wrongResponse.statusCode).toBe(401);
+    expect(wrongResponse.body).not.toContain(wrongCapability);
+    expect(authorityRace.activatorCalls).toHaveLength(1);
+
+    const sharedClock = { value: NOW_SECONDS };
+    const sharedReal = createMandateStoresV3({
+      nowSeconds: () => sharedClock.value,
+      leaseToken: (() => {
+        let value = 0;
+        return () => `shared-activation-lease-${++value}`;
+      })(),
+    });
+    const left = makeHarness({
+      clock: sharedClock,
+      realStores: sharedReal,
+      bindingPrefix: 'left-binding',
+    });
+    const right = makeHarness({
+      clock: sharedClock,
+      realStores: sharedReal,
+      bindingPrefix: 'right-binding',
+    });
+    const sharedLeftResponse = mockRes();
+    const sharedRightResponse = mockRes();
+    await Promise.all([
+      left.router(request({ ...body }), sharedLeftResponse),
+      right.router(request({ ...body }), sharedRightResponse),
+    ]);
+    await waitForStatus(left, body, 'active');
+    expect(sharedLeftResponse.statusCode).toBe(202);
+    expect(sharedRightResponse.statusCode).toBe(202);
+    expect(jsonOf(sharedRightResponse)).toEqual(jsonOf(sharedLeftResponse));
+    expect(sharedRightResponse.headers['Set-Cookie']).toBe(sharedLeftResponse.headers['Set-Cookie']);
+    expect(left.activatorCalls.length + right.activatorCalls.length).toBe(1);
+
+    const wrongSharedReal = createMandateStoresV3({
+      nowSeconds: () => sharedClock.value,
+    });
+    const correctProcess = makeHarness({
+      clock: sharedClock,
+      realStores: wrongSharedReal,
+      bindingPrefix: 'correct-binding',
+    });
+    const wrongProcess = makeHarness({
+      clock: sharedClock,
+      realStores: wrongSharedReal,
+      bindingPrefix: 'wrong-binding',
+    });
+    const correctProcessResponse = mockRes();
+    const wrongProcessResponse = mockRes();
+    await Promise.all([
+      correctProcess.router(request({ ...body }), correctProcessResponse),
+      wrongProcess.router(
+        request({ ...body, capability: wrongCapability }),
+        wrongProcessResponse,
+      ),
+    ]);
+    await waitForStatus(correctProcess, body, 'active');
+    expect(correctProcessResponse.statusCode).toBe(202);
+    expect(wrongProcessResponse.statusCode).toBe(401);
+    expect(wrongProcessResponse.body).not.toContain(wrongCapability);
+    expect(correctProcess.activatorCalls.length + wrongProcess.activatorCalls.length).toBe(1);
+  });
+
+  it('heartbeats a submitted activation lease while the external receipt wait exceeds 30 seconds', async () => {
+    vi.useFakeTimers();
+    let releaseReceipt;
+    let enteredReceiptWait;
+    const receiptGate = new Promise((resolve) => { releaseReceipt = resolve; });
+    const entered = new Promise((resolve) => { enteredReceiptWait = resolve; });
+    let harness;
+    try {
+      harness = makeHarness({
+        activateMandate: async (_approval, { onSubmitted }) => {
+          await onSubmitted(USER_OP_HASH);
+          harness.events.push('activator:waiting-receipt');
+          enteredReceiptWait();
+          await receiptGate;
+          harness.events.push('activator:receipt');
+          return { userOpHash: USER_OP_HASH, txHash: TX_HASH };
+        },
+      });
+      const body = registrationBody();
+
+      const { res } = await postMandate(harness, body);
+      expect(res.statusCode).toBe(202);
+      await entered;
+      for (let interval = 0; interval < 3; interval += 1) {
+        harness.clock.value += 11;
+        await vi.advanceTimersByTimeAsync(10_000);
+      }
+      expect(harness.clock.value).toBeGreaterThan(NOW_SECONDS + 30);
+      expect(harness.real.mandateActivations.get(identityOf(body)).status).toBe('submitted');
+
+      releaseReceipt();
+      await vi.waitFor(() => {
+        expect(harness.real.mandatesV3.status(identityOf(body)).status).toBe('active');
+      });
+
+      const waitingIndex = harness.events.indexOf('activator:waiting-receipt');
+      const receiptIndex = harness.events.indexOf('activator:receipt');
+      const waitRenewals = harness.events
+        .map((event, index) => ({ event, index }))
+        .filter(({ event, index }) => (
+          event === 'store:renew' && index > waitingIndex && index < receiptIndex
+        ));
+      expect(waitRenewals.length).toBeGreaterThanOrEqual(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('renews the real lease before and after fresh evaluation', async () => {
+    let harness;
+    harness = makeHarness({
+      evaluateMandateStatusFn: async () => {
+        harness.events.push('evaluator:begin');
+        harness.clock.value += 1;
+        harness.events.push('evaluator:end');
+        return { status: 'active', reasonCodes: [] };
+      },
+    });
+    const body = registrationBody();
+
+    await postMandate(harness, body);
+    await waitForStatus(harness, body, 'active');
+
+    const begin = harness.events.indexOf('evaluator:begin');
+    const end = harness.events.indexOf('evaluator:end');
+    const renewals = harness.events
+      .map((event, index) => ({ event, index }))
+      .filter(({ event }) => event === 'store:renew')
+      .map(({ index }) => index);
+    expect(renewals.some((index) => index < begin)).toBe(true);
+    expect(renewals.some((index) => index > end)).toBe(true);
+    expect(harness.events.indexOf('store:finishActive')).toBeGreaterThan(renewals.at(-1));
+  });
+
+  it('cannot finish active when authority is revoked during a stale-active evaluation race', async () => {
+    let harness;
+    const body = registrationBody();
+    harness = makeHarness({
+      evaluateMandateStatusFn: async () => {
+        harness.real.mandatesV3.revoke(identityOf(body));
+        return { status: 'active', reasonCodes: [] };
+      },
+    });
+
+    await postMandate(harness, body);
+    await waitForStatus(harness, body, 'revoked');
+
+    expect(harness.real.mandatesV3.status(identityOf(body)).status).toBe('revoked');
+    expect(harness.real.mandatesV3.get(identityOf(body)).sessionPrivateKey).toBeUndefined();
+    expect(harness.events).not.toContain('store:finishActive');
   });
 });
