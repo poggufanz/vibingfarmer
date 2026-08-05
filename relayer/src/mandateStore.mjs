@@ -8,7 +8,7 @@
 // (unix seconds, converted to ms), durable up to 30 days — so in practice the real horizon is
 // whatever the client requested (baseLeg.js requests a 7-day window), not this constant.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -187,10 +187,12 @@ export function createMandateStoreV2({ ttlMs = HOUR_MS, now = () => Date.now() }
 
 const USER_OP_HASH_RE = /^0x[0-9a-f]{64}$/;
 const TX_HASH_RE = /^0x[0-9a-f]{64}$/;
+const DIGEST_RE = /^[0-9a-f]{64}$/;
 const V3_IMMUTABLE_FIELDS = [
   'approvalDigest',
+  'policyDigest',
   'serializedApproval',
-  'sessionPrivateKey',
+  'sessionKeyDigest',
   'sessionKeyAddress',
   'capabilityHash',
   'stellarOwner',
@@ -207,8 +209,15 @@ function normalizeV3Record(record) {
   if (typeof record.mandateId !== 'string' || !record.mandateId) {
     throw new Error('mandate ID is required');
   }
-  if (typeof record.capabilityHash !== 'string' || !record.capabilityHash) {
+  if (!DIGEST_RE.test(record.capabilityHash || '')) {
     throw new Error('capability hash is required');
+  }
+  if (!DIGEST_RE.test(record.policyDigest || '')) {
+    throw new Error('policy digest is required and must be canonical');
+  }
+  if (!DIGEST_RE.test(record.approvalDigest || '')
+    || !DIGEST_RE.test(record.bindingHash || '')) {
+    throw new Error('mandate digest fields are invalid');
   }
   if (!Number.isSafeInteger(record.validUntilSeconds) || record.validUntilSeconds <= 0) {
     throw new Error('mandate expiry is invalid');
@@ -223,6 +232,10 @@ function normalizeV3Record(record) {
     ...record,
     kernelAddress: record.kernelAddress.toLowerCase(),
     sessionKeyAddress: record.sessionKeyAddress.toLowerCase(),
+    relayerOrigin: record.relayerOrigin ?? null,
+    bindingId: record.bindingId ?? null,
+    permissionId: record.permissionId ?? null,
+    sessionKeyDigest: createHash('sha256').update(record.sessionPrivateKey).digest('hex'),
     status: 'pending_activation',
   };
 }
@@ -239,6 +252,7 @@ function publicMandateV3(record, status = record.status) {
   return {
     mandateId: record.mandateId,
     approvalDigest: record.approvalDigest,
+    policyDigest: record.policyDigest,
     stellarOwner: record.stellarOwner,
     kernelAddress: record.kernelAddress,
     sessionKeyAddress: record.sessionKeyAddress ?? null,
@@ -261,6 +275,7 @@ function internalMandateV3(record, { includeSession = true } = {}) {
   const result = {
     mandateId: record.mandateId,
     approvalDigest: record.approvalDigest,
+    policyDigest: record.policyDigest,
     serializedApproval: record.serializedApproval,
     stellarOwner: record.stellarOwner,
     kernelAddress: record.kernelAddress,
@@ -322,6 +337,7 @@ export function createMandateStoresV3({
 } = {}) {
   const records = new Map();
   const workRows = new Map();
+  const issuedLeaseTokens = new Set();
   let tokenCounter = 0;
 
   function recordFor(identity) {
@@ -340,7 +356,10 @@ export function createMandateStoresV3({
   }
 
   function assertMandateLive(record, at) {
-    if (at >= record.validUntilSeconds) throw new Error('mandate expiry has been reached');
+    if (at >= record.validUntilSeconds) {
+      expireRecord(record, at);
+      throw new Error('mandate expiry has been reached');
+    }
   }
 
   function assertLease(work, token, at) {
@@ -354,36 +373,55 @@ export function createMandateStoresV3({
 
   function nextLeaseToken(previous) {
     let candidate = String(leaseToken());
-    if (!candidate || candidate === previous) {
+    while (!candidate || candidate === previous || issuedLeaseTokens.has(candidate)) {
       tokenCounter += 1;
       candidate = `${candidate || 'lease'}-${tokenCounter}`;
     }
+    issuedLeaseTokens.add(candidate);
     return candidate;
+  }
+
+  function expireRecord(record, at) {
+    if (!record || at < record.validUntilSeconds) return false;
+    record.sessionPrivateKey = undefined;
+    const work = workRows.get(record.mandateId);
+    if (work?.status === 'pending' || work?.status === 'running') {
+      workRows.delete(record.mandateId);
+    } else if (work?.status === 'submitting' || work?.status === 'submitted') {
+      work.status = 'uncertain';
+      work.leaseToken = null;
+      work.leaseExpiresAt = null;
+      work.updatedAt = at;
+      record.status = 'activation_uncertain';
+      record.updatedAt = at;
+    }
+    return true;
   }
 
   const mandatesV3 = {
     get(identity) {
       const record = recordFor(identity);
       if (!record) return null;
-      const expired = nowSeconds() >= record.validUntilSeconds;
-      if (expired) record.sessionPrivateKey = undefined;
+      const expired = expireRecord(record, effectiveNow());
       return internalMandateV3(record, { includeSession: !expired && record.status !== 'revoked' });
     },
     status(identity) {
       const record = recordFor(identity);
       if (!record) return { status: 'missing' };
-      const status = nowSeconds() >= record.validUntilSeconds ? 'expired' : record.status;
+      const status = expireRecord(record, effectiveNow()) ? 'expired' : record.status;
       return publicMandateV3(record, status);
     },
     revoke(identity) {
       const record = recordFor(identity);
       if (!record) return null;
       const at = effectiveNow();
+      const expired = expireRecord(record, at);
+      if (expired) return publicMandateV3(record, 'expired');
       record.status = 'revoked';
       record.sessionPrivateKey = undefined;
       record.updatedAt = at;
       workRows.delete(record.mandateId);
-      return publicMandateV3(record);
+      return publicMandateV3(record, 'revoked');
     },
     get size() {
       return records.size;
@@ -395,10 +433,11 @@ export function createMandateStoresV3({
       const incoming = normalizeV3Record(input);
       const existing = records.get(incoming.mandateId);
       if (existing) {
+        const expired = expireRecord(existing, effectiveNow());
         if (v3Conflict(existing, incoming)) throw new Error('immutable mandate conflict');
         return {
           duplicate: true,
-          mandate: publicMandateV3(existing),
+          mandate: publicMandateV3(existing, expired ? 'expired' : existing.status),
           work: publicActivationWork(workRows.get(existing.mandateId)),
         };
       }
@@ -434,7 +473,10 @@ export function createMandateStoresV3({
       };
     },
     get(identity) {
-      return publicActivationWork(workFor(identity));
+      const record = recordFor(identity);
+      if (!record) return null;
+      expireRecord(record, effectiveNow());
+      return publicActivationWork(workRows.get(record.mandateId));
     },
     claim({ nowSeconds: atValue, leaseSeconds = 30, ...identity }) {
       const record = recordFor(identity);
@@ -446,10 +488,28 @@ export function createMandateStoresV3({
         throw new Error('activation lease duration is invalid');
       }
       const previous = work.leaseToken;
+      const token = nextLeaseToken(previous);
       work.status = 'running';
       work.attempts += 1;
-      work.leaseToken = nextLeaseToken(previous);
-      work.leaseExpiresAt = at + leaseSeconds;
+      work.leaseToken = token;
+      work.leaseExpiresAt = Math.min(at + leaseSeconds, record.validUntilSeconds);
+      work.updatedAt = at;
+      return publicActivationWork(work);
+    },
+    renew({ leaseToken: token, nowSeconds: atValue, leaseSeconds = 30, ...identity }) {
+      const record = recordFor(identity);
+      const work = workFor(identity);
+      if (!record || !work) throw new Error('stale or missing activation lease');
+      const at = effectiveNow(atValue);
+      assertMandateLive(record, at);
+      assertLease(work, token, at);
+      if (!['running', 'submitting', 'submitted'].includes(work.status)) {
+        throw new Error('activation lease is terminal or not renewable');
+      }
+      if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds <= 0) {
+        throw new Error('activation lease duration is invalid');
+      }
+      work.leaseExpiresAt = Math.min(at + leaseSeconds, record.validUntilSeconds);
       work.updatedAt = at;
       return publicActivationWork(work);
     },
@@ -495,6 +555,9 @@ export function createMandateStoresV3({
       if (!Number.isSafeInteger(activatedAt) || activatedAt <= 0) {
         throw new Error('activation time is invalid');
       }
+      if (activatedAt >= record.validUntilSeconds) {
+        throw new Error('activation time must precede mandate expiry');
+      }
       record.status = 'active';
       record.activationUserOpHash = userOpHash;
       record.activationTxHash = txHash;
@@ -507,7 +570,13 @@ export function createMandateStoresV3({
       work.updatedAt = at;
       return { mandate: publicMandateV3(record), work: publicActivationWork(work) };
     },
-    finishUncertain({ leaseToken: token, nowSeconds: atValue, ...identity }) {
+    finishUncertain({
+      leaseToken: token,
+      userOpHash,
+      txHash,
+      nowSeconds: atValue,
+      ...identity
+    }) {
       const record = recordFor(identity);
       const work = workFor(identity);
       if (!record || !work) throw new Error('stale or terminal activation lease');
@@ -517,28 +586,86 @@ export function createMandateStoresV3({
       if (work.status !== 'submitting' && work.status !== 'submitted') {
         throw new Error('activation must cross the submitting or submitted fence');
       }
+      if (userOpHash !== undefined && !USER_OP_HASH_RE.test(userOpHash)) {
+        throw new Error('user operation hash is not canonical');
+      }
+      if (work.status === 'submitted' && userOpHash !== undefined
+        && userOpHash !== work.userOpHash) {
+        throw new Error('submitted user operation hash mismatch');
+      }
+      const retainedUserOpHash = userOpHash ?? work.userOpHash;
+      if (txHash !== undefined && !TX_HASH_RE.test(txHash)) {
+        throw new Error('activation transaction hash is not canonical');
+      }
+      if (txHash !== undefined && !retainedUserOpHash) {
+        throw new Error('transaction evidence requires a canonical user operation hash');
+      }
       record.status = 'activation_uncertain';
       record.updatedAt = at;
       work.status = 'uncertain';
+      if (retainedUserOpHash) work.userOpHash = retainedUserOpHash;
+      if (txHash !== undefined) work.txHash = txHash;
       work.leaseToken = null;
       work.leaseExpiresAt = null;
       work.updatedAt = at;
       return { mandate: publicMandateV3(record), work: publicActivationWork(work) };
     },
+    finishRevoked({
+      leaseToken: token,
+      userOpHash,
+      txHash,
+      activatedAt,
+      nowSeconds: atValue,
+      ...identity
+    }) {
+      const record = recordFor(identity);
+      const work = workFor(identity);
+      if (!record || !work) throw new Error('stale or terminal activation lease');
+      const at = effectiveNow(atValue);
+      assertMandateLive(record, at);
+      assertLease(work, token, at);
+      if (work.status !== 'submitted') {
+        throw new Error('activation must be submitted before receipt revocation');
+      }
+      if (!USER_OP_HASH_RE.test(userOpHash || '') || userOpHash !== work.userOpHash) {
+        throw new Error('submitted user operation hash mismatch');
+      }
+      if (!TX_HASH_RE.test(txHash || '')) {
+        throw new Error('activation transaction hash is not canonical');
+      }
+      if (!Number.isSafeInteger(activatedAt) || activatedAt <= 0) {
+        throw new Error('activation timestamp is invalid');
+      }
+      if (activatedAt >= record.validUntilSeconds) {
+        throw new Error('activation timestamp must precede mandate expiry');
+      }
+      record.status = 'revoked';
+      record.activationUserOpHash = userOpHash;
+      record.activationTxHash = txHash;
+      record.activatedAt = activatedAt;
+      record.sessionPrivateKey = undefined;
+      record.updatedAt = at;
+      workRows.delete(record.mandateId);
+      return { mandate: publicMandateV3(record), work: null };
+    },
     listRecoverable({ nowSeconds: atValue } = {}) {
       const at = effectiveNow(atValue);
-      return [...workRows.values()]
-        .filter((work) => work.status === 'pending'
-          || (work.status === 'running' && work.leaseExpiresAt <= at))
-        .map(publicActivationWork);
+      const recoverable = [];
+      for (const record of records.values()) {
+        if (expireRecord(record, at) || record.status !== 'pending_activation') continue;
+        const work = workRows.get(record.mandateId);
+        if (work?.status === 'pending') recoverable.push(publicActivationWork(work));
+      }
+      return recoverable;
     },
     reconcileExpired({ nowSeconds: atValue } = {}) {
       const at = effectiveNow(atValue);
       const reconciled = [];
-      for (const work of workRows.values()) {
+      for (const work of [...workRows.values()]) {
+        const record = records.get(work.mandateId);
+        if (record && expireRecord(record, at)) continue;
         if (!['running', 'submitting', 'submitted'].includes(work.status)
           || !Number.isSafeInteger(work.leaseExpiresAt) || work.leaseExpiresAt > at) continue;
-        const record = records.get(work.mandateId);
         if (work.status === 'running') {
           work.status = 'pending';
         } else {

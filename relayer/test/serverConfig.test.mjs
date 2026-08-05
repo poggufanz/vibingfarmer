@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,10 @@ import * as serverModule from '../src/server.mjs';
 import { createSqliteStores } from '../src/sqliteStores.mjs';
 
 const { runtimeServerConfig } = serverModule;
+
+function sha256Json(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
 
 function serverConfig(overrides = {}) {
   return {
@@ -58,7 +63,11 @@ describe('runtimeServerConfig', () => {
   // Defect caught: the outbox worker and socket started before either local SQLite writability or
   // authenticated remote schema/store readiness had been proven.
   it('gates startup on local writable-store and authenticated reporter probes', async () => {
-    const localProbe = { probe: async () => ({ writable: true }) };
+    const localProbe = { probe: async () => ({
+      writable: true,
+      legacyMandateTables: [],
+      mandateMigrationCleanupPending: false,
+    }) };
     const reporter = { probe: async () => ({
       ready: true,
       schemaVersion: 1,
@@ -79,21 +88,142 @@ describe('runtimeServerConfig', () => {
     ['missing Base-child store', { ready: true, schemaVersion: 1, stores: { executionReceipts: true } }],
   ])('keeps startup closed for %s', async (_label, remote) => {
     await expect(serverModule.verifyRelayerReadiness({
-      sqlite: { probe: async () => ({ writable: true }) },
+      sqlite: { probe: async () => ({
+        writable: true,
+        legacyMandateTables: [],
+        mandateMigrationCleanupPending: false,
+      }) },
       reporter: { probe: async () => remote },
     })).rejects.toThrow(/schema\/store is not ready/);
+  });
+
+  it.each([
+    ['missing writable flag', { legacyMandateTables: [], mandateMigrationCleanupPending: false }],
+    ['false writable flag', {
+      writable: false, legacyMandateTables: [], mandateMigrationCleanupPending: false,
+    }],
+    ['non-boolean writable flag', {
+      writable: 1, legacyMandateTables: [], mandateMigrationCleanupPending: false,
+    }],
+    ['missing legacy-table list', { writable: true, mandateMigrationCleanupPending: false }],
+    ['null legacy-table list', {
+      writable: true, legacyMandateTables: null, mandateMigrationCleanupPending: false,
+    }],
+    ['non-array legacy-table list', {
+      writable: true, legacyMandateTables: 'none', mandateMigrationCleanupPending: false,
+    }],
+    ['missing cleanup flag', { writable: true, legacyMandateTables: [] }],
+    ['null cleanup flag', {
+      writable: true, legacyMandateTables: [], mandateMigrationCleanupPending: null,
+    }],
+    ['non-boolean cleanup flag', {
+      writable: true, legacyMandateTables: [], mandateMigrationCleanupPending: 'false',
+    }],
+  ])('rejects malformed local readiness: %s before probing the reporter', async (_label, local) => {
+    let reporterCalls = 0;
+    let rejection;
+    try {
+      await serverModule.verifyRelayerReadiness({
+        sqlite: { probe: async () => local },
+        reporter: { probe: async () => {
+          reporterCalls += 1;
+          return {
+            ready: true,
+            schemaVersion: 1,
+            stores: { executionReceipts: true, baseChildIntents: true },
+          };
+        } },
+      });
+    } catch (error) {
+      rejection = error;
+    }
+
+    expect(reporterCalls).toBe(0);
+    expect(rejection?.message).toMatch(/writable|legacy|migration|cleanup|readiness|probe/i);
   });
 
   it('keeps readiness closed while either plaintext legacy mandate table exists', async () => {
     for (const legacyMandateTables of [['mandates'], ['mandates_v2'], ['mandates', 'mandates_v2']]) {
       await expect(serverModule.verifyRelayerReadiness({
-        sqlite: { probe: async () => ({ writable: true, legacyMandateTables }) },
+        sqlite: { probe: async () => ({
+          writable: true,
+          legacyMandateTables,
+          mandateMigrationCleanupPending: false,
+        }) },
         reporter: { probe: async () => ({
           ready: true,
           schemaVersion: 1,
           stores: { executionReceipts: true, baseChildIntents: true },
         }) },
       })).rejects.toThrow(/legacy|plaintext|mandate/i);
+    }
+  });
+
+  it('keeps readiness closed while offline migration cleanup is durably pending', async () => {
+    const config = serverConfig();
+    const sessionKeyCipher = Object.freeze({
+      seal() { return 'unused-test-envelope'; },
+      open() { return { plaintext: 'unused-test-key', needsRotation: false }; },
+    });
+    const seeded = createSqliteStores(config.dbPath, { sessionKeyCipher });
+    const migrationState = {
+      phase: 'cleanup_pending',
+      manifestVersion: 1,
+      sourceDigest: sha256Json(['vf-server-config-test-source-v1']),
+      targetDigest: sha256Json(['vf-mandate-migration-target-v1', []]),
+      migratedCount: 0,
+      quarantinedCount: 0,
+      updatedAt: 2_000_000_000,
+    };
+    seeded.db.prepare(`
+      UPDATE mandate_migration_state
+      SET phase = ?, manifest_version = ?, source_digest = ?, target_digest = ?,
+          migrated_count = ?, quarantined_count = ?, updated_at = ?
+      WHERE id = 1
+    `).run(
+      migrationState.phase,
+      migrationState.manifestVersion,
+      migrationState.sourceDigest,
+      migrationState.targetDigest,
+      migrationState.migratedCount,
+      migrationState.quarantinedCount,
+      migrationState.updatedAt,
+    );
+    expect(seeded.db.prepare(`
+      SELECT phase, manifest_version, source_digest, target_digest,
+             migrated_count, quarantined_count, updated_at
+      FROM mandate_migration_state WHERE id = 1
+    `).get()).toEqual({
+      phase: migrationState.phase,
+      manifest_version: migrationState.manifestVersion,
+      source_digest: migrationState.sourceDigest,
+      target_digest: migrationState.targetDigest,
+      migrated_count: migrationState.migratedCount,
+      quarantined_count: migrationState.quarantinedCount,
+      updated_at: migrationState.updatedAt,
+    });
+    seeded.db.close();
+    const sqlite = createSqliteStores(config.dbPath, { sessionKeyCipher });
+    const calls = { reporter: 0, resume: 0, worker: 0, listener: 0 };
+    const reporter = { probe: async () => {
+      calls.reporter += 1;
+      return {
+        ready: true,
+        schemaVersion: 1,
+        stores: { executionReceipts: true, baseChildIntents: true },
+      };
+    } };
+    try {
+      expect(sqlite.probe()).toMatchObject({ mandateMigrationCleanupPending: true });
+      await expect(serverModule.startVerifiedRelayer({
+        verifyReadiness: () => serverModule.verifyRelayerReadiness({ sqlite, reporter }),
+        resumeFarmJobs: async () => { calls.resume += 1; },
+        startWorker: () => { calls.worker += 1; return { stop() {} }; },
+        openListener: () => { calls.listener += 1; return { close() {} }; },
+      })).rejects.toThrow(/migration|cleanup|pending|plaintext/i);
+      expect(calls).toEqual({ reporter: 0, resume: 0, worker: 0, listener: 0 });
+    } finally {
+      sqlite.db.close();
     }
   });
 
@@ -145,14 +275,19 @@ describe('runtimeServerConfig', () => {
     expect(opened).toBe(false);
   });
 
-  it.each(['mandates', 'mandates_v2'])('rejects readiness for a real SQLite database containing legacy %s before any listener serves', async (legacyTable) => {
+  it.each([
+    ['mandates', 'v1'],
+    ['mandates_v2', 'v2'],
+    ['Mandates', 'v1'],
+    ['Mandates_V2', 'v2'],
+  ])('rejects readiness for a real SQLite database containing legacy %s before any listener serves', async (legacyTable, kind) => {
     const config = serverConfig();
     const db = new DatabaseSync(config.dbPath);
-    if (legacyTable === 'mandates') {
-      db.exec('CREATE TABLE mandates (approval TEXT PRIMARY KEY, session_key TEXT NOT NULL, expires_at INTEGER NOT NULL)');
+    if (kind === 'v1') {
+      db.exec(`CREATE TABLE ${legacyTable} (approval TEXT PRIMARY KEY, session_key TEXT NOT NULL, expires_at INTEGER NOT NULL)`);
     } else {
       db.exec(`
-        CREATE TABLE mandates_v2 (
+        CREATE TABLE ${legacyTable} (
           serialized_approval TEXT NOT NULL,
           stellar_owner TEXT NOT NULL,
           kernel_address TEXT NOT NULL,
@@ -172,6 +307,8 @@ describe('runtimeServerConfig', () => {
     });
     const openSqlite = (path, options) => createSqliteStores(path, options);
     const sqlite = openSqlite(config.dbPath, { sessionKeyCipher });
+    expect(sqlite.probe().legacyMandateTables.map((name) => name.toLowerCase()))
+      .toContain(legacyTable.toLowerCase());
     const reporter = { probe: async () => ({
       ready: true,
       schemaVersion: 1,
@@ -189,6 +326,10 @@ describe('runtimeServerConfig', () => {
     } finally {
       sqlite.db.close();
     }
+  });
+
+  it('allows the explicit in-memory development server without a persistence cipher', () => {
+    expect(() => serverModule.createRelayerServer(serverConfig({ dbPath: null }))).not.toThrow();
   });
 
   it('rejects the offline plaintext-key migration flag before constructing an HTTP server', () => {

@@ -6,19 +6,141 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createAssociationOutbox } from './associationOutbox.mjs';
 
 const HOUR_MS = 60 * 60 * 1000;
 const HASH_RE = /^0x[0-9a-f]{64}$/;
+const DIGEST_RE = /^[0-9a-f]{64}$/;
 const V3_IMMUTABLE_FIELDS = [
-  'approvalDigest', 'serializedApproval', 'sessionPrivateKey', 'sessionKeyAddress',
+  'approvalDigest', 'policyDigest', 'serializedApproval', 'sessionKeyDigest', 'sessionKeyAddress',
   'capabilityHash', 'stellarOwner', 'kernelAddress', 'relayerOrigin', 'validUntilSeconds',
   'bindingId', 'bindingHash', 'permissionId',
 ];
+const MIGRATED_MANDATE_STATUS = 'activation_uncertain';
+const QUARANTINED_MANDATE_STATUS = 'revoked';
 
-export const MANDATE_V3_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS mandates_v3 (
+function migrationDigest(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+export function canonicalMandateMigrationDestinationDigest({ outcome, record }) {
+  const facts = outcome === 'migrate'
+    ? [
+      record.approvalDigest,
+      record.policyDigest,
+      record.stellarOwner,
+      record.kernelAddress,
+      record.sessionKeyAddress,
+      record.relayerOrigin,
+      record.validUntilSeconds,
+      record.bindingId,
+      record.bindingHash,
+      record.permissionId,
+      record.sessionKeyDigest,
+      record.createdAt,
+      MIGRATED_MANDATE_STATUS,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]
+    : [
+      record.approvalDigest,
+      record.stellarOwner,
+      record.kernelAddress,
+      record.quarantineReason,
+      QUARANTINED_MANDATE_STATUS,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ];
+  return migrationDigest(JSON.stringify([
+    'vf-legacy-mandate-destination-v1',
+    outcome,
+    facts,
+  ]));
+}
+
+export function persistedMandateMigrationDestinationDigest(row) {
+  if (row.status === MIGRATED_MANDATE_STATUS) {
+    if (row.capability_hash !== null
+      || row.activation_user_op_hash !== null
+      || row.activation_tx_hash !== null
+      || row.activated_at !== null
+      || row.quarantine_reason !== null
+      || migrationDigest(String(row.serialized_approval || '')) !== row.approval_digest) {
+      throw new Error('persisted migrated destination facts are invalid');
+    }
+    return canonicalMandateMigrationDestinationDigest({
+      outcome: 'migrate',
+      record: {
+        approvalDigest: row.approval_digest,
+        policyDigest: row.policy_digest,
+        stellarOwner: row.stellar_owner,
+        kernelAddress: row.kernel_address,
+        sessionKeyAddress: row.session_key_address,
+        relayerOrigin: row.relayer_origin,
+        validUntilSeconds: row.valid_until_seconds,
+        bindingId: row.binding_id,
+        bindingHash: row.binding_hash,
+        permissionId: row.permission_id,
+        sessionKeyDigest: row.session_key_digest,
+        createdAt: row.created_at,
+      },
+    });
+  }
+  if (row.status === QUARANTINED_MANDATE_STATUS) {
+    if ([
+      row.policy_digest,
+      row.serialized_approval,
+      row.session_key_address,
+      row.relayer_origin,
+      row.valid_until_seconds,
+      row.binding_id,
+      row.binding_hash,
+      row.permission_id,
+      row.session_key_envelope,
+      row.session_key_digest,
+      row.capability_hash,
+      row.activation_user_op_hash,
+      row.activation_tx_hash,
+      row.activated_at,
+    ].some((value) => value !== null)) {
+      throw new Error('persisted revoked destination retained authority');
+    }
+    return canonicalMandateMigrationDestinationDigest({
+      outcome: QUARANTINED_MANDATE_STATUS,
+      record: {
+        approvalDigest: row.approval_digest,
+        stellarOwner: row.stellar_owner,
+        kernelAddress: row.kernel_address,
+        quarantineReason: row.quarantine_reason,
+      },
+    });
+  }
+  throw new Error('persisted migration status is invalid');
+}
+
+export function mandateMigrationTargetDigest(rows) {
+  const identitiesAndDigests = rows.map((row) => [
+    row.mandate_id,
+    persistedMandateMigrationDestinationDigest(row),
+  ]).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return migrationDigest(JSON.stringify(['vf-mandate-migration-target-v1', identitiesAndDigests]));
+}
+
+const TARGET_MANDATE_TABLES = [
+  'mandates_v3',
+  'mandate_activation_work',
+  'mandate_migration_state',
+];
+
+const PRE_POLICY_MANDATE_SCHEMA = `
+  CREATE TABLE mandates_v3 (
     mandate_id TEXT PRIMARY KEY,
     approval_digest TEXT NOT NULL,
     serialized_approval TEXT,
@@ -40,7 +162,7 @@ export const MANDATE_V3_SCHEMA = `
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS mandate_activation_work (
+  CREATE TABLE mandate_activation_work (
     mandate_id TEXT PRIMARY KEY,
     stellar_owner TEXT NOT NULL,
     kernel_address TEXT NOT NULL,
@@ -56,11 +178,322 @@ export const MANDATE_V3_SCHEMA = `
   );
 `;
 
+function quoteSchemaIdentifier(value) {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
+
+function normalizedSchemaSql(value) {
+  if (value === null || value === undefined) return null;
+  return String(value).trim().replace(/\s+/g, ' ')
+    .replace(/\s*([(),])\s*/g, '$1');
+}
+
+function targetSchemaFingerprint(db) {
+  const directObjects = db.prepare(`
+    SELECT type, name, tbl_name, sql FROM sqlite_master
+    WHERE lower(name) IN ('mandates_v3','mandate_activation_work','mandate_migration_state')
+       OR lower(tbl_name) IN ('mandates_v3','mandate_activation_work','mandate_migration_state')
+  `).all();
+  const directKeys = new Set(directObjects.map(({ type, name }) => `${type}\0${name}`));
+  const targetReference = /(?:^|[^a-z0-9_])(mandates_v3|mandate_activation_work|mandate_migration_state)(?:$|[^a-z0-9_])/i;
+  const indirectObjects = db.prepare(`
+    SELECT type, name, tbl_name, sql FROM sqlite_master
+    WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+  `).all().filter(({ type, name, sql }) => (
+    !directKeys.has(`${type}\0${name}`) && targetReference.test(String(sql))
+  ));
+  const objects = [...directObjects, ...indirectObjects]
+    .sort((left, right) => (
+      left.type.localeCompare(right.type)
+      || left.name.localeCompare(right.name)
+      || left.tbl_name.localeCompare(right.tbl_name)
+    )).map((row) => ({
+    type: row.type,
+    name: row.name,
+    table: row.tbl_name,
+    sql: normalizedSchemaSql(row.sql),
+  }));
+  const tables = objects.filter(({ type }) => type === 'table').map(({ name }) => name);
+  return {
+    objects,
+    tables: tables.map((name) => ({
+      name,
+      columns: db.prepare(`PRAGMA table_xinfo(${quoteSchemaIdentifier(name)})`).all()
+        .map(({ cid, name: columnName, type, notnull, dflt_value: defaultValue, pk, hidden }) => ({
+          cid,
+          name: columnName,
+          type,
+          notnull,
+          defaultValue,
+          pk,
+          hidden,
+        })),
+      foreignKeys: db.prepare(`PRAGMA foreign_key_list(${quoteSchemaIdentifier(name)})`).all()
+        .map(({ id, seq, table, from, to, on_update: onUpdate,
+          on_delete: onDelete, match }) => ({
+          id, seq, table, from, to, onUpdate, onDelete, match,
+        })),
+    })),
+  };
+}
+
+let mandateSchemaReferences;
+
+function canonicalMandateSchemaReferences() {
+  if (mandateSchemaReferences) return mandateSchemaReferences;
+  const capture = (setup) => {
+    const reference = new DatabaseSync(':memory:');
+    try {
+      reference.exec('PRAGMA foreign_keys=ON');
+      setup(reference);
+      return targetSchemaFingerprint(reference);
+    } finally {
+      reference.close();
+    }
+  };
+  mandateSchemaReferences = {
+    empty: capture(() => {}),
+    prePolicy: capture((db) => db.exec(PRE_POLICY_MANDATE_SCHEMA)),
+    currentFresh: capture((db) => db.exec(MANDATE_V3_SCHEMA)),
+    currentAltered: capture((db) => {
+      db.exec(PRE_POLICY_MANDATE_SCHEMA);
+      db.exec(`
+        ALTER TABLE mandates_v3 ADD COLUMN policy_digest TEXT;
+        ALTER TABLE mandates_v3 ADD COLUMN session_key_digest TEXT;
+      `);
+      db.exec(MANDATE_V3_SCHEMA);
+    }),
+  };
+  return mandateSchemaReferences;
+}
+
+function sameFingerprint(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function requireForeignKeys(db) {
+  if (db.prepare('PRAGMA foreign_keys').get()?.foreign_keys !== 1) {
+    throw new Error('mandate target foreign keys are disabled');
+  }
+}
+
+function validateCurrentMandateRows(db) {
+  const markerRows = db.prepare(`
+    SELECT id, phase, manifest_version, source_digest, target_digest,
+           migrated_count, quarantined_count, updated_at,
+           typeof(id) AS id_type,
+           typeof(phase) AS phase_type,
+           typeof(manifest_version) AS manifest_version_type,
+           typeof(source_digest) AS source_digest_type,
+           typeof(target_digest) AS target_digest_type,
+           typeof(migrated_count) AS migrated_count_type,
+           typeof(quarantined_count) AS quarantined_count_type,
+           typeof(updated_at) AS updated_at_type
+    FROM mandate_migration_state ORDER BY id
+  `).all();
+  const marker = markerRows[0];
+  const canonicalPhase = marker && ['virgin', 'cleanup_pending', 'completed'].includes(marker.phase);
+  const virginMetadata = marker?.phase === 'virgin'
+    && [
+      marker.manifest_version,
+      marker.source_digest,
+      marker.target_digest,
+      marker.migrated_count,
+      marker.quarantined_count,
+    ].every((value) => value === null)
+    && [
+      marker.manifest_version_type,
+      marker.source_digest_type,
+      marker.target_digest_type,
+      marker.migrated_count_type,
+      marker.quarantined_count_type,
+    ].every((type) => type === 'null');
+  const boundMetadata = marker?.phase !== 'virgin'
+    && marker?.manifest_version === 1
+    && marker?.manifest_version_type === 'integer'
+    && DIGEST_RE.test(marker?.source_digest || '')
+    && marker?.source_digest_type === 'text'
+    && DIGEST_RE.test(marker?.target_digest || '')
+    && marker?.target_digest_type === 'text'
+    && Number.isSafeInteger(marker?.migrated_count)
+    && marker.migrated_count >= 0
+    && marker?.migrated_count_type === 'integer'
+    && Number.isSafeInteger(marker?.quarantined_count)
+    && marker.quarantined_count >= 0
+    && marker?.quarantined_count_type === 'integer';
+  if (markerRows.length !== 1 || marker.id !== 1 || !canonicalPhase
+    || marker.id_type !== 'integer'
+    || marker.phase_type !== 'text'
+    || marker.updated_at_type !== 'integer'
+    || (!virginMetadata && !boundMetadata)) {
+    throw new Error('mandate migration marker singleton is invalid');
+  }
+  if (db.prepare('PRAGMA foreign_key_check').all().length !== 0) {
+    throw new Error('mandate target foreign-key integrity failed');
+  }
+  const invalidWork = db.prepare(`
+    SELECT 1 FROM mandate_activation_work AS work
+    LEFT JOIN mandates_v3 AS mandate ON mandate.mandate_id = work.mandate_id
+    WHERE mandate.mandate_id IS NULL
+       OR work.stellar_owner IS NOT mandate.stellar_owner
+       OR work.kernel_address IS NOT mandate.kernel_address
+    LIMIT 1
+  `).get();
+  if (invalidWork) throw new Error('mandate activation identity integrity failed');
+  if (marker.phase === 'completed') {
+    try {
+      const migrationRows = db.prepare(`
+        SELECT * FROM mandates_v3 WHERE capability_hash IS NULL ORDER BY mandate_id
+      `).all();
+      const migratedCount = migrationRows
+        .filter(({ status }) => status === MIGRATED_MANDATE_STATUS).length;
+      const quarantinedCount = migrationRows
+        .filter(({ status }) => status === QUARANTINED_MANDATE_STATUS).length;
+      if (migrationRows.length !== marker.migrated_count + marker.quarantined_count
+        || migratedCount !== marker.migrated_count
+        || quarantinedCount !== marker.quarantined_count
+        || mandateMigrationTargetDigest(migrationRows) !== marker.target_digest) {
+        throw new Error('completed mandate migration target aggregate is invalid');
+      }
+    } catch {
+      throw new Error('completed mandate migration target aggregate integrity failed');
+    }
+  }
+  return marker;
+}
+
+export function classifyMandateSchemaEnsemble(db) {
+  requireForeignKeys(db);
+  const fingerprint = targetSchemaFingerprint(db);
+  const references = canonicalMandateSchemaReferences();
+  if (sameFingerprint(fingerprint, references.empty)) {
+    return { kind: 'absent', cleanupPending: false };
+  }
+  if (sameFingerprint(fingerprint, references.prePolicy)) {
+    const mandates = db.prepare('SELECT COUNT(*) AS n FROM mandates_v3').get().n;
+    const work = db.prepare('SELECT COUNT(*) AS n FROM mandate_activation_work').get().n;
+    if (mandates !== 0 || work !== 0 || db.prepare('PRAGMA foreign_key_check').all().length !== 0) {
+      throw new Error('nonempty pre-policy mandate target cannot be upgraded safely');
+    }
+    return { kind: 'pre-policy', cleanupPending: false };
+  }
+  if (sameFingerprint(fingerprint, references.currentFresh)
+    || sameFingerprint(fingerprint, references.currentAltered)) {
+    const migrationState = validateCurrentMandateRows(db);
+    return {
+      kind: 'current',
+      cleanupPending: migrationState.phase === 'cleanup_pending',
+      migrationState,
+    };
+  }
+  throw new Error('mandate target schema ensemble is incompatible');
+}
+
+function prepareMandateSchema(db) {
+  db.exec('PRAGMA foreign_keys=ON');
+  const initial = classifyMandateSchemaEnsemble(db);
+  if (initial.kind === 'current') return;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const locked = classifyMandateSchemaEnsemble(db);
+    if (locked.kind !== initial.kind) {
+      throw new Error('mandate target schema changed during initialization');
+    }
+    if (locked.kind === 'pre-policy') {
+      db.exec(`
+        ALTER TABLE mandates_v3 ADD COLUMN policy_digest TEXT;
+        ALTER TABLE mandates_v3 ADD COLUMN session_key_digest TEXT;
+      `);
+    }
+    db.exec(MANDATE_V3_SCHEMA);
+    if (classifyMandateSchemaEnsemble(db).kind !== 'current') {
+      throw new Error('mandate target schema initialization failed');
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export const MANDATE_V3_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS mandates_v3 (
+    mandate_id TEXT PRIMARY KEY,
+    approval_digest TEXT NOT NULL,
+    policy_digest TEXT,
+    serialized_approval TEXT,
+    stellar_owner TEXT,
+    kernel_address TEXT,
+    session_key_address TEXT,
+    relayer_origin TEXT,
+    valid_until_seconds INTEGER,
+    status TEXT NOT NULL CHECK (status IN ('pending_activation','active','activation_uncertain','revoked')),
+    binding_id TEXT,
+    binding_hash TEXT,
+    permission_id TEXT,
+    session_key_envelope TEXT,
+    session_key_digest TEXT,
+    capability_hash TEXT,
+    activation_user_op_hash TEXT,
+    activation_tx_hash TEXT,
+    activated_at INTEGER,
+    quarantine_reason TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS mandate_activation_work (
+    mandate_id TEXT PRIMARY KEY,
+    stellar_owner TEXT NOT NULL,
+    kernel_address TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending','running','submitting','submitted','done','uncertain')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
+    lease_expires_at INTEGER,
+    user_op_hash TEXT,
+    tx_hash TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+      FOREIGN KEY (mandate_id) REFERENCES mandates_v3(mandate_id)
+  );
+  CREATE TABLE IF NOT EXISTS mandate_migration_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    phase TEXT NOT NULL CHECK (phase IN ('virgin','cleanup_pending','completed')),
+    manifest_version INTEGER,
+    source_digest TEXT,
+    target_digest TEXT,
+    migrated_count INTEGER,
+    quarantined_count INTEGER,
+    updated_at INTEGER NOT NULL,
+    CHECK (
+      (phase = 'virgin'
+        AND manifest_version IS NULL
+        AND source_digest IS NULL
+        AND target_digest IS NULL
+        AND migrated_count IS NULL
+        AND quarantined_count IS NULL)
+      OR
+      (phase IN ('cleanup_pending','completed')
+        AND manifest_version = 1
+        AND length(source_digest) = 64
+        AND source_digest NOT GLOB '*[^0-9a-f]*'
+        AND length(target_digest) = 64
+        AND target_digest NOT GLOB '*[^0-9a-f]*'
+        AND migrated_count >= 0
+        AND quarantined_count >= 0)
+    )
+  );
+  INSERT OR IGNORE INTO mandate_migration_state (
+    id, phase, manifest_version, source_digest, target_digest,
+    migrated_count, quarantined_count, updated_at
+  ) VALUES (1, 'virgin', NULL, NULL, NULL, NULL, NULL, 0);
+`;
+
 export function mandateSessionAad(record) {
   return JSON.stringify([
-    'vf-mandate-session-v1',
+    'vf-mandate-session-v2',
     record.mandateId,
     record.approvalDigest,
+    record.policyDigest,
     record.stellarOwner,
     String(record.kernelAddress || '').toLowerCase(),
     String(record.sessionKeyAddress || '').toLowerCase(),
@@ -79,7 +512,10 @@ export function createSqliteStores(path, {
 } = {}) {
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
-  db.exec(`
+  try {
+    db.exec('PRAGMA busy_timeout=5000');
+    prepareMandateSchema(db);
+    db.exec(`
     PRAGMA foreign_keys=ON;
     PRAGMA secure_delete=ON;
     CREATE TABLE IF NOT EXISTS relay_records (exec_id TEXT PRIMARY KEY, record TEXT NOT NULL);
@@ -118,7 +554,11 @@ export function createSqliteStores(path, {
     CREATE INDEX IF NOT EXISTS idx_association_outbox_child
       ON association_outbox (child_id, sequence);
     ${MANDATE_V3_SCHEMA}
-  `);
+    `);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 
   const associationOutbox = createAssociationOutbox(db, {
     maxAttempts: outboxMaxAttempts,
@@ -173,14 +613,32 @@ export function createSqliteStores(path, {
     };
   }
 
+  const COMMIT_EXPIRY_CLEANUP = Symbol('commitExpiryCleanup');
+
   function transaction(fn) {
-    db.exec('BEGIN IMMEDIATE');
+    let begun = false;
     try {
+      db.exec('BEGIN IMMEDIATE');
+      begun = true;
       const result = fn();
       db.exec('COMMIT');
+      begun = false;
       return result;
     } catch (error) {
-      db.exec('ROLLBACK');
+      if (begun && error?.[COMMIT_EXPIRY_CLEANUP]) {
+        try {
+          db.exec('COMMIT');
+          begun = false;
+        } catch (commitError) {
+          if (begun) db.exec('ROLLBACK');
+          throw commitError;
+        }
+        throw error;
+      }
+      if (begun) db.exec('ROLLBACK');
+      if (/SQLITE_BUSY|database is locked/i.test(String(error?.message || ''))) {
+        throw new Error('mandate store transaction is temporarily unavailable');
+      }
       throw error;
     }
   }
@@ -318,8 +776,15 @@ export function createSqliteStores(path, {
     if (!record || typeof record.mandateId !== 'string' || !record.mandateId) {
       throw new Error('mandate ID is required');
     }
-    if (typeof record.capabilityHash !== 'string' || !record.capabilityHash) {
+    if (!DIGEST_RE.test(record.capabilityHash || '')) {
       throw new Error('capability hash is required');
+    }
+    if (!DIGEST_RE.test(record.policyDigest || '')) {
+      throw new Error('policy digest is required and must be canonical');
+    }
+    if (!DIGEST_RE.test(record.approvalDigest || '')
+      || !DIGEST_RE.test(record.bindingHash || '')) {
+      throw new Error('mandate digest fields are invalid');
     }
     if (!Number.isSafeInteger(record.validUntilSeconds) || record.validUntilSeconds <= 0) {
       throw new Error('mandate expiry is invalid');
@@ -334,6 +799,10 @@ export function createSqliteStores(path, {
       ...record,
       kernelAddress: record.kernelAddress.toLowerCase(),
       sessionKeyAddress: record.sessionKeyAddress.toLowerCase(),
+      relayerOrigin: record.relayerOrigin ?? null,
+      bindingId: record.bindingId ?? null,
+      permissionId: record.permissionId ?? null,
+      sessionKeyDigest: createHash('sha256').update(record.sessionPrivateKey).digest('hex'),
       status: 'pending_activation',
     };
   }
@@ -353,6 +822,7 @@ export function createSqliteStores(path, {
     return mandateSessionAad({
       mandateId: row.mandate_id,
       approvalDigest: row.approval_digest,
+      policyDigest: row.policy_digest ?? null,
       stellarOwner: row.stellar_owner,
       kernelAddress: row.kernel_address,
       sessionKeyAddress: row.session_key_address,
@@ -366,6 +836,7 @@ export function createSqliteStores(path, {
     return {
       mandateId: row.mandate_id,
       approvalDigest: row.approval_digest,
+      policyDigest: row.policy_digest ?? null,
       stellarOwner: row.stellar_owner,
       kernelAddress: row.kernel_address,
       sessionKeyAddress: row.session_key_address ?? null,
@@ -384,11 +855,12 @@ export function createSqliteStores(path, {
     };
   }
 
-  function internalMandate(row, { allowSession = true } = {}) {
+  function internalMandate(row) {
     if (!row) return null;
     const result = {
       mandateId: row.mandate_id,
       approvalDigest: row.approval_digest,
+      policyDigest: row.policy_digest ?? null,
       serializedApproval: row.serialized_approval ?? undefined,
       stellarOwner: row.stellar_owner,
       kernelAddress: row.kernel_address,
@@ -406,20 +878,6 @@ export function createSqliteStores(path, {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
-    if (allowSession && row.session_key_envelope) {
-      const cipher = requireSessionKeyCipher();
-      const opened = cipher.open(row.session_key_envelope, rowAad(row));
-      Object.defineProperty(result, 'sessionPrivateKey', {
-        value: opened.plaintext,
-        enumerable: false,
-      });
-      if (opened.needsRotation) {
-        const replacement = cipher.seal(opened.plaintext, rowAad(row));
-        db.prepare(`
-          UPDATE mandates_v3 SET session_key_envelope = ?, updated_at = ? WHERE mandate_id = ?
-        `).run(replacement, nowSeconds(), row.mandate_id);
-      }
-    }
     if (row.capability_hash) {
       Object.defineProperty(result, 'capabilityHash', {
         value: row.capability_hash,
@@ -460,7 +918,10 @@ export function createSqliteStores(path, {
 
   function assertLive(row, at) {
     if (!Number.isSafeInteger(row.valid_until_seconds) || at >= row.valid_until_seconds) {
-      throw new Error('mandate expiry has been reached');
+      cleanupExpiredLocked(row, at);
+      const error = new Error('mandate expiry has been reached');
+      error[COMMIT_EXPIRY_CLEANUP] = true;
+      throw error;
     }
   }
 
@@ -474,8 +935,9 @@ export function createSqliteStores(path, {
   function conflict(existingRow, incoming) {
     const existing = {
       approvalDigest: existingRow.approval_digest,
+      policyDigest: existingRow.policy_digest,
       serializedApproval: existingRow.serialized_approval,
-      sessionPrivateKey: internalMandate(existingRow).sessionPrivateKey,
+      sessionKeyDigest: existingRow.session_key_digest,
       sessionKeyAddress: existingRow.session_key_address,
       capabilityHash: existingRow.capability_hash,
       stellarOwner: existingRow.stellar_owner,
@@ -489,25 +951,103 @@ export function createSqliteStores(path, {
     return V3_IMMUTABLE_FIELDS.some((field) => existing[field] !== incoming[field]);
   }
 
+  function cleanupExpiredLocked(row, at) {
+    if (!row || !Number.isSafeInteger(row.valid_until_seconds)
+      || at < row.valid_until_seconds) return row;
+    const work = db.prepare('SELECT * FROM mandate_activation_work WHERE mandate_id = ?')
+      .get(row.mandate_id);
+    if (work?.status === 'pending' || work?.status === 'running') {
+      db.prepare('DELETE FROM mandate_activation_work WHERE mandate_id = ?').run(row.mandate_id);
+    } else if (work?.status === 'submitting' || work?.status === 'submitted') {
+      db.prepare(`
+        UPDATE mandate_activation_work
+        SET status = 'uncertain', lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+        WHERE mandate_id = ?
+      `).run(at, row.mandate_id);
+      db.prepare(`
+        UPDATE mandates_v3 SET status = 'activation_uncertain' WHERE mandate_id = ?
+      `).run(row.mandate_id);
+    }
+    db.prepare(`
+      UPDATE mandates_v3 SET session_key_envelope = NULL, updated_at = ? WHERE mandate_id = ?
+    `).run(at, row.mandate_id);
+    return mandateRow(row.mandate_id);
+  }
+
+  function cleanupExpired(row, at) {
+    if (!row || !Number.isSafeInteger(row.valid_until_seconds)
+      || at < row.valid_until_seconds) return row;
+    return transaction(() => cleanupExpiredLocked(mandateRow(row.mandate_id), at));
+  }
+
+  function cleanupAllExpiredLocked(at) {
+    const rows = db.prepare(`
+      SELECT * FROM mandates_v3
+      WHERE valid_until_seconds IS NOT NULL AND valid_until_seconds <= ?
+    `).all(at);
+    for (const row of rows) cleanupExpiredLocked(row, at);
+  }
+
+  function internalWithSession(identity, initialRow, at) {
+    const row = cleanupExpired(initialRow, at);
+    if (!row || row.status === 'revoked' || !row.session_key_envelope
+      || at >= row.valid_until_seconds) return internalMandate(row);
+
+    const cipher = requireSessionKeyCipher();
+    const opened = cipher.open(row.session_key_envelope, rowAad(row));
+    const checkedAt = safeNow();
+    if (checkedAt >= row.valid_until_seconds) {
+      return internalMandate(cleanupExpired(identityRow(identity), checkedAt));
+    }
+    const replacement = opened.needsRotation
+      ? cipher.seal(opened.plaintext, rowAad(row))
+      : row.session_key_envelope;
+    const update = opened.needsRotation
+      ? db.prepare(`
+          UPDATE mandates_v3 SET session_key_envelope = ?, updated_at = ?
+          WHERE mandate_id = ? AND stellar_owner = ? AND kernel_address = ?
+            AND session_key_envelope = ? AND status != 'revoked' AND valid_until_seconds > ?
+        `).run(
+          replacement, checkedAt, row.mandate_id, row.stellar_owner, row.kernel_address,
+          row.session_key_envelope, checkedAt,
+        )
+      : db.prepare(`
+          UPDATE mandates_v3 SET session_key_envelope = session_key_envelope
+          WHERE mandate_id = ? AND stellar_owner = ? AND kernel_address = ?
+            AND session_key_envelope = ? AND status != 'revoked' AND valid_until_seconds > ?
+        `).run(
+          row.mandate_id, row.stellar_owner, row.kernel_address,
+          row.session_key_envelope, checkedAt,
+        );
+    const current = identityRow(identity);
+    if (update.changes !== 1 || !current || current.status === 'revoked'
+      || current.session_key_envelope !== replacement
+      || checkedAt >= current.valid_until_seconds) {
+      return internalMandate(cleanupExpired(current, checkedAt));
+    }
+    const result = internalMandate(current);
+    Object.defineProperty(result, 'sessionPrivateKey', {
+      value: opened.plaintext,
+      enumerable: false,
+    });
+    return result;
+  }
+
   let leaseCounter = 0;
   const mandatesV3 = {
     get(identity) {
       const row = identityRow(identity);
       if (!row) return null;
-      const expired = Number.isSafeInteger(row.valid_until_seconds)
-        && nowSeconds() >= row.valid_until_seconds;
-      if (expired && row.session_key_envelope) {
-        db.prepare('UPDATE mandates_v3 SET session_key_envelope = NULL, updated_at = ? WHERE mandate_id = ?')
-          .run(nowSeconds(), row.mandate_id);
-        row.session_key_envelope = null;
-      }
-      return internalMandate(row, { allowSession: !expired && row.status !== 'revoked' });
+      const at = safeNow();
+      return internalWithSession(identity, row, at);
     },
     status(identity) {
-      const row = identityRow(identity);
+      let row = identityRow(identity);
       if (!row) return { status: 'missing' };
-      const status = Number.isSafeInteger(row.valid_until_seconds)
-        && nowSeconds() >= row.valid_until_seconds ? 'expired' : row.status;
+      const at = safeNow();
+      const expired = Number.isSafeInteger(row.valid_until_seconds) && at >= row.valid_until_seconds;
+      if (expired) row = cleanupExpired(row, at);
+      const status = expired ? 'expired' : row.status;
       return publicMandate(row, status);
     },
     revoke(identity) {
@@ -515,13 +1055,18 @@ export function createSqliteStores(path, {
         const row = identityRow(identity);
         if (!row) return null;
         const at = safeNow();
+        const expired = Number.isSafeInteger(row.valid_until_seconds)
+          && at >= row.valid_until_seconds;
+        if (expired) {
+          return publicMandate(cleanupExpiredLocked(row, at), 'expired');
+        }
         db.prepare(`
           UPDATE mandates_v3
           SET status = 'revoked', session_key_envelope = NULL, updated_at = ?
           WHERE mandate_id = ?
         `).run(at, row.mandate_id);
         db.prepare('DELETE FROM mandate_activation_work WHERE mandate_id = ?').run(row.mandate_id);
-        return publicMandate(mandateRow(row.mandate_id));
+        return publicMandate(mandateRow(row.mandate_id), 'revoked');
       });
     },
     get size() {
@@ -532,34 +1077,41 @@ export function createSqliteStores(path, {
   const mandateActivations = {
     enqueue({ record }) {
       const incoming = normalizeMandate(record);
-      const existing = mandateRow(incoming.mandateId);
-      if (existing) {
-        if (conflict(existing, incoming)) throw new Error('immutable mandate conflict');
-        return {
-          duplicate: true,
-          mandate: publicMandate(existing),
-          work: activationWork(db.prepare('SELECT * FROM mandate_activation_work WHERE mandate_id = ?')
-            .get(incoming.mandateId)),
-        };
-      }
-      const at = safeNow();
-      if (at >= incoming.validUntilSeconds) throw new Error('mandate expiry has been reached');
       const envelope = requireSessionKeyCipher().seal(incoming.sessionPrivateKey, mandateSessionAad(incoming));
       return transaction(() => {
+        const at = safeNow();
+        let existing = mandateRow(incoming.mandateId);
+        if (existing) {
+          const expired = at >= existing.valid_until_seconds;
+          if (expired) existing = cleanupExpiredLocked(existing, at);
+          if (conflict(existing, incoming)) {
+            const error = new Error('immutable mandate conflict');
+            if (expired) error[COMMIT_EXPIRY_CLEANUP] = true;
+            throw error;
+          }
+          return {
+            duplicate: true,
+            mandate: publicMandate(existing, expired ? 'expired' : existing.status),
+            work: activationWork(db.prepare('SELECT * FROM mandate_activation_work WHERE mandate_id = ?')
+            .get(incoming.mandateId)),
+          };
+        }
+        if (at >= incoming.validUntilSeconds) throw new Error('mandate expiry has been reached');
         db.prepare(`
           INSERT INTO mandates_v3 (
-            mandate_id, approval_digest, serialized_approval, stellar_owner, kernel_address,
+            mandate_id, approval_digest, policy_digest, serialized_approval, stellar_owner, kernel_address,
             session_key_address, relayer_origin, valid_until_seconds, status, binding_id,
-            binding_hash, permission_id, session_key_envelope, capability_hash,
+            binding_hash, permission_id, session_key_envelope, session_key_digest, capability_hash,
             activation_user_op_hash, activation_tx_hash, activated_at, quarantine_reason,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_activation', ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_activation', ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
         `).run(
-          incoming.mandateId, incoming.approvalDigest, incoming.serializedApproval,
+          incoming.mandateId, incoming.approvalDigest, incoming.policyDigest,
+          incoming.serializedApproval,
           incoming.stellarOwner, incoming.kernelAddress, incoming.sessionKeyAddress,
           incoming.relayerOrigin ?? null, incoming.validUntilSeconds, incoming.bindingId ?? null,
           incoming.bindingHash ?? null, incoming.permissionId ?? null, envelope,
-          incoming.capabilityHash, at, at,
+          incoming.sessionKeyDigest, incoming.capabilityHash, at, at,
         );
         db.prepare(`
           INSERT INTO mandate_activation_work (
@@ -576,26 +1128,69 @@ export function createSqliteStores(path, {
       });
     },
     get(identity) {
-      return activationWork(activationRow(identity));
+      let mandate = identityRow(identity);
+      if (!mandate) return null;
+      const at = safeNow();
+      if (at >= mandate.valid_until_seconds) mandate = cleanupExpired(mandate, at);
+      return activationWork(db.prepare('SELECT * FROM mandate_activation_work WHERE mandate_id = ?')
+        .get(mandate.mandate_id));
     },
     claim({ nowSeconds: atValue, leaseSeconds = 30, ...identity }) {
-      const mandate = identityRow(identity);
-      if (!mandate) return null;
-      const at = safeNow(atValue);
-      assertLive(mandate, at);
-      if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds <= 0) {
-        throw new Error('activation lease duration is invalid');
-      }
-      leaseCounter += 1;
-      const token = `${leaseToken()}-${leaseCounter}`;
-      const row = db.prepare(`
-        UPDATE mandate_activation_work
-        SET status = 'running', attempts = attempts + 1, lease_token = ?,
-            lease_expires_at = ?, updated_at = ?
-        WHERE mandate_id = ? AND status = 'pending'
-        RETURNING *
-      `).get(token, at + leaseSeconds, at, mandate.mandate_id);
-      return activationWork(row);
+      return transaction(() => {
+        const mandate = identityRow(identity);
+        if (!mandate) return null;
+        const at = safeNow(atValue);
+        assertLive(mandate, at);
+        if (mandate.status !== 'pending_activation') return null;
+        if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds <= 0) {
+          throw new Error('activation lease duration is invalid');
+        }
+        leaseCounter += 1;
+        const token = `${leaseToken()}-${leaseCounter}-${randomUUID()}`;
+        const row = db.prepare(`
+          UPDATE mandate_activation_work
+          SET status = 'running', attempts = attempts + 1, lease_token = ?,
+              lease_expires_at = ?, updated_at = ?
+          WHERE mandate_id = ? AND status = 'pending'
+          RETURNING *
+        `).get(
+          token,
+          Math.min(at + leaseSeconds, mandate.valid_until_seconds),
+          at,
+          mandate.mandate_id,
+        );
+        return activationWork(row);
+      });
+    },
+    renew({ leaseToken: token, nowSeconds: atValue, leaseSeconds = 30, ...identity }) {
+      return transaction(() => {
+        const mandate = identityRow(identity);
+        const work = activationRow(identity);
+        if (!mandate || !work) throw new Error('stale or missing activation lease');
+        const at = safeNow(atValue);
+        assertLive(mandate, at);
+        assertLease(work, token, at);
+        if (!['running', 'submitting', 'submitted'].includes(work.status)) {
+          throw new Error('activation lease is terminal or not renewable');
+        }
+        if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds <= 0) {
+          throw new Error('activation lease duration is invalid');
+        }
+        const leaseExpiresAt = Math.min(at + leaseSeconds, mandate.valid_until_seconds);
+        const updated = db.prepare(`
+          UPDATE mandate_activation_work
+          SET lease_expires_at = ?, updated_at = ?
+          WHERE mandate_id = ? AND stellar_owner = ? AND kernel_address = ?
+            AND lease_token = ? AND lease_expires_at > ?
+            AND status IN ('running','submitting','submitted')
+          RETURNING *
+        `).get(
+          leaseExpiresAt, at, mandate.mandate_id, mandate.stellar_owner,
+          mandate.kernel_address, token, at,
+        );
+        if (!updated) throw new Error('stale activation lease token');
+        return activationWork(updated);
+      });
     },
     checkpoint({ leaseToken: token, status, userOpHash, nowSeconds: atValue, ...identity }) {
       return transaction(() => {
@@ -640,6 +1235,9 @@ export function createSqliteStores(path, {
         if (!Number.isSafeInteger(activatedAt) || activatedAt <= 0) {
           throw new Error('activation time is invalid');
         }
+        if (activatedAt >= mandate.valid_until_seconds) {
+          throw new Error('activation time must precede mandate expiry');
+        }
         db.prepare(`
           UPDATE mandates_v3
           SET status = 'active', activation_user_op_hash = ?, activation_tx_hash = ?,
@@ -657,7 +1255,13 @@ export function createSqliteStores(path, {
         };
       });
     },
-    finishUncertain({ leaseToken: token, nowSeconds: atValue, ...identity }) {
+    finishUncertain({
+      leaseToken: token,
+      userOpHash,
+      txHash,
+      nowSeconds: atValue,
+      ...identity
+    }) {
       return transaction(() => {
         const mandate = identityRow(identity);
         const work = activationRow(identity);
@@ -668,13 +1272,31 @@ export function createSqliteStores(path, {
         if (work.status !== 'submitting' && work.status !== 'submitted') {
           throw new Error('activation must cross the submitting or submitted fence');
         }
+        if (userOpHash !== undefined && !HASH_RE.test(userOpHash)) {
+          throw new Error('user operation hash is not canonical');
+        }
+        if (work.status === 'submitted' && userOpHash !== undefined
+          && userOpHash !== work.user_op_hash) {
+          throw new Error('submitted user operation hash mismatch');
+        }
+        const retainedUserOpHash = userOpHash ?? work.user_op_hash;
+        if (txHash !== undefined && !HASH_RE.test(txHash)) {
+          throw new Error('activation transaction hash is not canonical');
+        }
+        if (txHash !== undefined && !retainedUserOpHash) {
+          throw new Error('transaction evidence requires a canonical user operation hash');
+        }
         db.prepare(`UPDATE mandates_v3 SET status = 'activation_uncertain', updated_at = ? WHERE mandate_id = ?`)
           .run(at, mandate.mandate_id);
         db.prepare(`
           UPDATE mandate_activation_work
-          SET status = 'uncertain', lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+          SET status = 'uncertain', user_op_hash = ?, tx_hash = ?,
+              lease_token = NULL, lease_expires_at = NULL, updated_at = ?
           WHERE mandate_id = ?
-        `).run(at, mandate.mandate_id);
+        `).run(
+          retainedUserOpHash ?? null, txHash ?? work.tx_hash ?? null,
+          at, mandate.mandate_id,
+        );
         return {
           mandate: publicMandate(mandateRow(mandate.mandate_id)),
           work: activationWork(db.prepare('SELECT * FROM mandate_activation_work WHERE mandate_id = ?')
@@ -682,22 +1304,75 @@ export function createSqliteStores(path, {
         };
       });
     },
+    finishRevoked({
+      leaseToken: token,
+      userOpHash,
+      txHash,
+      activatedAt,
+      nowSeconds: atValue,
+      ...identity
+    }) {
+      return transaction(() => {
+        const mandate = identityRow(identity);
+        const work = activationRow(identity);
+        if (!mandate || !work) throw new Error('stale or terminal activation lease');
+        const at = safeNow(atValue);
+        assertLive(mandate, at);
+        assertLease(work, token, at);
+        if (work.status !== 'submitted') {
+          throw new Error('activation must be submitted before receipt revocation');
+        }
+        if (!HASH_RE.test(userOpHash || '') || userOpHash !== work.user_op_hash) {
+          throw new Error('submitted user operation hash mismatch');
+        }
+        if (!HASH_RE.test(txHash || '')) {
+          throw new Error('activation transaction hash is not canonical');
+        }
+        if (!Number.isSafeInteger(activatedAt) || activatedAt <= 0) {
+          throw new Error('activation timestamp is invalid');
+        }
+        if (activatedAt >= mandate.valid_until_seconds) {
+          throw new Error('activation timestamp must precede mandate expiry');
+        }
+        db.prepare(`
+          UPDATE mandates_v3
+          SET status = 'revoked', activation_user_op_hash = ?, activation_tx_hash = ?,
+              activated_at = ?, session_key_envelope = NULL, updated_at = ?
+          WHERE mandate_id = ?
+        `).run(userOpHash, txHash, activatedAt, at, mandate.mandate_id);
+        db.prepare('DELETE FROM mandate_activation_work WHERE mandate_id = ?')
+          .run(mandate.mandate_id);
+        return {
+          mandate: publicMandate(mandateRow(mandate.mandate_id)),
+          work: null,
+        };
+      });
+    },
     listRecoverable({ nowSeconds: atValue } = {}) {
       const at = safeNow(atValue);
-      return db.prepare(`
-        SELECT * FROM mandate_activation_work
-        WHERE status = 'pending' OR (status = 'running' AND lease_expires_at <= ?)
-        ORDER BY created_at, mandate_id
-      `).all(at).map(activationWork);
+      return transaction(() => {
+        cleanupAllExpiredLocked(at);
+        return db.prepare(`
+          SELECT work.* FROM mandate_activation_work AS work
+          JOIN mandates_v3 AS mandate ON mandate.mandate_id = work.mandate_id
+          WHERE work.status = 'pending'
+            AND mandate.status = 'pending_activation'
+            AND mandate.valid_until_seconds > ?
+          ORDER BY work.created_at, work.mandate_id
+        `).all(at).map(activationWork);
+      });
     },
     reconcileExpired({ nowSeconds: atValue } = {}) {
       const at = safeNow(atValue);
       return transaction(() => {
+        cleanupAllExpiredLocked(at);
         const rows = db.prepare(`
-          SELECT * FROM mandate_activation_work
-          WHERE status IN ('running','submitting','submitted') AND lease_expires_at <= ?
-          ORDER BY created_at, mandate_id
-        `).all(at);
+          SELECT work.* FROM mandate_activation_work AS work
+          JOIN mandates_v3 AS mandate ON mandate.mandate_id = work.mandate_id
+          WHERE work.status IN ('running','submitting','submitted')
+            AND work.lease_expires_at <= ? AND mandate.valid_until_seconds > ?
+          ORDER BY work.created_at, work.mandate_id
+        `).all(at, at);
         const result = [];
         for (const row of rows) {
           const next = row.status === 'running' ? 'pending' : 'uncertain';
@@ -723,19 +1398,27 @@ export function createSqliteStores(path, {
   function legacyMandateTables() {
     return db.prepare(`
       SELECT name FROM sqlite_master
-      WHERE type = 'table' AND name IN ('mandates','mandates_v2')
+      WHERE type = 'table' AND lower(name) IN ('mandates','mandates_v2')
       ORDER BY name
     `).all().map(({ name }) => name);
   }
 
   function probe() {
     return transaction(() => {
+      const ensemble = classifyMandateSchemaEnsemble(db);
+      if (ensemble.kind !== 'current') {
+        throw new Error('mandate readiness schema ensemble is incompatible');
+      }
       db.prepare('UPDATE jobs SET job = job WHERE 0').run();
       db.prepare('SELECT id FROM association_outbox WHERE 0').all();
       db.prepare('SELECT job_id FROM farm_execution_work WHERE 0').all();
       db.prepare('SELECT mandate_id FROM mandates_v3 WHERE 0').all();
       db.prepare('SELECT mandate_id FROM mandate_activation_work WHERE 0').all();
-      return { writable: true, legacyMandateTables: legacyMandateTables() };
+      return {
+        writable: true,
+        legacyMandateTables: legacyMandateTables(),
+        mandateMigrationCleanupPending: ensemble.cleanupPending,
+      };
     });
   }
 

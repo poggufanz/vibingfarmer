@@ -36,8 +36,14 @@ export async function verifyRelayerReadiness({ sqlite, reporter }) {
   if (!sqlite?.probe || !reporter?.probe) throw new Error('relayer durable readiness is not configured');
   const local = await sqlite.probe();
   if (local?.writable !== true) throw new Error('relayer SQLite store is not writable');
-  if (Array.isArray(local.legacyMandateTables) && local.legacyMandateTables.length > 0) {
+  if (!Array.isArray(local.legacyMandateTables)) {
+    throw new Error('relayer SQLite legacy mandate metadata is invalid');
+  }
+  if (local.legacyMandateTables.length > 0) {
     throw new Error('plaintext legacy mandate tables require offline migration');
+  }
+  if (local.mandateMigrationCleanupPending !== false) {
+    throw new Error('offline mandate migration cleanup is pending');
   }
   const remote = await reporter.probe();
   if (
@@ -91,7 +97,8 @@ export function createRelayerServer(config, { openSqlite = createSqliteStores } 
     throw new Error('RELAYER_OFFLINE_KEY_MIGRATION cannot run in the HTTP relayer process');
   }
   const sessionKeyCipher = config?.sessionKeyCipher;
-  if (typeof sessionKeyCipher?.seal !== 'function' || typeof sessionKeyCipher?.open !== 'function') {
+  if (config.dbPath
+    && (typeof sessionKeyCipher?.seal !== 'function' || typeof sessionKeyCipher?.open !== 'function')) {
     throw new Error('session-key encryption cipher is required before relayer startup');
   }
   const runtimeConfig = runtimeServerConfig(config);
