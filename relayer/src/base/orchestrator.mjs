@@ -8,6 +8,10 @@
 
 import { encodeFunctionData } from 'viem';
 import { reconstructSessionClient, MAX_CALL_CAP_UNITS } from './session.mjs';
+import {
+  requireCanonicalUserOperationHash,
+  requireSuccessfulUserOperation,
+} from './userOpReceipt.mjs';
 
 export const YIELD_ROUTER_ABI = [{
   type: 'function', name: 'deposit', stateMutability: 'nonpayable',
@@ -40,6 +44,33 @@ export function createOrchestrator(config) {
     chain, rpcUrl, bundlerRpcUrl, yieldRouterAddress, usdcAddress, sessionPrivateKey,
     reconstructSessionClientFn = reconstructSessionClient,
   } = config;
+
+  /**
+   * Activates a mandate by clearing the session account's allowance to YieldRouter.
+   * @param {string} approval - serialized session approval from the SP3 mandate ceremony
+   * @param {{onSubmitted?: (userOpHash: string) => Promise<void> | void}} [options]
+   */
+  async function activateMandate(approval, { onSubmitted } = {}) {
+    const kernelClient = await reconstructSessionClientFn({
+      chain, rpcUrl, bundlerRpcUrl, approval, sessionPrivateKey,
+    });
+    const approveData = encodeFunctionData({
+      abi: APPROVE_ABI, functionName: 'approve', args: [yieldRouterAddress, 0n],
+    });
+    const callData = await kernelClient.account.encodeCalls([
+      { to: usdcAddress, value: 0n, data: approveData },
+    ]);
+    const userOpHash = requireCanonicalUserOperationHash(
+      await kernelClient.sendUserOperation({ callData }),
+      { label: 'mandate activation' },
+    );
+    await onSubmitted?.(userOpHash);
+    const receipt = await kernelClient.waitForUserOperationReceipt({
+      hash: userOpHash, timeout: USEROP_TIMEOUT_MS,
+    });
+    const txHash = requireSuccessfulUserOperation(receipt, { label: 'mandate activation' });
+    return { userOpHash, txHash };
+  }
 
   /**
    * Fires one YieldRouter.deposit(pool, amount, minShares) userOp per allocation, SERIALLY —
@@ -79,18 +110,20 @@ export function createOrchestrator(config) {
           { to: usdcAddress, value: 0n, data: approveData },
           { to: yieldRouterAddress, value: 0n, data: depositData },
         ]);
-        const userOpHash = await kernelClient.sendUserOperation({ callData });
+        const userOpHash = requireCanonicalUserOperationHash(
+          await kernelClient.sendUserOperation({ callData }),
+          { label: `deposit into ${allocation.pool}` },
+        );
         const receipt = await kernelClient.waitForUserOperationReceipt({ hash: userOpHash, timeout: USEROP_TIMEOUT_MS });
-        const success = receipt?.success === true || receipt?.receipt?.status === 'success';
-        if (!success) throw new Error(`deposit into ${allocation.pool} was mined but did not succeed`);
+        const txHash = requireSuccessfulUserOperation(receipt, { label: `deposit into ${allocation.pool}` });
         results.push({
           allocationId: allocation.allocationId,
           pool: allocation.pool,
           status: 'fulfilled',
-          value: { pool: allocation.pool, userOpHash, txHash: receipt?.receipt?.transactionHash },
+          value: { pool: allocation.pool, userOpHash, txHash },
           executionStatus: 'deposited',
           custody: { location: 'base-proxy' },
-          txHash: receipt?.receipt?.transactionHash ?? null,
+          txHash,
         });
       } catch (reason) {
         results.push({
@@ -107,5 +140,5 @@ export function createOrchestrator(config) {
     return results;
   }
 
-  return { dispatchDeposits };
+  return { activateMandate, dispatchDeposits };
 }

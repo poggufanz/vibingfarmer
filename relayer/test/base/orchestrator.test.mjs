@@ -13,6 +13,11 @@ import {
 
 const YIELD_ROUTER_ADDRESS = '0x00000000000000000000000000000000000000f1';
 const USDC_ADDRESS = '0x00000000000000000000000000000000000000dd';
+const TX_HASH = `0x${'a'.repeat(64)}`;
+const USER_OP_HASH = `0x${'b'.repeat(64)}`;
+const FIRST_USER_OP_HASH = `0x${'1'.repeat(64)}`;
+const SECOND_USER_OP_HASH = `0x${'2'.repeat(64)}`;
+const THIRD_USER_OP_HASH = `0x${'3'.repeat(64)}`;
 
 function buildMockKernelClient() {
   return {
@@ -20,10 +25,10 @@ function buildMockKernelClient() {
       address: '0xSmartAccount',
       encodeCalls: vi.fn().mockResolvedValue('0xencodedCallData'),
     },
-    sendUserOperation: vi.fn().mockResolvedValue('0xuserOpHash'),
+    sendUserOperation: vi.fn().mockResolvedValue(USER_OP_HASH),
     waitForUserOperationReceipt: vi.fn(async ({ hash }) => ({
       success: true,
-      receipt: { status: 'success', transactionHash: `0xtx-${hash}` },
+      receipt: { status: 'success', transactionHash: TX_HASH },
     })),
   };
 }
@@ -55,9 +60,9 @@ describe('dispatchDeposits', () => {
   it('a rejected allocation (e.g. a paused pool) does not abort the others — Promise.allSettled semantics', async () => {
     const kernelClient = buildMockKernelClient();
     kernelClient.sendUserOperation = vi.fn()
-      .mockResolvedValueOnce('0xop-1')
+      .mockResolvedValueOnce(FIRST_USER_OP_HASH)
       .mockRejectedValueOnce(new Error('AA23 reverted: pool paused'))
-      .mockResolvedValueOnce('0xop-3');
+      .mockResolvedValueOnce(THIRD_USER_OP_HASH);
     const reconstructSessionClientFn = vi.fn().mockResolvedValue(kernelClient);
     const orchestrator = createOrchestrator({
       chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
@@ -85,14 +90,14 @@ describe('dispatchDeposits', () => {
     const kernelClient = buildMockKernelClient();
     let sends = 0;
     let resolveFirstReceipt;
-    kernelClient.sendUserOperation = vi.fn(async () => `0xop-${++sends}`);
+    kernelClient.sendUserOperation = vi.fn(async () => [FIRST_USER_OP_HASH, SECOND_USER_OP_HASH][sends++]);
     kernelClient.waitForUserOperationReceipt = vi.fn(({ hash }) =>
-      hash === '0xop-1'
+      hash === FIRST_USER_OP_HASH
         ? new Promise((res) => {
             resolveFirstReceipt = () =>
-              res({ success: true, receipt: { status: 'success', transactionHash: '0xt1' } });
+            res({ success: true, receipt: { status: 'success', transactionHash: TX_HASH } });
           })
-        : Promise.resolve({ success: true, receipt: { status: 'success', transactionHash: '0xt2' } })
+        : Promise.resolve({ success: true, receipt: { status: 'success', transactionHash: TX_HASH } })
     );
     const reconstructSessionClientFn = vi.fn().mockResolvedValue(kernelClient);
     const orchestrator = createOrchestrator({
@@ -227,5 +232,90 @@ describe('dispatchDeposits', () => {
     await expect(orchestrator.dispatchDeposits('serialized-approval', allocations)).rejects.toThrow(/cap/i);
     expect(reconstructSessionClientFn).not.toHaveBeenCalled();
     expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ success: true, receipt: { status: 'reverted', transactionHash: TX_HASH } }],
+    [{ success: false, receipt: { status: 'success', transactionHash: TX_HASH } }],
+  ])('holds an allocation when user operation success is only one-sided', async (receipt) => {
+    const kernelClient = buildMockKernelClient();
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(receipt);
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const [result] = await orchestrator.dispatchDeposits('serialized-approval', [
+      { pool: '0x00000000000000000000000000000000000000a1', amount: 100n, minShares: 90n },
+    ]);
+
+    expect(result).toMatchObject({ status: 'rejected', executionStatus: 'held', txHash: null });
+  });
+
+  it('holds an allocation without waiting when the bundler returns a malformed user operation hash', async () => {
+    const kernelClient = buildMockKernelClient();
+    kernelClient.sendUserOperation.mockResolvedValue('0x1');
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const [result] = await orchestrator.dispatchDeposits('serialized-approval', [
+      { pool: '0x00000000000000000000000000000000000000a1', amount: 100n, minShares: 90n },
+    ]);
+
+    expect(result).toMatchObject({ status: 'rejected', executionStatus: 'held', txHash: null });
+    expect(kernelClient.waitForUserOperationReceipt).not.toHaveBeenCalled();
+  });
+});
+
+describe('activateMandate', () => {
+  it('submits one zero-reset approval before waiting for its successful receipt', async () => {
+    const kernelClient = buildMockKernelClient();
+    const events = [];
+    kernelClient.waitForUserOperationReceipt.mockImplementation(async () => {
+      events.push('waited');
+      return { success: true, receipt: { status: 'success', transactionHash: TX_HASH } };
+    });
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const result = await orchestrator.activateMandate('serialized-approval', {
+      onSubmitted: async (userOpHash) => events.push(`submitted:${userOpHash}`),
+    });
+
+    expect(events).toEqual([`submitted:${USER_OP_HASH}`, 'waited']);
+    expect(result).toEqual({ userOpHash: USER_OP_HASH, txHash: TX_HASH });
+    expect(kernelClient.account.encodeCalls).toHaveBeenCalledTimes(1);
+    const [calls] = kernelClient.account.encodeCalls.mock.calls[0];
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ to: USDC_ADDRESS, value: 0n });
+    expect(decodeFunctionData({ abi: APPROVE_ABI, data: calls[0].data })).toMatchObject({
+      functionName: 'approve', args: [YIELD_ROUTER_ADDRESS, 0n],
+    });
+  });
+
+  it('rejects a malformed user operation hash before notifying or waiting', async () => {
+    const kernelClient = buildMockKernelClient();
+    kernelClient.sendUserOperation.mockResolvedValue('0x1');
+    const onSubmitted = vi.fn();
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    await expect(orchestrator.activateMandate('serialized-approval', { onSubmitted })).rejects.toThrow('canonical user operation hash');
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(kernelClient.waitForUserOperationReceipt).not.toHaveBeenCalled();
   });
 });
