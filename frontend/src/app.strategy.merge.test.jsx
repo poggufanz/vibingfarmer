@@ -5,38 +5,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   checkCircleUsdcFunding,
-  readStoredBaseMandate,
+  checkStoredBaseMandate,
   buildBaseLegContext,
-  baseMandateAllocationsForPlan,
 } from './mergeFlowHelpers.js'
 
 describe('merge flow helpers', () => {
-  it('derives exact reviewed Base child allocations for the immediate pre-grant check', () => {
-    expect(
-      baseMandateAllocationsForPlan({
-        agents: [
-          {
-            kind: 'bridge',
-            children: [
-              {
-                allocationId: 'run-9:bridge:aave-v3',
-                address: '0x00000000000000000000000000000000000000a1',
-                allocation: { token: 'USDC', units: '1234567', decimals: 6 },
-              },
-            ],
-          },
-        ],
-      })
-    ).toEqual([
-      {
-        allocationId: 'run-9:bridge:aave-v3',
-        poolAddress: '0x00000000000000000000000000000000000000a1',
-        amount: { token: 'USDC', units: '1234567', decimals: 6 },
-        minShares: '0',
-      },
-    ])
-  })
-
   // Strategy Task 13 (decision log #22, obligation D): the two `resolveBaseAvailability`
   // legacy-shape tests that lived here (`{checkHealth}`-only) are DELETED along with the
   // migrated app.jsx call site and the now-removed `resolveLegacyBaseAvailability` branch —
@@ -65,23 +38,73 @@ describe('merge flow helpers', () => {
 // mergeFlowHelpers.test.js's 'checkStoredBaseMandate — owner-scoped gating' and
 // 'resolveBaseAvailability — canonical bound-mandate contract' describe blocks.
 
-describe('readStoredBaseMandate', () => {
-  const fakeStorage = (initial = {}) => {
-    const m = new Map(Object.entries(initial))
-    return { getItem: (k) => (m.has(k) ? m.get(k) : null) }
-  }
-  it('parses the stored record', () => {
-    const storage = fakeStorage({
-      vf_base_mandate: JSON.stringify({ kernelAddress: '0xKERNEL', serializedApproval: 'A' }),
+describe('app owner-scoped v3 mandate boundary', () => {
+  it('rechecks one amount-free mandate identity and never reads a global approval blob', async () => {
+    const mandateId = '11'.repeat(16)
+    const kernelAddress = '0x0000000000000000000000000000000000000aa1'
+    const record = {
+      version: 3,
+      mandateId,
+      stellarOwner: 'GUSER',
+      kernelAddress,
+      sessionKeyAddress: '0x0000000000000000000000000000000000000bb2',
+      relayerOrigin: 'https://relayer.example',
+      validUntilSeconds: 9_999_999_999,
+      status: 'active',
+      bindingId: 'binding-1',
+      bindingHash: 'binding-hash-1',
+      reasonCodes: [],
+      expected: {},
+      observed: {
+        blockNumber: '100',
+        blockHash: `0x${'ab'.repeat(32)}`,
+        blockTime: 2_000_000_000,
+        implementation: '0x0000000000000000000000000000000000000cc3',
+        permission: { digest: 'permission-digest' },
+        activation: {
+          userOpHash: `0x${'33'.repeat(32)}`,
+          txHash: `0x${'44'.repeat(32)}`,
+          activatedAt: 2_000_000_000,
+        },
+      },
+      checks: Object.fromEntries(
+        [
+          'chain',
+          'owner',
+          'kernel',
+          'session',
+          'permission',
+          'policy',
+          'binding',
+          'origin',
+          'implementation',
+          'freshness',
+          'reconstruction',
+          'activation',
+        ].map((key) => [key, true])
+      ),
+    }
+    const values = new Map([
+      [`vf_base_mandate_v3:GUSER`, JSON.stringify(record)],
+      ['vf_base_mandate', JSON.stringify({ serializedApproval: 'MUST-NOT-BE-READ' })],
+    ])
+    const storage = {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      removeItem: vi.fn((key) => values.delete(key)),
+    }
+    const getMandateStatus = vi.fn(async () => record)
+
+    expect(
+      await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' })()
+    ).toBe(true)
+    expect(getMandateStatus).toHaveBeenCalledWith(mandateId, {
+      stellarOwner: 'GUSER',
+      kernelAddress,
     })
-    expect(readStoredBaseMandate(storage)).toEqual({
-      kernelAddress: '0xKERNEL',
-      serializedApproval: 'A',
-    })
-  })
-  it('null when nothing is stored, and null (never throws) on a corrupt record', () => {
-    expect(readStoredBaseMandate(fakeStorage())).toBeNull()
-    expect(readStoredBaseMandate(fakeStorage({ vf_base_mandate: '{not json' }))).toBeNull()
+    expect(storage.removeItem).toHaveBeenCalledWith('vf_base_mandate')
+    expect(JSON.stringify(getMandateStatus.mock.calls)).not.toMatch(
+      /MUST-NOT-BE-READ|serializedApproval/
+    )
   })
 })
 

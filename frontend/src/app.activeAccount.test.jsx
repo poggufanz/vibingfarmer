@@ -250,7 +250,8 @@ const C = Object.freeze({ ...G, kind: 'C', address: 'COWNER', connectorId: 'vf-w
 const BASE_KERNEL = `0x${'11'.repeat(20)}`
 const BASE_SESSION = '0x1563915e194D8CfBA1943570603F7606A3115508'
 const BASE_RELAYER_ORIGIN = 'https://relayer.test'
-const BASE_EXPIRES_AT_MS = 2_000_000_000_000
+const BASE_MANDATE_ID = 'ab'.repeat(16)
+const BASE_VALID_UNTIL_SECONDS = 2_000_000_000
 // Captured from the relayer evaluator with the production 10,000-USDC cap, this test's exact
 // 40-USDC allocation, and the producer harness's `0xfeed` encoded calls.
 const BASE_PERMISSION_ID = '0x4086748b'
@@ -291,7 +292,8 @@ function moneyReads(agents = []) {
 
 function activeBaseWireEvidence() {
   return {
-    version: 2,
+    version: 3,
+    mandateId: BASE_MANDATE_ID,
     status: 'active',
     reasonCodes: [],
     stellarOwner: G.address,
@@ -300,7 +302,7 @@ function activeBaseWireEvidence() {
     sessionKeyAddress: BASE_SESSION,
     bindingId: 'binding-test',
     bindingHash: '761ae6f804c1c9774dc3d91678a4752f46259cb6ffa346c996bef372675c0725',
-    expiresAt: BASE_EXPIRES_AT_MS,
+    validUntilSeconds: BASE_VALID_UNTIL_SECONDS,
     expected: {
       chainId: 84532,
       relayerOrigin: BASE_RELAYER_ORIGIN,
@@ -326,7 +328,7 @@ function activeBaseWireEvidence() {
       policyDigest: 'fde7fc639b0f3b04ed2722c20868f2b2c06707d8b3e56398f7bc6f3b35c65ffa',
       bindingId: 'binding-test',
       bindingHash: '761ae6f804c1c9774dc3d91678a4752f46259cb6ffa346c996bef372675c0725',
-      expiresAt: BASE_EXPIRES_AT_MS,
+      validUntilSeconds: BASE_VALID_UNTIL_SECONDS,
     },
     observed: {
       blockNumber: '101',
@@ -341,7 +343,11 @@ function activeBaseWireEvidence() {
         policyData: BASE_POLICY_DATA,
         digest: '3570159502324ec8b94b984b62452c9fc026c937bffde96e83472c2d4d26655f',
       },
-      preparedCallDigest: '24bac97411885d34f4d8248c2a7f5110611280ae97fbaa74e82809425163c490',
+      activation: {
+        userOpHash: `0x${'33'.repeat(32)}`,
+        txHash: `0x${'44'.repeat(32)}`,
+        activatedAt: Math.floor(Date.now() / 1000) - 10,
+      },
     },
     checks: {
       chain: true,
@@ -353,10 +359,9 @@ function activeBaseWireEvidence() {
       binding: true,
       origin: true,
       implementation: true,
-      allocation: true,
       freshness: true,
       reconstruction: true,
-      prepared: true,
+      activation: true,
     },
   }
 }
@@ -1209,22 +1214,7 @@ describe('active account application state', () => {
     const reviewedEvidence = activeBaseWireEvidence()
     let remoteEvidence = reviewedEvidence
     getMandateStatus.mockImplementation(async () => remoteEvidence)
-    localStorage.setItem(
-      baseMandateStorageKey(G.address),
-      JSON.stringify({
-        version: 2,
-        stellarOwner: G.address,
-        kernelAddress: BASE_KERNEL,
-        serializedApproval: 'APPROVAL',
-        sessionKeyAddress: BASE_SESSION,
-        relayerOrigin: BASE_RELAYER_ORIGIN,
-        expiresAt: BASE_EXPIRES_AT_MS / 1000,
-        status: 'active',
-        bindingId: reviewedEvidence.bindingId,
-        bindingHash: reviewedEvidence.bindingHash,
-        createdAt: Math.floor(Date.now() / 1000),
-      })
-    )
+    localStorage.setItem(baseMandateStorageKey(G.address), JSON.stringify(reviewedEvidence))
 
     render(
       <MemoryRouter
@@ -1274,13 +1264,11 @@ describe('active account application state', () => {
           policyData: [],
           digest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
         },
-        preparedCallDigest: null,
       },
       checks: {
         ...reviewedEvidence.checks,
         permission: false,
         reconstruction: false,
-        prepared: false,
       },
     }
     let confirmation
@@ -1297,16 +1285,13 @@ describe('active account application state', () => {
       await Promise.resolve()
     })
 
-    expect(getMandateStatus).toHaveBeenLastCalledWith('APPROVAL', {
+    expect(getMandateStatus).toHaveBeenLastCalledWith(BASE_MANDATE_ID, {
       stellarOwner: G.address,
       kernelAddress: BASE_KERNEL,
-      allocation: {
-        allocationId: plan.agents[0].children[0].allocationId,
-        poolAddress: pool.address,
-        amount: { token: 'USDC', units: '40000000', decimals: 6 },
-        minShares: '0',
-      },
     })
+    expect(JSON.stringify(getMandateStatus.mock.calls)).not.toMatch(
+      /serializedApproval|capability|authorization|\ballocation\b|\bamount\b|\bpool(?:Address)?\b|\bminShares\b/i
+    )
     expect(mountedHarness.orchestratorConfig).toBeNull()
     expect(mountedHarness.movement.grant).not.toHaveBeenCalled()
     expect(mountedHarness.movement.pull).not.toHaveBeenCalled()

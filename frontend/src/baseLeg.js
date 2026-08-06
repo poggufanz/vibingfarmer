@@ -25,7 +25,7 @@ import { estimateMinShares as defaultEstimateMinShares } from './base/quotes.js'
 import { defaultMakePublicClient } from './wallet/passkeyBase.js'
 import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
 import { sanitizeReceiptData } from './strategy/dispatchSummary.js'
-import { isVerifiedBaseMandateStatus, toMandateStatusAllocation } from './base/mandateStatus.js'
+import { isVerifiedBaseMandateStatus } from './base/mandateStatus.js'
 
 function unknownSubmissionRecoveryPhase(stage) {
   if (stage === 'pull') return { phase: 'pull', action: 'reconcile-pull' }
@@ -76,7 +76,7 @@ export async function executeBaseLeg({
     makePublicClient = defaultMakePublicClient,
     runAgentPull = defaultRunAgentPull,
     runAgentBurn = defaultRunAgentBurn,
-    // VF Wallet Task 6: owner+kernel-scoped v2 mandate (wallet/baseBinding.js), not the legacy
+    // VF Wallet Task 6: owner+kernel-scoped v3 mandate (wallet/baseBinding.js), never the legacy
     // global vf_base_mandate record — the whole point of this task is that a mismatched owner or
     // kernel fails closed HERE, before any funds move, rather than trusting storage content alone.
     readStoredMandate = readBaseMandate,
@@ -184,34 +184,28 @@ export async function executeBaseLeg({
       }))
     )
 
-    // Last browser-side gate before runFarmFlow is allowed to durably commit an intent and burn.
-    // The quote supplies the actual minShares, so this verifies and prepares precisely the calls
-    // that this run will submit rather than a broad/no-op probe.
-    for (const allocation of quotedAllocations) {
-      const exactAllocation = toMandateStatusAllocation({
-        allocationId: allocation.allocationId || bridgeAllocationId,
-        poolAddress: allocation.pool,
-        units: allocation.amountBaseUnits,
-        minShares: allocation.minShares,
+    // Last browser-side gate before runFarmFlow is allowed to durably commit an intent and burn:
+    // exactly ONE amount-free live status check, performed after every allocation's live quote and
+    // immediately before the farm dispatch. The mandate is named by its public mandateId only —
+    // no allocation, pool, amount, or minShares crosses this boundary (the relayer's v3
+    // activation evidence already binds the policy); pending/uncertain/revoked/expired/mismatch/
+    // unknown/malformed evidence, or a transport failure, all fail closed HERE before money moves.
+    let evidence = null
+    try {
+      evidence = await getMandateStatus(storedMandate.mandateId, {
+        stellarOwner: connectedAddress,
+        kernelAddress,
       })
-      let evidence = null
-      try {
-        evidence = await getMandateStatus(storedMandate.serializedApproval, {
-          stellarOwner: connectedAddress,
-          kernelAddress,
-          allocation: exactAllocation,
-        })
-      } catch {
-        evidence = null
-      }
-      if (!isVerifiedBaseMandateStatus(evidence)) {
-        throw new Error('The stored Base mandate is no longer valid.')
-      }
+    } catch {
+      evidence = null
+    }
+    if (!isVerifiedBaseMandateStatus(evidence)) {
+      throw new Error('The stored Base mandate is no longer valid.')
     }
     safeEmit('baseleg-mandate', {
       status: 'done',
       sessionKeyAddress: storedMandate.sessionKeyAddress,
-      expiry: storedMandate.expiry,
+      validUntilSeconds: storedMandate.validUntilSeconds,
       reused: true,
     })
 
@@ -232,7 +226,7 @@ export async function executeBaseLeg({
       stellarWallet: { address: connectedAddress },
       baseRecipientAddress: ownerAddress,
       sessionKeyAddress: storedMandate.sessionKeyAddress,
-      serializedApproval: storedMandate.serializedApproval,
+      mandateId: storedMandate.mandateId,
       allocations: quotedAllocations,
       burnUnits7,
       // Threaded through to postFarm's owner-bound wire contract. The bridge agent is the

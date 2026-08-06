@@ -101,12 +101,60 @@ describe('buildMergedCatalog — truthful venue records (Strategy Task 1)', () =
 })
 
 describe('checkRelayerHealth', () => {
-  it('healthy on 404 unknown-jobId', async () => {
+  const readyConfig = {
+    networkId: 'stellar-testnet',
+    readiness: { ready: true },
+  }
+
+  it('is healthy only on a ready public config response from the same-origin GET route', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => readyConfig,
+    })
+    expect(await checkRelayerHealth({ fetchImpl })).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const [url, options] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/vf-cross/config')
+    expect(url).not.toMatch(/status\/health-probe|https?:\/\//)
+    expect(options).toMatchObject({ method: 'GET', credentials: 'same-origin' })
+    expect(options.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('ignores a cross-origin VITE relayer override for the public readiness probe', async () => {
+    vi.stubEnv('VITE_CROSS_RELAYER_BASE', 'https://direct-relayer.example/api/vf-cross')
+    vi.resetModules()
+    try {
+      const { checkRelayerHealth: freshCheck } = await import('./mergedCatalog.js')
+      const fetchImpl = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => readyConfig,
+      })
+      expect(await freshCheck({ fetchImpl })).toBe(true)
+      expect(fetchImpl.mock.calls[0][0]).toBe('/api/vf-cross/config')
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
+  it.each([
+    ['not ready', { networkId: 'stellar-testnet', readiness: { ready: false } }],
+    ['missing readiness', { networkId: 'stellar-testnet' }],
+    ['malformed readiness', { networkId: 'stellar-testnet', readiness: { ready: 'yes' } }],
+  ])('fails closed on a 200 config response that is %s', async (_label, body) => {
+    const fetchImpl = vi.fn().mockResolvedValue({ status: 200, ok: true, json: async () => body })
+    expect(await checkRelayerHealth({ fetchImpl })).toBe(false)
+  })
+
+  it('treats the legacy 404 unknown-job probe as unhealthy', async () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValue({ status: 404, ok: false, json: async () => ({ error: 'unknown jobId' }) })
-    expect(await checkRelayerHealth({ fetchImpl })).toBe(true)
+    expect(await checkRelayerHealth({ fetchImpl })).toBe(false)
   })
+
   it('unhealthy on 503 relayer-not-configured', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       status: 503,
@@ -119,14 +167,15 @@ describe('checkRelayerHealth', () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error('boom'))
     expect(await checkRelayerHealth({ fetchImpl })).toBe(false)
   })
-  it('probes with an abort signal so the caller can bound/cancel it', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValue({ status: 404, ok: false, json: async () => ({ error: 'unknown jobId' }) })
-    await checkRelayerHealth({ fetchImpl })
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
-    const [, opts] = fetchImpl.mock.calls[0]
-    expect(opts.signal).toBeInstanceOf(AbortSignal)
+  it('rejects a direct relayer origin without opening a cross-origin request', async () => {
+    const fetchImpl = vi.fn()
+    expect(
+      await checkRelayerHealth({
+        baseUrl: 'https://direct-relayer.example/api/vf-cross',
+        fetchImpl,
+      })
+    ).toBe(false)
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
   it('unhealthy (fail-closed) when aborted/timed out', async () => {
     const abortError = new Error('The operation was aborted')

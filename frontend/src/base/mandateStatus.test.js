@@ -13,7 +13,7 @@ const active = (overrides = {}) => ({
   version: 3,
   status: 'active',
   reasonCodes: [],
-  expiresAt: 2_000_007_200,
+  validUntilSeconds: 2_000_007_200,
   expected: {
     owner: 'GOWNER',
     kernelAddress: '0x0000000000000000000000000000000000000AA1',
@@ -156,6 +156,9 @@ describe('Base mandate evidence gates', () => {
         sessionPrivateKey: 'TOP-SECRET',
         serializedApproval: 'SERIALIZED-APPROVAL',
         approvalBlob: 'APPROVAL-BLOB',
+        capability: 'CAPABILITY-SECRET',
+        authorization: 'Bearer AUTHORIZATION-SECRET',
+        cookie: '__Host-vf-mandate-secret=COOKIE-SECRET',
         observed: {
           ...active().observed,
           relaySecret: 'RELAY-SECRET',
@@ -163,14 +166,38 @@ describe('Base mandate evidence gates', () => {
             ownerPrivateKey: 'OWNER-SECRET',
             enableSignature: 'ENABLE-SIGNATURE',
             sessionMaterial: 'SESSION-MATERIAL',
-            deeper: { serializedApproval: 'NESTED-APPROVAL', safe: 'kept' },
+            deeper: {
+              serializedApproval: 'NESTED-APPROVAL',
+              bearerToken: 'BEARER-SECRET',
+              safe: 'kept',
+            },
           },
         },
       })
     )
     expect(evidence.observed.nested.deeper.safe).toBe('kept')
     expect(JSON.stringify(evidence)).not.toMatch(
-      /TOP-SECRET|SERIALIZED-APPROVAL|APPROVAL-BLOB|RELAY-SECRET|OWNER-SECRET|ENABLE-SIGNATURE|SESSION-MATERIAL|NESTED-APPROVAL/
+      /TOP-SECRET|SERIALIZED-APPROVAL|APPROVAL-BLOB|CAPABILITY-SECRET|AUTHORIZATION-SECRET|COOKIE-SECRET|RELAY-SECRET|OWNER-SECRET|ENABLE-SIGNATURE|SESSION-MATERIAL|NESTED-APPROVAL|BEARER-SECRET/
     )
   })
+})
+
+describe('v3 activation lifecycle normalization', () => {
+  it.each(['pending_activation', 'activation_uncertain'])(
+    'preserves the public %s lifecycle instead of collapsing it to unknown',
+    (status) => {
+      const evidence = {
+        version: 3,
+        mandateId: '11'.repeat(16),
+        status,
+        reasonCodes: status === 'activation_uncertain' ? ['ACTIVATION_RECEIPT_UNKNOWN'] : [],
+        expected: {},
+        observed: {},
+        checks: {},
+      }
+
+      expect(normalizeBaseMandateStatus(evidence)).toEqual(evidence)
+      expect(isVerifiedBaseMandateStatus(evidence)).toBe(false)
+    }
+  )
 })

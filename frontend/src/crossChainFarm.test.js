@@ -9,8 +9,11 @@ import { BASE_POOL_CATALOG } from './config.js'
 // relayer/src/httpRouter.mjs:246-262, so tests below use real entries instead of placeholders.
 const AAVE_POOL = BASE_POOL_CATALOG.find((p) => p.proxyTarget === 'aave-v3').address
 const MOONWELL_POOL = BASE_POOL_CATALOG.find((p) => p.proxyTarget === 'moonwell').address
+const MANDATE_ID = '11'.repeat(16)
+const JOB_ID = '55'.repeat(16)
+const OTHER_JOB_ID = '66'.repeat(16)
 
-describe('runFarmFlow', () => {
+describe('crossChainFarm protected wire POST migration', () => {
   // Defect caught: the browser used to burn before the relayer durably acknowledged the Base child intent.
   test('commits intent, burns once, attaches that burn, then polls in exact custody-safe order', async () => {
     const events = []
@@ -32,11 +35,11 @@ describe('runFarmFlow', () => {
       }),
       postFarm: vi.fn(async () => {
         calls.push('intent')
-        return { jobId: 'job-1', acknowledged: true, schemaVersion: 1 }
+        return { jobId: JOB_ID, acknowledged: true, schemaVersion: 1 }
       }),
       postFarmAttach: vi.fn(async () => {
         calls.push('attach')
-        return { jobId: 'job-1', attached: true }
+        return { jobId: JOB_ID, attached: true }
       }),
       pollFarmStatus: vi.fn(async () => {
         calls.push('poll')
@@ -48,7 +51,7 @@ describe('runFarmFlow', () => {
       stellarWallet: { address: 'GWALLET', signBurn: vi.fn() },
       baseRecipientAddress: '0xBASEACCT',
       sessionKeyAddress: '0xSESSION',
-      serializedApproval: 'approval-blob',
+      mandateId: MANDATE_ID,
       allocations,
       burnUnits7: 1_000_000_000n,
       runId: 'run-42',
@@ -56,7 +59,7 @@ describe('runFarmFlow', () => {
       deps,
     })
 
-    expect(result).toEqual({ burnHash: 'burn-1', jobId: 'job-1', finalStatus: 'done' })
+    expect(result).toEqual({ burnHash: 'burn-1', jobId: JOB_ID, finalStatus: 'done' })
     expect(calls).toEqual(['intent', 'burn', 'attach', 'poll'])
     expect(deps.burn).toHaveBeenCalledWith(expect.objectContaining({ amountUnits: 1_000_000_000n }))
     expect(events.map((e) => e.name)).toEqual([
@@ -69,7 +72,7 @@ describe('runFarmFlow', () => {
     expect(deps.postFarm).toHaveBeenCalledWith(
       expect.objectContaining({
         sourceDomain: 27,
-        serializedApproval: 'approval-blob',
+        mandateId: MANDATE_ID,
         allocations,
         // VF Wallet Task 6: stellarOwner/kernelAddress bind the dispatch, derived from the
         // params already passed in (no new required args); bridgeAgent/grantTxHash default to
@@ -83,12 +86,19 @@ describe('runFarmFlow', () => {
       })
     )
     expect(deps.postFarmAttach).toHaveBeenCalledWith({
-      jobId: 'job-1',
+      mandateId: MANDATE_ID,
+      jobId: JOB_ID,
       burnTxHash: 'burn-1',
-      serializedApproval: 'approval-blob',
       stellarOwner: 'GWALLET',
       kernelAddress: '0xBASEACCT',
     })
+    expect(deps.pollFarmStatus).toHaveBeenCalledWith({ mandateId: MANDATE_ID, jobId: JOB_ID })
+    expect(JSON.stringify(deps.postFarm.mock.calls)).not.toMatch(
+      /serializedApproval|approval-blob/i
+    )
+    expect(JSON.stringify({ result, events })).not.toMatch(
+      /serializedApproval|capability|sessionPrivateKey|Authorization|Bearer|Cookie/i
+    )
   })
 
   // Defect caught: ambiguous reporter failures previously happened after custody had already left Stellar.
@@ -114,7 +124,7 @@ describe('runFarmFlow', () => {
           stellarWallet: { address: 'GWALLET', signBurn: vi.fn() },
           baseRecipientAddress: '0xBASEACCT',
           sessionKeyAddress: '0xSESSION',
-          serializedApproval: 'approval-blob',
+          mandateId: MANDATE_ID,
           allocations: [
             {
               allocationId: 'run-safe:bridge:aave-v3',
@@ -139,15 +149,15 @@ describe('runFarmFlow', () => {
   test('threads bridgeAgentAddress/runId/grantTxHash through to postFarm when the caller supplies them', async () => {
     const deps = {
       burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-1' })),
-      postFarm: vi.fn(async () => ({ jobId: 'job-1', acknowledged: true, schemaVersion: 1 })),
-      postFarmAttach: vi.fn(async () => ({ jobId: 'job-1', attached: true })),
+      postFarm: vi.fn(async () => ({ jobId: JOB_ID, acknowledged: true, schemaVersion: 1 })),
+      postFarmAttach: vi.fn(async () => ({ jobId: JOB_ID, attached: true })),
       pollFarmStatus: vi.fn(async () => ({ status: 'done', steps: {} })),
     }
     await runFarmFlow({
       stellarWallet: { address: 'GWALLET', signBurn: vi.fn() },
       baseRecipientAddress: '0xBASEACCT',
       sessionKeyAddress: '0xSESSION',
-      serializedApproval: 'approval-blob',
+      mandateId: MANDATE_ID,
       allocations: [
         {
           allocationId: 'run-42:bridge:aave-v3',
@@ -175,7 +185,7 @@ describe('runFarmFlow', () => {
       burn: vi.fn(async () => {
         throw new Error('friendbot funding failed (503)')
       }),
-      postFarm: vi.fn(async () => ({ jobId: 'job-safe', acknowledged: true, schemaVersion: 1 })),
+      postFarm: vi.fn(async () => ({ jobId: JOB_ID, acknowledged: true, schemaVersion: 1 })),
       postFarmAttach: vi.fn(),
       pollFarmStatus: vi.fn(),
     }
@@ -184,7 +194,7 @@ describe('runFarmFlow', () => {
         stellarWallet: { address: 'GWALLET', signBurn: vi.fn() },
         baseRecipientAddress: '0xBASEACCT',
         sessionKeyAddress: '0xSESSION',
-        serializedApproval: 'approval-blob',
+        mandateId: MANDATE_ID,
         allocations: [
           { allocationId: 'run-b:bridge:aave-v3', pool: AAVE_POOL, amountBaseUnits: 1n },
         ],
@@ -205,7 +215,7 @@ describe('runFarmFlow', () => {
     const onEvent = vi.fn()
     const deps = {
       burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-1' })),
-      postFarm: vi.fn(async () => ({ jobId: 'job-1', acknowledged: true, schemaVersion: 1 })),
+      postFarm: vi.fn(async () => ({ jobId: JOB_ID, acknowledged: true, schemaVersion: 1 })),
       postFarmAttach: vi.fn(async () => {
         throw new Error('relayer unreachable')
       }),
@@ -216,7 +226,7 @@ describe('runFarmFlow', () => {
         stellarWallet: { address: 'GWALLET', signBurn: vi.fn() },
         baseRecipientAddress: '0xBASEACCT',
         sessionKeyAddress: '0xSESSION',
-        serializedApproval: 'approval-blob',
+        mandateId: MANDATE_ID,
         allocations: [
           { allocationId: 'run-r:bridge:aave-v3', pool: AAVE_POOL, amountBaseUnits: 1n },
         ],
@@ -230,7 +240,7 @@ describe('runFarmFlow', () => {
       'farm-failed',
       expect.objectContaining({
         stage: 'attach',
-        recoveryHint: expect.stringMatching(/job-1.*burn-1|burn-1.*job-1/),
+        recoveryHint: expect.stringMatching(new RegExp(`${JOB_ID}.*burn-1|burn-1.*${JOB_ID}`)),
       })
     )
   })
@@ -247,7 +257,7 @@ describe('runFarmFlow', () => {
         stellarWallet: { address: 'GWALLET', signBurn: vi.fn() },
         baseRecipientAddress: '0xBASEACCT',
         sessionKeyAddress: '0xSESSION',
-        serializedApproval: 'approval-blob',
+        mandateId: MANDATE_ID,
         allocations: [{ pool: '0xAAAA', amountBaseUnits: 123_456n }],
         burnUnits7: 1_234_567n,
         deps,
@@ -286,7 +296,7 @@ describe('runFarmFlow', () => {
         stellarWallet: { address: 'GWALLET', signBurn: vi.fn() },
         baseRecipientAddress: '0xBASEACCT',
         sessionKeyAddress: '0xSESSION',
-        serializedApproval: 'approval-blob',
+        mandateId: MANDATE_ID,
         allocations,
         burnUnits7: 10n,
         deps,
@@ -325,7 +335,7 @@ describe('runFarmFlow allocationId canonical guard (pre-burn)', () => {
       stellarWallet: { address: 'GWALLET', signBurn: vi.fn() },
       baseRecipientAddress: '0xBASEACCT',
       sessionKeyAddress: '0xSESSION',
-      serializedApproval: 'approval-blob',
+      mandateId: MANDATE_ID,
       burnUnits7: 1_000_000_000n,
       runId: RUN_ID,
       ...overrides,
@@ -335,8 +345,8 @@ describe('runFarmFlow allocationId canonical guard (pre-burn)', () => {
   test('a canonical allocationId still burns and dispatches unchanged (no behavior change on the healthy path)', async () => {
     const deps = {
       burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-canon' })),
-      postFarm: vi.fn(async () => ({ jobId: 'job-canon', acknowledged: true, schemaVersion: 1 })),
-      postFarmAttach: vi.fn(async () => ({ jobId: 'job-canon', attached: true })),
+      postFarm: vi.fn(async () => ({ jobId: JOB_ID, acknowledged: true, schemaVersion: 1 })),
+      postFarmAttach: vi.fn(async () => ({ jobId: JOB_ID, attached: true })),
       pollFarmStatus: vi.fn(async () => ({ status: 'done', steps: {} })),
     }
     const result = await runFarmFlow({
@@ -353,8 +363,8 @@ describe('runFarmFlow allocationId canonical guard (pre-burn)', () => {
   test('multiple canonical allocations across different catalog pools still burn and dispatch unchanged', async () => {
     const deps = {
       burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-multi' })),
-      postFarm: vi.fn(async () => ({ jobId: 'job-multi', acknowledged: true, schemaVersion: 1 })),
-      postFarmAttach: vi.fn(async () => ({ jobId: 'job-multi', attached: true })),
+      postFarm: vi.fn(async () => ({ jobId: OTHER_JOB_ID, acknowledged: true, schemaVersion: 1 })),
+      postFarmAttach: vi.fn(async () => ({ jobId: OTHER_JOB_ID, attached: true })),
       pollFarmStatus: vi.fn(async () => ({ status: 'done', steps: {} })),
     }
     const result = await runFarmFlow({

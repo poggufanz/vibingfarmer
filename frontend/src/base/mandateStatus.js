@@ -1,5 +1,7 @@
 const STATUS_VALUES = new Set([
   'active',
+  'pending_activation',
+  'activation_uncertain',
   'not_yet_valid',
   'expiring',
   'expired',
@@ -8,7 +10,8 @@ const STATUS_VALUES = new Set([
   'unknown',
 ])
 
-const SECRET_KEY = /(private.*key|secret|session.*material|raw.*public.*key|approval|enable.*signature)/i
+const SECRET_KEY =
+  /(private.*key|secret|session.*material|raw.*public.*key|approval|enable.*signature|capability|authorization|cookie|bearer)/i
 const MANDATORY_CHECKS = Object.freeze([
   'chain',
   'owner',

@@ -1,61 +1,108 @@
-// frontend/src/mergeFlowHelpers.test.js — applyBaseLegOutcome: honest status lines + the
-// dashboard owner-record backup write (dashboardPositions.js/skills.jsx/HistoryPanel.jsx/app.jsx
-// all gate on the owner-scoped v2 record now — the legacy vf_base_owner*  keys are dual-write
-// only, see applyBaseLegOutcome's own doc comment).
+// frontend/src/mergeFlowHelpers.test.js — preserves the money/custody projection tests while the
+// mandate setup boundary migrates to owner-scoped, non-secret v3 records.
 import { describe, it, expect, vi } from 'vitest'
 import {
   applyBaseLegOutcome,
   mapBaseLegEvent,
   pollBaseLegUntilSettled,
   setupBaseMandate,
-  readStoredBaseMandate,
   checkStoredBaseMandate,
   needsBaseMandateSetup,
   resolveBaseAvailability,
-  baseMandateProbeAllocation,
   baseMandateRequiresReview,
 } from './mergeFlowHelpers.js'
 import { toBaseMandateView } from './strategy/baseMandateView.js'
-import { readBaseMandate, readBaseOwner } from './wallet/baseBinding.js'
+import { readBaseMandate, readBaseOwner, validateBaseMandate } from './wallet/baseBinding.js'
 
 function fakeStorage(initial = {}) {
   const m = new Map(Object.entries(initial))
+  const operations = []
   return {
-    getItem: (k) => (m.has(k) ? m.get(k) : null),
-    setItem: (k, v) => m.set(k, String(v)),
+    getItem: (k) => {
+      operations.push(['get', k])
+      return m.has(k) ? m.get(k) : null
+    },
+    setItem: (k, v) => {
+      operations.push(['set', k])
+      m.set(k, String(v))
+    },
+    removeItem: (k) => {
+      operations.push(['remove', k])
+      m.delete(k)
+    },
     dump: () => Object.fromEntries(m),
+    operations,
+  }
+}
+
+const MANDATE_ID = 'ab'.repeat(16)
+const CAPABILITY = 'cd'.repeat(32)
+const OWNER = 'GUSER'
+const KERNEL = '0x0000000000000000000000000000000000000aa1'
+const SESSION = '0x0000000000000000000000000000000000000bb2'
+const NOW = 2_000_000_000
+
+function deterministicCrypto() {
+  let call = 0
+  return {
+    getRandomValues(target) {
+      call += 1
+      target.fill(call === 1 ? 0xab : 0xcd)
+      return target
+    },
   }
 }
 
 const okDeps = () => ({
   ensureBaseOwner: vi.fn().mockResolvedValue({
-    address: '0x0000000000000000000000000000000000000AA1',
+    address: KERNEL,
     kernelAccount: {},
     publicClient: {},
     passkeyValidator: {},
     ownerMode: 'ceremony',
   }),
   createMandate: vi.fn().mockResolvedValue({
-    serializedApproval: 'APPROVAL',
-    sessionKeyAddress: '0xSESSION',
-    sessionPrivateKey: '0xPRIV',
-    expiry: 9999999999,
+    serializedApproval: 'APPROVAL-SENTINEL',
+    sessionKeyAddress: SESSION,
+    sessionPrivateKey: 'PRIVATE-KEY-SENTINEL',
+    expiry: NOW + 7_200,
   }),
-  postMandate: vi.fn().mockResolvedValue({ ok: true }),
+  postMandate: vi.fn().mockResolvedValue({
+    ok: true,
+    status: 'pending_activation',
+    mandateId: MANDATE_ID,
+    bindingId: 'binding-1',
+    bindingHash: 'binding-hash-1',
+    relayerOrigin: 'https://relayer.example',
+  }),
+  waitForMandateActivation: vi.fn().mockResolvedValue(null),
+  cryptoImpl: deterministicCrypto(),
 })
 
 const activeEvidence = (overrides = {}) => ({
-  version: 2,
+  version: 3,
+  mandateId: MANDATE_ID,
+  stellarOwner: OWNER,
+  kernelAddress: KERNEL,
+  sessionKeyAddress: SESSION,
+  relayerOrigin: 'https://relayer.example',
+  validUntilSeconds: NOW + 7_200,
   status: 'active',
+  bindingId: 'binding-1',
+  bindingHash: 'binding-hash-1',
   reasonCodes: [],
-  expected: { chainId: 84532 },
+  expected: { chainId: 84532, owner: OWNER, kernelAddress: KERNEL },
   observed: {
     blockNumber: '101',
-    blockHash: '0xblock',
-    blockTime: Date.now(),
-    implementation: '0ximpl',
+    blockHash: `0x${'ab'.repeat(32)}`,
+    blockTime: NOW,
+    implementation: '0x0000000000000000000000000000000000000cc3',
     permission: { digest: 'permission-digest' },
-    preparedCallDigest: 'prepared-call-digest',
+    activation: {
+      userOpHash: `0x${'33'.repeat(32)}`,
+      txHash: `0x${'44'.repeat(32)}`,
+      activatedAt: NOW - 10,
+    },
   },
   checks: {
     chain: true,
@@ -67,42 +114,128 @@ const activeEvidence = (overrides = {}) => ({
     binding: true,
     origin: true,
     implementation: true,
-    allocation: true,
     freshness: true,
     reconstruction: true,
-    prepared: true,
+    activation: true,
   },
   ...overrides,
 })
 
-describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically by a run)', () => {
-  it('happy path: owner -> mandate -> register -> writes vf_base_mandate, never the private key', async () => {
+describe('setupBaseMandate v3 lifecycle', () => {
+  it('generates canonical authority, writes pending before polling, then stores only verified public evidence', async () => {
     const deps = okDeps()
     const storage = fakeStorage()
+    const trace = []
+    deps.postMandate.mockImplementation(async (body) => {
+      trace.push(['register', body.mandateId])
+      return {
+        ok: true,
+        status: 'pending_activation',
+        mandateId: MANDATE_ID,
+        bindingId: 'binding-1',
+        bindingHash: 'binding-hash-1',
+        relayerOrigin: 'https://relayer.example',
+      }
+    })
+    let pendingSnapshot
+    deps.waitForMandateActivation.mockImplementation(async (identity) => {
+      const pending = JSON.parse(storage.dump()[`vf_base_mandate_v3:${OWNER}`])
+      pendingSnapshot = pending
+      trace.push(['poll', pending.status, identity.mandateId])
+      return activeEvidence()
+    })
     const out = await setupBaseMandate({
-      connectedAddress: 'GUSER',
+      connectedAddress: OWNER,
       deps: { ...deps, storage },
     })
-    expect(out).toEqual({
-      kernelAddress: '0x0000000000000000000000000000000000000AA1',
-      expiry: 9999999999,
+    expect(trace).toEqual([
+      ['register', MANDATE_ID],
+      ['poll', 'pending_activation', MANDATE_ID],
+    ])
+    expect(deps.postMandate).toHaveBeenCalledWith({
+      mandateId: MANDATE_ID,
+      capability: CAPABILITY,
+      serializedApproval: 'APPROVAL-SENTINEL',
+      sessionPrivateKey: 'PRIVATE-KEY-SENTINEL',
+      sessionKeyAddress: SESSION,
+      expiresAt: NOW + 7_200,
+      stellarOwner: OWNER,
+      kernelAddress: KERNEL,
     })
-    expect(deps.ensureBaseOwner).toHaveBeenCalledWith({ connectedAddress: 'GUSER' })
-    expect(deps.postMandate).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionPrivateKey: '0xPRIV' })
+    expect(deps.waitForMandateActivation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mandateId: MANDATE_ID,
+        stellarOwner: OWNER,
+        kernelAddress: KERNEL,
+      })
     )
-    const stored = readStoredBaseMandate(storage)
-    expect(stored).toEqual({
-      serializedApproval: 'APPROVAL',
-      sessionKeyAddress: '0xSESSION',
-      kernelAddress: '0x0000000000000000000000000000000000000AA1',
-      expiry: 9999999999,
+    expect(JSON.stringify(deps.waitForMandateActivation.mock.calls)).not.toMatch(
+      /APPROVAL-SENTINEL|PRIVATE-KEY-SENTINEL|cdcdcdcd/
+    )
+    expect(pendingSnapshot).toMatchObject({
+      version: 3,
+      mandateId: MANDATE_ID,
+      stellarOwner: OWNER,
+      kernelAddress: KERNEL,
+      sessionKeyAddress: SESSION,
+      status: 'pending_activation',
     })
-    expect(storage.getItem('vf_base_mandate')).not.toContain('0xPRIV')
+    expect(Object.keys(pendingSnapshot).sort()).toEqual(
+      [
+        'version',
+        'mandateId',
+        'stellarOwner',
+        'kernelAddress',
+        'sessionKeyAddress',
+        'relayerOrigin',
+        'validUntilSeconds',
+        'status',
+        'bindingId',
+        'bindingHash',
+        'reasonCodes',
+        'expected',
+        'observed',
+        'checks',
+      ].sort()
+    )
+    expect(JSON.stringify(pendingSnapshot)).not.toMatch(
+      /APPROVAL-SENTINEL|PRIVATE-KEY-SENTINEL|cdcdcdcd|Bearer|Cookie|serializedApproval|sessionPrivateKey|capability/i
+    )
+    expect(readBaseMandate(OWNER, storage)).toEqual(activeEvidence())
+    expect(out).toMatchObject({
+      mandateId: MANDATE_ID,
+      stellarOwner: OWNER,
+      kernelAddress: KERNEL,
+      sessionKeyAddress: SESSION,
+      status: 'active',
+    })
+    expect(Object.keys(out).sort()).toEqual(
+      [
+        'version',
+        'mandateId',
+        'stellarOwner',
+        'kernelAddress',
+        'sessionKeyAddress',
+        'relayerOrigin',
+        'validUntilSeconds',
+        'status',
+        'bindingId',
+        'bindingHash',
+        'reasonCodes',
+        'expected',
+        'observed',
+        'checks',
+      ].sort()
+    )
+    const serialized = JSON.stringify({ out, storage: storage.dump() })
+    expect(serialized).not.toMatch(
+      /APPROVAL-SENTINEL|PRIVATE-KEY-SENTINEL|cdcdcdcd|Bearer|Cookie|serializedApproval|sessionPrivateKey|capability/i
+    )
   })
 
   it('createMandate is asked for a future expiry and at least one pool', async () => {
     const deps = okDeps()
+    deps.waitForMandateActivation.mockResolvedValue(activeEvidence())
     const before = Math.floor(Date.now() / 1000)
     await setupBaseMandate({ connectedAddress: 'GUSER', deps: { ...deps, storage: fakeStorage() } })
     const createArgs = deps.createMandate.mock.calls[0][0]
@@ -112,50 +245,82 @@ describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically
     expect(createArgs.pools[0].cap).toBeGreaterThan(0n)
   })
 
-  it('a ceremony failure (e.g. cancelled) rejects — this is a direct call, not a settled leg', async () => {
+  it('registration rejection creates no active record', async () => {
     const deps = okDeps()
-    deps.ensureBaseOwner.mockRejectedValue(new Error('user cancelled'))
+    deps.postMandate.mockRejectedValue(new Error('registration rejected'))
+    const storage = fakeStorage()
     await expect(
-      setupBaseMandate({ connectedAddress: 'GUSER', deps: { ...deps, storage: fakeStorage() } })
-    ).rejects.toThrow('user cancelled')
+      setupBaseMandate({ connectedAddress: OWNER, deps: { ...deps, storage } })
+    ).rejects.toThrow(/Base mandate/i)
+    expect(readBaseMandate(OWNER, storage)).toBeNull()
   })
 
-  it('gate recheck: checkStoredBaseMandate flips to true once the fresh mandate is written (the affordance clears itself)', async () => {
+  it('checkStoredBaseMandate uses one amount-free owner-scoped status read', async () => {
     const deps = okDeps()
     const storage = fakeStorage()
+    deps.waitForMandateActivation.mockResolvedValue(activeEvidence())
     const getMandateStatus = vi.fn().mockResolvedValue(activeEvidence())
-    // Before setup: nothing stored, gate stays closed.
-    expect(
-      await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' })()
-    ).toBe(false)
-    await setupBaseMandate({ connectedAddress: 'GUSER', deps: { ...deps, storage } })
-    // After setup: the relayer confirms the just-written mandate, gate opens.
-    expect(
-      await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' })()
-    ).toBe(true)
-    expect(getMandateStatus).toHaveBeenCalledWith('APPROVAL', {
-      stellarOwner: 'GUSER',
-      kernelAddress: '0x0000000000000000000000000000000000000AA1',
-      allocation: baseMandateProbeAllocation(),
+    await setupBaseMandate({ connectedAddress: OWNER, deps: { ...deps, storage } })
+    expect(await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: OWNER })()).toBe(
+      true
+    )
+    expect(getMandateStatus).toHaveBeenCalledTimes(1)
+    expect(getMandateStatus).toHaveBeenCalledWith(MANDATE_ID, {
+      stellarOwner: OWNER,
+      kernelAddress: KERNEL,
     })
   })
 
-  it('writes an owner-scoped BaseMandateRecordV2 beside the legacy vf_base_mandate key', async () => {
+  it.each(['activation_uncertain', 'revoked', 'timeout'])(
+    'leaves at most a non-secret unavailable pending record when polling stops as %s',
+    async (reason) => {
+      const deps = okDeps()
+      const storage = fakeStorage()
+      deps.waitForMandateActivation.mockRejectedValue(
+        new Error(`poison ${reason} APPROVAL-SENTINEL PRIVATE-KEY-SENTINEL ${CAPABILITY}`)
+      )
+
+      let error
+      try {
+        await setupBaseMandate({ connectedAddress: OWNER, deps: { ...deps, storage } })
+      } catch (caught) {
+        error = caught
+      }
+      const pending = readBaseMandate(OWNER, storage)
+      expect(error).toBeInstanceOf(Error)
+      expect(String(error.message)).toMatch(/Base mandate/i)
+      expect(JSON.stringify({ error: error.message, storage: storage.dump() })).not.toMatch(
+        /APPROVAL-SENTINEL|PRIVATE-KEY-SENTINEL|cdcdcdcd|Bearer|Cookie/i
+      )
+      if (pending !== null) {
+        expect(validateBaseMandate(pending, { stellarOwner: OWNER, now: NOW })).toBe('unavailable')
+      }
+    }
+  )
+
+  it('deletes legacy global, v2, and poisoned v3 approval records instead of adopting them', async () => {
     const deps = okDeps()
-    const storage = fakeStorage()
-    await setupBaseMandate({ connectedAddress: 'GUSER', deps: { ...deps, storage } })
-    const v2 = readBaseMandate('GUSER', storage)
-    expect(v2).toMatchObject({
-      version: 2,
-      stellarOwner: 'GUSER',
-      kernelAddress: '0x0000000000000000000000000000000000000AA1',
-      serializedApproval: 'APPROVAL',
-      sessionKeyAddress: '0xSESSION',
-      expiresAt: 9999999999,
-      status: 'active',
+    deps.waitForMandateActivation.mockResolvedValue(activeEvidence())
+    const storage = fakeStorage({
+      vf_base_mandate: JSON.stringify({ serializedApproval: 'GLOBAL' }),
+      [`vf_base_mandate_v2:${OWNER}`]: JSON.stringify({ version: 2, serializedApproval: 'V2' }),
+      [`vf_base_mandate_v3:${OWNER}`]: JSON.stringify({
+        ...activeEvidence(),
+        serializedApproval: 'POISONED-V3',
+      }),
     })
-    // A different owner never sees this record.
-    expect(readBaseMandate('SOMEONE_ELSE', storage)).toBeNull()
+
+    await setupBaseMandate({ connectedAddress: OWNER, deps: { ...deps, storage } })
+    const rawAfterSetup = storage.dump()
+    expect(rawAfterSetup).not.toHaveProperty('vf_base_mandate')
+    expect(rawAfterSetup).not.toHaveProperty(`vf_base_mandate_v2:${OWNER}`)
+    expect(JSON.stringify(rawAfterSetup)).not.toMatch(
+      /GLOBAL|\bV2\b|POISONED-V3|serializedApproval/
+    )
+    expect(readBaseMandate(OWNER, storage)).toEqual(activeEvidence())
+    expect(JSON.stringify(storage.dump())).not.toMatch(
+      /GLOBAL|\bV2\b|POISONED-V3|serializedApproval/
+    )
   })
 })
 
@@ -165,10 +330,16 @@ describe('checkStoredBaseMandate — owner-scoped gating (VF Wallet Task 6)', ()
   // Deleted in the same commit as the migration, never before it.
 
   it('a mandate set up for owner A is not visible to owner B (no silent adoption on wallet switch)', async () => {
-    const deps = okDeps()
-    const storage = fakeStorage()
+    const ownerA = 'GOWNERA'
+    const storage = fakeStorage({
+      [`vf_base_mandate_v3:${ownerA}`]: JSON.stringify(
+        activeEvidence({
+          stellarOwner: ownerA,
+          expected: { ...activeEvidence().expected, owner: ownerA },
+        })
+      ),
+    })
     const getMandateStatus = vi.fn().mockResolvedValue(activeEvidence())
-    await setupBaseMandate({ connectedAddress: 'GOWNERA', deps: { ...deps, storage } })
     expect(
       await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GOWNERB' })()
     ).toBe(false)
@@ -191,42 +362,7 @@ describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy
     kernelAddress: '0x0000000000000000000000000000000000000AA1',
     relayerOrigin: 'https://relayer.example',
   }
-  const mandate = {
-    version: 2,
-    stellarOwner: 'GUSER',
-    kernelAddress: '0x0000000000000000000000000000000000000aa1',
-    sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
-    relayerOrigin: 'https://relayer.example',
-    expiresAt: now + 3600,
-    status: 'active',
-    bindingId: 'binding-1',
-    bindingHash: '0xhash',
-    reasonCodes: [],
-    expected: { chainId: 84532 },
-    observed: {
-      blockNumber: '101',
-      blockHash: '0xblock',
-      blockTime: Date.now(),
-      implementation: '0ximpl',
-      permission: { digest: 'permission-digest' },
-      preparedCallDigest: 'prepared-call-digest',
-    },
-    checks: {
-      chain: true,
-      owner: true,
-      kernel: true,
-      session: true,
-      permission: true,
-      policy: true,
-      binding: true,
-      origin: true,
-      implementation: true,
-      allocation: true,
-      freshness: true,
-      reconstruction: true,
-      prepared: true,
-    },
-  }
+  const mandate = activeEvidence({ validUntilSeconds: now + 3600 })
 
   it('offers Base only when the connected, active record and relayer health are all valid', async () => {
     const result = resolveBaseAvailability({ mandate, connection, health: true })
@@ -296,14 +432,6 @@ describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy
 })
 
 describe('Base mandate evidence review helpers', () => {
-  it('builds a canonical read-only catalog probe', () => {
-    expect(baseMandateProbeAllocation({ runId: 'run-9' })).toMatchObject({
-      allocationId: expect.stringMatching(/^run-9:bridge:/),
-      amount: { token: 'USDC', units: '1', decimals: 6 },
-      minShares: '0',
-    })
-  })
-
   it('requires review for a material evidence change or any non-verified status', () => {
     const previous = activeEvidence()
     expect(baseMandateRequiresReview(previous, activeEvidence())).toBe(false)

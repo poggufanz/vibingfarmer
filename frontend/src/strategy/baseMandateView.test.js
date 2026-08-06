@@ -8,24 +8,29 @@ const connection = {
   relayerOrigin: 'https://relayer.example',
 }
 const activeMandate = {
-  version: 2,
+  version: 3,
+  mandateId: '11'.repeat(16),
   stellarOwner: 'GOWNER',
   kernelAddress: '0x0000000000000000000000000000000000000AA1',
   sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
   relayerOrigin: 'https://relayer.example',
-  expiresAt: now + 3600,
+  validUntilSeconds: now + 3600,
   status: 'active',
   bindingId: 'binding-1',
-  bindingHash: '0xabc123',
+  bindingHash: 'binding-hash-1',
   reasonCodes: [],
   expected: { chainId: 84532 },
   observed: {
     blockNumber: '101',
-    blockHash: '0xblock',
-    blockTime: Date.now(),
-    implementation: '0ximpl',
+    blockHash: `0x${'ab'.repeat(32)}`,
+    blockTime: now,
+    implementation: '0x0000000000000000000000000000000000000CC3',
     permission: { digest: 'permission-digest' },
-    preparedCallDigest: 'prepared-call-digest',
+    activation: {
+      userOpHash: `0x${'33'.repeat(32)}`,
+      txHash: `0x${'44'.repeat(32)}`,
+      activatedAt: now - 10,
+    },
   },
   checks: {
     chain: true,
@@ -37,14 +42,13 @@ const activeMandate = {
     binding: true,
     origin: true,
     implementation: true,
-    allocation: true,
     freshness: true,
     reconstruction: true,
-    prepared: true,
+    activation: true,
   },
 }
 
-describe('toBaseMandateView', () => {
+describe('baseMandateView v3', () => {
   it('discloses the complete ready mandate boundary without changing the canonical record', () => {
     const original = { ...activeMandate }
 
@@ -68,7 +72,7 @@ describe('toBaseMandateView', () => {
     expect(view.destination).toBe('allowlisted Base Sepolia custody proxies')
     expect(view.sessionKeyAddress).toBe(activeMandate.sessionKeyAddress)
     expect(view.kernelAddress).toBe(activeMandate.kernelAddress)
-    expect(view.expiresAt).toBe(activeMandate.expiresAt)
+    expect(view.validUntilSeconds).toBe(activeMandate.validUntilSeconds)
     expect(view.bindingId).toBe(activeMandate.bindingId)
     expect(view.bindingHash).toBe(activeMandate.bindingHash)
     expect(view.evidence).toEqual(activeMandate)
@@ -85,7 +89,7 @@ describe('toBaseMandateView', () => {
   it.each([
     ['missing', null, connection],
     ['missing', { ...activeMandate, status: 'missing' }, connection],
-    ['expired', { ...activeMandate, expiresAt: now - 1 }, connection],
+    ['expired', { ...activeMandate, validUntilSeconds: now - 1 }, connection],
     ['owner-mismatch', { ...activeMandate, stellarOwner: 'GOTHER' }, connection],
     [
       'kernel-mismatch',
@@ -94,6 +98,8 @@ describe('toBaseMandateView', () => {
     ],
     ['relayer-mismatch', { ...activeMandate, relayerOrigin: 'https://other.example' }, connection],
     ['revoked', { ...activeMandate, status: 'revoked' }, connection],
+    ['unavailable', { ...activeMandate, status: 'pending_activation' }, connection],
+    ['unavailable', { ...activeMandate, status: 'activation_uncertain' }, connection],
     ['unavailable', { ...activeMandate, bindingId: null }, connection],
     [
       'unavailable',
@@ -113,12 +119,22 @@ describe('toBaseMandateView', () => {
       kernelAddress: connection.kernelAddress,
       relayerOrigin: connection.relayerOrigin,
       status: 'active',
-      expiresAt: now + 3600,
+      validUntilSeconds: now + 3600,
       bindingId: 'local',
       bindingHash: 'local',
       sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
     }
     expect(toBaseMandateView({ mandate: localOnly, ...connection })).toMatchObject({
+      status: 'unavailable',
+      ready: false,
+    })
+  })
+
+  it('does not revive a v2 expiresAt record when validUntilSeconds is absent', () => {
+    const { validUntilSeconds: _removed, ...withoutV3Expiry } = activeMandate
+    const legacy = { ...withoutV3Expiry, expiresAt: now + 3600 }
+
+    expect(toBaseMandateView({ mandate: legacy, ...connection })).toMatchObject({
       status: 'unavailable',
       ready: false,
     })

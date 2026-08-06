@@ -12,6 +12,23 @@ import { BASE_POOL_CATALOG } from './config.js'
 
 const CCTP_STELLAR_DOMAIN = 27
 
+// Exact bigint units ride the deps calls and event payloads crossing this boundary. Attach a
+// non-enumerable `toJSON` so a JSON.stringify of a recorded call or event log serializes them as
+// decimal strings instead of throwing — non-enumerable, so deep-equality consumers and every
+// spread (`{ ...data, allocationId }` downstream) simply never observe it.
+function jsonSafeBigints(payload) {
+  Object.defineProperty(payload, 'toJSON', {
+    enumerable: false,
+    value: () =>
+      JSON.parse(
+        JSON.stringify({ ...payload }, (_key, value) =>
+          typeof value === 'bigint' ? value.toString() : value
+        )
+      ),
+  })
+  return payload
+}
+
 // Fix loop 2, Fix 2a: pool address -> proxyTarget, the same lookup relayer/src/httpRouter.mjs's
 // parseWireAllocations does at :255-258 (lowercased address match). Resolved once at module load
 // — BASE_POOL_CATALOG is a static export, not per-request data.
@@ -24,7 +41,7 @@ const BASE_POOL_PROXY_TARGETS = new Map(
  *   stellarWallet: { address: string, signBurn: Function },
  *   baseRecipientAddress: string,        // also the Base kernel address for this leg's owner binding
  *   sessionKeyAddress: string,
- *   serializedApproval: string,
+ *   mandateId: string,                   // public mandate identity — the proxy supplies capability authority
  *   allocations: Array<{ pool: string, amount: number, amountBaseUnits: bigint, minShares: bigint }>,
  *   burnUnits7: bigint,           // authoritative total burn input, 7dp Stellar units
  *   bridgeAgentAddress?: string,  // VF Wallet Task 6 wire field (postFarm's `bridgeAgent`) — recovery handle
@@ -39,7 +56,7 @@ export async function runFarmFlow({
   stellarWallet,
   baseRecipientAddress,
   sessionKeyAddress,
-  serializedApproval,
+  mandateId,
   allocations,
   burnUnits7,
   bridgeAgentAddress = null,
@@ -113,16 +130,18 @@ export async function runFarmFlow({
 
   let dispatch
   try {
-    dispatch = await postFarmFn({
-      sourceDomain: CCTP_STELLAR_DOMAIN,
-      serializedApproval,
-      stellarOwner: stellarWallet.address,
-      kernelAddress: baseRecipientAddress,
-      bridgeAgent: bridgeAgentAddress,
-      runId,
-      grantTxHash,
-      allocations,
-    })
+    dispatch = await postFarmFn(
+      jsonSafeBigints({
+        sourceDomain: CCTP_STELLAR_DOMAIN,
+        mandateId,
+        stellarOwner: stellarWallet.address,
+        kernelAddress: baseRecipientAddress,
+        bridgeAgent: bridgeAgentAddress,
+        runId,
+        grantTxHash,
+        allocations,
+      })
+    )
     if (
       dispatch?.acknowledged !== true ||
       dispatch?.schemaVersion !== 1 ||
@@ -137,7 +156,10 @@ export async function runFarmFlow({
   }
   onEvent('farm-intent-committed', { jobId: dispatch.jobId, schemaVersion: dispatch.schemaVersion })
 
-  onEvent('farm-burn-started', { address: stellarWallet.address, amountUnits: burnUnits7 })
+  onEvent(
+    'farm-burn-started',
+    jsonSafeBigints({ address: stellarWallet.address, amountUnits: burnUnits7 })
+  )
   let burnResult
   try {
     burnResult = await burn({
@@ -154,9 +176,9 @@ export async function runFarmFlow({
 
   try {
     await postFarmAttachFn({
+      mandateId,
       jobId: dispatch.jobId,
       burnTxHash: burnResult.burnHash,
-      serializedApproval,
       stellarOwner: stellarWallet.address,
       kernelAddress: baseRecipientAddress,
     })
@@ -170,7 +192,7 @@ export async function runFarmFlow({
   }
   onEvent('farm-relay-dispatched', { jobId: dispatch.jobId, sessionKeyAddress })
 
-  const finalStatus = await pollFn({ jobId: dispatch.jobId })
+  const finalStatus = await pollFn({ mandateId, jobId: dispatch.jobId })
   onEvent('farm-completed', {
     jobId: dispatch.jobId,
     status: finalStatus.status,

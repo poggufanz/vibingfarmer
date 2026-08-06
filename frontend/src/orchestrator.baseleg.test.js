@@ -168,6 +168,7 @@ import {
 import { BASE_POOL_CATALOG } from './config.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'
+const CANONICAL_JOB_ID = '55'.repeat(16)
 
 // grantAddresses walks agentInits in order; the LAST entry is the bridge agent iff its kind===1 —
 // mirrors grant.js's own additive bridgeAgentAddress logic exactly, so the mock stays honest.
@@ -366,13 +367,24 @@ beforeEach(() => {
   readVaultSharesMock.mockResolvedValue(0n)
   readStoredBaseMandateMock.mockReset()
   readStoredBaseMandateMock.mockReturnValue({
+    version: 3,
+    mandateId: '11'.repeat(16),
+    stellarOwner: 'GUSER',
     kernelAddress: KERNEL,
-    serializedApproval: 'APPROVAL',
-    sessionKeyAddress: '0xSESSION',
-    expiry: 9999999999,
+    sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
+    validUntilSeconds: 9999999999,
+    status: 'active',
   })
   readBaseMandateMock.mockReset()
-  readBaseMandateMock.mockReturnValue({ kernelAddress: KERNEL })
+  readBaseMandateMock.mockReturnValue({
+    version: 3,
+    mandateId: '11'.repeat(16),
+    stellarOwner: 'GUSER',
+    kernelAddress: KERNEL,
+    sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
+    validUntilSeconds: 9999999999,
+    status: 'active',
+  })
   executeBaseLegMock.mockReset()
   executeBaseLegMock.mockResolvedValue({ success: true, burnHash: 'B', jobId: 'j1' })
   runAgentBurnMock.mockReset()
@@ -712,6 +724,35 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     )
   })
 
+  it('derives the bridge recipient only from the connected owner v3 mandate, never a global record', async () => {
+    readStoredBaseMandateMock.mockImplementation(() => {
+      throw new Error('global mandate reader must be unreachable')
+    })
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 's-owner-v3',
+      onEvent: vi.fn(),
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+    })
+
+    const summary = await orch.dispatch(
+      {
+        vaults: [
+          { address: 'CSTELLAR', allocation: 0.6, chain: 'stellar' },
+          { address: '0xBASE', allocation: 0.4, chain: 'base' },
+        ],
+      },
+      100
+    )
+
+    expect(summary.baseLeg).toMatchObject({ success: true })
+    expect(readBaseMandateMock).toHaveBeenCalledWith('GUSER')
+    expect(readStoredBaseMandateMock).not.toHaveBeenCalled()
+    expect(executeBaseLegMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kernelAddress: KERNEL })
+    )
+  })
+
   it('an all-Base strategy (zero Stellar deposit workers) still grants — bridge init only, no deposit budget entry', async () => {
     const orch = new OrchestratorAgent({
       user: 'GUSER',
@@ -762,13 +803,14 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     expect(workerInstances).toHaveLength(1)
     expect(executeBaseLegMock).not.toHaveBeenCalled()
     expect(readStoredBaseMandateMock).not.toHaveBeenCalled()
+    expect(readBaseMandateMock).not.toHaveBeenCalled()
     expect(summary.baseLeg).toBeNull()
     const grantArgs = submitGrantMock.mock.calls[0][0]
     expect(grantArgs.agentInits).toHaveLength(1) // deposit worker only, no bridge init appended
   })
 
   it('no stored Base mandate -> dispatch aborts before any work (mandate setup is its own ceremony, never a run)', async () => {
-    readStoredBaseMandateMock.mockReturnValue(null)
+    readBaseMandateMock.mockReturnValue(null)
     const orch = new OrchestratorAgent({
       user: 'GUSER',
       sessionId: 's-nomandate',
@@ -1396,13 +1438,44 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
         deps: {
           ...args.deps,
           readStoredMandate: () => ({
-            version: 2,
+            version: 3,
+            mandateId: '11'.repeat(16),
             stellarOwner: 'GUSER',
-            serializedApproval: 'APPROVAL',
-            sessionKeyAddress: '0xSESSION',
+            sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
             kernelAddress: KERNEL,
-            expiresAt: 9999999999,
+            relayerOrigin: 'https://relayer.example',
+            validUntilSeconds: 9999999999,
             status: 'active',
+            bindingId: 'binding-1',
+            bindingHash: 'binding-hash-1',
+            reasonCodes: [],
+            expected: {},
+            checks: {
+              chain: true,
+              owner: true,
+              kernel: true,
+              session: true,
+              permission: true,
+              policy: true,
+              binding: true,
+              origin: true,
+              implementation: true,
+              freshness: true,
+              reconstruction: true,
+              activation: true,
+            },
+            observed: {
+              blockNumber: '101',
+              blockHash: `0x${'ab'.repeat(32)}`,
+              blockTime: 2_000_000_000,
+              implementation: '0x0000000000000000000000000000000000000CC3',
+              permission: { digest: 'permission-digest' },
+              activation: {
+                userOpHash: `0x${'33'.repeat(32)}`,
+                txHash: `0x${'44'.repeat(32)}`,
+                activatedAt: 2_000_000_000,
+              },
+            },
           }),
           // Task 9 hardened isVerifiedBaseMandateStatus to require the full BaseMandateStatusV2
           // shape (checks/observed/reasonCodes), not a bare `{status:'active'}` flag -- this
@@ -1413,8 +1486,16 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
           // and then goes uncertain -- was never exercised. Mirror the verified shape so the gate
           // legitimately passes and the real burn-uncertainty path below runs.
           getMandateStatus: async () => ({
-            version: 2,
+            version: 3,
+            mandateId: '11'.repeat(16),
+            stellarOwner: 'GUSER',
+            kernelAddress: KERNEL,
+            sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
+            relayerOrigin: 'https://relayer.example',
+            validUntilSeconds: 9999999999,
             status: 'active',
+            bindingId: 'binding-1',
+            bindingHash: 'binding-hash-1',
             reasonCodes: [],
             checks: {
               chain: true,
@@ -1426,18 +1507,21 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
               binding: true,
               origin: true,
               implementation: true,
-              allocation: true,
               freshness: true,
               reconstruction: true,
-              prepared: true,
+              activation: true,
             },
             observed: {
               blockNumber: '101',
-              blockHash: '0xblock',
-              blockTime: Date.now(),
-              implementation: '0ximpl',
+              blockHash: `0x${'ab'.repeat(32)}`,
+              blockTime: 2_000_000_000,
+              implementation: '0x0000000000000000000000000000000000000CC3',
               permission: { digest: 'permission-digest' },
-              preparedCallDigest: 'prepared-call-digest',
+              activation: {
+                userOpHash: `0x${'33'.repeat(32)}`,
+                txHash: `0x${'44'.repeat(32)}`,
+                activatedAt: 2_000_000_000,
+              },
             },
           }),
           makePublicClient: () => ({}),
@@ -1460,7 +1544,7 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       ok: true,
       status: 201,
       json: async () => ({
-        jobId: 'JOB-INTENT-run-uncertain-burn',
+        jobId: CANONICAL_JOB_ID,
         acknowledged: true,
         schemaVersion: 1,
       }),

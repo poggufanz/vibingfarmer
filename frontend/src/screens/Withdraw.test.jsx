@@ -19,6 +19,7 @@ import Withdraw from './Withdraw.jsx'
 const signAndSubmitUnwind = vi.fn()
 const postUnwind = vi.fn()
 const pollFarmStatus = vi.fn()
+const JOB_ID = '55'.repeat(16)
 
 vi.mock('../base/withdrawBatch.js', () => ({
   signAndSubmitUnwind: (...a) => signAndSubmitUnwind(...a),
@@ -65,7 +66,7 @@ beforeEach(() => {
     exited: 2,
     skipped: 0,
   })
-  postUnwind.mockResolvedValue({ jobId: 'job-1' })
+  postUnwind.mockResolvedValue({ jobId: JOB_ID })
   pollFarmStatus.mockResolvedValue({ status: 'done' })
 })
 
@@ -108,6 +109,20 @@ describe('Withdraw (Base full exit)', () => {
       unwindTxHash: '0xUNWIND',
       stellarRecipient: baseProps.stellarRecipient,
     })
+    expect(pollFarmStatus).toHaveBeenCalledWith({ jobId: JOB_ID })
+    expect(pollFarmStatus.mock.calls[0][0]).not.toHaveProperty('mandateId')
+    expect(pollFarmStatus.mock.calls[0][0]).not.toHaveProperty('serializedApproval')
+  })
+
+  it('keeps job-only unwind status fail-closed instead of borrowing mandate authority', async () => {
+    pollFarmStatus.mockRejectedValue(new Error('unwind capability unavailable'))
+    render(<Withdraw {...baseProps} mandateId={'11'.repeat(16)} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+
+    expect(pollFarmStatus).toHaveBeenCalledWith({ jobId: JOB_ID })
+    expect(pollFarmStatus.mock.calls[0][0]).not.toHaveProperty('mandateId')
+    expect(baseProps.onDone).not.toHaveBeenCalled()
   })
 
   it('reports a partial exit honestly instead of claiming plain success', async () => {

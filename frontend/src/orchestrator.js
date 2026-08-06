@@ -20,7 +20,7 @@ import {
   evmAddrToBytes32,
 } from './stellar/cctpBurn.js'
 import { deriveCctpTransferUnits, toBaseUnits } from './stellar/format.js'
-import { readStoredBaseMandate } from './mergeFlowHelpers.js'
+import { readBaseMandate } from './wallet/baseBinding.js'
 import {
   SOROBAN_TOKEN_ADDRESS,
   SOROBAN_DECIMALS,
@@ -1276,7 +1276,6 @@ export class OrchestratorAgent {
         })
       }
       try {
-        const { readBaseMandate } = await import('./wallet/baseBinding.js')
         this.assertCurrentAccount()
         baseMandate = readBaseMandate(this.user)
       } catch (cause) {
@@ -2566,7 +2565,9 @@ export class OrchestratorAgent {
     // desync the runtime burn arg from what's actually on-chain (see baseLeg.js's own doc).
     let bridgeKernelAddress = null
     if (baseVaults.length > 0) {
-      const mandate = readStoredBaseMandate()
+      // Owner-scoped v3 record only — never the removed global vf_base_mandate reader, so a
+      // wallet switch can never pin another owner's kernel as this grant's mint_recipient.
+      const mandate = readBaseMandate(this.user)
       if (!mandate) {
         throw new Error('No durable Base mandate is stored for the cross-chain leg.')
       }
