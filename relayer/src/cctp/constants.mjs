@@ -28,3 +28,14 @@ export const IRIS_SANDBOX_URL = 'https://iris-api-sandbox.circle.com';
 // minFinalityThreshold: <=1000 = Fast, >=2000 = Standard (finalized). Default Standard (SP0).
 export const MIN_FINALITY_STANDARD = 2000;
 export const MAX_FEE_STANDARD = 0n;
+
+// CCTP v2 wire protocol values (message format version + finality thresholds) used by the raw
+// message parser/matcher (messageV2.mjs). Numbers stay plain numbers — contract callers pass
+// them as u32 args; convert to BigInt only at the wire-comparison boundary.
+export const CCTP_V2_WIRE_VERSION = 1;
+export const FINALITY_FAST = 1000;
+export const FINALITY_STANDARD = 2000;
+// Executed finality values Circle will ever attest to; anything else is invalid evidence.
+export const SUPPORTED_EXECUTED_FINALITIES = Object.freeze([
+  BigInt(FINALITY_FAST), BigInt(FINALITY_STANDARD),
+]);

@@ -1,9 +1,10 @@
 // Idempotent CCTP watcher: given a burn txHash, polls Iris and submits the destination mint
 // EXACTLY ONCE per execId, no matter how many times relayMint is called (dedupe via `store`).
 // Direction (forward: Stellar->Base vs reverse: Base->Stellar) is inferred from sourceDomain —
-// this app's corridor only ever has two source domains, so no extra parameter is needed and
-// the exported relayMint({sourceDomain, burnTxHash, execId}) signature stays exactly as
-// specified by the design doc.
+// this app's corridor only ever has two source domains. relayMint({sourceDomain, burnTxHash,
+// execId, expectation}) always forwards an expectation to Iris (Task 7): the caller's immutable
+// expectation when supplied, otherwise a fail-closed route-scope skeleton that can never match
+// a real burn.
 
 import { pollAttestation as defaultPollAttestation } from './iris.mjs';
 import { mintBase as defaultMintBase } from './forward.mjs';
@@ -28,15 +29,38 @@ export function createWatcher(config) {
     mintAndForwardStellarFn = defaultMintAndForwardStellar,
   } = config;
 
-  async function relayMint({ sourceDomain, burnTxHash, execId }) {
+  // Fail-closed fallback (Task 7): Iris must always be polled with an expectation. Until Task 8
+  // threads the caller's immutable expectation end-to-end, a route-scope skeleton is forwarded —
+  // it carries no identities/amounts, so the strict matcher can never match a real burn against
+  // it and nothing mints unverified.
+  function routeExpectation(sourceDomain) {
+    if (sourceDomain === domains.stellar) {
+      return {
+        version: 1, direction: 'stellar-to-base',
+        sourceDomain: domains.stellar, destinationDomain: domains.base,
+      };
+    }
+    if (sourceDomain === domains.base) {
+      return {
+        version: 1, direction: 'base-to-stellar',
+        sourceDomain: domains.base, destinationDomain: domains.stellar,
+      };
+    }
+    throw new Error(`relayMint: unrecognized sourceDomain ${sourceDomain}`);
+  }
+
+  async function relayMint({ sourceDomain, burnTxHash, execId, expectation }) {
     const existing = store.get(execId);
     if (existing && existing.status === 'minted') {
       return { status: 'already-minted', mintTxHash: existing.mintTxHash };
     }
 
-    store.set(execId, { status: 'pending', sourceDomain, burnTxHash });
+    const scopedExpectation = expectation ?? routeExpectation(sourceDomain);
+    store.set(execId, { status: 'pending', sourceDomain, burnTxHash, expectation: scopedExpectation });
 
-    const { message, attestation } = await pollAttestationFn({ irisUrl, sourceDomain, txHash: burnTxHash });
+    const { message, attestation } = await pollAttestationFn({
+      irisUrl, sourceDomain, txHash: burnTxHash, expectation: scopedExpectation,
+    });
 
     let mintTxHash;
     if (sourceDomain === domains.stellar) {
@@ -71,7 +95,10 @@ export function createWatcher(config) {
     const redriven = [];
     for (const [execId, record] of Object.entries(all)) {
       if (record.status === 'pending') {
-        await relayMint({ sourceDomain: record.sourceDomain, burnTxHash: record.burnTxHash, execId });
+        await relayMint({
+          sourceDomain: record.sourceDomain, burnTxHash: record.burnTxHash, execId,
+          expectation: record.expectation,
+        });
         redriven.push(execId);
       }
     }

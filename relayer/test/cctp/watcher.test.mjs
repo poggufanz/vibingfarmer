@@ -46,6 +46,24 @@ describe('relayMint — reverse leg (sourceDomain = base)', () => {
   });
 });
 
+// Task 7 RED — fail-closed expectation guard. Task 8 owns the watcher state machine; this is
+// the minimal proof of the live hole: relayMint reaches Iris with no expectation at all, so any
+// first complete message would be trusted (raw-message authority bypass). The new-required
+// signature must forward an immutable expectation from the caller to pollAttestation.
+describe('fail-closed expectation forwarding (Task 7 guard)', () => {
+  it('relayMint forwards an expectation to pollAttestation (regression: today no expectation reaches Iris)', async () => {
+    const config = buildConfig();
+    const watcher = createWatcher(config);
+
+    await watcher.relayMint({ sourceDomain: DOMAINS.stellar, burnTxHash: 'burn-exp-1', execId: 'exec-exp-1' });
+
+    expect(config.pollAttestationFn).toHaveBeenCalledTimes(1);
+    const pollArgs = config.pollAttestationFn.mock.calls[0][0];
+    expect(pollArgs.expectation).toBeDefined();
+    expect(pollArgs.expectation).not.toBeNull();
+  });
+});
+
 describe('sweepStuck', () => {
   it('redrives records left pending (e.g. the process restarted mid-poll)', async () => {
     const config = buildConfig();
