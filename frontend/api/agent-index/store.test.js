@@ -12,6 +12,22 @@ const MIGRATIONS_DIR = join(__dirname, '..', '..', 'migrations')
 // resolve it as a bare package specifier ("sqlite") instead — createRequire hands resolution to
 // Node directly, bypassing Vite's transform for this one import.
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
+const MIGRATIONS = [
+  '0001_vf_gate.sql',
+  '0002_agent_index.sql',
+  '0003_agent_index_bounds.sql',
+  '0004_agent_associations.sql',
+  '0005_execution_receipts.sql',
+  '0006_base_child_intents.sql',
+  '0007_agent_membership_owner_pages.sql',
+  '0008_base_recovery_evidence.sql',
+]
+
+function applyMigrations(sqlite, through) {
+  for (const filename of MIGRATIONS.slice(0, through)) {
+    sqlite.exec(readFileSync(join(MIGRATIONS_DIR, filename), 'utf8'))
+  }
+}
 
 // ponytail: a hand-rolled D1 double reimplementing SQL semantics in JS would drift from real D1
 // behavior (CHECK constraints, transactions) the moment a constraint changes. Node's built-in
@@ -21,13 +37,7 @@ const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
 // need: db.batch() transactions (see task brief note on extending it minimally in the test file).
 function fakeD1() {
   const sqlite = new DatabaseSync(':memory:')
-  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0001_vf_gate.sql'), 'utf8'))
-  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
-  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0003_agent_index_bounds.sql'), 'utf8'))
-  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0004_agent_associations.sql'), 'utf8'))
-  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0005_execution_receipts.sql'), 'utf8'))
-  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0006_base_child_intents.sql'), 'utf8'))
-  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0007_agent_membership_owner_pages.sql'), 'utf8'))
+  applyMigrations(sqlite, 8)
 
   function bound(sql, args) {
     return {
@@ -91,7 +101,7 @@ let store
 
 beforeEach(() => {
   db = fakeD1()
-  store = createAgentIndexStore(db)
+  store = createAgentIndexStore(db, { enableLegacyBaseChildWrites: true })
 })
 
 describe('createAgentIndexStore', () => {
@@ -111,6 +121,10 @@ describe('createAgentIndexStore', () => {
         'advanceBaseChildLifecycle',
         'readBaseChildIntent',
         'readOwnerBaseChildIntents',
+        'reserveBaseChildIntentBatch',
+        'advanceBaseChildPhase',
+        'readBaseChildRecoveryBundle',
+        'readPublicBaseChildEvidence',
         'upsertMembership',
         'upsertRunAllocation',
         'readRunAllocation',
@@ -131,21 +145,36 @@ describe('createAgentIndexStore', () => {
     )
   })
 
+  it('keeps legacy unauthoritative Base-child writers off the production repository surface', () => {
+    const productionStore = createAgentIndexStore(db)
+    expect(productionStore.createBaseChildIntent).toBeUndefined()
+    expect(productionStore.advanceBaseChildLifecycle).toBeUndefined()
+  })
+
   it('probes the canonical receipt and Base-child stores before acknowledging readiness', async () => {
     await expect(store.probeReadiness()).resolves.toEqual({
       writable: true,
       schemaVersion: 1,
-      stores: { executionReceipts: true, baseChildIntents: true },
+      stores: {
+        executionReceipts: true,
+        baseChildIntents: true,
+        baseRecoveryEvidence: true,
+      },
     })
   })
 
-  it.each(['execution_receipts', 'base_child_intents'])(
-    'fails readiness when canonical table %s is missing',
-    async (table) => {
-      db._raw.exec(`DROP TABLE ${table}`)
-      await expect(store.probeReadiness()).rejects.toThrow()
-    }
-  )
+  it.each([
+    'execution_receipts',
+    'base_child_intents',
+    'base_child_intent_batches',
+    'base_child_intent_batch_items',
+    'base_child_phase_events',
+    'base_child_phase_projection',
+    'base_child_recovery_leases',
+  ])('fails readiness when canonical table %s is missing', async (table) => {
+    db._raw.exec(`DROP TABLE ${table}`)
+    await expect(store.probeReadiness()).rejects.toThrow()
+  })
 })
 
 describe('consumeReceiptChallenge', () => {
@@ -1152,6 +1181,244 @@ describe('migration 0001 tables are untouched', () => {
   })
 })
 
+describe('migration 0008 Base recovery schema', () => {
+  it('exposes execution/recovery columns and durable batch/evidence tables', () => {
+    expect(() =>
+      db._raw.prepare('SELECT execution_id, recovery_version FROM base_child_intents').all()
+    ).not.toThrow()
+    for (const table of [
+      'base_child_intent_batches',
+      'base_child_intent_batch_items',
+      'base_child_phase_events',
+      'base_child_phase_projection',
+      'base_child_recovery_leases',
+    ]) {
+      expect(() => db._raw.prepare(`SELECT * FROM ${table}`).all()).not.toThrow()
+    }
+  })
+
+  it('upgrades real legacy rows without inventing execution identity and enforces new identity', () => {
+    const sqlite = new DatabaseSync(':memory:')
+    applyMigrations(sqlite, 7)
+    const insert = sqlite.prepare(
+      `INSERT INTO base_child_intents
+         (network_id,binding_id,allocation_id,child_id,owner_address,agent_address,
+          intent_digest,intent_json,token,units,decimals,lifecycle_sequence,lifecycle_status,
+          lifecycle_evidence_json,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+    insert.run(
+      NETWORK,
+      'legacy-binding',
+      'legacy-allocation',
+      'legacy-child',
+      'GLEGACY',
+      'CLEGACY',
+      'legacy-digest',
+      '{"runId":"legacy-run","minShares":"0"}',
+      'USDC',
+      '9007199254740993000000',
+      6,
+      0,
+      'planned',
+      '{}',
+      10,
+      10
+    )
+    sqlite
+      .prepare(
+        `INSERT INTO base_child_lifecycle_events
+           VALUES (?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        NETWORK,
+        'legacy-binding',
+        'legacy-allocation',
+        'legacy-child',
+        0,
+        'legacy-planned',
+        'planned',
+        '{}',
+        10
+      )
+
+    sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0008_base_recovery_evidence.sql'), 'utf8'))
+    const legacy = sqlite
+      .prepare(
+        `SELECT execution_id,recovery_version FROM base_child_intents
+         WHERE binding_id='legacy-binding'`
+      )
+      .get()
+    expect(legacy).toEqual({ execution_id: null, recovery_version: 0 })
+    expect(
+      sqlite.prepare(`SELECT COUNT(*) count FROM base_child_lifecycle_events`).get().count
+    ).toBe(1)
+
+    insert.run(
+      NETWORK,
+      'legacy-binding-2',
+      'legacy-allocation-2',
+      'legacy-child-2',
+      'GLEGACY',
+      'CLEGACY',
+      'legacy-digest-2',
+      '{"runId":"legacy-run-2","minShares":"0"}',
+      'USDC',
+      '1',
+      6,
+      0,
+      'planned',
+      '{}',
+      11,
+      11
+    )
+    expect(
+      sqlite
+        .prepare(`SELECT COUNT(*) count FROM base_child_intents WHERE execution_id IS NULL`)
+        .get().count
+    ).toBe(2)
+    const insertNew = sqlite.prepare(
+      `INSERT INTO base_child_intents
+         (network_id,binding_id,execution_id,allocation_id,child_id,owner_address,agent_address,
+          intent_digest,intent_json,token,units,decimals,lifecycle_sequence,lifecycle_status,
+          lifecycle_evidence_json,recovery_version,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+    insertNew.run(
+      NETWORK,
+      'new-binding',
+      'new-run:exec:new-allocation',
+      'new-allocation',
+      'new-child',
+      'GNEW',
+      'CNEW',
+      'new-digest',
+      '{"runId":"new-run","minShares":"0"}',
+      'USDC',
+      '1',
+      6,
+      0,
+      'planned',
+      '{}',
+      0,
+      12,
+      12
+    )
+    expect(() =>
+      insertNew.run(
+        NETWORK,
+        'other-binding',
+        'new-run:exec:new-allocation',
+        'other-allocation',
+        'other-child',
+        'GNEW',
+        'CNEW',
+        'other-digest',
+        '{"runId":"other-run","minShares":"0"}',
+        'USDC',
+        '1',
+        6,
+        0,
+        'planned',
+        '{}',
+        0,
+        13,
+        13
+      )
+    ).toThrow(/unique/i)
+    expect(() =>
+      sqlite
+        .prepare(`UPDATE base_child_intents SET execution_id=? WHERE binding_id='new-binding'`)
+        .run('changed')
+    ).toThrow(/immutable/i)
+  })
+
+  it('keeps recovery events append-only and enforces lease time constraints', async () => {
+    const input = {
+      idempotencyKey: 'schema-batch',
+      burnUnits7: '10000000',
+      children: [
+        {
+          version: 1,
+          networkId: NETWORK,
+          owner: 'GOWNER1',
+          agent: 'CAGENT1',
+          bindingId: 'schema-binding',
+          executionId: 'schema-run:exec:schema-allocation',
+          allocationId: 'schema-allocation',
+          childId: 'schema-child',
+          intent: {
+            token: 'USDC',
+            units: '1000000',
+            decimals: 6,
+            poolAddress: '0x1111111111111111111111111111111111111111',
+            proxyTarget: 'aave-v3',
+            minShares: '0',
+            runId: 'schema-run',
+            grantTxHash: 'schema-grant',
+            kernelAddress: '0x2222222222222222222222222222222222222222',
+            bindingHash: 'schema-hash',
+            baseJobId: 'schema-child',
+          },
+          lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 20 },
+        },
+      ],
+    }
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '9'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    await store.advanceBaseChildPhase({
+      identity: {
+        networkId: NETWORK,
+        bindingId: 'schema-binding',
+        executionId: 'schema-run:exec:schema-allocation',
+        allocationId: 'schema-allocation',
+        childId: 'schema-child',
+      },
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: '8'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'submitting',
+        evidence: {},
+        observedAt: 21,
+      },
+    })
+    expect(() =>
+      db._raw.prepare(`UPDATE base_child_phase_events SET state='failed'`).run()
+    ).toThrow(/append-only/i)
+    expect(() => db._raw.prepare(`DELETE FROM base_child_phase_events`).run()).toThrow(
+      /append-only/i
+    )
+    expect(() =>
+      db._raw
+        .prepare(
+          `INSERT INTO base_child_recovery_leases
+             (network_id,binding_id,execution_id,allocation_id,child_id,phase,owner_address,
+              action,evidence_version,holder,lease_token,acquired_at,expires_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(
+          NETWORK,
+          'schema-binding',
+          'schema-run:exec:schema-allocation',
+          'schema-allocation',
+          'schema-child',
+          'cctp_burn',
+          'GOWNER1',
+          'reconcile',
+          1,
+          'worker',
+          'lease',
+          30,
+          30
+        )
+    ).toThrow(/check/i)
+  })
+})
+
 describe('Base child intent and lifecycle durability', () => {
   const child = (overrides = {}) => ({
     version: 1,
@@ -1159,9 +1426,17 @@ describe('Base child intent and lifecycle durability', () => {
     owner: 'GOWNER1',
     agent: 'CAGENT1',
     bindingId: 'binding-1',
+    executionId: 'run-1:exec:run-1:bridge:aave-v3',
     allocationId: 'run-1:bridge:aave-v3',
     childId: 'job-1',
-    intent: { token: 'USDC', units: '1000000', decimals: 6, poolAddress: '0xpool' },
+    intent: {
+      token: 'USDC',
+      units: '1000000',
+      decimals: 6,
+      poolAddress: '0xpool',
+      minShares: '0',
+      runId: 'run-1',
+    },
     lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 1000 },
     ...overrides,
   })
@@ -1228,5 +1503,331 @@ describe('Base child intent and lifecycle durability', () => {
         idempotencyKey: 'lifecycle-key-3',
       })
     ).rejects.toThrow(/sequence|conflict/i)
+  })
+})
+
+describe('Task 9 authoritative Base child recovery store', () => {
+  const child = (ordinal = 1, overrides = {}) => {
+    const allocationId = `allocation-${ordinal}`
+    return {
+      version: 1,
+      networkId: NETWORK,
+      owner: 'GOWNER1',
+      agent: 'CAGENT1',
+      bindingId: 'binding-batch-1',
+      executionId: `run-batch-1:exec:${allocationId}`,
+      allocationId,
+      childId: `job-${ordinal}`,
+      intent: {
+        token: 'USDC',
+        units: '1000000',
+        decimals: 6,
+        poolAddress: '0x1111111111111111111111111111111111111111',
+        proxyTarget: 'aave-v3',
+        minShares: '0',
+        runId: 'run-batch-1',
+        grantTxHash: 'grant-batch-1',
+        kernelAddress: '0x2222222222222222222222222222222222222222',
+        bindingHash: 'binding-hash-batch-1',
+        baseJobId: 'job-batch-1',
+      },
+      lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 2000 },
+      ...overrides,
+    }
+  }
+  const batch = (overrides = {}) => ({
+    idempotencyKey: 'batch-key-1',
+    burnUnits7: '30000000',
+    children: [child(1), child(2), child(3)],
+    ...overrides,
+  })
+  const identity = {
+    networkId: NETWORK,
+    bindingId: 'binding-batch-1',
+    executionId: 'run-batch-1:exec:allocation-1',
+    allocationId: 'allocation-1',
+    childId: 'job-1',
+  }
+
+  it('atomically reserves one ordered batch and makes an exact retry a no-op', async () => {
+    const input = batch()
+    await expect(
+      store.reserveBaseChildIntentBatch({
+        batch: input,
+        requestDigest: '1'.repeat(64),
+        idempotencyKey: input.idempotencyKey,
+      })
+    ).resolves.toEqual({ written: 3, duplicates: 0 })
+    expect(
+      db._raw.prepare('SELECT COUNT(*) count FROM base_child_intent_batches').get().count
+    ).toBe(1)
+    expect(
+      db._raw.prepare('SELECT COUNT(*) count FROM base_child_intent_batch_items').get().count
+    ).toBe(3)
+    expect(db._raw.prepare('SELECT COUNT(*) count FROM base_child_intents').get().count).toBe(3)
+    expect(
+      db._raw.prepare('SELECT COUNT(*) count FROM base_child_lifecycle_events').get().count
+    ).toBe(3)
+    await expect(
+      store.reserveBaseChildIntentBatch({
+        batch: input,
+        requestDigest: '1'.repeat(64),
+        idempotencyKey: input.idempotencyKey,
+      })
+    ).resolves.toEqual({ written: 0, duplicates: 3 })
+    expect(
+      db._raw.prepare('SELECT COUNT(*) count FROM base_child_lifecycle_events').get().count
+    ).toBe(3)
+  })
+
+  it('rejects changed content under one key without changing the original batch', async () => {
+    const input = batch()
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '1'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    await expect(
+      store.reserveBaseChildIntentBatch({
+        batch: { ...input, burnUnits7: '30000010' },
+        requestDigest: '2'.repeat(64),
+        idempotencyKey: input.idempotencyKey,
+      })
+    ).rejects.toBeInstanceOf(AgentIndexConflictError)
+    expect(
+      db._raw.prepare('SELECT burn_units_7 FROM base_child_intent_batches').get().burn_units_7
+    ).toBe('30000000')
+  })
+
+  it('rolls back every new row when a later child conflicts', async () => {
+    const prior = child(2, { bindingId: 'other-binding' })
+    await store.reserveBaseChildIntentBatch({
+      batch: { idempotencyKey: 'prior-key', burnUnits7: '10000000', children: [prior] },
+      requestDigest: '3'.repeat(64),
+      idempotencyKey: 'prior-key',
+    })
+    await expect(
+      store.reserveBaseChildIntentBatch({
+        batch: batch(),
+        requestDigest: '1'.repeat(64),
+        idempotencyKey: 'batch-key-1',
+      })
+    ).rejects.toBeInstanceOf(AgentIndexConflictError)
+    expect(
+      db._raw
+        .prepare(
+          "SELECT COUNT(*) count FROM base_child_intent_batches WHERE idempotency_key='batch-key-1'"
+        )
+        .get().count
+    ).toBe(0)
+    expect(
+      db._raw
+        .prepare("SELECT COUNT(*) count FROM base_child_intents WHERE binding_id='binding-batch-1'")
+        .get().count
+    ).toBe(0)
+  })
+
+  it('rolls back receipt, children, events, and items when the final batch statement aborts', async () => {
+    db._raw.exec(`
+      CREATE TRIGGER task9_abort_last_item
+      BEFORE INSERT ON base_child_intent_batch_items
+      WHEN NEW.ordinal = 2
+      BEGIN
+        SELECT RAISE(ABORT, 'injected final item failure');
+      END;
+    `)
+    const input = batch({ idempotencyKey: 'last-statement-failure' })
+    await expect(
+      store.reserveBaseChildIntentBatch({
+        batch: input,
+        requestDigest: '7'.repeat(64),
+        idempotencyKey: input.idempotencyKey,
+      })
+    ).rejects.toThrow(/store failed/i)
+    for (const table of [
+      'base_child_intent_batches',
+      'base_child_intent_batch_items',
+      'base_child_intents',
+      'base_child_lifecycle_events',
+    ]) {
+      expect(db._raw.prepare(`SELECT COUNT(*) count FROM ${table}`).get().count).toBe(0)
+    }
+  })
+
+  it('advances evidence with full-identity CAS and exact replay', async () => {
+    const input = batch({ children: [child(1)], burnUnits7: '10000000' })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '1'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    const request = {
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'a'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'submitting',
+        evidence: { burnUnits7: '10000000' },
+        observedAt: 2100,
+      },
+    }
+    await expect(store.advanceBaseChildPhase(request)).resolves.toMatchObject({
+      written: 1,
+      duplicates: 0,
+      recoveryVersion: 1,
+      eventId: 'a'.repeat(64),
+    })
+    await expect(store.advanceBaseChildPhase(request)).resolves.toMatchObject({
+      written: 0,
+      duplicates: 1,
+      recoveryVersion: 1,
+    })
+    await expect(
+      store.advanceBaseChildPhase({
+        ...request,
+        event: { ...request.event, evidence: { burnUnits7: '10000001' } },
+      })
+    ).rejects.toBeInstanceOf(AgentIndexConflictError)
+    await expect(
+      store.advanceBaseChildPhase({
+        ...request,
+        event: { ...request.event, eventId: 'b'.repeat(64), evidence: { burnUnits7: '10000001' } },
+      })
+    ).rejects.toBeInstanceOf(AgentIndexConflictError)
+    await expect(
+      store.advanceBaseChildPhase({
+        ...request,
+        identity: { ...identity, executionId: 'run-batch-1:exec:allocation-2' },
+        event: { ...request.event, eventId: 'c'.repeat(64) },
+      })
+    ).rejects.toBeInstanceOf(AgentIndexConflictError)
+  })
+
+  it('enforces explicit phase order and confirmed non-regression', async () => {
+    const input = batch({
+      idempotencyKey: 'phase-order-batch',
+      children: [child(1)],
+      burnUnits7: '10000000',
+    })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '4'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    await expect(
+      store.advanceBaseChildPhase({
+        identity,
+        expectedRecoveryVersion: 0,
+        event: {
+          eventId: '1'.repeat(64),
+          phase: 'cctp_mint',
+          state: 'submitted',
+          evidence: {},
+          observedAt: 2200,
+        },
+      })
+    ).rejects.toBeInstanceOf(AgentIndexConflictError)
+    await store.advanceBaseChildPhase({
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: '2'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'confirmed',
+        evidence: { burnTxHash: '0xburn' },
+        observedAt: 2201,
+      },
+    })
+    await expect(
+      store.advanceBaseChildPhase({
+        identity,
+        expectedRecoveryVersion: 1,
+        event: {
+          eventId: '3'.repeat(64),
+          phase: 'cctp_burn',
+          state: 'unknown',
+          evidence: { burnTxHash: '0xburn' },
+          observedAt: 2202,
+        },
+      })
+    ).rejects.toBeInstanceOf(AgentIndexConflictError)
+    expect((await store.readBaseChildRecoveryBundle(identity)).recoveryVersion).toBe(1)
+  })
+
+  it('rolls back the event and version when the projection write aborts', async () => {
+    const input = batch({
+      idempotencyKey: 'projection-failure-batch',
+      children: [child(1)],
+      burnUnits7: '10000000',
+    })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '5'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    db._raw.exec(`
+      CREATE TRIGGER task9_abort_projection
+      BEFORE INSERT ON base_child_phase_projection
+      BEGIN
+        SELECT RAISE(ABORT, 'injected projection failure');
+      END;
+    `)
+    await expect(
+      store.advanceBaseChildPhase({
+        identity,
+        expectedRecoveryVersion: 0,
+        event: {
+          eventId: '6'.repeat(64),
+          phase: 'cctp_burn',
+          state: 'submitting',
+          evidence: {},
+          observedAt: 2300,
+        },
+      })
+    ).rejects.toThrow(/store failed/i)
+    expect(db._raw.prepare(`SELECT COUNT(*) count FROM base_child_phase_events`).get().count).toBe(
+      0
+    )
+    expect(
+      db._raw.prepare(`SELECT recovery_version FROM base_child_intents`).get().recovery_version
+    ).toBe(0)
+  })
+
+  it('reads recovery evidence only by the exact five-part identity', async () => {
+    const input = batch({ children: [child(1)], burnUnits7: '10000000' })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '1'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    await store.advanceBaseChildPhase({
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'a'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'submitting',
+        evidence: { amount: '9007199254740993000000' },
+        observedAt: 2100,
+      },
+    })
+    await expect(store.readBaseChildRecoveryBundle(identity)).resolves.toMatchObject({
+      identity,
+      recoverable: true,
+      recoveryVersion: 1,
+      events: [{ eventId: 'a'.repeat(64), evidence: { amount: '9007199254740993000000' } }],
+    })
+    for (const [field, value] of [
+      ['networkId', 'other-network'],
+      ['bindingId', 'other-binding'],
+      ['executionId', 'run-batch-1:exec:allocation-2'],
+      ['allocationId', 'allocation-2'],
+      ['childId', 'job-2'],
+    ]) {
+      await expect(
+        store.readBaseChildRecoveryBundle({ ...identity, [field]: value })
+      ).resolves.toBeNull()
+    }
   })
 })

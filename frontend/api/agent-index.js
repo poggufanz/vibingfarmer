@@ -9,8 +9,9 @@
 import { createAgentIndexStore } from './agent-index/store.js'
 import {
   handleAssociationReport,
-  handleBaseChildIntent,
-  handleBaseChildLifecycle,
+  handleBaseChildIntentBatch,
+  handleBaseChildEvidenceWrite,
+  handleBaseChildEvidenceRead,
   handleReporterReadiness,
   handleIngest,
   handleRead,
@@ -51,17 +52,31 @@ const POOL_TARGETS = new Map([
   ['0x5e843a639f0555e2a6669601621befc887bdb479', 'morpho-blue'],
   ['0xadd3c1a75c7cef2516b51750959bd829a4ad4761', 'moonwell'],
 ])
-const SCOPE_REQUIREMENTS = {
-  messenger:
-    process.env.SOROBAN_CCTP_TOKEN_MESSENGER ||
-    'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
-  token:
-    process.env.SOROBAN_CCTP_USDC_ADDRESS ||
-    'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+const SCOPE_REQUIREMENTS = (req) => ({
+  messenger: setting(
+    req,
+    'SOROBAN_CCTP_TOKEN_MESSENGER',
+    setting(
+      req,
+      'SOROBAN_TOKEN_MESSENGER_ADDRESS',
+      'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP'
+    )
+  ),
+  token: setting(
+    req,
+    'SOROBAN_CCTP_USDC_ADDRESS',
+    'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+  ),
   destinationDomain: 6,
   reportToken: 'USDC',
   reportDecimals: 6,
   scopeDecimals: 7,
+})
+
+function configuredBaseChildBatchMax(req) {
+  const raw = setting(req, 'AGENT_INDEX_BASE_CHILD_BATCH_MAX', '16')
+  const value = typeof raw === 'number' ? raw : /^\d+$/.test(String(raw)) ? Number(raw) : NaN
+  return Number.isSafeInteger(value) && value >= 1 && value <= 16 ? value : null
 }
 
 function json(res, status, obj) {
@@ -137,6 +152,37 @@ export function createReceiptAuthorityReader({ network, routerAddresses, server 
   }
 }
 
+export function createBaseChildAuthorityReader({ network, server }) {
+  if (!network?.networkId || !network.passphrase || !server) return null
+  return async ({ networkId, agent }) => {
+    if (networkId !== network.networkId) {
+      throw new AgentIndexValidationError('Requested network does not match configured network')
+    }
+    try {
+      const [scope, latest] = await Promise.all([
+        readContract({ contract: agent, method: 'scope_of', server }),
+        server.getLatestLedger(),
+      ])
+      const ledgerSequence = Number(latest?.sequence)
+      const ledgerCloseSeconds = Number(latest?.closeTime)
+      if (
+        !Number.isSafeInteger(ledgerSequence) ||
+        ledgerSequence < 1 ||
+        !Number.isSafeInteger(ledgerCloseSeconds) ||
+        ledgerCloseSeconds < 0
+      ) {
+        throw new Error('malformed latest ledger')
+      }
+      return { scope, ledgerSequence, ledgerCloseSeconds }
+    } catch (error) {
+      if (error instanceof AgentIndexValidationError) throw error
+      throw new AgentIndexUnavailableError('Base child authority reads are unavailable', {
+        cause: error,
+      })
+    }
+  }
+}
+
 async function receiptDependencies(req) {
   const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
   const network = configuredNetwork(req)
@@ -152,6 +198,24 @@ async function receiptDependencies(req) {
       store,
       network,
       authorityReader: createReceiptAuthorityReader({ network, routerAddresses, server }),
+    }
+  } catch {
+    return { store, network, authorityReader: null }
+  }
+}
+
+async function baseChildDependencies(req) {
+  const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
+  const network = configuredNetwork(req)
+  const rpcUrl = RPC_URL(req)
+  if (!network || !rpcUrl) return { store, network, authorityReader: null }
+  try {
+    const sdkMod = await import('@stellar/stellar-sdk')
+    const server = new sdkMod.rpc.Server(rpcUrl)
+    return {
+      store,
+      network,
+      authorityReader: createBaseChildAuthorityReader({ network, server }),
     }
   } catch {
     return { store, network, authorityReader: null }
@@ -243,6 +307,35 @@ export default async function handler(req, res) {
       owner: url.searchParams.get('owner') || '',
       executionId: url.searchParams.get('execution') || '',
       allocationId: url.searchParams.get('allocation') || '',
+      store,
+    })
+    return json(res, out.status, out.body)
+  }
+
+  if (req.method === 'GET' && action === 'base-child-evidence') {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    if (
+      !rateLimit(req, res, {
+        max: 20,
+        windowMs: 60_000,
+        bucket: 'agent-index-base-evidence-read',
+      })
+    )
+      return
+    const network = configuredNetwork(req)
+    if (!network) {
+      return json(res, 503, { error: 'Agent-index dependency unavailable' })
+    }
+    const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
+    const out = await handleBaseChildEvidenceRead({
+      identity: {
+        networkId: url.searchParams.get('network') || '',
+        bindingId: url.searchParams.get('binding') || '',
+        executionId: url.searchParams.get('execution') || '',
+        allocationId: url.searchParams.get('allocation') || '',
+        childId: url.searchParams.get('child') || '',
+      },
+      configuredNetworkId: network.networkId,
       store,
     })
     return json(res, out.status, out.body)
@@ -352,11 +445,28 @@ export default async function handler(req, res) {
     return json(res, out.status, out.body)
   }
 
-  if (req.method === 'POST' && action === 'base-child-intent') {
+  if (req.method === 'POST' && action === 'base-child-intent-batch') {
+    if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-child' })) return
+    const { store, network, authorityReader } = await baseChildDependencies(req)
+    const out = await handleBaseChildIntentBatch({
+      batch: req.body,
+      configuredNetworkId: network?.networkId,
+      store,
+      secret: REPORTER_SECRET(req),
+      providedSecret: bearer(req),
+      authorityReader,
+      poolTargets: POOL_TARGETS,
+      scopeRequirements: SCOPE_REQUIREMENTS(req),
+      maxBatchSize: configuredBaseChildBatchMax(req),
+    })
+    return json(res, out.status, out.body)
+  }
+
+  if (req.method === 'POST' && action === 'base-child-evidence') {
     if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-child' })) return
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
-    const out = await handleBaseChildIntent({
-      child: req.body?.child,
+    const out = await handleBaseChildEvidenceWrite({
+      request: req.body,
       configuredNetworkId: configuredNetwork(req)?.networkId,
       store,
       secret: REPORTER_SECRET(req),
@@ -369,19 +479,6 @@ export default async function handler(req, res) {
     if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-child' })) return
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
     const out = await handleReporterReadiness({
-      store,
-      secret: REPORTER_SECRET(req),
-      providedSecret: bearer(req),
-    })
-    return json(res, out.status, out.body)
-  }
-
-  if (req.method === 'POST' && action === 'base-child-lifecycle') {
-    if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-child' })) return
-    const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
-    const out = await handleBaseChildLifecycle({
-      request: req.body,
-      configuredNetworkId: configuredNetwork(req)?.networkId,
       store,
       secret: REPORTER_SECRET(req),
       providedSecret: bearer(req),

@@ -19,12 +19,18 @@ import {
   parsePhaseAttemptRow,
   toBaseChildRow,
   parseBaseChildRow,
+  baseChildBatchDigest,
+  baseChildRecoveryIdentity,
+  toBaseChildPhaseEventRow,
+  parseBaseChildPhaseEventRow,
+  parseBaseChildPhaseProjectionRow,
   canonicalJson,
   AgentIndexConflictError,
   AgentIndexStoreError,
   AgentIndexValidationError,
   BASE_CHILD_LIFECYCLE_STATUSES,
   RECEIPT_PHASES,
+  BASE_CHILD_RECOVERY_PHASES,
   nowSeconds,
 } from './models.js'
 import {
@@ -36,6 +42,7 @@ import {
 export const D1_TOTAL_BIND_PARAMETER_LIMIT = 100
 // Network-scoped address queries reserve one D1 bind for networkId.
 export const D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE = D1_TOTAL_BIND_PARAMETER_LIMIT - 1
+export const MAX_BASE_CHILD_BATCH_SIZE = 16
 
 function parseSourceId(sourceId) {
   if (typeof sourceId !== 'string' || !sourceId)
@@ -90,7 +97,7 @@ function sameAssociationEvidence(existing, association) {
 
 /** D1 repository. `db` is a Cloudflare D1 binding (prepare/bind/run/first/all + batch) — or, in
  * tests, an in-memory double with the same surface (see store.test.js). */
-export function createAgentIndexStore(db) {
+export function createAgentIndexStore(db, { enableLegacyBaseChildWrites = false } = {}) {
   async function probeReadiness() {
     await db.prepare('UPDATE agent_index_sources SET status = status WHERE 0').bind().run()
     await db
@@ -113,6 +120,45 @@ export function createAgentIndexStore(db) {
         `SELECT attempt_id, network_id, execution_id, allocation_id, attempt_kind,
                 phase, status, evidence_json, request_digest, receipt_version
          FROM execution_phase_attempts WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT idempotency_key, request_digest, burn_units_7, child_count
+         FROM base_child_intent_batches WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT idempotency_key, ordinal, network_id, binding_id, execution_id,
+                allocation_id, child_id, intent_digest
+         FROM base_child_intent_batch_items WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT event_id, network_id, binding_id, execution_id, allocation_id, child_id,
+                recovery_version, phase, state, evidence_json
+         FROM base_child_phase_events WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT network_id, binding_id, execution_id, allocation_id, child_id, phase,
+                owner_address, action, evidence_version, lease_token, acquired_at, expires_at
+         FROM base_child_recovery_leases WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT network_id, binding_id, execution_id, allocation_id, child_id, phase,
+                latest_event_id, recovery_version, state, evidence_json
+         FROM base_child_phase_projection WHERE 0`
       )
       .bind()
       .all()
@@ -155,7 +201,7 @@ export function createAgentIndexStore(db) {
     return {
       writable: true,
       schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
-      stores: { executionReceipts: true, baseChildIntents: true },
+      stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
     }
   }
 
@@ -670,21 +716,436 @@ export function createAgentIndexStore(db) {
     return (results ?? []).map(parseBaseChildRow)
   }
 
+  async function readBaseChildIntentBatch(idempotencyKey) {
+    const receipt = await db
+      .prepare(`SELECT * FROM base_child_intent_batches WHERE idempotency_key = ?`)
+      .bind(idempotencyKey)
+      .first()
+    if (!receipt) return null
+    const { results } = await db
+      .prepare(
+        `SELECT * FROM base_child_intent_batch_items
+         WHERE idempotency_key = ? ORDER BY ordinal ASC`
+      )
+      .bind(idempotencyKey)
+      .all()
+    return { receipt, items: results ?? [] }
+  }
+
+  function exactBatch(existing, { batch, requestDigest, idempotencyKey }) {
+    if (!existing || existing.receipt.idempotency_key !== idempotencyKey) return false
+    if (
+      existing.receipt.request_digest !== requestDigest ||
+      existing.receipt.burn_units_7 !== batch.burnUnits7 ||
+      existing.receipt.child_count !== batch.children.length ||
+      existing.items.length !== batch.children.length
+    ) {
+      return false
+    }
+    return batch.children.every((child, ordinal) => {
+      const item = existing.items[ordinal]
+      const row = toBaseChildRow(child, baseChildBatchDigest(child.intent))
+      return (
+        item?.ordinal === ordinal &&
+        item.network_id === row.network_id &&
+        item.binding_id === row.binding_id &&
+        item.execution_id === row.execution_id &&
+        item.allocation_id === row.allocation_id &&
+        item.child_id === row.child_id &&
+        item.owner_address === row.owner_address &&
+        item.agent_address === row.agent_address &&
+        item.intent_digest === row.intent_digest
+      )
+    })
+  }
+
+  async function reserveBaseChildIntentBatch({ batch, requestDigest, idempotencyKey }) {
+    if (
+      !batch ||
+      batch.idempotencyKey !== idempotencyKey ||
+      !idempotencyKey ||
+      !/^[0-9a-f]{64}$/.test(requestDigest ?? '') ||
+      !Array.isArray(batch.children) ||
+      batch.children.length === 0 ||
+      batch.children.length > MAX_BASE_CHILD_BATCH_SIZE ||
+      !/^(?:[1-9]\d*)$/.test(batch.burnUnits7 ?? '')
+    ) {
+      throw new AgentIndexValidationError('Invalid Base child intent batch')
+    }
+    const existing = await readBaseChildIntentBatch(idempotencyKey)
+    if (existing) {
+      if (!exactBatch(existing, { batch, requestDigest, idempotencyKey })) {
+        throw new AgentIndexConflictError('Base child batch idempotency conflict')
+      }
+      return { written: 0, duplicates: batch.children.length }
+    }
+
+    const rows = batch.children.map((child) =>
+      toBaseChildRow(child, baseChildBatchDigest(child.intent))
+    )
+    const first = rows[0]
+    const firstIntent = batch.children[0].intent
+    const createdAt = Math.min(...rows.map((row) => row.observed_at))
+    const statements = [
+      db
+        .prepare(
+          `INSERT INTO base_child_intent_batches
+             (idempotency_key, request_digest, network_id, owner_address, agent_address,
+              binding_id, run_id, grant_tx_hash, kernel_address, binding_hash, base_job_id,
+              burn_units_7, child_count, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .bind(
+          idempotencyKey,
+          requestDigest,
+          first.network_id,
+          first.owner_address,
+          first.agent_address,
+          first.binding_id,
+          firstIntent.runId,
+          firstIntent.grantTxHash,
+          firstIntent.kernelAddress,
+          firstIntent.bindingHash,
+          firstIntent.baseJobId,
+          batch.burnUnits7,
+          rows.length,
+          createdAt
+        ),
+    ]
+    rows.forEach((row, ordinal) => {
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO base_child_intents
+               (network_id, binding_id, execution_id, allocation_id, child_id,
+                owner_address, agent_address, intent_digest, intent_json, token, units, decimals,
+                lifecycle_sequence, lifecycle_status, lifecycle_evidence_json, recovery_version,
+                created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          )
+          .bind(
+            row.network_id,
+            row.binding_id,
+            row.execution_id,
+            row.allocation_id,
+            row.child_id,
+            row.owner_address,
+            row.agent_address,
+            row.intent_digest,
+            row.intent_json,
+            row.token,
+            row.units,
+            row.decimals,
+            row.lifecycle_sequence,
+            row.lifecycle_status,
+            row.lifecycle_evidence_json,
+            0,
+            row.observed_at,
+            row.observed_at
+          ),
+        db
+          .prepare(
+            `INSERT INTO base_child_lifecycle_events
+               (network_id, binding_id, allocation_id, child_id, sequence, idempotency_key,
+                status, evidence_json, observed_at)
+             VALUES (?,?,?,?,0,?,?,?,?)`
+          )
+          .bind(
+            row.network_id,
+            row.binding_id,
+            row.allocation_id,
+            row.child_id,
+            `${idempotencyKey}:${ordinal}:planned`,
+            row.lifecycle_status,
+            row.lifecycle_evidence_json,
+            row.observed_at
+          ),
+        db
+          .prepare(
+            `INSERT INTO base_child_intent_batch_items
+               (idempotency_key, ordinal, network_id, binding_id, execution_id, allocation_id,
+                child_id, owner_address, agent_address, intent_digest)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`
+          )
+          .bind(
+            idempotencyKey,
+            ordinal,
+            row.network_id,
+            row.binding_id,
+            row.execution_id,
+            row.allocation_id,
+            row.child_id,
+            row.owner_address,
+            row.agent_address,
+            row.intent_digest
+          )
+      )
+    })
+    try {
+      await db.batch(statements)
+      return { written: rows.length, duplicates: 0 }
+    } catch (error) {
+      const raced = await readBaseChildIntentBatch(idempotencyKey)
+      if (exactBatch(raced, { batch, requestDigest, idempotencyKey })) {
+        return { written: 0, duplicates: rows.length }
+      }
+      const message = String(error?.message ?? error)
+      if (/constraint|unique|immutable|conflict/i.test(message)) {
+        throw new AgentIndexConflictError('Base child batch conflict', { cause: error })
+      }
+      throw new AgentIndexStoreError('Base child batch store failed', { cause: error })
+    }
+  }
+
+  async function readBaseChildRecoveryBundle(identity) {
+    let normalized
+    try {
+      normalized = baseChildRecoveryIdentity(identity)
+    } catch (error) {
+      throw new AgentIndexValidationError('Invalid Base child recovery identity', { cause: error })
+    }
+    const args = [
+      normalized.networkId,
+      normalized.bindingId,
+      normalized.executionId,
+      normalized.allocationId,
+      normalized.childId,
+    ]
+    const row = await db
+      .prepare(
+        `SELECT * FROM base_child_intents
+         WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+           AND allocation_id = ? AND child_id = ?`
+      )
+      .bind(...args)
+      .first()
+    if (!row) return null
+    const [{ results: projectionRows }, { results: eventRows }] = await Promise.all([
+      db
+        .prepare(
+          `SELECT * FROM base_child_phase_projection
+           WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+             AND allocation_id = ? AND child_id = ?
+           ORDER BY CASE phase
+             WHEN 'cctp_burn' THEN 0 WHEN 'cctp_attestation' THEN 1
+             WHEN 'cctp_mint' THEN 2 WHEN 'base_deposit' THEN 3 END ASC`
+        )
+        .bind(...args)
+        .all(),
+      db
+        .prepare(
+          `SELECT * FROM base_child_phase_events
+           WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+             AND allocation_id = ? AND child_id = ?
+           ORDER BY recovery_version ASC, event_id ASC`
+        )
+        .bind(...args)
+        .all(),
+    ])
+    const intent = parseBaseChildRow(row)
+    return {
+      identity: normalized,
+      recoverable: intent.recoverable,
+      recoveryVersion: intent.recoveryVersion,
+      intent,
+      phases: (projectionRows ?? []).map(parseBaseChildPhaseProjectionRow),
+      events: (eventRows ?? []).map(parseBaseChildPhaseEventRow),
+    }
+  }
+
+  function exactPhaseEvent(row, eventRow) {
+    return (
+      row?.event_id === eventRow.event_id &&
+      row.network_id === eventRow.network_id &&
+      row.binding_id === eventRow.binding_id &&
+      row.execution_id === eventRow.execution_id &&
+      row.allocation_id === eventRow.allocation_id &&
+      row.child_id === eventRow.child_id &&
+      row.owner_address === eventRow.owner_address &&
+      row.agent_address === eventRow.agent_address &&
+      row.recovery_version === eventRow.recovery_version &&
+      row.phase === eventRow.phase &&
+      row.state === eventRow.state &&
+      row.evidence_digest === eventRow.evidence_digest &&
+      row.evidence_json === eventRow.evidence_json &&
+      row.observed_at === eventRow.observed_at
+    )
+  }
+
+  function allowPhaseTransition(projections, eventRow) {
+    const phaseIndex = BASE_CHILD_RECOVERY_PHASES.indexOf(eventRow.phase)
+    const current = projections.find((entry) => entry.phase === eventRow.phase)
+    for (let index = 0; index < phaseIndex; index += 1) {
+      const predecessor = projections.find(
+        (entry) => entry.phase === BASE_CHILD_RECOVERY_PHASES[index]
+      )
+      if (predecessor?.state !== 'confirmed') return false
+    }
+    if (!current) return true
+    if (current.state === 'confirmed') return false
+    const allowed = {
+      submitting: new Set(['submitted', 'confirmed', 'failed', 'unknown', 'blocked']),
+      submitted: new Set(['confirmed', 'failed', 'unknown', 'blocked']),
+      unknown: new Set(['confirmed']),
+      failed: new Set(),
+      blocked: new Set(),
+    }
+    if (!allowed[current.state]?.has(eventRow.state)) return false
+    if (current.state === 'unknown' && eventRow.state === 'confirmed') {
+      const previous = current.evidence ?? {}
+      const next = JSON.parse(eventRow.evidence_json)
+      for (const [key, value] of Object.entries(previous)) {
+        if (/(hash|id|intent)$/i.test(key) && next[key] !== value) return false
+      }
+    }
+    return true
+  }
+
+  async function advanceBaseChildPhase({ identity, expectedRecoveryVersion, event }) {
+    const existingEvent = await db
+      .prepare(`SELECT * FROM base_child_phase_events WHERE event_id = ?`)
+      .bind(event?.eventId ?? '')
+      .first()
+    const bundle = await readBaseChildRecoveryBundle(identity)
+    if (!bundle || !bundle.recoverable) {
+      throw new AgentIndexConflictError('Base child recovery identity conflict')
+    }
+    let eventRow
+    try {
+      eventRow = toBaseChildPhaseEventRow(
+        { identity, expectedRecoveryVersion, event },
+        { owner: bundle.intent.owner, agent: bundle.intent.agent }
+      )
+    } catch (error) {
+      throw new AgentIndexValidationError('Invalid Base child phase evidence', { cause: error })
+    }
+    if (existingEvent) {
+      if (!exactPhaseEvent(existingEvent, eventRow)) {
+        throw new AgentIndexConflictError('Base child phase event conflict')
+      }
+      return {
+        written: 0,
+        duplicates: 1,
+        eventId: eventRow.event_id,
+        recoveryVersion: eventRow.recovery_version,
+      }
+    }
+    if (
+      bundle.recoveryVersion !== expectedRecoveryVersion ||
+      !allowPhaseTransition(bundle.phases, eventRow)
+    ) {
+      throw new AgentIndexConflictError('Base child phase sequence conflict')
+    }
+    const identityArgs = [
+      eventRow.network_id,
+      eventRow.binding_id,
+      eventRow.execution_id,
+      eventRow.allocation_id,
+      eventRow.child_id,
+    ]
+    const statements = [
+      db
+        .prepare(
+          `INSERT INTO base_child_phase_events
+             (event_id, network_id, binding_id, execution_id, allocation_id, child_id,
+              owner_address, agent_address, recovery_version, phase, state, evidence_digest,
+              evidence_json, observed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .bind(
+          eventRow.event_id,
+          ...identityArgs,
+          eventRow.owner_address,
+          eventRow.agent_address,
+          eventRow.recovery_version,
+          eventRow.phase,
+          eventRow.state,
+          eventRow.evidence_digest,
+          eventRow.evidence_json,
+          eventRow.observed_at
+        ),
+      db
+        .prepare(
+          `UPDATE base_child_intents SET recovery_version = ?, updated_at = ?
+           WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+             AND allocation_id = ? AND child_id = ? AND recovery_version = ?`
+        )
+        .bind(
+          eventRow.recovery_version,
+          eventRow.observed_at,
+          ...identityArgs,
+          expectedRecoveryVersion
+        ),
+      db
+        .prepare(
+          `INSERT INTO base_child_phase_projection
+             (network_id, binding_id, execution_id, allocation_id, child_id, phase,
+              latest_event_id, recovery_version, state, evidence_digest, evidence_json, observed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(network_id, binding_id, allocation_id, child_id, phase) DO UPDATE SET
+             latest_event_id = excluded.latest_event_id,
+             recovery_version = excluded.recovery_version,
+             state = excluded.state,
+             evidence_digest = excluded.evidence_digest,
+             evidence_json = excluded.evidence_json,
+             observed_at = excluded.observed_at`
+        )
+        .bind(
+          ...identityArgs,
+          eventRow.phase,
+          eventRow.event_id,
+          eventRow.recovery_version,
+          eventRow.state,
+          eventRow.evidence_digest,
+          eventRow.evidence_json,
+          eventRow.observed_at
+        ),
+    ]
+    try {
+      await db.batch(statements)
+      return {
+        written: 1,
+        duplicates: 0,
+        eventId: eventRow.event_id,
+        recoveryVersion: eventRow.recovery_version,
+      }
+    } catch (error) {
+      const raced = await db
+        .prepare(`SELECT * FROM base_child_phase_events WHERE event_id = ?`)
+        .bind(eventRow.event_id)
+        .first()
+      if (exactPhaseEvent(raced, eventRow)) {
+        return {
+          written: 0,
+          duplicates: 1,
+          eventId: eventRow.event_id,
+          recoveryVersion: eventRow.recovery_version,
+        }
+      }
+      const message = String(error?.message ?? error)
+      if (/constraint|unique|CAS|conflict/i.test(message)) {
+        throw new AgentIndexConflictError('Base child phase evidence conflict', { cause: error })
+      }
+      throw new AgentIndexStoreError('Base child phase evidence store failed', { cause: error })
+    }
+  }
+
   async function createBaseChildIntent({ child, intentDigest, idempotencyKey }) {
     const row = toBaseChildRow(child, intentDigest)
     const now = row.observed_at
     const insertIntent = db
       .prepare(
         `INSERT INTO base_child_intents
-           (network_id, binding_id, allocation_id, child_id, owner_address, agent_address,
+           (network_id, binding_id, execution_id, allocation_id, child_id, owner_address, agent_address,
             intent_digest, intent_json, token, units, decimals, lifecycle_sequence,
-            lifecycle_status, lifecycle_evidence_json, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            lifecycle_status, lifecycle_evidence_json, recovery_version, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(network_id, binding_id, allocation_id, child_id) DO NOTHING`
       )
       .bind(
         row.network_id,
         row.binding_id,
+        row.execution_id,
         row.allocation_id,
         row.child_id,
         row.owner_address,
@@ -697,6 +1158,7 @@ export function createAgentIndexStore(db) {
         row.lifecycle_sequence,
         row.lifecycle_status,
         row.lifecycle_evidence_json,
+        0,
         now,
         now
       )
@@ -1552,10 +2014,13 @@ export function createAgentIndexStore(db) {
     commitAuthenticatedReceiptMutation,
     acquireRecoveryLease,
     releaseRecoveryLease,
-    createBaseChildIntent,
-    advanceBaseChildLifecycle,
+    ...(enableLegacyBaseChildWrites ? { createBaseChildIntent, advanceBaseChildLifecycle } : {}),
     readBaseChildIntent,
     readOwnerBaseChildIntents,
+    reserveBaseChildIntentBatch,
+    advanceBaseChildPhase,
+    readBaseChildRecoveryBundle,
+    readPublicBaseChildEvidence: readBaseChildRecoveryBundle,
     upsertMembership,
     upsertRunAllocation,
     readRunAllocation,

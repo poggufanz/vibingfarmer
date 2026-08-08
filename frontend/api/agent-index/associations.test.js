@@ -5,6 +5,8 @@ import {
   advanceBaseChildLifecycle,
   associationIdempotencyKey,
   ingestBaseChildIntent,
+  validateBaseChildIntentBatch,
+  MAX_BASE_CHILD_BATCH_SIZE,
   ingestAssociationReport,
   joinBaseAssociations,
 } from './associations.js'
@@ -36,6 +38,7 @@ describe('Base child intent identity', () => {
     owner: OWNER_A,
     agent: BRIDGE,
     bindingId: 'binding-shared',
+    executionId: 'run-42:exec:allocation-shared',
     allocationId: 'allocation-shared',
     childId,
     intent: {
@@ -44,6 +47,7 @@ describe('Base child intent identity', () => {
       decimals: 6,
       poolAddress: POOL,
       proxyTarget: 'aave-v3',
+      minShares: '0',
       runId: 'run-42',
       grantTxHash: 'grant-42',
       kernelAddress: KERNEL,
@@ -86,6 +90,7 @@ describe('Base child intent identity', () => {
       networkId: 'stellar-testnet',
       owner: OWNER_A,
       bindingId: 'binding-shared',
+      executionId: 'run-42:exec:allocation-shared',
       allocationId: 'allocation-shared',
       childId: 'child-a',
     })
@@ -126,6 +131,210 @@ describe('Base child intent identity', () => {
       })
     ).rejects.toThrow(/unexpected|private/i)
     expect(lifecycleStore.advanceBaseChildLifecycle).not.toHaveBeenCalled()
+  })
+})
+
+describe('Task 9 authoritative Base child batches', () => {
+  const child = (ordinal = 1, overrides = {}) => {
+    const allocationId = `run-42:bridge:allocation-${ordinal}`
+    return {
+      version: 1,
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      agent: BRIDGE,
+      bindingId: 'binding-42',
+      executionId: `run-42:exec:${allocationId}`,
+      allocationId,
+      childId: 'job-batch-42',
+      intent: {
+        token: 'USDC',
+        units: '1000000',
+        decimals: 6,
+        poolAddress: POOL,
+        proxyTarget: 'aave-v3',
+        minShares: '0',
+        runId: 'run-42',
+        grantTxHash: 'grant-42',
+        kernelAddress: KERNEL,
+        bindingHash: 'binding-hash-42',
+        baseJobId: 'job-batch-42',
+      },
+      lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: NOW },
+      ...overrides,
+    }
+  }
+  const batch = (overrides = {}) => ({
+    idempotencyKey: 'batch-idempotency-42',
+    burnUnits7: '20000000',
+    children: [child(1), child(2)],
+    ...overrides,
+  })
+  const membership = (overrides = {}) => ({
+    networkId: 'stellar-testnet',
+    address: BRIDGE,
+    owner: OWNER_A,
+    creator: LIVE_BRIDGE_ROUTER,
+    schemaVersion: 1,
+    kind: 'bridge',
+    grantTxHash: 'grant-42',
+    runId: 'run-42',
+    provenance: { source: 'router-event', generation: 'agent-v3-bridge' },
+    ...overrides,
+  })
+  const scope = (overrides = {}) => ({
+    owner: OWNER_A,
+    kind: 1,
+    target: MESSENGER,
+    token: TOKEN,
+    destination_domain: 6,
+    mint_recipient: KERNEL.slice(2).toLowerCase().padStart(64, '0'),
+    expiry: 2_100_000_000,
+    revoked: false,
+    cap_per_period: '30000000',
+    spent_in_period: '10000000',
+    period_start: 1_999_999_000,
+    period_duration: 10_000,
+    ...overrides,
+  })
+  const dependencies = (overrides = {}) => ({
+    store: {
+      readMembershipsByAgentAddresses: vi.fn(async () => [membership()]),
+      reserveBaseChildIntentBatch: vi.fn(async () => ({ written: 2, duplicates: 0 })),
+    },
+    authorityReader: vi.fn(async () => ({
+      scope: scope(),
+      ledgerSequence: 123456,
+      ledgerCloseSeconds: 2_000_000_000,
+    })),
+    poolTargets: POOL_TARGETS,
+    scopeRequirements: SCOPE_REQUIREMENTS,
+    supportedNetworkId: 'stellar-testnet',
+    ...overrides,
+  })
+
+  it('validates one common membership/scope and reserves exact BigInt headroom once', async () => {
+    const deps = dependencies()
+    await expect(validateBaseChildIntentBatch({ batch: batch(), ...deps })).resolves.toEqual({
+      written: 2,
+      duplicates: 0,
+    })
+    expect(deps.store.readMembershipsByAgentAddresses).toHaveBeenCalledTimes(1)
+    expect(deps.authorityReader).toHaveBeenCalledTimes(1)
+    expect(deps.store.reserveBaseChildIntentBatch).toHaveBeenCalledTimes(1)
+    expect(deps.store.reserveBaseChildIntentBatch.mock.calls[0][0]).toMatchObject({
+      idempotencyKey: 'batch-idempotency-42',
+      batch: { burnUnits7: '20000000' },
+    })
+    expect(deps.store.reserveBaseChildIntentBatch.mock.calls[0][0].requestDigest).toMatch(
+      /^[0-9a-f]{64}$/
+    )
+  })
+
+  it('uses the ledger boundary for period reset and accepts exact remaining headroom', async () => {
+    const atBoundary = dependencies({
+      authorityReader: vi.fn(async () => ({
+        scope: scope({
+          cap_per_period: '20000000',
+          spent_in_period: '20000000',
+          period_start: 1_999_999_990,
+          period_duration: 10,
+        }),
+        ledgerSequence: 123456,
+        ledgerCloseSeconds: 2_000_000_000,
+      })),
+    })
+    await expect(
+      validateBaseChildIntentBatch({ batch: batch(), ...atBoundary })
+    ).resolves.toMatchObject({ written: 2 })
+    const beforeBoundary = dependencies({
+      authorityReader: vi.fn(async () => ({
+        scope: scope({
+          cap_per_period: '20000000',
+          spent_in_period: '1',
+          period_start: 1_999_999_990,
+          period_duration: 10,
+        }),
+        ledgerSequence: 123455,
+        ledgerCloseSeconds: 1_999_999_999,
+      })),
+    })
+    await expect(
+      validateBaseChildIntentBatch({ batch: batch(), ...beforeBoundary })
+    ).rejects.toThrow(/headroom|cap/i)
+    expect(beforeBoundary.store.reserveBaseChildIntentBatch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['empty batch', () => batch({ children: [] })],
+    ['non-array batch', () => batch({ children: {} })],
+    [
+      'oversized batch',
+      () =>
+        batch({
+          children: Array.from({ length: MAX_BASE_CHILD_BATCH_SIZE + 1 }, (_, index) =>
+            child(index + 1)
+          ),
+        }),
+    ],
+    ['mixed owner', () => batch({ children: [child(1), child(2, { owner: OWNER_B })] })],
+    [
+      'mixed agent',
+      () => batch({ children: [child(1), child(2, { agent: `${BRIDGE.slice(0, -1)}D` })] }),
+    ],
+    [
+      'mixed run',
+      () =>
+        batch({
+          children: [child(1), child(2, { intent: { ...child(2).intent, runId: 'run-other' } })],
+        }),
+    ],
+    [
+      'duplicate allocation',
+      () => batch({ children: [child(1), child(1, { childId: 'job-other' })] }),
+    ],
+    [
+      'noncanonical execution',
+      () => batch({ children: [child(1), child(2, { executionId: 'run-42:exec:wrong' })] }),
+    ],
+    [
+      'unallowlisted pool',
+      () =>
+        batch({
+          children: [child(1), child(2, { intent: { ...child(2).intent, poolAddress: '0xdead' } })],
+        }),
+    ],
+    ['sum mismatch', () => batch({ burnUnits7: '20000010' })],
+  ])('rejects %s before persistence', async (_label, mutate) => {
+    const deps = dependencies()
+    await expect(validateBaseChildIntentBatch({ batch: mutate(), ...deps })).rejects.toThrow()
+    expect(deps.store.reserveBaseChildIntentBatch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['missing membership', { memberships: [] }],
+    ['wrong membership owner', { membership: membership({ owner: OWNER_B }) }],
+    ['wrong membership run', { membership: membership({ runId: 'run-other' }) }],
+    ['wrong scope owner', { scope: scope({ owner: OWNER_B }) }],
+    ['wrong messenger', { scope: scope({ target: `${MESSENGER.slice(0, -1)}F` }) }],
+    ['wrong token', { scope: scope({ token: `${TOKEN.slice(0, -1)}F` }) }],
+    ['wrong domain', { scope: scope({ destination_domain: 7 }) }],
+    ['expired scope', { scope: scope({ expiry: 2_000_000_000 }) }],
+    ['revoked scope', { scope: scope({ revoked: true }) }],
+    ['over-spent scope', { scope: scope({ spent_in_period: '30000001' }) }],
+  ])('rejects %s before persistence', async (_label, mutation) => {
+    const deps = dependencies()
+    if (mutation.memberships)
+      deps.store.readMembershipsByAgentAddresses.mockResolvedValue(mutation.memberships)
+    if (mutation.membership)
+      deps.store.readMembershipsByAgentAddresses.mockResolvedValue([mutation.membership])
+    if (mutation.scope)
+      deps.authorityReader.mockResolvedValue({
+        scope: mutation.scope,
+        ledgerSequence: 123456,
+        ledgerCloseSeconds: 2_000_000_000,
+      })
+    await expect(validateBaseChildIntentBatch({ batch: batch(), ...deps })).rejects.toThrow()
+    expect(deps.store.reserveBaseChildIntentBatch).not.toHaveBeenCalled()
   })
 })
 

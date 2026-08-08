@@ -12,6 +12,7 @@ import {
   ingestBaseChildIntent,
   joinBaseAssociations,
   mergeOwnerBaseAssociations,
+  validateBaseChildIntentBatch,
 } from './associations.js'
 import {
   applyAuthenticatedReceiptMutation,
@@ -27,6 +28,10 @@ import {
   AgentIndexStoreError,
   AgentIndexUnavailableError,
   AgentIndexValidationError,
+  assertNoSensitiveProperties,
+  baseChildBatchDigest,
+  baseChildRecoveryIdentity,
+  canonicalJson,
 } from './models.js'
 import {
   AGENT_CREATORS,
@@ -584,6 +589,206 @@ export async function handleBaseChildIntent({
   }
 }
 
+export async function handleBaseChildIntentBatch({
+  batch,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+  authorityReader,
+  poolTargets,
+  scopeRequirements,
+  maxBatchSize,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  try {
+    requireConfiguredNetwork(batch?.children?.[0]?.networkId, configuredNetworkId)
+    if (!store?.reserveBaseChildIntentBatch || !store?.readMembershipsByAgentAddresses) {
+      throw new AgentIndexUnavailableError('Base child batch store is unavailable')
+    }
+    if (typeof authorityReader !== 'function') {
+      throw new AgentIndexUnavailableError('Base child authority reader is unavailable')
+    }
+    if (maxBatchSize === null) {
+      throw new AgentIndexUnavailableError('Base child batch limit is misconfigured')
+    }
+    const result = await validateBaseChildIntentBatch({
+      batch,
+      store,
+      authorityReader,
+      poolTargets,
+      scopeRequirements,
+      supportedNetworkId: configuredNetworkId,
+      ...(maxBatchSize == null ? {} : { maxBatchSize }),
+    })
+    return {
+      status: 201,
+      body: {
+        acknowledged: true,
+        schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+        idempotencyKey: batch.idempotencyKey,
+        requestDigest: baseChildBatchDigest(batch),
+        identities: batch.children.map(baseChildRecoveryIdentity),
+        written: result.written,
+        duplicates: result.duplicates,
+      },
+    }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+const EVIDENCE_REQUEST_FIELDS = new Set([
+  'schemaVersion',
+  'identity',
+  'expectedRecoveryVersion',
+  'event',
+])
+const EVIDENCE_EVENT_FIELDS = new Set(['eventId', 'phase', 'state', 'evidence', 'observedAt'])
+const RECOVERY_IDENTITY_FIELDS = new Set([
+  'networkId',
+  'bindingId',
+  'executionId',
+  'allocationId',
+  'childId',
+])
+
+function requireExactObject(value, fields, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AgentIndexValidationError(`${label} must be an object`)
+  }
+  const keys = Object.keys(value)
+  const unexpected = keys.find((key) => !fields.has(key))
+  const missing = [...fields].find((key) => !Object.prototype.hasOwnProperty.call(value, key))
+  if (unexpected || missing) throw new AgentIndexValidationError(`Invalid ${label}`)
+}
+
+function validateEvidenceRequest(request) {
+  requireExactObject(request, EVIDENCE_REQUEST_FIELDS, 'Base child evidence request')
+  requireExactObject(request.identity, RECOVERY_IDENTITY_FIELDS, 'Base child recovery identity')
+  requireExactObject(request.event, EVIDENCE_EVENT_FIELDS, 'Base child evidence event')
+  if (request.schemaVersion !== AGENT_INDEX_SCHEMA_VERSION) {
+    throw new AgentIndexValidationError('Unsupported Base child evidence schema')
+  }
+  baseChildRecoveryIdentity(request.identity)
+  assertNoSensitiveProperties(request)
+  canonicalJson(request.event.evidence ?? {})
+}
+
+export async function handleBaseChildEvidenceWrite({
+  request,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  try {
+    validateEvidenceRequest(request)
+    requireConfiguredNetwork(request.identity.networkId, configuredNetworkId)
+    if (!store?.advanceBaseChildPhase) {
+      throw new AgentIndexUnavailableError('Base child evidence store is unavailable')
+    }
+    const result = await store.advanceBaseChildPhase(request)
+    return {
+      status: 201,
+      body: {
+        acknowledged: true,
+        schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+        identity: request.identity,
+        eventId: request.event.eventId,
+        phase: request.event.phase,
+        state: request.event.state,
+        recoveryVersion: result.recoveryVersion,
+        written: result.written,
+        duplicates: result.duplicates,
+      },
+    }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+const PUBLIC_EVIDENCE_FIELDS = new Set([
+  'burnTxHash',
+  'expectationDigest',
+  'messageDigest',
+  'attestationDigest',
+  'evidenceVersion',
+  'mintTxHash',
+  'userOpHash',
+  'transactionHash',
+  'blockNumber',
+  'blockHash',
+  'chainId',
+  'kernelAddress',
+  'yieldRouter',
+  'poolAddress',
+  'assets',
+  'minShares',
+  'shares',
+  'sender',
+  'nonce',
+  'entryPoint',
+  'reasonCode',
+  'token',
+  'units',
+  'decimals',
+  'destinationDomain',
+  'messageHash',
+  'attestationHash',
+  'mintRecipient',
+  'logIndex',
+])
+
+function publicEvidence(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const output = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (!PUBLIC_EVIDENCE_FIELDS.has(key)) continue
+    if (entry === null || ['string', 'number', 'boolean'].includes(typeof entry))
+      output[key] = entry
+  }
+  return output
+}
+
+export function publicBaseChildEvidenceSummary(bundle) {
+  return {
+    schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+    identity: baseChildRecoveryIdentity(bundle.identity),
+    recoverable: bundle.recoverable === true,
+    recoveryVersion: bundle.recoveryVersion,
+    phases: (bundle.phases ?? []).map((phase) => ({
+      phase: phase.phase,
+      state: phase.state,
+      eventId: phase.eventId,
+      recoveryVersion: phase.recoveryVersion,
+      observedAt: phase.observedAt,
+      evidence: publicEvidence(phase.evidence),
+    })),
+  }
+}
+
+export async function handleBaseChildEvidenceRead({ identity, configuredNetworkId, store }) {
+  try {
+    requireExactObject(identity, RECOVERY_IDENTITY_FIELDS, 'Base child recovery identity')
+    const normalized = baseChildRecoveryIdentity(identity)
+    if (configuredNetworkId !== undefined) {
+      requireConfiguredNetwork(normalized.networkId, configuredNetworkId)
+    }
+    if (!store?.readPublicBaseChildEvidence) {
+      throw new AgentIndexUnavailableError('Base child evidence store is unavailable')
+    }
+    const bundle = await store.readPublicBaseChildEvidence(normalized)
+    if (!bundle) return { status: 404, body: { error: 'Base child evidence not found' } }
+    return { status: 200, body: publicBaseChildEvidenceSummary(bundle) }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
 export async function handleReporterReadiness({ store, secret, providedSecret }) {
   const gate = await reporterGate({ secret, providedSecret })
   if (gate) return gate
@@ -596,7 +801,8 @@ export async function handleReporterReadiness({ store, secret, providedSecret })
       result?.writable !== true ||
       result?.schemaVersion !== AGENT_INDEX_SCHEMA_VERSION ||
       result?.stores?.executionReceipts !== true ||
-      result?.stores?.baseChildIntents !== true
+      result?.stores?.baseChildIntents !== true ||
+      result?.stores?.baseRecoveryEvidence !== true
     ) {
       return { status: 503, body: { error: 'Base child store unavailable', configured: true } }
     }
@@ -605,11 +811,15 @@ export async function handleReporterReadiness({ store, secret, providedSecret })
       body: {
         ready: true,
         schemaVersion: result.schemaVersion,
-        stores: { executionReceipts: true, baseChildIntents: true },
+        stores: {
+          executionReceipts: true,
+          baseChildIntents: true,
+          baseRecoveryEvidence: true,
+        },
       },
     }
-  } catch (error) {
-    return agentIndexFailure(error)
+  } catch {
+    return { status: 503, body: { error: 'Base child store unavailable', configured: true } }
   }
 }
 

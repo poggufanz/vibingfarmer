@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 // Domain vocabulary + row shaping for the agent owner-membership/coverage index (D1 tables in
 // migrations/0002_agent_index.sql). Pure, no I/O — store.js is the only module that touches the
 // database; this file is the single place the JS-record <-> SQL-column mapping and the shared
@@ -41,6 +43,20 @@ export const BASE_CHILD_LIFECYCLE_STATUSES = [
   'confirmed',
   'failed',
   'unknown',
+]
+export const BASE_CHILD_RECOVERY_PHASES = [
+  'cctp_burn',
+  'cctp_attestation',
+  'cctp_mint',
+  'base_deposit',
+]
+export const BASE_CHILD_RECOVERY_STATES = [
+  'submitting',
+  'submitted',
+  'confirmed',
+  'failed',
+  'unknown',
+  'blocked',
 ]
 
 export class AgentIndexError extends Error {
@@ -99,6 +115,14 @@ function requireDecimalString(value, field) {
   return value
 }
 
+function requireUnsignedIntegerString(value, field, { positive = false } = {}) {
+  requireString(value, field)
+  if (!/^(0|[1-9]\d*)$/.test(value) || (positive && value === '0')) {
+    throw new Error(`${field} must be a${positive ? ' positive' : 'n unsigned'} integer string`)
+  }
+  return value
+}
+
 function sensitiveKey(key) {
   const normalized = String(key)
     .toLowerCase()
@@ -106,7 +130,12 @@ function sensitiveKey(key) {
   return (
     normalized.includes('secret') ||
     normalized.includes('private') ||
-    normalized.includes('sessionkey')
+    normalized.includes('sessionkey') ||
+    normalized.includes('serializedapproval') ||
+    normalized.includes('capability') ||
+    normalized.includes('bearer') ||
+    normalized.includes('leasetoken') ||
+    normalized.includes('walletmaterial')
   )
 }
 
@@ -148,6 +177,9 @@ export function canonicalJson(value) {
     if (entry === null || typeof entry === 'string' || typeof entry === 'boolean') return entry
     if (typeof entry === 'number') {
       if (!Number.isFinite(entry)) throw new Error('non-finite numbers are not serializable')
+      if (Number.isInteger(entry) && !Number.isSafeInteger(entry)) {
+        throw new Error('integer JSON values must be safe integers; use an exact string')
+      }
       return entry
     }
     if (Array.isArray(entry)) return entry.map(canonicalize)
@@ -297,12 +329,20 @@ export function toBaseChildRow(child, intentDigest) {
   assertNoSensitiveProperties(c)
   assertExactUnits(c)
   const amount = requireAmount(c.intent, 'intent')
+  requireUnsignedIntegerString(amount.units, 'intent.units', { positive: true })
+  requireUnsignedIntegerString(c.intent?.minShares, 'intent.minShares')
+  const executionId = requireString(c.executionId, 'executionId')
+  const expectedExecutionId = `${requireString(c.intent?.runId, 'intent.runId')}:exec:${requireString(c.allocationId, 'allocationId')}`
+  if (executionId !== expectedExecutionId) {
+    throw new Error('executionId must match runId and allocationId')
+  }
   const lifecycle = c.lifecycle || {}
   if (lifecycle.sequence !== 0) throw new Error('first Base child lifecycle sequence must be 0')
   return {
     network_id: requireString(c.networkId, 'networkId'),
     binding_id: requireString(c.bindingId, 'bindingId'),
-    allocation_id: requireString(c.allocationId, 'allocationId'),
+    execution_id: executionId,
+    allocation_id: c.allocationId,
     child_id: requireString(c.childId, 'childId'),
     owner_address: requireString(c.owner, 'owner'),
     agent_address: requireString(c.agent, 'agent'),
@@ -311,6 +351,7 @@ export function toBaseChildRow(child, intentDigest) {
     token: amount.token,
     units: amount.units,
     decimals: amount.decimals,
+    recovery_version: 0,
     lifecycle_sequence: 0,
     lifecycle_status: requireOneOf(
       lifecycle.status,
@@ -318,22 +359,41 @@ export function toBaseChildRow(child, intentDigest) {
       'lifecycle.status'
     ),
     lifecycle_evidence_json: canonicalJson(lifecycle.evidence ?? {}),
-    observed_at: requireInt(lifecycle.observedAt, 'lifecycle.observedAt'),
+    observed_at: (() => {
+      const observedAt = requireInt(lifecycle.observedAt, 'lifecycle.observedAt')
+      if (!Number.isSafeInteger(observedAt) || observedAt < 0) {
+        throw new Error('lifecycle.observedAt must be a non-negative safe integer')
+      }
+      return observedAt
+    })(),
   }
 }
 
 export function parseBaseChildRow(row) {
   if (!row) return null
+  const intent = JSON.parse(row.intent_json)
+  const executionId = row.execution_id ?? null
+  if (executionId !== null && executionId !== `${intent?.runId}:exec:${row.allocation_id}`) {
+    throw new Error('persisted Base child execution mapping is invalid')
+  }
+  const recoveryVersion = row.recovery_version ?? 0
+  if (!Number.isSafeInteger(recoveryVersion) || recoveryVersion < 0) {
+    throw new Error('persisted Base child recovery version is invalid')
+  }
   return {
     version: 1,
     networkId: row.network_id,
     bindingId: row.binding_id,
+    executionId,
     allocationId: row.allocation_id,
     childId: row.child_id,
     owner: row.owner_address,
     agent: row.agent_address,
     intentDigest: row.intent_digest,
-    intent: JSON.parse(row.intent_json),
+    intent,
+    recoveryVersion,
+    recoverable: executionId !== null,
+    recoveryUnavailableReason: executionId === null ? 'legacy-execution-unmapped' : null,
     lifecycle: {
       sequence: row.lifecycle_sequence,
       status: row.lifecycle_status,
@@ -341,6 +401,96 @@ export function parseBaseChildRow(row) {
     },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+export function baseChildRecoveryIdentity(value) {
+  const identity = value || {}
+  return {
+    networkId: requireString(identity.networkId, 'networkId'),
+    bindingId: requireString(identity.bindingId, 'bindingId'),
+    executionId: requireString(identity.executionId, 'executionId'),
+    allocationId: requireString(identity.allocationId, 'allocationId'),
+    childId: requireString(identity.childId, 'childId'),
+  }
+}
+
+export function baseChildBatchDigest(batch) {
+  assertNoSensitiveProperties(batch)
+  return createHash('sha256').update(canonicalJson(batch)).digest('hex')
+}
+
+export function toBaseChildPhaseEventRow(report, subjects) {
+  const identity = baseChildRecoveryIdentity(report?.identity)
+  const expectedRecoveryVersion = report?.expectedRecoveryVersion
+  if (!Number.isSafeInteger(expectedRecoveryVersion) || expectedRecoveryVersion < 0) {
+    throw new Error('expectedRecoveryVersion must be a non-negative safe integer')
+  }
+  const event = report?.event || {}
+  const eventId = requireString(event.eventId, 'event.eventId')
+  if (!/^[0-9a-f]{64}$/.test(eventId)) throw new Error('event.eventId must be 64 lowercase hex')
+  const evidenceJson = canonicalJson(event.evidence ?? {})
+  const observedAt = requireInt(event.observedAt, 'event.observedAt')
+  if (!Number.isSafeInteger(observedAt) || observedAt < 0) {
+    throw new Error('event.observedAt must be a non-negative safe integer')
+  }
+  return {
+    event_id: eventId,
+    network_id: identity.networkId,
+    binding_id: identity.bindingId,
+    execution_id: identity.executionId,
+    allocation_id: identity.allocationId,
+    child_id: identity.childId,
+    owner_address: requireString(subjects?.owner, 'owner'),
+    agent_address: requireString(subjects?.agent, 'agent'),
+    recovery_version: expectedRecoveryVersion + 1,
+    phase: requireOneOf(event.phase, BASE_CHILD_RECOVERY_PHASES, 'event.phase'),
+    state: requireOneOf(event.state, BASE_CHILD_RECOVERY_STATES, 'event.state'),
+    evidence_digest: createHash('sha256').update(evidenceJson).digest('hex'),
+    evidence_json: evidenceJson,
+    observed_at: observedAt,
+  }
+}
+
+export function parseBaseChildPhaseEventRow(row) {
+  if (!row) return null
+  return {
+    eventId: row.event_id,
+    identity: {
+      networkId: row.network_id,
+      bindingId: row.binding_id,
+      executionId: row.execution_id,
+      allocationId: row.allocation_id,
+      childId: row.child_id,
+    },
+    owner: row.owner_address,
+    agent: row.agent_address,
+    recoveryVersion: row.recovery_version,
+    phase: row.phase,
+    state: row.state,
+    evidenceDigest: row.evidence_digest,
+    evidence: JSON.parse(row.evidence_json),
+    observedAt: row.observed_at,
+  }
+}
+
+export function parseBaseChildPhaseProjectionRow(row) {
+  if (!row) return null
+  return {
+    eventId: row.latest_event_id,
+    identity: {
+      networkId: row.network_id,
+      bindingId: row.binding_id,
+      executionId: row.execution_id,
+      allocationId: row.allocation_id,
+      childId: row.child_id,
+    },
+    recoveryVersion: row.recovery_version,
+    phase: row.phase,
+    state: row.state,
+    evidenceDigest: row.evidence_digest,
+    evidence: JSON.parse(row.evidence_json),
+    observedAt: row.observed_at,
   }
 }
 

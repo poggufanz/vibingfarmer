@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
 import { nativeToScVal, Keypair, StrKey } from '@stellar/stellar-sdk'
 import { symbolScVal, addrScVal } from '../../src/stellar/scval.js'
-import { createAgentIndexStore } from './store.js'
+import { createAgentIndexStore as createProductionAgentIndexStore } from './store.js'
 import { createOwnerReadCursorCodec } from './readCursor.js'
 import {
   handleIngest,
@@ -16,6 +16,9 @@ import {
   handleReceiptWrite,
   handleBaseChildIntent,
   handleBaseChildLifecycle,
+  handleBaseChildIntentBatch,
+  handleBaseChildEvidenceWrite,
+  handleBaseChildEvidenceRead,
   handleReporterReadiness,
   handleRecoveryRequest,
   LIVE_MANIFEST,
@@ -30,12 +33,17 @@ import { appendPhase, createAllocationReceipt } from '../../src/strategy/allocat
 import { aggregateOwnerPositions, readOwnerMoney } from '../../src/money/readOwnerMoney.js'
 import { BASE_POOL_CATALOG } from '../../src/config.js'
 
+// Historical read-path fixtures seed pre-Task-9 rows through the explicitly test/offline-only
+// compatibility writers. Production route construction uses the default, writer-free surface.
+const createAgentIndexStore = (db) =>
+  createProductionAgentIndexStore(db, { enableLegacyBaseChildWrites: true })
+
 // ── same in-memory-D1 helper as store.test.js / indexer.test.js ──
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'migrations')
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
 
-function fakeD1() {
+function fakeD1({ includeRecoveryEvidence = true } = {}) {
   const sqlite = new DatabaseSync(':memory:')
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0001_vf_gate.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
@@ -44,6 +52,9 @@ function fakeD1() {
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0005_execution_receipts.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0006_base_child_intents.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0007_agent_membership_owner_pages.sql'), 'utf8'))
+  if (includeRecoveryEvidence) {
+    sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0008_base_recovery_evidence.sql'), 'utf8'))
+  }
   function bound(sql, args) {
     return {
       run() {
@@ -92,7 +103,7 @@ describe('handleReporterReadiness', () => {
       body: {
         ready: true,
         schemaVersion: 1,
-        stores: { executionReceipts: true, baseChildIntents: true },
+        stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
       },
     })
   })
@@ -103,16 +114,32 @@ describe('handleReporterReadiness', () => {
       {
         writable: true,
         schemaVersion: 2,
-        stores: { executionReceipts: true, baseChildIntents: true },
+        stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
       },
     ],
     [
       'missing receipt-store acknowledgement',
-      { writable: true, schemaVersion: 1, stores: { baseChildIntents: true } },
+      {
+        writable: true,
+        schemaVersion: 1,
+        stores: { baseChildIntents: true, baseRecoveryEvidence: true },
+      },
     ],
     [
       'missing Base-child-store acknowledgement',
-      { writable: true, schemaVersion: 1, stores: { executionReceipts: true } },
+      {
+        writable: true,
+        schemaVersion: 1,
+        stores: { executionReceipts: true, baseRecoveryEvidence: true },
+      },
+    ],
+    [
+      'missing recovery-evidence acknowledgement',
+      {
+        writable: true,
+        schemaVersion: 1,
+        stores: { executionReceipts: true, baseChildIntents: true },
+      },
     ],
   ])('fails closed on %s', async (_label, readiness) => {
     const out = await handleReporterReadiness({
@@ -121,6 +148,18 @@ describe('handleReporterReadiness', () => {
       providedSecret: 'reporter-secret',
     })
     expect(out).toMatchObject({ status: 503, body: { configured: true } })
+  })
+
+  it('maps a 0007-only database to a non-disclosing 503', async () => {
+    const out = await handleReporterReadiness({
+      store: createAgentIndexStore(fakeD1({ includeRecoveryEvidence: false })),
+      secret: 'reporter-secret',
+      providedSecret: 'reporter-secret',
+    })
+    expect(out).toEqual({
+      status: 503,
+      body: { error: 'Base child store unavailable', configured: true },
+    })
   })
 })
 
@@ -195,6 +234,7 @@ describe('authenticated Base child handlers', () => {
     owner: OWNER_A,
     agent: AGENT_A,
     bindingId: 'binding-42',
+    executionId: 'run-42:exec:run-42:bridge:aave-v3',
     allocationId: 'run-42:bridge:aave-v3',
     childId: 'job-42',
     intent: {
@@ -203,6 +243,7 @@ describe('authenticated Base child handlers', () => {
       decimals: 6,
       poolAddress: `0x${'11'.repeat(20)}`,
       proxyTarget: 'aave-v3',
+      minShares: '0',
       bindingHash: 'hash-42',
       runId: 'run-42',
       grantTxHash: 'grant-42',
@@ -216,6 +257,7 @@ describe('authenticated Base child handlers', () => {
     networkId: 'stellar-testnet',
     owner: OWNER_A,
     bindingId: 'binding-42',
+    executionId: 'run-42:exec:run-42:bridge:aave-v3',
     allocationId: 'run-42:bridge:aave-v3',
     childId: 'job-42',
   }
@@ -330,6 +372,229 @@ describe('authenticated Base child handlers', () => {
         providedSecret: secret,
       })
     ).resolves.toMatchObject({ status: 409 })
+  })
+})
+
+describe('Task 9 authoritative batch and public evidence handlers', () => {
+  const secret = 'server-reporter-secret'
+  const pool = `0x${'11'.repeat(20)}`
+  const kernel = `0x${'22'.repeat(20)}`
+  const messenger = `C${'D'.repeat(55)}`
+  const token = `C${'E'.repeat(55)}`
+  const liveCreator = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
+  const identity = {
+    networkId: 'stellar-testnet',
+    bindingId: 'binding-batch-42',
+    executionId: 'run-batch-42:exec:allocation-1',
+    allocationId: 'allocation-1',
+    childId: 'job-batch-42',
+  }
+  const child = (ordinal = 1) => ({
+    version: 1,
+    networkId: 'stellar-testnet',
+    owner: OWNER_A,
+    agent: AGENT_A,
+    bindingId: 'binding-batch-42',
+    executionId: `run-batch-42:exec:allocation-${ordinal}`,
+    allocationId: `allocation-${ordinal}`,
+    childId: 'job-batch-42',
+    intent: {
+      token: 'USDC',
+      units: '1000000',
+      decimals: 6,
+      poolAddress: pool,
+      proxyTarget: 'aave-v3',
+      minShares: '0',
+      runId: 'run-batch-42',
+      grantTxHash: 'grant-batch-42',
+      kernelAddress: kernel,
+      bindingHash: 'binding-hash-batch-42',
+      baseJobId: 'job-batch-42',
+    },
+    lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 2_000_000_000_000 },
+  })
+  const batch = () => ({
+    idempotencyKey: 'batch-key-42',
+    burnUnits7: '20000000',
+    children: [child(1), child(2)],
+  })
+  const deps = (overrides = {}) => ({
+    configuredNetworkId: 'stellar-testnet',
+    secret,
+    providedSecret: secret,
+    poolTargets: new Map([[pool, 'aave-v3']]),
+    scopeRequirements: {
+      messenger,
+      token,
+      destinationDomain: 6,
+      reportToken: 'USDC',
+      reportDecimals: 6,
+      scopeDecimals: 7,
+    },
+    authorityReader: vi.fn(async () => ({
+      scope: {
+        owner: OWNER_A,
+        kind: 1,
+        target: messenger,
+        token,
+        destination_domain: 6,
+        mint_recipient: kernel.slice(2).padStart(64, '0'),
+        expiry: 2_100_000_000,
+        revoked: false,
+        cap_per_period: '30000000',
+        spent_in_period: '0',
+        period_start: 2_000_000_000,
+        period_duration: 3600,
+      },
+      ledgerSequence: 123456,
+      ledgerCloseSeconds: 2_000_000_001,
+    })),
+    ...overrides,
+  })
+
+  async function readyStore() {
+    const store = createAgentIndexStore(fakeD1())
+    await store.upsertMembership({
+      networkId: 'stellar-testnet',
+      agentAddress: AGENT_A,
+      ownerAddress: OWNER_A,
+      creatorAddress: liveCreator,
+      schemaVersion: 1,
+      kind: 'bridge',
+      creationLedger: 123,
+      creationTx: 'creation-tx',
+      grantTxHash: 'grant-batch-42',
+      runId: 'run-batch-42',
+      runOrdinal: 0,
+      provenance: { source: 'router-event', generation: 'agent-v3-bridge' },
+    })
+    return store
+  }
+
+  it('gates the batch before authority/store work and returns the exact ordered 201 ack', async () => {
+    const store = await readyStore()
+    const authorityReader = vi.fn()
+    await expect(
+      handleBaseChildIntentBatch({
+        batch: batch(),
+        store,
+        ...deps({ providedSecret: 'wrong', authorityReader }),
+      })
+    ).resolves.toEqual({
+      status: 401,
+      body: { error: 'Unauthorized' },
+    })
+    expect(authorityReader).not.toHaveBeenCalled()
+
+    const accepted = await handleBaseChildIntentBatch({ batch: batch(), store, ...deps() })
+    expect(accepted).toMatchObject({
+      status: 201,
+      body: {
+        acknowledged: true,
+        schemaVersion: 1,
+        idempotencyKey: 'batch-key-42',
+        requestDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+        identities: [
+          identity,
+          {
+            ...identity,
+            executionId: 'run-batch-42:exec:allocation-2',
+            allocationId: 'allocation-2',
+          },
+        ],
+        written: 2,
+        duplicates: 0,
+      },
+    })
+    expect(JSON.stringify(accepted.body)).not.toMatch(/scope|secret|owner|authorization/i)
+  })
+
+  it('writes evidence with CAS and publicly returns only allowlisted chain facts', async () => {
+    const store = await readyStore()
+    await handleBaseChildIntentBatch({ batch: batch(), store, ...deps() })
+    const report = {
+      schemaVersion: 1,
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'a'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'submitting',
+        evidence: {
+          burnTxHash: `0x${'ab'.repeat(32)}`,
+          amount: '9007199254740993000000',
+        },
+        observedAt: 2_000_000_000_100,
+      },
+    }
+    await expect(
+      handleBaseChildEvidenceWrite({ request: report, store, ...deps() })
+    ).resolves.toMatchObject({
+      status: 201,
+      body: { acknowledged: true, identity, eventId: 'a'.repeat(64), recoveryVersion: 1 },
+    })
+    const bundle = await store.readBaseChildRecoveryBundle(identity)
+    bundle.intent.internalDiagnostic = 'database-secret'
+    bundle.phases[0].evidence = {
+      ...bundle.phases[0].evidence,
+      nested: { sessionPrivateKey: 'private-key' },
+      leaseToken: 'lease-secret',
+    }
+    const readStore = { readPublicBaseChildEvidence: vi.fn(async () => bundle) }
+    const out = await handleBaseChildEvidenceRead({ identity, store: readStore })
+    expect(out).toMatchObject({
+      status: 200,
+      body: {
+        schemaVersion: 1,
+        identity,
+        recoverable: true,
+        recoveryVersion: 1,
+        phases: [
+          {
+            phase: 'cctp_burn',
+            state: 'submitting',
+            evidence: { burnTxHash: `0x${'ab'.repeat(32)}` },
+          },
+        ],
+      },
+    })
+    expect(JSON.stringify(out.body)).not.toMatch(/private|secret|lease|intent|diagnostic|amount/i)
+  })
+
+  it('requires all five public identity fields and maps unknown exact tuples to 404', async () => {
+    const store = { readPublicBaseChildEvidence: vi.fn(async () => null) }
+    for (const field of Object.keys(identity)) {
+      const invalid = { ...identity }
+      delete invalid[field]
+      await expect(
+        handleBaseChildEvidenceRead({ identity: invalid, store })
+      ).resolves.toMatchObject({ status: 400 })
+    }
+    await expect(handleBaseChildEvidenceRead({ identity, store })).resolves.toEqual({
+      status: 404,
+      body: { error: 'Base child evidence not found' },
+    })
+  })
+
+  it('rejects extra evidence fields before the store and changed event replay as 409', async () => {
+    const store = { advanceBaseChildPhase: vi.fn() }
+    const request = {
+      schemaVersion: 1,
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'a'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'submitting',
+        evidence: {},
+        observedAt: 1,
+      },
+      serializedApproval: 'private',
+    }
+    await expect(
+      handleBaseChildEvidenceWrite({ request, store, ...deps() })
+    ).resolves.toMatchObject({ status: 400 })
+    expect(store.advanceBaseChildPhase).not.toHaveBeenCalled()
   })
 })
 
@@ -1029,6 +1294,7 @@ describe('handleRead — Base association envelope', () => {
         owner: OWNER_A,
         agent,
         bindingId,
+        executionId: `${runId}:exec:${allocationId}`,
         allocationId,
         childId,
         intent: {
@@ -1037,6 +1303,7 @@ describe('handleRead — Base association envelope', () => {
           decimals: 6,
           poolAddress: BASE_POOL_CATALOG[0].address,
           proxyTarget: 'aave-v3',
+          minShares: '0',
           bindingHash: `binding-hash-${suffix}`,
           runId,
           grantTxHash: `grant-${suffix}`,
@@ -1058,6 +1325,7 @@ describe('handleRead — Base association envelope', () => {
           networkId: ROUTER_V1.networkId,
           owner: OWNER_A,
           bindingId,
+          executionId: `${runId}:exec:${allocationId}`,
           allocationId,
           childId,
         },
@@ -1394,6 +1662,7 @@ describe('handleRead — Base association envelope', () => {
       owner: OWNER_A,
       agent: AGENT_A,
       bindingId,
+      executionId: `run-new:exec:${allocationId}`,
       allocationId,
       childId,
       intent: {
@@ -1402,6 +1671,7 @@ describe('handleRead — Base association envelope', () => {
         decimals: 6,
         poolAddress,
         proxyTarget: 'aave-v3',
+        minShares: '0',
         bindingHash: 'binding-hash-new',
         runId: 'run-new',
         grantTxHash: 'grant-new',
@@ -1431,6 +1701,7 @@ describe('handleRead — Base association envelope', () => {
             networkId: ROUTER_V1.networkId,
             owner: OWNER_A,
             bindingId,
+            executionId: `run-new:exec:${allocationId}`,
             allocationId,
             childId,
           },
@@ -1547,6 +1818,7 @@ describe('handleRead — Base association envelope', () => {
         owner: OWNER_A,
         agent: AGENT_A,
         bindingId,
+        executionId: `run-malformed:exec:${allocationId}`,
         allocationId,
         childId,
         intent: {
@@ -1555,6 +1827,7 @@ describe('handleRead — Base association envelope', () => {
           decimals: 6,
           poolAddress: BASE_POOL_CATALOG[0].address,
           proxyTarget: 'aave-v3',
+          minShares: '0',
           bindingHash: 'binding-hash-malformed',
           runId: 'run-malformed',
           grantTxHash: 'grant-malformed',
@@ -1574,6 +1847,7 @@ describe('handleRead — Base association envelope', () => {
           networkId: ROUTER_V1.networkId,
           owner: OWNER_A,
           bindingId,
+          executionId: `run-malformed:exec:${allocationId}`,
           allocationId,
           childId,
         },

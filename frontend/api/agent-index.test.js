@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Keypair, Networks, StrKey } from '@stellar/stellar-sdk'
+import { Keypair, Networks, StrKey, rpc } from '@stellar/stellar-sdk'
 
 const mocked = vi.hoisted(() => ({
   store: null,
@@ -120,34 +120,34 @@ function receiptMutation() {
   }
 }
 
-function childIntent(childId = 'child-route-1') {
-  return {
+function childBatch() {
+  const poolAddress = '0x389250872044368759d3db5c09b2706a6628d4e0'
+  const kernelAddress = `0x${'22'.repeat(20)}`
+  const children = [1, 2].map((ordinal) => ({
     version: 1,
     networkId: NETWORK,
     owner: OWNER,
     agent: AGENT,
-    bindingId: 'binding-route-1',
-    allocationId: 'allocation-route-1',
-    childId,
+    bindingId: 'binding-route-batch',
+    executionId: `run-route-1:exec:allocation-route-${ordinal}`,
+    allocationId: `allocation-route-${ordinal}`,
+    childId: 'job-route-batch',
     intent: {
       token: 'USDC',
       units: '1000000',
       decimals: 6,
-      poolAddress: `0x${'11'.repeat(20)}`,
+      poolAddress,
       proxyTarget: 'aave-v3',
+      minShares: '0',
       runId: 'run-route-1',
       grantTxHash: 'grant-route-1',
-      kernelAddress: `0x${'22'.repeat(20)}`,
-      bindingHash: 'binding-hash-route-1',
-      baseJobId: childId,
+      kernelAddress,
+      bindingHash: 'binding-hash-route-batch',
+      baseJobId: 'job-route-batch',
     },
-    lifecycle: {
-      sequence: 0,
-      status: 'planned',
-      evidence: { reviewed: true },
-      observedAt: 2_000_000_000_000,
-    },
-  }
+    lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 2_000_000_000_000 },
+  }))
+  return { idempotencyKey: 'route-batch-key-1', burnUnits7: '20000000', children }
 }
 
 function fakeStore(overrides = {}) {
@@ -172,10 +172,39 @@ function fakeStore(overrides = {}) {
     probeReadiness: vi.fn(async () => ({
       writable: true,
       schemaVersion: 1,
-      stores: { executionReceipts: true, baseChildIntents: true },
+      stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
     })),
     createBaseChildIntent: vi.fn(async () => ({ written: 1, duplicates: 0, sequence: 0 })),
     advanceBaseChildLifecycle: vi.fn(async () => ({ written: 1, duplicates: 0, sequence: 1 })),
+    readMembershipsByAgentAddresses: vi.fn(async () => [
+      {
+        networkId: NETWORK,
+        address: AGENT,
+        owner: OWNER,
+        creator: ROUTER_V2,
+        schemaVersion: 1,
+        kind: 'bridge',
+        grantTxHash: 'grant-route-1',
+        runId: 'run-route-1',
+        provenance: { source: 'router-event', generation: 'agent-v3-bridge' },
+      },
+    ]),
+    reserveBaseChildIntentBatch: vi.fn(async ({ batch }) => ({
+      written: batch.children.length,
+      duplicates: 0,
+    })),
+    advanceBaseChildPhase: vi.fn(async () => ({
+      written: 1,
+      duplicates: 0,
+      recoveryVersion: 1,
+    })),
+    readPublicBaseChildEvidence: vi.fn(async (identity) => ({
+      identity,
+      recoverable: true,
+      recoveryVersion: 1,
+      phases: [],
+      events: [],
+    })),
     ...overrides,
   }
 }
@@ -840,6 +869,197 @@ describe('/api/agent-index authenticated execution routes', () => {
 })
 
 describe('/api/agent-index operational evidence routes', () => {
+  it('routes one authoritative Base child batch with request-scoped authority facts', async () => {
+    const messenger = `C${'D'.repeat(55)}`
+    const token = `C${'E'.repeat(55)}`
+    const batch = childBatch()
+    const kernel = batch.children[0].intent.kernelAddress
+    const latest = vi.spyOn(rpc.Server.prototype, 'getLatestLedger').mockResolvedValue({
+      sequence: 123456,
+      closeTime: 2_000_000_001,
+    })
+    mocked.readContract.mockImplementation(async ({ contract, method }) => {
+      if (contract === AGENT && method === 'scope_of') {
+        return {
+          owner: OWNER,
+          kind: 1,
+          target: messenger,
+          token,
+          destination_domain: 6,
+          mint_recipient: kernel.slice(2).padStart(64, '0'),
+          expiry: 2_100_000_000,
+          revoked: false,
+          cap_per_period: '30000000',
+          spent_in_period: '0',
+          period_start: 2_000_000_000,
+          period_duration: 3600,
+        }
+      }
+      throw new Error('unexpected authority read')
+    })
+    const wrongGlobalMessenger = process.env.SOROBAN_CCTP_TOKEN_MESSENGER
+    process.env.SOROBAN_CCTP_TOKEN_MESSENGER = `C${'F'.repeat(55)}`
+    try {
+      const out = await call(
+        mockReq({
+          method: 'POST',
+          url: '/api/agent-index?action=base-child-intent-batch',
+          body: batch,
+          requestEnv: env({
+            SOROBAN_CCTP_TOKEN_MESSENGER: messenger,
+            SOROBAN_CCTP_USDC_ADDRESS: token,
+          }),
+        })
+      )
+      expect(out.res.statusCode).toBe(201)
+      expect(out.body).toMatchObject({
+        acknowledged: true,
+        idempotencyKey: 'route-batch-key-1',
+        identities: batch.children.map(
+          ({ networkId, bindingId, executionId, allocationId, childId }) => ({
+            networkId,
+            bindingId,
+            executionId,
+            allocationId,
+            childId,
+          })
+        ),
+      })
+      expect(mocked.store.reserveBaseChildIntentBatch).toHaveBeenCalledTimes(1)
+      expect(latest).toHaveBeenCalledTimes(1)
+    } finally {
+      if (wrongGlobalMessenger === undefined) delete process.env.SOROBAN_CCTP_TOKEN_MESSENGER
+      else process.env.SOROBAN_CCTP_TOKEN_MESSENGER = wrongGlobalMessenger
+      latest.mockRestore()
+    }
+  })
+
+  it('routes reporter evidence writes and exact public evidence reads before owner lookup', async () => {
+    const identity = {
+      networkId: NETWORK,
+      bindingId: 'binding-route-batch',
+      executionId: 'run-route-1:exec:allocation-route-1',
+      allocationId: 'allocation-route-1',
+      childId: 'job-route-batch',
+    }
+    const write = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=base-child-evidence',
+        body: {
+          schemaVersion: 1,
+          identity,
+          expectedRecoveryVersion: 0,
+          event: {
+            eventId: 'a'.repeat(64),
+            phase: 'cctp_burn',
+            state: 'submitting',
+            evidence: {},
+            observedAt: 2_000_000_000_100,
+          },
+        },
+      })
+    )
+    expect(write.res.statusCode).toBe(201)
+    const query = new URLSearchParams({
+      action: 'base-child-evidence',
+      network: identity.networkId,
+      binding: identity.bindingId,
+      execution: identity.executionId,
+      allocation: identity.allocationId,
+      child: identity.childId,
+    })
+    const readReq = mockReq({ url: `/api/agent-index?${query}` })
+    delete readReq.headers.authorization
+    const read = await call(readReq)
+    expect(read.res.statusCode).toBe(200)
+    expect(read.body).toMatchObject({ identity, recoverable: true, recoveryVersion: 1 })
+    expect(mocked.store.readPublicBaseChildEvidence).toHaveBeenCalledWith(identity)
+    expect(read.res.headers['Access-Control-Allow-Origin']).toBe('*')
+  })
+
+  it('fails public evidence reads closed when the configured network/passphrase is invalid', async () => {
+    const query = new URLSearchParams({
+      action: 'base-child-evidence',
+      network: NETWORK,
+      binding: 'binding-route-batch',
+      execution: 'run-route-1:exec:allocation-route-1',
+      allocation: 'allocation-route-1',
+      child: 'job-route-batch',
+    })
+    const req = mockReq({
+      url: `/api/agent-index?${query}`,
+      requestEnv: env({ STELLAR_NETWORK_PASSPHRASE: 'invalid-passphrase' }),
+    })
+    delete req.headers.authorization
+    const out = await call(req)
+    expect(out.res.statusCode).toBe(503)
+    expect(mocked.store.readPublicBaseChildEvidence).not.toHaveBeenCalled()
+  })
+
+  it('rate limits public evidence reads in their tighter bucket before store access', async () => {
+    const query = new URLSearchParams({
+      action: 'base-child-evidence',
+      network: NETWORK,
+      binding: 'binding-route-batch',
+      execution: 'run-route-1:exec:allocation-route-1',
+      allocation: 'allocation-route-1',
+      child: 'job-route-batch',
+    })
+    let out
+    for (let attempt = 0; attempt < 21; attempt += 1) {
+      const req = mockReq({
+        url: `/api/agent-index?${query}`,
+        ip: '203.0.113.249',
+      })
+      delete req.headers.authorization
+      out = await call(req)
+    }
+    expect(out.res.statusCode).toBe(429)
+    expect(mocked.store.readPublicBaseChildEvidence).toHaveBeenCalledTimes(20)
+  })
+
+  it('rejects a batch bearer before RPC authority reads', async () => {
+    const latest = vi.spyOn(rpc.Server.prototype, 'getLatestLedger')
+    const req = mockReq({
+      method: 'POST',
+      url: '/api/agent-index?action=base-child-intent-batch',
+      body: childBatch(),
+    })
+    req.headers.authorization = 'Bearer wrong-secret'
+    const out = await call(req)
+    expect(out.res.statusCode).toBe(401)
+    expect(mocked.readContract).not.toHaveBeenCalled()
+    expect(latest).not.toHaveBeenCalled()
+    latest.mockRestore()
+  })
+
+  it('accepts idempotency only in the exact batch body, never from a header fallback', async () => {
+    const body = childBatch()
+    delete body.idempotencyKey
+    const req = mockReq({
+      method: 'POST',
+      url: '/api/agent-index?action=base-child-intent-batch',
+      body,
+    })
+    req.headers['idempotency-key'] = 'header-key-must-not-be-used'
+    const out = await call(req)
+    expect(out.res.statusCode).toBe(400)
+    expect(mocked.store.reserveBaseChildIntentBatch).not.toHaveBeenCalled()
+  })
+
+  it.each(['base-child-intent', 'base-child-lifecycle'])(
+    'retires the unauthoritative %s writer',
+    async (action) => {
+      const out = await call(
+        mockReq({ method: 'POST', url: `/api/agent-index?action=${action}`, body: {} })
+      )
+      expect(out.res.statusCode).toBe(404)
+      expect(mocked.store.createBaseChildIntent).not.toHaveBeenCalled()
+      expect(mocked.store.advanceBaseChildLifecycle).not.toHaveBeenCalled()
+    }
+  )
+
   // Defect caught: the relayer had no authenticated, schema-pinned way to prove that the D1
   // binding was present and writable before consuming durable outbox rows.
   it('exposes authenticated Base child schema/store readiness', async () => {
@@ -854,7 +1074,7 @@ describe('/api/agent-index operational evidence routes', () => {
     expect(accepted.body).toEqual({
       ready: true,
       schemaVersion: 1,
-      stores: { executionReceipts: true, baseChildIntents: true },
+      stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
     })
     expect(mocked.store.probeReadiness).toHaveBeenCalledTimes(1)
 
@@ -899,28 +1119,6 @@ describe('/api/agent-index operational evidence routes', () => {
       },
       200,
     ],
-    ['Base child commit', 'base-child-intent', { child: childIntent() }, 201],
-    [
-      'Base child lifecycle advance',
-      'base-child-lifecycle',
-      {
-        identity: {
-          networkId: NETWORK,
-          owner: OWNER,
-          bindingId: 'binding-route-1',
-          allocationId: 'allocation-route-1',
-          childId: 'child-route-1',
-        },
-        expectedSequence: 0,
-        lifecycle: {
-          sequence: 1,
-          status: 'submitted',
-          evidence: { userOpHash: '0xroute' },
-          observedAt: 2_000_000_000_001,
-        },
-      },
-      200,
-    ],
   ])(
     'makes the %s route reachable behind reporter authentication',
     async (_label, action, body, status) => {
@@ -934,43 +1132,16 @@ describe('/api/agent-index operational evidence routes', () => {
     }
   )
 
-  it.each([
-    ['lease-acquire', { networkId: NETWORK }],
-    [
-      'base-child-intent',
-      {
-        child: {
-          ...childIntent(),
-          lifecycle: { sequence: 0, evidence: {}, observedAt: 2_000_000_000_000 },
-        },
-      },
-    ],
-    [
-      'base-child-lifecycle',
-      {
-        identity: {
-          networkId: NETWORK,
-          owner: OWNER,
-          bindingId: 'binding-route-1',
-          allocationId: 'allocation-route-1',
-          childId: 'child-route-1',
-        },
-        expectedSequence: 0,
-        lifecycle: {
-          sequence: 2,
-          status: 'submitted',
-          evidence: {},
-          observedAt: 2_000_000_000_001,
-        },
-      },
-    ],
-  ])('maps an invalid %s body to a non-disclosing 400', async (action, body) => {
-    const out = await call(
-      mockReq({ method: 'POST', url: `/api/agent-index?action=${action}`, body })
-    )
-    expect(out.res.statusCode).toBe(400)
-    expect(out.body).toEqual({ error: 'Invalid agent-index request' })
-  })
+  it.each([['lease-acquire', { networkId: NETWORK }]])(
+    'maps an invalid %s body to a non-disclosing 400',
+    async (action, body) => {
+      const out = await call(
+        mockReq({ method: 'POST', url: `/api/agent-index?action=${action}`, body })
+      )
+      expect(out.res.statusCode).toBe(400)
+      expect(out.body).toEqual({ error: 'Invalid agent-index request' })
+    }
+  )
 
   it('maps an unexpected store bug to a non-disclosing 500', async () => {
     mocked.store = fakeStore({

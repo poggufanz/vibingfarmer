@@ -4,9 +4,12 @@ import {
 } from '../../src/stellar/agentCreatorManifest.js'
 import {
   AgentIndexValidationError,
+  AgentIndexUnavailableError,
+  AgentIndexConflictError,
   BASE_CHILD_LIFECYCLE_STATUSES,
   assertNoSensitiveProperties,
   canonicalJson,
+  baseChildBatchDigest,
   toBaseChildRow,
 } from './models.js'
 import { receiptIntentDigest } from './executionReceipts.js'
@@ -53,6 +56,7 @@ const BASE_CHILD_FIELDS = new Set([
   'owner',
   'agent',
   'bindingId',
+  'executionId',
   'allocationId',
   'childId',
   'intent',
@@ -62,6 +66,7 @@ const BASE_CHILD_IDENTITY_FIELDS = new Set([
   'networkId',
   'owner',
   'bindingId',
+  'executionId',
   'allocationId',
   'childId',
 ])
@@ -71,6 +76,7 @@ const BASE_CHILD_INTENT_FIELDS = new Set([
   'decimals',
   'poolAddress',
   'proxyTarget',
+  'minShares',
   'runId',
   'grantTxHash',
   'kernelAddress',
@@ -83,6 +89,11 @@ const LIVE_BRIDGE_GENERATION = AGENT_WASM_GENERATIONS.find(
   (generation) => generation.generation === 'agent-v3-bridge'
 )
 const LIVE_BRIDGE_CREATORS = new Set(LIVE_BRIDGE_GENERATION?.creatorAddresses ?? [])
+// Each child expands to three D1 statements (intent, planned event, receipt item). Sixteen keeps
+// one reservation bounded to 49 statements while remaining configurable downward per deployment.
+export const MAX_BASE_CHILD_BATCH_SIZE = 16
+
+const BASE_CHILD_BATCH_FIELDS = new Set(['idempotencyKey', 'burnUnits7', 'children'])
 
 export function baseChildIdempotencyKey(child) {
   const digest = receiptIntentDigest(child?.intent)
@@ -100,6 +111,7 @@ export function baseChildIdentity(child) {
     networkId: requiredString(child?.networkId, 'networkId'),
     owner: requiredString(child?.owner, 'owner'),
     bindingId: requiredString(child?.bindingId, 'bindingId'),
+    executionId: requiredString(child?.executionId, 'executionId'),
     allocationId: requiredString(child?.allocationId, 'allocationId'),
     childId: requiredString(child?.childId, 'childId'),
   }
@@ -127,6 +139,244 @@ export async function ingestBaseChildIntent({ child, store }) {
   })
 }
 
+function exactUnsigned(value, field, { positive = false } = {}) {
+  if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) {
+    throw new Error(`${field} must be an unsigned integer string`)
+  }
+  if (positive && value === '0') throw new Error(`${field} must be positive`)
+  return BigInt(value)
+}
+
+function scopeInteger(value, field, { positive = false } = {}) {
+  let parsed
+  if (typeof value === 'bigint') parsed = value
+  else if (typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)) parsed = BigInt(value)
+  else if (Number.isSafeInteger(value) && value >= 0) parsed = BigInt(value)
+  else throw new Error(`live bridge scope ${field} is invalid`)
+  if (parsed < 0n || (positive && parsed === 0n)) {
+    throw new Error(`live bridge scope ${field} is invalid`)
+  }
+  return parsed
+}
+
+function validateBatchMembership(membership, common) {
+  if (
+    !membership ||
+    membership.address !== common.agent ||
+    membership.owner !== common.owner ||
+    membership.kind !== 'bridge' ||
+    membership.grantTxHash !== common.grantTxHash ||
+    membership.runId !== common.runId ||
+    membership.schemaVersion !== AGENT_INDEX_SCHEMA_VERSION ||
+    membership.provenance?.source !== 'router-event' ||
+    membership.provenance?.generation !== LIVE_BRIDGE_GENERATION?.generation ||
+    !LIVE_BRIDGE_CREATORS.has(membership.creator)
+  ) {
+    throw new Error('bridge membership is not the live reviewed grant instance')
+  }
+}
+
+function validateBatchScope({ snapshot, common, burnUnits7, requirements }) {
+  if (
+    !snapshot ||
+    !Number.isSafeInteger(snapshot.ledgerSequence) ||
+    snapshot.ledgerSequence < 1 ||
+    !Number.isSafeInteger(snapshot.ledgerCloseSeconds) ||
+    snapshot.ledgerCloseSeconds < 0 ||
+    !snapshot.scope
+  ) {
+    throw new AgentIndexUnavailableError('Fresh bridge authority snapshot is unavailable')
+  }
+  const scope = snapshot.scope
+  const ledgerClose = BigInt(snapshot.ledgerCloseSeconds)
+  const expiry = scopeInteger(scope.expiry, 'expiry')
+  const cap = scopeInteger(scope.cap_per_period, 'cap_per_period')
+  const spent = scopeInteger(scope.spent_in_period, 'spent_in_period')
+  const periodStart = scopeInteger(scope.period_start, 'period_start')
+  const periodDuration = scopeInteger(scope.period_duration, 'period_duration', { positive: true })
+  if (spent > cap) throw new Error('live bridge scope spent exceeds cap')
+  const checks = [
+    scope.owner === common.owner,
+    Number(scope.kind) === 1,
+    scope.target === requirements.messenger,
+    scope.token === requirements.token,
+    Number(scope.destination_domain) === requirements.destinationDomain,
+    mintRecipientHex(scope.mint_recipient) === expectedMintRecipient(common.kernelAddress),
+    expiry > ledgerClose,
+    scope.revoked === false,
+  ]
+  if (checks.some((value) => !value)) throw new Error('live bridge scope does not authorize batch')
+  const rolled = ledgerClose >= periodStart + periodDuration
+  const effectiveSpent = rolled ? 0n : spent
+  const remaining = cap - effectiveSpent
+  if (BigInt(burnUnits7) > remaining) throw new Error('Base child batch exceeds scope headroom')
+}
+
+export async function validateBaseChildIntentBatch({
+  batch,
+  store,
+  authorityReader,
+  poolTargets,
+  scopeRequirements,
+  supportedNetworkId = 'stellar-testnet',
+  maxBatchSize = MAX_BASE_CHILD_BATCH_SIZE,
+}) {
+  if (!store?.readMembershipsByAgentAddresses || !store?.reserveBaseChildIntentBatch) {
+    throw new AgentIndexUnavailableError('Base child batch store is unavailable')
+  }
+  if (typeof authorityReader !== 'function') {
+    throw new AgentIndexUnavailableError('Base child authority reader is unavailable')
+  }
+  try {
+    requireExactFields(batch, BASE_CHILD_BATCH_FIELDS, 'Base child batch')
+    requiredString(batch.idempotencyKey, 'idempotencyKey')
+    if (
+      !Number.isSafeInteger(maxBatchSize) ||
+      maxBatchSize < 1 ||
+      maxBatchSize > MAX_BASE_CHILD_BATCH_SIZE
+    ) {
+      throw new Error('maxBatchSize is invalid')
+    }
+    if (
+      !Array.isArray(batch.children) ||
+      batch.children.length === 0 ||
+      batch.children.length > maxBatchSize
+    ) {
+      throw new Error(`Base child batch must contain 1-${maxBatchSize} children`)
+    }
+    const burnUnits7 = exactUnsigned(batch.burnUnits7, 'burnUnits7', { positive: true })
+    if (burnUnits7 % 10n !== 0n) throw new Error('burnUnits7 must convert exactly to six decimals')
+
+    const normalized = batch.children.map((child) => {
+      requireExactFields(child, BASE_CHILD_FIELDS, 'Base child')
+      requireExactFields(child.intent, BASE_CHILD_INTENT_FIELDS, 'Base child intent')
+      requireExactFields(child.lifecycle, BASE_CHILD_LIFECYCLE_FIELDS, 'Base child lifecycle')
+      const row = toBaseChildRow(child, baseChildBatchDigest(child.intent))
+      const canonicalTarget = canonicalPoolTarget(poolTargets, child.intent.poolAddress)
+      if (!canonicalTarget || child.intent.proxyTarget !== canonicalTarget) {
+        throw new Error('Base child pool/proxy target is not canonical')
+      }
+      if (
+        child.intent.token !== scopeRequirements.reportToken ||
+        child.intent.decimals !== scopeRequirements.reportDecimals
+      ) {
+        throw new Error('Base child amount does not match configured token')
+      }
+      if (child.childId !== child.intent.baseJobId) {
+        throw new Error('Base child ID does not match its Base job')
+      }
+      if (
+        child.lifecycle.sequence !== 0 ||
+        child.lifecycle.status !== 'planned' ||
+        canonicalJson(child.lifecycle.evidence ?? {}) !== '{}'
+      ) {
+        throw new Error('Base child initial lifecycle must be planned without evidence')
+      }
+      return {
+        child,
+        row,
+        units: exactUnsigned(child.intent.units, 'intent.units', { positive: true }),
+      }
+    })
+    const first = normalized[0].child
+    const common = {
+      networkId: first.networkId,
+      owner: first.owner,
+      agent: first.agent,
+      bindingId: first.bindingId,
+      runId: first.intent.runId,
+      grantTxHash: first.intent.grantTxHash,
+      kernelAddress: first.intent.kernelAddress,
+      bindingHash: first.intent.bindingHash,
+      baseJobId: first.intent.baseJobId,
+    }
+    if (common.networkId !== supportedNetworkId)
+      throw new Error('Base child batch network mismatch')
+    const allocations = new Set()
+    const identities = new Set()
+    let sum6 = 0n
+    for (const entry of normalized) {
+      const child = entry.child
+      const candidate = [
+        child.networkId,
+        child.owner,
+        child.agent,
+        child.bindingId,
+        child.intent.runId,
+        child.intent.grantTxHash,
+        child.intent.kernelAddress.toLowerCase(),
+        child.intent.bindingHash,
+        child.intent.baseJobId,
+      ]
+      const expected = [
+        common.networkId,
+        common.owner,
+        common.agent,
+        common.bindingId,
+        common.runId,
+        common.grantTxHash,
+        common.kernelAddress.toLowerCase(),
+        common.bindingHash,
+        common.baseJobId,
+      ]
+      if (candidate.some((value, index) => value !== expected[index])) {
+        throw new Error('Base child batch has mixed immutable context')
+      }
+      if (allocations.has(child.allocationId)) throw new Error('duplicate Base child allocation')
+      allocations.add(child.allocationId)
+      const identityKey = canonicalJson([
+        child.networkId,
+        child.bindingId,
+        child.executionId,
+        child.allocationId,
+        child.childId,
+      ])
+      if (identities.has(identityKey)) throw new Error('duplicate Base child identity')
+      identities.add(identityKey)
+      sum6 += entry.units
+    }
+    if (sum6 * 10n !== burnUnits7) throw new Error('Base child sum does not match burnUnits7')
+    const memberships = await store.readMembershipsByAgentAddresses({
+      networkId: common.networkId,
+      agentAddresses: [common.agent],
+    })
+    const membership = memberships?.find((row) => row.address === common.agent)
+    validateBatchMembership(membership, common)
+    let snapshot
+    try {
+      snapshot = await authorityReader({ networkId: common.networkId, agent: common.agent })
+    } catch (error) {
+      if (error instanceof AgentIndexUnavailableError) throw error
+      throw new AgentIndexUnavailableError('Fresh bridge authority snapshot is unavailable', {
+        cause: error,
+      })
+    }
+    validateBatchScope({
+      snapshot,
+      common,
+      burnUnits7: batch.burnUnits7,
+      requirements: scopeRequirements,
+    })
+    const requestDigest = baseChildBatchDigest(batch)
+    return await store.reserveBaseChildIntentBatch({
+      batch,
+      requestDigest,
+      idempotencyKey: batch.idempotencyKey,
+    })
+  } catch (error) {
+    if (
+      error instanceof AgentIndexValidationError ||
+      error instanceof AgentIndexUnavailableError ||
+      error instanceof AgentIndexConflictError
+    ) {
+      throw error
+    }
+    throw new AgentIndexValidationError(error?.message || 'Invalid Base child intent batch', {
+      cause: error,
+    })
+  }
+}
+
 export async function advanceBaseChildLifecycle({ identity, expectedSequence, lifecycle, store }) {
   if (!store?.advanceBaseChildLifecycle)
     throw new Error('Base child lifecycle store is unavailable')
@@ -134,7 +384,14 @@ export async function advanceBaseChildLifecycle({ identity, expectedSequence, li
     requireExactFields(identity, BASE_CHILD_IDENTITY_FIELDS, 'Base child identity')
     requireExactFields(lifecycle, BASE_CHILD_LIFECYCLE_FIELDS, 'Base child lifecycle')
     assertNoSensitiveProperties({ identity, lifecycle })
-    for (const field of ['networkId', 'owner', 'bindingId', 'allocationId', 'childId']) {
+    for (const field of [
+      'networkId',
+      'owner',
+      'bindingId',
+      'executionId',
+      'allocationId',
+      'childId',
+    ]) {
       requiredString(identity?.[field], `identity.${field}`)
     }
     if (!Number.isSafeInteger(expectedSequence) || expectedSequence < 0) {

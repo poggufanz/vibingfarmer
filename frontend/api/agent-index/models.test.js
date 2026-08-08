@@ -17,6 +17,12 @@ import {
   toBackfillAuditRow,
   parseBackfillAuditRow,
   parseSourceRow,
+  baseChildBatchDigest,
+  baseChildRecoveryIdentity,
+  parseBaseChildRow,
+  toBaseChildRow,
+  toBaseChildPhaseEventRow,
+  parseBaseChildPhaseProjectionRow,
 } from './models.js'
 
 const membership = (over = {}) => ({
@@ -51,6 +57,196 @@ const allocation = (over = {}) => ({
   executionStatus: 'queued',
   custodyLocation: 'agent',
   ...over,
+})
+
+const baseChild = (over = {}) => ({
+  version: 1,
+  networkId: 'stellar-testnet',
+  owner: 'GOWNER1',
+  agent: 'CAGENT1',
+  bindingId: 'binding-1',
+  executionId: 'run-1:exec:allocation-1',
+  allocationId: 'allocation-1',
+  childId: 'child-1',
+  intent: {
+    token: 'USDC',
+    units: '9007199254740993000000',
+    decimals: 6,
+    poolAddress: '0x1111111111111111111111111111111111111111',
+    proxyTarget: 'aave-v3',
+    minShares: '9007199254740993000001',
+    runId: 'run-1',
+    grantTxHash: 'grant-1',
+    kernelAddress: '0x2222222222222222222222222222222222222222',
+    bindingHash: 'binding-hash-1',
+    baseJobId: 'child-1',
+  },
+  lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 2_000_000_000_000 },
+  ...over,
+})
+
+describe('Task 9 Base child recovery models', () => {
+  it('round-trips the canonical execution mapping and exact amounts', () => {
+    const row = toBaseChildRow(baseChild(), 'a'.repeat(64))
+    expect(row.execution_id).toBe('run-1:exec:allocation-1')
+    expect(row.recovery_version).toBe(0)
+    expect(row.units).toBe('9007199254740993000000')
+    const parsed = parseBaseChildRow({ ...row, created_at: 1, updated_at: 1 })
+    expect(parsed).toMatchObject({
+      executionId: 'run-1:exec:allocation-1',
+      recoveryVersion: 0,
+      recoverable: true,
+      recoveryUnavailableReason: null,
+      intent: { units: '9007199254740993000000', minShares: '9007199254740993000001' },
+    })
+  })
+
+  it.each([
+    undefined,
+    null,
+    '',
+    'other-run:exec:allocation-1',
+    'run-1/exec/allocation-1',
+    'run-1:exec:allocation-2',
+    'run-1:exec:allocation-1:suffix',
+  ])('rejects noncanonical new execution mapping %j', (executionId) => {
+    expect(() => toBaseChildRow(baseChild({ executionId }), 'a'.repeat(64))).toThrow(/execution/i)
+  })
+
+  it('keeps pre-0008 rows readable but explicitly non-recoverable', () => {
+    const row = toBaseChildRow(baseChild(), 'a'.repeat(64))
+    delete row.execution_id
+    delete row.recovery_version
+    expect(parseBaseChildRow(row)).toMatchObject({
+      executionId: null,
+      recoveryVersion: 0,
+      recoverable: false,
+      recoveryUnavailableReason: 'legacy-execution-unmapped',
+    })
+    expect(parseBaseChildRow({ ...row, execution_id: null })).toMatchObject({
+      executionId: null,
+      recoverable: false,
+    })
+  })
+
+  it('fails closed on a malformed persisted execution mapping', () => {
+    const row = toBaseChildRow(baseChild(), 'a'.repeat(64))
+    expect(() => parseBaseChildRow({ ...row, execution_id: 'run-1:exec:other' })).toThrow(
+      /execution/i
+    )
+  })
+
+  it('binds all five identity fields and ordered batch content into stable digests', () => {
+    expect(baseChildRecoveryIdentity(baseChild())).toEqual({
+      networkId: 'stellar-testnet',
+      bindingId: 'binding-1',
+      executionId: 'run-1:exec:allocation-1',
+      allocationId: 'allocation-1',
+      childId: 'child-1',
+    })
+    const batch = {
+      idempotencyKey: 'batch-1',
+      burnUnits7: '90071992547409930000000',
+      children: [baseChild()],
+    }
+    const digest = baseChildBatchDigest(batch)
+    expect(digest).toMatch(/^[0-9a-f]{64}$/)
+    expect(
+      baseChildBatchDigest({ ...batch, children: [{ ...baseChild(), owner: 'GOWNER1' }] })
+    ).toBe(digest)
+    expect(
+      baseChildBatchDigest({ ...batch, children: [baseChild(), baseChild({ childId: 'child-2' })] })
+    ).not.toBe(digest)
+    expect(baseChildBatchDigest({ ...batch, burnUnits7: '90071992547409930000010' })).not.toBe(
+      digest
+    )
+  })
+
+  it('shapes exact versioned phase evidence without numeric coercion', () => {
+    const report = {
+      identity: baseChildRecoveryIdentity(baseChild()),
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'a'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'submitting',
+        evidence: { burnUnits7: '90071992547409930000000' },
+        observedAt: 2_000_000_000_001,
+      },
+    }
+    const row = toBaseChildPhaseEventRow(report, { owner: 'GOWNER1', agent: 'CAGENT1' })
+    expect(row).toMatchObject({
+      event_id: 'a'.repeat(64),
+      execution_id: 'run-1:exec:allocation-1',
+      recovery_version: 1,
+      phase: 'cctp_burn',
+      state: 'submitting',
+      evidence_json: '{"burnUnits7":"90071992547409930000000"}',
+    })
+    expect(
+      parseBaseChildPhaseProjectionRow({
+        ...row,
+        latest_event_id: row.event_id,
+      })
+    ).toMatchObject({
+      eventId: 'a'.repeat(64),
+      recoveryVersion: 1,
+      evidence: { burnUnits7: '90071992547409930000000' },
+    })
+  })
+
+  it.each([
+    ['serializedApproval', 'signed-envelope'],
+    ['capabilityHash', 'capability-digest'],
+    ['bearerToken', 'reporter-token'],
+    ['leaseToken', 'lease-token'],
+    ['walletMaterial', 'wallet-export'],
+  ])('rejects nested private evidence field %s before canonical persistence', (field, value) => {
+    const report = {
+      identity: baseChildRecoveryIdentity(baseChild()),
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'a'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'submitting',
+        evidence: { [field]: value },
+        observedAt: 2_000_000_000_001,
+      },
+    }
+    expect(() => toBaseChildPhaseEventRow(report, { owner: 'GOWNER1', agent: 'CAGENT1' })).toThrow(
+      /rejected/i
+    )
+  })
+
+  it('rejects unsafe numeric evidence and unsafe lifecycle timestamps', () => {
+    const report = {
+      identity: baseChildRecoveryIdentity(baseChild()),
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'a'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'submitting',
+        evidence: { amount: 9_007_199_254_740_992 },
+        observedAt: 2_000_000_000_001,
+      },
+    }
+    expect(() => toBaseChildPhaseEventRow(report, { owner: 'GOWNER1', agent: 'CAGENT1' })).toThrow(
+      /safe integer/i
+    )
+    expect(() =>
+      toBaseChildRow(
+        baseChild({
+          lifecycle: {
+            sequence: 0,
+            status: 'planned',
+            evidence: {},
+            observedAt: 9_007_199_254_740_992,
+          },
+        }),
+        'a'.repeat(64)
+      )
+    ).toThrow(/safe integer/i)
+  })
 })
 
 describe('sourceIdFor', () => {
