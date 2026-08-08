@@ -8,6 +8,12 @@
 // (Stellar mint 2a93e14f... succeeded; store stayed 'pending', user was told it failed).
 // iris.mjs/pollAttestation already had the correct swallow-and-keep-polling shape; these two
 // did not. One guard here fixes both callers.
+//
+// Task 8 (plan mismatch #7): the two failure exits carry stable machine-readable codes so the
+// watcher can classify without parsing prose:
+//   STELLAR_TX_FAILED  — definitive on-chain failure    -> blocked (never retried)
+//   STELLAR_TX_TIMEOUT — attempt window expired          -> retryable (stay mint_submitted)
+// The error prose is unchanged; the Task 8 prose-era assertions still hold verbatim.
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -41,10 +47,14 @@ export async function confirmStellarTx({ server, hash, label, attempts = 30, int
     }
     if (got.status === 'NOT_FOUND') continue;
     if (got.status === 'SUCCESS') return hash;
-    throw new Error(`${label} FAILED: ${got.status} ${JSON.stringify(got.resultXdr ?? '')}`);
+    const failed = new Error(`${label} FAILED: ${got.status} ${JSON.stringify(got.resultXdr ?? '')}`);
+    failed.code = 'STELLAR_TX_FAILED'; // definitive on-chain failure
+    throw failed;
   }
-  // ponytail: the hash is in the message so an operator can reconcile by hand. Still leaves the
-  // store at 'pending' if the window genuinely expires — persist the broadcast hash into the
-  // store before confirming if that ever happens for real.
-  throw new Error(`${label} not confirmed: ${hash}`, { cause: lastErr });
+  // ponytail: the hash is in the message so an operator can reconcile by hand. The Task 8
+  // watcher keeps the durable record at mint_submitted on this code and reconfirms the same
+  // hash later — a slow ledger never costs the confirmation identity.
+  const timeout = new Error(`${label} not confirmed: ${hash}`, { cause: lastErr });
+  timeout.code = 'STELLAR_TX_TIMEOUT'; // window exhausted on a known hash — retryable
+  throw timeout;
 }

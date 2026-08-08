@@ -8,6 +8,22 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createAssociationOutbox } from './associationOutbox.mjs';
+import {
+  RELAY_CLAIMABLE_STATES,
+  relayEnqueueDecision,
+  relayClaim,
+  relayRenew,
+  relayRecordAttested,
+  relayMarkMintSubmitting,
+  relayMarkMintSubmitted,
+  relayFinishMinted,
+  relayFinishBlocked,
+  relayFinishUncertain,
+  relayRelease,
+  relayReconcileExpired,
+  relayStatusOf,
+  relayError,
+} from './store.mjs';
 
 const HOUR_MS = 60 * 60 * 1000;
 const HASH_RE = /^0x[0-9a-f]{64}$/;
@@ -416,6 +432,51 @@ function prepareMandateSchema(db) {
   }
 }
 
+// Task 8 cctp_relay_work: checkpointed CCTP relay-work authority. The generic relay_records
+// table is NEVER a fallback for this work. Column order is pinned by the RED suite; the
+// evidence/confirmation CHECKs make half-written attested checkpoints and hash-less
+// mint_submitted/minted rows unrepresentable at the schema level.
+// Index note (deviation from the task-8 design's DDL): the design's column order
+// (state, lease_expires_at, created_at, exec_id) provably cannot serve the suite-pinned
+// EXPLAIN QUERY PLAN for `... WHERE state NOT IN (...) ORDER BY created_at, exec_id`
+// (verified empirically against node:sqlite — a leading low-cardinality state column with a
+// NOT IN constraint yields SCAN + temp b-tree, never the index). The pinned name is kept;
+// leading (created_at, exec_id) is what makes the recovery listing index-backed.
+const CCTP_RELAY_WORK_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS cctp_relay_work (
+    exec_id TEXT PRIMARY KEY,
+    source_domain INTEGER NOT NULL,
+    burn_tx_hash TEXT NOT NULL UNIQUE,
+    expectation_json TEXT NOT NULL,
+    expectation_digest TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN (
+      'attestation_pending','attested','mint_submitting','mint_submitted',
+      'minted','blocked','uncertain'
+    )),
+    message_hex TEXT,
+    nonce_hex TEXT,
+    message_digest TEXT,
+    attestation_hex TEXT,
+    attestation_digest TEXT,
+    evidence_version INTEGER NOT NULL DEFAULT 0,
+    mint_tx_hash TEXT,
+    reason_code TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
+    lease_expires_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    CHECK (state <> 'attested' OR (
+      message_hex IS NOT NULL AND nonce_hex IS NOT NULL AND message_digest IS NOT NULL
+      AND attestation_hex IS NOT NULL AND attestation_digest IS NOT NULL
+    )),
+    CHECK (state <> 'mint_submitted' OR mint_tx_hash IS NOT NULL),
+    CHECK (state <> 'minted' OR mint_tx_hash IS NOT NULL)
+  );
+  CREATE INDEX IF NOT EXISTS idx_cctp_relay_recovery
+    ON cctp_relay_work(created_at, exec_id, state, lease_expires_at);
+`;
+
 export const MANDATE_V3_SCHEMA = `
   CREATE TABLE IF NOT EXISTS mandates_v3 (
     mandate_id TEXT PRIMARY KEY,
@@ -549,6 +610,7 @@ export function createSqliteStores(path, {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    ${CCTP_RELAY_WORK_SCHEMA}
     CREATE INDEX IF NOT EXISTS idx_association_outbox_delivery
       ON association_outbox (status, available_at, lease_expires_at, id);
     CREATE INDEX IF NOT EXISTS idx_association_outbox_child
@@ -1443,6 +1505,233 @@ export function createSqliteStores(path, {
     `).all().map(({ name }) => name);
   }
 
+  // -------------------------------------------------------------------------
+  // Task 8: cctpRelays — transactional SQLite implementation of the checkpointed
+  // CCTP relay-work contract (same behavior as store.mjs memory/file backends;
+  // the pure validation/transition functions are shared from store.mjs).
+  // Multi-row/read-compare-write operations run in one BEGIN IMMEDIATE
+  // transaction; transitions are conditional UPDATEs guarded by
+  // (exec_id, expected state, lease_token, unexpired lease). Conflicts are typed
+  // (RELAY_*) — no raw SQLite error text ever escapes.
+  // -------------------------------------------------------------------------
+
+  function relayTransaction(fn) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = fn();
+      db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      db.exec('ROLLBACK');
+      if (/SQLITE_BUSY|database is locked/i.test(String(error?.message || ''))) {
+        throw relayError('RELAY_STORE_BUSY', 'relay work store is temporarily unavailable');
+      }
+      throw error;
+    }
+  }
+
+  function cctpRowToRecord(row) {
+    if (!row) return null;
+    return {
+      execId: row.exec_id,
+      sourceDomain: row.source_domain,
+      burnTxHash: row.burn_tx_hash,
+      expectation: JSON.parse(row.expectation_json),
+      expectationDigest: row.expectation_digest,
+      state: row.state,
+      messageHex: row.message_hex,
+      nonceHex: row.nonce_hex,
+      messageDigest: row.message_digest,
+      attestationHex: row.attestation_hex,
+      attestationDigest: row.attestation_digest,
+      evidenceVersion: row.evidence_version,
+      mintTxHash: row.mint_tx_hash,
+      reasonCode: row.reason_code,
+      attempts: row.attempts,
+      leaseToken: row.lease_token,
+      leaseExpiresAt: row.lease_expires_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  const cctpSelect = () => db.prepare('SELECT * FROM cctp_relay_work WHERE exec_id = ?');
+  const cctpGet = (execId) => cctpRowToRecord(cctpSelect().get(execId));
+
+  const CCTP_UPDATE_COLUMNS = `
+    UPDATE cctp_relay_work SET
+      source_domain = ?, burn_tx_hash = ?, expectation_json = ?, expectation_digest = ?,
+      state = ?, message_hex = ?, nonce_hex = ?, message_digest = ?, attestation_hex = ?,
+      attestation_digest = ?, evidence_version = ?, mint_tx_hash = ?, reason_code = ?,
+      attempts = ?, lease_token = ?, lease_expires_at = ?, created_at = ?, updated_at = ?
+  `;
+
+  function cctpBind(record) {
+    return [
+      record.sourceDomain, record.burnTxHash, JSON.stringify(record.expectation),
+      record.expectationDigest, record.state, record.messageHex, record.nonceHex,
+      record.messageDigest, record.attestationHex, record.attestationDigest,
+      record.evidenceVersion, record.mintTxHash, record.reasonCode, record.attempts,
+      record.leaseToken, record.leaseExpiresAt, record.createdAt, record.updatedAt,
+    ];
+  }
+
+  // Conditional transition write: the row must still carry the exact (state, live lease) the
+  // pure transition function compared against. Zero rows touched => a stale connection raced
+  // this worker => typed CAS conflict, never a silent overwrite.
+  function cctpWriteTransition(current, next, now) {
+    const result = db.prepare(`
+      ${CCTP_UPDATE_COLUMNS}
+      WHERE exec_id = ? AND state = ? AND lease_token = ? AND lease_expires_at > ?
+    `).run(...cctpBind(next), current.execId, current.state, current.leaseToken, now);
+    if (result.changes !== 1) {
+      throw relayError('RELAY_CAS_CONFLICT', 'relay transition conflicts with the durable record (zero-row conditional update)');
+    }
+    return next;
+  }
+
+  function cctpTransition(args, transition) {
+    return relayTransaction(() => {
+      const current = cctpGet(args.execId);
+      const outcome = transition(current, args);
+      if (outcome.unchanged) return current;
+      return cctpWriteTransition(current, outcome.next, args.now);
+    });
+  }
+
+  function requireSweepArgs(now, limit) {
+    if (!Number.isSafeInteger(now) || !Number.isSafeInteger(limit) || limit <= 0) {
+      throw relayError('RELAY_VALIDATION', 'relay sweep requires a safe-integer now and a positive safe-integer limit');
+    }
+  }
+
+  const cctpRelays = {
+    enqueue({ execId, sourceDomain, burnTxHash, expectation, now: enqueueNow }) {
+      return relayTransaction(() => {
+        const decision = relayEnqueueDecision({
+          existing: cctpGet(execId),
+          hasBurnOwner: (burn) => Boolean(db.prepare(
+            'SELECT 1 FROM cctp_relay_work WHERE burn_tx_hash = ? AND exec_id <> ?',
+          ).get(burn, execId)),
+          execId,
+          sourceDomain,
+          burnTxHash,
+          expectation,
+          now: enqueueNow,
+        });
+        if (decision.changed) {
+          db.prepare(`
+            INSERT INTO cctp_relay_work (
+              exec_id, source_domain, burn_tx_hash, expectation_json, expectation_digest,
+              state, message_hex, nonce_hex, message_digest, attestation_hex,
+              attestation_digest, evidence_version, mint_tx_hash, reason_code,
+              attempts, lease_token, lease_expires_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(decision.record.execId, ...cctpBind(decision.record));
+        }
+        return decision.record;
+      });
+    },
+
+    get(execId) {
+      return cctpGet(execId);
+    },
+
+    claim({ execId, now: claimNow, leaseMs }) {
+      // One conditional UPDATE: exactly one competing connection installs its token on an
+      // unleased safe-state row; everyone else gets null.
+      if (!Number.isSafeInteger(claimNow) || !Number.isSafeInteger(leaseMs) || leaseMs <= 0) {
+        throw relayError('RELAY_VALIDATION', 'relay claim requires a safe-integer now and a positive safe-integer leaseMs');
+      }
+      const row = db.prepare(`
+        UPDATE cctp_relay_work
+        SET attempts = attempts + 1, lease_token = ?, lease_expires_at = ?, updated_at = ?
+        WHERE exec_id = ? AND state IN ('attestation_pending','attested','mint_submitted')
+          AND lease_token IS NULL
+        RETURNING *
+      `).get(randomUUID(), claimNow + leaseMs, claimNow, execId);
+      return cctpRowToRecord(row);
+    },
+
+    renew({ execId, leaseToken, now: renewNow, leaseMs }) {
+      return cctpTransition({ execId, leaseToken, now: renewNow, leaseMs }, relayRenew);
+    },
+
+    recordAttested({ execId, leaseToken, messageHex, nonceHex, attestationHex, now: attestNow }) {
+      return cctpTransition({
+        execId, leaseToken, messageHex, nonceHex, attestationHex, now: attestNow,
+      }, relayRecordAttested);
+    },
+
+    markMintSubmitting({ execId, leaseToken, now: fenceNow }) {
+      return cctpTransition({ execId, leaseToken, now: fenceNow }, relayMarkMintSubmitting);
+    },
+
+    markMintSubmitted({ execId, leaseToken, mintTxHash, now: submitNow }) {
+      return cctpTransition({ execId, leaseToken, mintTxHash, now: submitNow }, relayMarkMintSubmitted);
+    },
+
+    finishMinted({ execId, leaseToken, mintTxHash, now: finishNow }) {
+      return cctpTransition({ execId, leaseToken, mintTxHash, now: finishNow }, relayFinishMinted);
+    },
+
+    finishBlocked({ execId, leaseToken, reasonCode, now: blockNow }) {
+      return cctpTransition({ execId, leaseToken, reasonCode, now: blockNow }, relayFinishBlocked);
+    },
+
+    finishUncertain({ execId, leaseToken, mintTxHash, reasonCode, now: uncertainNow }) {
+      return cctpTransition(
+        { execId, leaseToken, mintTxHash, reasonCode, now: uncertainNow },
+        relayFinishUncertain,
+      );
+    },
+
+    release({ execId, leaseToken, now: releaseNow }) {
+      return cctpTransition({ execId, leaseToken, now: releaseNow }, relayRelease);
+    },
+
+    listForSweep({ now: sweepNow, limit, includeTerminal = false }) {
+      requireSweepArgs(sweepNow, limit);
+      const rows = db.prepare(includeTerminal
+        ? "SELECT * FROM cctp_relay_work WHERE state <> 'minted' ORDER BY created_at, exec_id LIMIT ?"
+        : "SELECT * FROM cctp_relay_work WHERE state NOT IN ('minted','blocked','uncertain') ORDER BY created_at, exec_id LIMIT ?")
+        .all(limit);
+      return rows.map(cctpRowToRecord);
+    },
+
+    reconcileExpired({ now: reconcileNow, limit }) {
+      requireSweepArgs(reconcileNow, limit);
+      return relayTransaction(() => {
+        const rows = db.prepare(`
+          SELECT * FROM cctp_relay_work
+          WHERE lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
+            AND state NOT IN ('minted','blocked','uncertain')
+          ORDER BY created_at, exec_id LIMIT ?
+        `).all(reconcileNow, limit);
+        const reconciled = [];
+        for (const row of rows) {
+          const current = cctpRowToRecord(row);
+          const next = relayReconcileExpired(current, reconcileNow);
+          const result = db.prepare(`
+            UPDATE cctp_relay_work
+            SET state = ?, reason_code = ?, lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+            WHERE exec_id = ? AND state = ? AND lease_token = ? AND lease_expires_at <= ?
+          `).run(next.state, next.reasonCode, reconcileNow,
+            current.execId, current.state, current.leaseToken, reconcileNow);
+          if (result.changes !== 1) {
+            throw relayError('RELAY_CAS_CONFLICT', 'relay reconciliation conflicts with the durable record (zero-row conditional update)');
+          }
+          reconciled.push(next);
+        }
+        return reconciled;
+      });
+    },
+
+    statusOf(execId) {
+      return relayStatusOf(cctpGet(execId));
+    },
+  };
+
   function probe() {
     return transaction(() => {
       const ensemble = classifyMandateSchemaEnsemble(db);
@@ -1454,6 +1743,7 @@ export function createSqliteStores(path, {
       db.prepare('SELECT job_id FROM farm_execution_work WHERE 0').all();
       db.prepare('SELECT mandate_id FROM mandates_v3 WHERE 0').all();
       db.prepare('SELECT mandate_id FROM mandate_activation_work WHERE 0').all();
+      db.prepare('SELECT exec_id FROM cctp_relay_work WHERE 0').all();
       return {
         writable: true,
         legacyMandateTables: legacyMandateTables(),
@@ -1481,6 +1771,7 @@ export function createSqliteStores(path, {
     mandateActivations,
     associationOutbox,
     farmExecutions,
+    cctpRelays,
     probe,
   };
 }

@@ -108,9 +108,11 @@ export function createRelayerServer(config, {
   const runtimeConfig = runtimeServerConfig(config);
   // When RELAYER_DB_PATH is set, sqlite backs the idempotency store + jobs + mandates so a restart
   // loses nothing (session keys still die at their 1h TTL either way). Build BEFORE createWatcher so
-  // the watcher gets the sqlite-backed idempotency store rather than the file store.
+  // the watcher gets the sqlite-backed relay-work store rather than the file store.
+  // Task 8: the watcher's store is the checkpointed relay-work authority (cctp_relay_work via
+  // `cctpRelays`), never the generic relay_records KV.
   const sqlite = config.dbPath ? openSqlite(config.dbPath, { sessionKeyCipher }) : null;
-  if (sqlite) config = { ...config, store: sqlite.store };
+  if (sqlite) config = { ...config, store: sqlite.cctpRelays };
   const watcher = createWatcher(config);
   const jobs = sqlite ? sqlite.jobs : new Map();
   // Capability-bound encrypted mandate authority is the sole live registration/farm path.
@@ -160,6 +162,11 @@ export function createRelayerServer(config, {
   // hookData (see cctp/reverse.mjs) — accepted here for logging/idempotency, not for routing.
   // The withdraw+burn happens client-side via BaseExitSweeper.exitAllAndBurn; the relayer never
   // constructs or dispatches a burn.
+  //
+  // Task 8 fail-closed note: relayMint now REQUIRES the immutable canonical expectation and the
+  // HTTP layer does not yet construct one from the request intent (Task 11 owns that wiring).
+  // Until then this call — like the /farm flow — rejects with RELAY_VALIDATION before any row,
+  // poll, or destination send. There is deliberately no bypass.
   function relayUnwindMint({ unwindTxHash }) {
     return watcher.relayMint({ sourceDomain: config.domains.base, burnTxHash: unwindTxHash, execId: unwindTxHash });
   }

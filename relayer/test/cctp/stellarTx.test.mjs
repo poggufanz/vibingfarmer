@@ -71,3 +71,36 @@ describe('confirmStellarTx', () => {
     expect(server.getTransaction).toHaveBeenCalledTimes(5);
   });
 });
+
+// Task 8 (plan mismatch #7): today the only difference between "definitively failed on-chain"
+// and "not confirmed within the window" is error prose, and the watcher must NOT parse prose.
+// These pin stable machine-readable codes on the rejection so the watcher can classify:
+//   STELLAR_TX_FAILED  — definitive on-chain failure  -> blocked (never minted, never retried)
+//   STELLAR_TX_TIMEOUT — window expired on a known hash -> retryable (stay mint_submitted)
+describe('confirmStellarTx typed error codes', () => {
+  const rejection = (p) => p.then(
+    () => { throw new Error('expected confirmStellarTx to reject, but it resolved'); },
+    (err) => err,
+  );
+
+  it('tags a definitive on-chain failure with STELLAR_TX_FAILED — regression: watcher keeping a provably-failed mint at mint_submitted forever (or marking it minted)', async () => {
+    const server = { getTransaction: vi.fn().mockResolvedValue({ status: 'FAILED', resultXdr: 'XDR' }) };
+    const err = await rejection(confirmStellarTx({ server, ...FAST }));
+    expect(err.code).toBe('STELLAR_TX_FAILED');
+  });
+
+  it('tags an exhausted NOT_FOUND window with STELLAR_TX_TIMEOUT — regression: a slow-but-harmless pending hash classified as definitive failure and the mint rebroadcast', async () => {
+    const server = { getTransaction: vi.fn().mockResolvedValue({ status: 'NOT_FOUND' }) };
+    const err = await rejection(confirmStellarTx({ server, ...FAST, attempts: 4 }));
+    expect(err.code).toBe('STELLAR_TX_TIMEOUT');
+    expect(server.getTransaction).toHaveBeenCalledTimes(4);
+  });
+
+  it('tags an all-transient-error window with STELLAR_TX_TIMEOUT and keeps the last error as cause — regression: a broken RPC masquerading as definitive failure', async () => {
+    const server = { getTransaction: vi.fn().mockRejectedValue(new Error('fetch failed')) };
+    const err = await rejection(confirmStellarTx({ server, ...FAST, attempts: 5 }));
+    expect(err.code).toBe('STELLAR_TX_TIMEOUT');
+    expect(err.cause?.message).toBe('fetch failed'); // 'RPC broken' stays distinguishable from 'still pending'
+    expect(server.getTransaction).toHaveBeenCalledTimes(5);
+  });
+});

@@ -3615,3 +3615,413 @@ describe('sqliteStores', () => {
   });
 
 });
+
+// ---------------------------------------------------------------------------
+// Task 8 RED — cctp_relay_work: transactional SQLite implementation of the checkpointed
+// CCTP relay-work contract. Contract: .superpowers/sdd/vf-cross-chain-hardening-plan/
+// task-8-test-design.md "SQLite RED matrix" (schema, concurrency, CAS, reconciliation).
+//
+// Pinned wiring: createSqliteStores(path) returns a `cctpRelays` property implementing the
+// same store contract as store.test.mjs (enqueue/get/claim/renew/recordAttested/
+// markMintSubmitting/markMintSubmitted/finishMinted/finishBlocked/finishUncertain/release/
+// listForSweep/reconcileExpired/statusOf). The generic `relay_records` table is NEVER an
+// authority fallback for relay work.
+//
+// All digest literals are hand-calculated (node:crypto over the exact fixture bytes /
+// canonical JSON), never via production helpers. See store.test.mjs for derivations.
+// ---------------------------------------------------------------------------
+
+const CCTP_T0 = 1_700_000_000_000;
+const CCTP_ZERO32 = '00'.repeat(32);
+
+const CCTP_FORWARD_EXPECTATION = {
+  version: 1,
+  direction: 'stellar-to-base',
+  sourceDomain: 27,
+  destinationDomain: 6,
+  sender: '0xda6f9ee0786c812344d82817ef19b648b4af120f8bd10bf658e6b99eacff24b8',
+  recipient: '0x0000000000000000000000008fe6b999dc680ccfdd5bf7eb0974218be2542daa',
+  destinationCaller: `0x${CCTP_ZERO32}`,
+  burnToken: '0x5045cd5ec0729a768fd5ad02505852df4f028dce830e5ac52209ba48483b2f01',
+  mintRecipient: '0x0000000000000000000000000123456789abcdef0123456789abcdef01234567',
+  messageSender: '0xabababababababababababababababababababababababababababababababab',
+  amount: '1000000',
+  burnUnits7: '10000000',
+  maxFee: '0',
+  minFinalityThreshold: 2000,
+  hookData: '0x',
+};
+// sha256('vf-cctp-expectation-v1\0' + canonical JSON) — hand-calculated, see store.test.mjs.
+const CCTP_FORWARD_EXPECTATION_DIGEST =
+  '11168b4892206a45bb692ff36133a2571db05d6192a257edeafb247cfa8a8a98';
+
+const CCTP_BURN_FORWARD = 'aa'.repeat(32);
+const CCTP_MINT_BASE = `0x${'bb'.repeat(32)}`;
+const CCTP_MESSAGE_HEX = '0xdeadbeef';
+const CCTP_MESSAGE_DIGEST = '5f78c33274e43fa9de5659265c1d917e25c03722dcb0b8d27db8d5feaa813953';
+const CCTP_NONCE_HEX = `0x${'11'.repeat(32)}`;
+const CCTP_ATTESTATION_HEX = '0xaabb';
+const CCTP_ATTESTATION_DIGEST =
+  'd798d1fac6bd4bb1c11f50312760351013379a0ab6f0a8c0af8a506b96b2525a';
+const CCTP_NEW_ATTESTATION_HEX = '0xccdd';
+const CCTP_NEW_ATTESTATION_DIGEST =
+  '5a8814ae66ff07179d2c22381da6221f6fe754e6175c47d7d87846080f0a9715';
+
+function cctpThrowsCode(fn, code) {
+  try {
+    fn();
+  } catch (err) {
+    if (err?.code !== code) {
+      throw new Error(`expected typed code ${code}, got ${err?.code ?? '(none)'}: ${err?.message}`);
+    }
+    return err;
+  }
+  throw new Error(`expected typed code ${code}, but no error was thrown`);
+}
+
+const cctpIntent = (execId, overrides = {}) => ({
+  execId,
+  sourceDomain: 27,
+  burnTxHash: CCTP_BURN_FORWARD,
+  expectation: CCTP_FORWARD_EXPECTATION,
+  now: CCTP_T0,
+  ...overrides,
+});
+
+function cctpSeedAttested(cctpRelays, execId, { now = CCTP_T0, leaseMs = 60_000, burnTxHash = CCTP_BURN_FORWARD } = {}) {
+  cctpRelays.enqueue(cctpIntent(execId, { now, burnTxHash }));
+  const claimed = cctpRelays.claim({ execId, now, leaseMs });
+  cctpRelays.recordAttested({
+    execId, leaseToken: claimed.leaseToken, messageHex: CCTP_MESSAGE_HEX,
+    nonceHex: CCTP_NONCE_HEX, attestationHex: CCTP_ATTESTATION_HEX, now,
+  });
+  return claimed.leaseToken;
+}
+
+function cctpSeedSubmitting(cctpRelays, execId, { now = CCTP_T0, leaseMs = 60_000, burnTxHash = CCTP_BURN_FORWARD } = {}) {
+  const token = cctpSeedAttested(cctpRelays, execId, { now, leaseMs, burnTxHash });
+  cctpRelays.markMintSubmitting({ execId, leaseToken: token, now });
+  return token;
+}
+
+function cctpSeedSubmitted(cctpRelays, execId, { now = CCTP_T0, leaseMs = 60_000, burnTxHash = CCTP_BURN_FORWARD } = {}) {
+  const token = cctpSeedSubmitting(cctpRelays, execId, { now, leaseMs, burnTxHash });
+  cctpRelays.markMintSubmitted({ execId, leaseToken: token, mintTxHash: CCTP_MINT_BASE, now });
+  return token;
+}
+
+describe('cctpRelays — cctp_relay_work SQLite relay-work store (Task 8 RED)', () => {
+  // Regression caught: the store silently operated against a missing/wrong table; schema and
+  // readiness must be provable on a fresh DB (SQLite RED matrix rows 1 + 11).
+  it('creates the exact cctp_relay_work schema and recovery index on a fresh DB; probe() passes', () => {
+    const stores = createSqliteStores(freshPath());
+    const table = stores.db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cctp_relay_work'",
+    ).get();
+    expect(table).toBeDefined();
+    const columns = stores.db.prepare('PRAGMA table_xinfo(cctp_relay_work)').all()
+      .map(({ name }) => name);
+    expect(columns).toEqual([
+      'exec_id', 'source_domain', 'burn_tx_hash', 'expectation_json', 'expectation_digest',
+      'state', 'message_hex', 'nonce_hex', 'message_digest', 'attestation_hex',
+      'attestation_digest', 'evidence_version', 'mint_tx_hash', 'reason_code',
+      'attempts', 'lease_token', 'lease_expires_at', 'created_at', 'updated_at',
+    ]);
+    const index = stores.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_cctp_relay_recovery'",
+    ).get();
+    expect(index).toBeDefined();
+    expect(stores.probe().writable).toBe(true);
+    stores.db.close();
+  });
+
+  it('probe() fails closed when the cctp_relay_work table is missing', () => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    stores.db.exec('DROP TABLE cctp_relay_work');
+    expect(() => stores.probe()).toThrow();
+    stores.db.close();
+  });
+
+  // Regression caught (row 2): JSON/number round-trips that lose precision would split an
+  // exact retry into a false conflict; ms timestamps and big decimal strings must survive.
+  it('canonical intent and evidence survive close/reopen with no precision loss', () => {
+    const path = freshPath();
+    const bigExpectation = {
+      ...CCTP_FORWARD_EXPECTATION,
+      amount: '9007199254740993', // > Number.MAX_SAFE_INTEGER
+      burnUnits7: '90071992547409930',
+    };
+    const first = createSqliteStores(path);
+    first.cctpRelays.enqueue({
+      ...cctpIntent('exec-big', { expectation: bigExpectation }), now: 1_700_000_000_123,
+    });
+    const claimed = first.cctpRelays.claim({ execId: 'exec-big', now: 1_700_000_000_124, leaseMs: 60_000 });
+    first.cctpRelays.recordAttested({
+      execId: 'exec-big', leaseToken: claimed.leaseToken, messageHex: CCTP_MESSAGE_HEX,
+      nonceHex: CCTP_NONCE_HEX, attestationHex: CCTP_ATTESTATION_HEX, now: 1_700_000_000_125,
+    });
+    first.db.close();
+
+    const second = createSqliteStores(path);
+    const record = second.cctpRelays.get('exec-big');
+    expect(record.expectation).toEqual(bigExpectation);
+    expect(record.expectation.amount).toBe('9007199254740993');
+    expect(record).toMatchObject({
+      state: 'attested',
+      messageDigest: CCTP_MESSAGE_DIGEST,
+      attestationDigest: CCTP_ATTESTATION_DIGEST,
+      evidenceVersion: 1,
+      createdAt: 1_700_000_000_123,
+      updatedAt: 1_700_000_000_125,
+      leaseExpiresAt: 1_700_000_060_124,
+    });
+    second.db.close();
+  });
+
+  // Regression caught (row 3): a naive INSERT threw a raw UNIQUE-constraint error on an exact
+  // duplicate retry instead of resolving to the existing row.
+  it('two connections enqueueing the same exact intent produce one row and no raw SQLite error', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path);
+    const second = createSqliteStores(path);
+    const a = first.cctpRelays.enqueue(cctpIntent('exec-1'));
+    const b = second.cctpRelays.enqueue(cctpIntent('exec-1', { now: CCTP_T0 + 999 }));
+    expect(b).toEqual(a);
+    const count = first.db.prepare(
+      'SELECT COUNT(*) AS n FROM cctp_relay_work WHERE exec_id = ?',
+    ).get('exec-1').n;
+    expect(count).toBe(1);
+    first.db.close();
+    second.db.close();
+  });
+
+  // Regression caught (row 4): raw SQLITE_BUSY/constraint errors leaked to callers instead of
+  // a typed conflict, and the conflicting call mutated the valid row (plan mismatch #9).
+  it('two-connection changed-intent and burn-reuse conflicts are typed and leak no SQLite detail', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path);
+    const second = createSqliteStores(path);
+    first.cctpRelays.enqueue(cctpIntent('exec-1'));
+    const changed = {
+      ...CCTP_FORWARD_EXPECTATION, amount: '2000000', burnUnits7: '20000000',
+    };
+    const conflict = cctpThrowsCode(
+      () => second.cctpRelays.enqueue(cctpIntent('exec-1', { expectation: changed })),
+      'RELAY_ENQUEUE_CONFLICT',
+    );
+    expect(conflict.message).not.toMatch(/SQLITE|constraint|UNIQUE/i);
+    const reuse = cctpThrowsCode(
+      () => second.cctpRelays.enqueue(cctpIntent('exec-2')),
+      'RELAY_ENQUEUE_CONFLICT',
+    );
+    expect(reuse.message).not.toMatch(/SQLITE|constraint|UNIQUE/i);
+    expect(second.cctpRelays.get('exec-2')).toBeNull();
+    expect(second.cctpRelays.get('exec-1').expectation).toEqual(CCTP_FORWARD_EXPECTATION);
+    first.db.close();
+    second.db.close();
+  });
+
+  // Regression caught (row 5): two connections both claimed the same row when claim was a
+  // read-then-write instead of one conditional UPDATE.
+  it('two connections claiming the same safe row: exactly one lease wins', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path);
+    first.cctpRelays.enqueue(cctpIntent('exec-1'));
+    const second = createSqliteStores(path);
+    const winner = first.cctpRelays.claim({ execId: 'exec-1', now: CCTP_T0, leaseMs: 60_000 });
+    expect(winner).toMatchObject({ attempts: 1, leaseExpiresAt: CCTP_T0 + 60_000 });
+    expect(typeof winner.leaseToken).toBe('string');
+    const loser = second.cctpRelays.claim({ execId: 'exec-1', now: CCTP_T0, leaseMs: 60_000 });
+    expect(loser).toBeNull();
+    expect(second.cctpRelays.get('exec-1').leaseToken).toBe(winner.leaseToken);
+    first.db.close();
+    second.db.close();
+  });
+
+  // Regression caught (row 6): a stale connection's transition overwrote the winner's
+  // checkpoint because the UPDATE did not guard on (state, lease_token, lease_expires_at).
+  it('a stale connection transition affects zero rows and throws a typed CAS error', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path);
+    const second = createSqliteStores(path);
+    first.cctpRelays.enqueue(cctpIntent('exec-1'));
+    const claimed = first.cctpRelays.claim({ execId: 'exec-1', now: CCTP_T0, leaseMs: 60_000 });
+    // the winner advances; the stale connection still holds a made-up/old token
+    first.cctpRelays.recordAttested({
+      execId: 'exec-1', leaseToken: claimed.leaseToken, messageHex: CCTP_MESSAGE_HEX,
+      nonceHex: CCTP_NONCE_HEX, attestationHex: CCTP_ATTESTATION_HEX, now: CCTP_T0,
+    });
+    cctpThrowsCode(
+      () => second.cctpRelays.markMintSubmitting({ execId: 'exec-1', leaseToken: 'stale-token', now: CCTP_T0 }),
+      'RELAY_CAS_CONFLICT',
+    );
+    expect(second.cctpRelays.get('exec-1').state).toBe('attested');
+    first.db.close();
+    second.db.close();
+  });
+
+  // Regression caught (row 7): field-by-field writes let a crash persist half an attested
+  // checkpoint; after reopen every multi-field transition must be all-or-none.
+  it('attested and submitted checkpoints are all-or-none after close/reopen', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path);
+    const token = cctpSeedSubmitted(first.cctpRelays, 'exec-1');
+    expect(token).toBeTruthy();
+    first.db.close();
+
+    const second = createSqliteStores(path);
+    const record = second.cctpRelays.get('exec-1');
+    expect(record).toMatchObject({
+      state: 'mint_submitted',
+      messageHex: CCTP_MESSAGE_HEX,
+      nonceHex: CCTP_NONCE_HEX,
+      messageDigest: CCTP_MESSAGE_DIGEST,
+      attestationHex: CCTP_ATTESTATION_HEX,
+      attestationDigest: CCTP_ATTESTATION_DIGEST,
+      evidenceVersion: 1,
+      mintTxHash: CCTP_MINT_BASE,
+    });
+    // the schema itself refuses a mint_submitted row without a canonical mint hash
+    expect(() => second.db.prepare(
+      "UPDATE cctp_relay_work SET mint_tx_hash = NULL WHERE exec_id = 'exec-1'",
+    ).run()).toThrow();
+    expect(second.cctpRelays.get('exec-1').mintTxHash).toBe(CCTP_MINT_BASE);
+    second.db.close();
+  });
+
+  // Regression caught (row 8): evidence replacement and the version bump were two writes;
+  // and evidence stayed mutable after the submit fence.
+  it('evidence replacement increments evidence_version in one transaction; frozen after the fence', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path);
+    const token = cctpSeedAttested(first.cctpRelays, 'exec-1');
+    first.cctpRelays.recordAttested({
+      execId: 'exec-1', leaseToken: token, messageHex: CCTP_MESSAGE_HEX,
+      nonceHex: CCTP_NONCE_HEX, attestationHex: CCTP_NEW_ATTESTATION_HEX, now: CCTP_T0 + 1,
+    });
+    // release the live seed lease so the reopened connection can claim the row (claim only
+    // succeeds for an UNLEASED safe state)
+    first.cctpRelays.release({ execId: 'exec-1', leaseToken: token, now: CCTP_T0 + 1 });
+    first.db.close();
+
+    const second = createSqliteStores(path);
+    expect(second.cctpRelays.get('exec-1')).toMatchObject({
+      state: 'attested',
+      attestationHex: CCTP_NEW_ATTESTATION_HEX,
+      attestationDigest: CCTP_NEW_ATTESTATION_DIGEST,
+      messageDigest: CCTP_MESSAGE_DIGEST,
+      evidenceVersion: 2,
+    });
+    const live = second.cctpRelays.claim({ execId: 'exec-1', now: CCTP_T0 + 2, leaseMs: 60_000 });
+    second.cctpRelays.markMintSubmitting({ execId: 'exec-1', leaseToken: live.leaseToken, now: CCTP_T0 + 2 });
+    cctpThrowsCode(() => second.cctpRelays.recordAttested({
+      execId: 'exec-1', leaseToken: live.leaseToken, messageHex: CCTP_MESSAGE_HEX,
+      nonceHex: CCTP_NONCE_HEX, attestationHex: CCTP_ATTESTATION_HEX, now: CCTP_T0 + 3,
+    }), 'RELAY_CAS_CONFLICT');
+    second.db.close();
+  });
+
+  // Regression caught (row 9): reconciliation ran row-by-row outside a transaction, so a
+  // crash left some expired leases cleared and a mint_submitting row still claimable.
+  it('reconcileExpired runs as one BEGIN IMMEDIATE transaction and follows the state table', () => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    const c = stores.cctpRelays;
+    c.enqueue(cctpIntent('r-pending', { now: CCTP_T0 }));
+    c.claim({ execId: 'r-pending', now: CCTP_T0, leaseMs: 10 });
+    cctpSeedAttested(c, 'r-attested', { now: CCTP_T0 + 1, leaseMs: 10, burnTxHash: 'ab'.repeat(32) });
+    cctpSeedSubmitting(c, 'r-submitting', { now: CCTP_T0 + 2, leaseMs: 10, burnTxHash: 'ac'.repeat(32) });
+    cctpSeedSubmitted(c, 'r-submitted', { now: CCTP_T0 + 3, leaseMs: 10, burnTxHash: 'ad'.repeat(32) });
+    const mintedToken = cctpSeedSubmitted(c, 'r-minted', { now: CCTP_T0 + 4, burnTxHash: 'ae'.repeat(32) });
+    c.finishMinted({ execId: 'r-minted', leaseToken: mintedToken, mintTxHash: CCTP_MINT_BASE, now: CCTP_T0 + 4 });
+
+    const statements = [];
+    const originalExec = stores.db.exec;
+    stores.db.exec = (sql) => { statements.push(String(sql)); return originalExec.call(stores.db, sql); };
+    let reconciled;
+    try {
+      reconciled = c.reconcileExpired({ now: CCTP_T0 + 1_000, limit: 100 });
+    } finally {
+      stores.db.exec = originalExec;
+    }
+    expect(statements.some((sql) => /BEGIN\s+IMMEDIATE/i.test(sql))).toBe(true);
+    expect(reconciled.map((r) => r.execId)).toEqual([
+      'r-pending', 'r-attested', 'r-submitting', 'r-submitted',
+    ]);
+    expect(c.get('r-pending')).toMatchObject({ state: 'attestation_pending', leaseToken: null });
+    expect(c.get('r-attested')).toMatchObject({ state: 'attested', leaseToken: null });
+    expect(c.get('r-submitting')).toMatchObject({
+      state: 'uncertain', reasonCode: 'submission_lease_expired', leaseToken: null,
+    });
+    expect(c.get('r-submitted')).toMatchObject({ state: 'mint_submitted', leaseToken: null });
+    expect(c.get('r-minted').state).toBe('minted');
+    stores.db.close();
+  });
+
+  // Regression caught (row 10): recovery listing was unbounded/insertion-ordered and included
+  // terminal rows, so startup recovery order was unstable (task-8 pins (createdAt, execId)).
+  it('listForSweep is index-backed, deterministic, bounded, and excludes terminals', () => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    const c = stores.cctpRelays;
+    c.enqueue(cctpIntent('exec-c', { now: CCTP_T0 + 2, burnTxHash: 'c0'.repeat(32) }));
+    c.enqueue(cctpIntent('exec-a', { now: CCTP_T0 }));
+    c.enqueue(cctpIntent('exec-b', { now: CCTP_T0 + 1, burnTxHash: 'b0'.repeat(32) }));
+    const mintedToken = cctpSeedSubmitted(c, 'exec-minted', { now: CCTP_T0 - 1, burnTxHash: 'ab'.repeat(32) });
+    c.finishMinted({ execId: 'exec-minted', leaseToken: mintedToken, mintTxHash: CCTP_MINT_BASE, now: CCTP_T0 });
+
+    const listed = c.listForSweep({ now: CCTP_T0 + 10_000, limit: 100 });
+    expect(listed.map((r) => r.execId)).toEqual(['exec-a', 'exec-b', 'exec-c']);
+    expect(c.listForSweep({ now: CCTP_T0 + 10_000, limit: 2 }).map((r) => r.execId))
+      .toEqual(['exec-a', 'exec-b']);
+    const plan = stores.db.prepare(
+      'EXPLAIN QUERY PLAN SELECT * FROM cctp_relay_work WHERE state NOT IN (\'minted\',\'blocked\',\'uncertain\') ORDER BY created_at, exec_id',
+    ).all().map((row) => row.detail).join(' | ');
+    expect(plan).toContain('idx_cctp_relay_recovery');
+    stores.db.close();
+  });
+
+  // Regression caught (row 11): invalid states/digests were storable, so recovery later read
+  // rows it could not classify.
+  it('invalid state/digest/evidence combinations are rejected by schema and application guards', () => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    expect(() => stores.db.prepare(`
+      INSERT INTO cctp_relay_work (
+        exec_id, source_domain, burn_tx_hash, expectation_json, expectation_digest,
+        state, created_at, updated_at
+      ) VALUES ('raw-1', 27, ?, '{}', ?, 'pending', 1, 1)
+    `).run(CCTP_BURN_FORWARD, CCTP_FORWARD_EXPECTATION_DIGEST)).toThrow(); // not a contract state
+    expect(() => stores.db.prepare(`
+      INSERT INTO cctp_relay_work (
+        exec_id, source_domain, burn_tx_hash, expectation_json, expectation_digest,
+        state, created_at, updated_at
+      ) VALUES ('raw-2', 27, ?, 'not-json', 'zz', 'attested', 1, 1)
+    `).run('e0'.repeat(32))).toThrow(); // attested with no evidence columns
+    const token = cctpSeedSubmitting(stores.cctpRelays, 'exec-1');
+    cctpThrowsCode(
+      () => stores.cctpRelays.markMintSubmitted({
+        execId: 'exec-1', leaseToken: token, mintTxHash: '0x123', now: CCTP_T0,
+      }),
+      'RELAY_VALIDATION',
+    );
+    stores.db.close();
+  });
+
+  // Regression caught (row 12): the watcher used to read generic relay_records rows as truth;
+  // a legacy {status:'minted'} blob must never authorize skipping a mint (plan mismatch #10).
+  it('the generic relay_records table is never an authority fallback for relay work', () => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    stores.store.set('legacy-exec', { status: 'minted', mintTxHash: CCTP_MINT_BASE });
+    stores.store.set('legacy-pending', { status: 'pending', sourceDomain: 27, burnTxHash: CCTP_BURN_FORWARD });
+
+    expect(stores.cctpRelays.get('legacy-exec')).toBeNull();
+    expect(stores.cctpRelays.get('legacy-pending')).toBeNull();
+    expect(stores.cctpRelays.statusOf('legacy-exec')).toBeNull();
+    expect(stores.cctpRelays.listForSweep({ now: CCTP_T0, limit: 100 })).toEqual([]);
+    expect(stores.cctpRelays.claim({ execId: 'legacy-pending', now: CCTP_T0, leaseMs: 1000 })).toBeNull();
+    stores.db.close();
+  });
+});

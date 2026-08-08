@@ -106,13 +106,27 @@ export async function burnBaseWithHook({
   return { hash: burnHash, status: receipt.status };
 }
 
+const STELLAR_TX_HASH_RE = /^[0-9a-f]{64}$/;
+
+function cctpMintError(code, message, options) {
+  const err = new Error(message, options);
+  err.code = code;
+  return err;
+}
+
 /**
- * Production relay action: submits the attested message to Stellar CctpForwarder.mint_and_forward.
- * Permissionless (anyone with a valid message+attestation can call it) — relayer's own Stellar
- * key pays the fee; the final recipient is whatever G-address was baked into hookData by the
- * burner, not chosen by the relayer.
+ * Production relay action, submit half (Task 8 split seam): builds the exact
+ * mint_and_forward(message, attestation) call, sends it, and returns the canonical sent hash
+ * IMMEDIATELY after broadcast — never calls getTransaction, so the watcher can durably
+ * checkpoint the hash before any confirmation is attempted. Permissionless (anyone with a
+ * valid message+attestation can call it) — the relayer's own Stellar key pays the fee; the
+ * final recipient is whatever G-address was baked into hookData by the burner.
+ *
+ * Rejects with CCTP_MINT_SUBMISSION_AMBIGUOUS whenever the send fence was crossed (or the send
+ * errored) without a canonical hash coming back — the watcher marks that uncertain and never
+ * auto-resubmits.
  */
-export async function mintAndForwardStellar({ server, kp, sourcePub, passphrase, forwarderAddress, message, attestation }) {
+export async function submitMintAndForwardStellar({ server, kp, sourcePub, passphrase, forwarderAddress, message, attestation }) {
   const hex = (s) => Buffer.from(s.replace(/^0x/, ''), 'hex');
   const op = new Contract(forwarderAddress).call('mint_and_forward',
     xdr.ScVal.scvBytes(hex(message)),
@@ -122,7 +136,29 @@ export async function mintAndForwardStellar({ server, kp, sourcePub, passphrase,
     .addOperation(op).setTimeout(120).build();
   const prepared = await server.prepareTransaction(built);
   prepared.sign(kp);
-  const sent = await server.sendTransaction(prepared);
-  if (sent.status === 'ERROR') throw new Error(`mint_and_forward send ERROR: ${JSON.stringify(sent.errorResult ?? sent)}`);
-  return confirmStellarTx({ server, hash: sent.hash, label: 'mint_and_forward' });
+  let sent;
+  try {
+    sent = await server.sendTransaction(prepared);
+  } catch (err) {
+    throw cctpMintError('CCTP_MINT_SUBMISSION_AMBIGUOUS', 'submitMintAndForwardStellar: send outcome unknown after the submission fence', { cause: err });
+  }
+  if (sent.status === 'ERROR') {
+    throw cctpMintError('CCTP_MINT_SUBMISSION_AMBIGUOUS', `submitMintAndForwardStellar: send ERROR after the submission fence: ${JSON.stringify(sent.errorResult ?? sent)}`);
+  }
+  if (typeof sent.hash !== 'string' || !STELLAR_TX_HASH_RE.test(sent.hash)) {
+    throw cctpMintError('CCTP_MINT_SUBMISSION_AMBIGUOUS', 'submitMintAndForwardStellar: send returned no canonical transaction hash after the submission fence');
+  }
+  return sent.hash;
+}
+
+/**
+ * Production relay action, confirm half (Task 8 split seam): observes the EXACT supplied hash
+ * via confirmStellarTx — read-only, no signer/message/attestation, so a confirmation path can
+ * never rebroadcast a second mint. Returns the hash on SUCCESS; rethrows the typed
+ * STELLAR_TX_FAILED (definitive) / STELLAR_TX_TIMEOUT (retryable) confirmation codes.
+ */
+export async function confirmMintAndForwardStellar({ server, hash, attempts, intervalMs }) {
+  return confirmStellarTx({
+    server, hash, label: 'mint_and_forward', attempts, intervalMs,
+  });
 }
