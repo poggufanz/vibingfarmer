@@ -733,6 +733,7 @@ export function createSqliteStores(path, {
 
   let enqueueAssociationInTransaction;
   let enqueueBaseEvidenceInTransaction;
+  let claimBaseSubmissionInTransaction;
   const associationOutbox = createAssociationOutbox(db, {
     maxAttempts: outboxMaxAttempts,
     now,
@@ -743,6 +744,7 @@ export function createSqliteStores(path, {
     now,
     leaseToken,
     registerTransactionEnqueue: (enqueue) => { enqueueBaseEvidenceInTransaction = enqueue; },
+    registerTransactionClaim: (claim) => { claimBaseSubmissionInTransaction = claim; },
   });
 
   const store = {
@@ -779,6 +781,11 @@ export function createSqliteStores(path, {
   function writeJob(jobId, job) {
     db.prepare('INSERT INTO jobs (job_id, job) VALUES (?, ?) ON CONFLICT(job_id) DO UPDATE SET job = excluded.job')
       .run(jobId, JSON.stringify(job));
+  }
+
+  function exactPublicJobState(job, jobId, state) {
+    return Boolean(job && typeof job === 'object' && !Array.isArray(job)
+      && job.jobId === jobId && job.status === state);
   }
 
   function workRecord(row) {
@@ -882,6 +889,37 @@ export function createSqliteStores(path, {
     }
   }
 
+  const AUTHORIZED_CLAIM_FIELDS = new Set([
+    'mandateId', 'stellarOwner', 'kernelAddress', 'status', 'bindingId', 'bindingHash',
+    'capabilityHash', 'relayerOrigin', 'validUntilSeconds', 'updatedAt',
+  ]);
+
+  function canonicalAuthorizedClaimSnapshot(value) {
+    const fields = value && typeof value === 'object' ? Reflect.ownKeys(value) : [];
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || fields.length !== AUTHORIZED_CLAIM_FIELDS.size
+        || fields.some((field) => typeof field !== 'string' || !AUTHORIZED_CLAIM_FIELDS.has(field))) {
+      throw new Error('authorized Base claim snapshot is invalid');
+    }
+    const snapshot = Object.fromEntries(
+      [...AUTHORIZED_CLAIM_FIELDS].map((field) => [field, value[field]]),
+    );
+    if (snapshot.status !== 'active'
+        || typeof snapshot.mandateId !== 'string' || !snapshot.mandateId
+        || typeof snapshot.stellarOwner !== 'string' || !snapshot.stellarOwner
+        || typeof snapshot.kernelAddress !== 'string'
+        || snapshot.kernelAddress !== snapshot.kernelAddress.toLowerCase()
+        || typeof snapshot.bindingId !== 'string' || !snapshot.bindingId
+        || !DIGEST_RE.test(snapshot.bindingHash || '')
+        || !DIGEST_RE.test(snapshot.capabilityHash || '')
+        || (snapshot.relayerOrigin !== null && typeof snapshot.relayerOrigin !== 'string')
+        || !Number.isSafeInteger(snapshot.validUntilSeconds) || snapshot.validUntilSeconds <= 0
+        || !Number.isSafeInteger(snapshot.updatedAt) || snapshot.updatedAt < 0) {
+      throw new Error('authorized Base claim snapshot is not canonical');
+    }
+    return Object.freeze(snapshot);
+  }
+
   const farmIntents = {
     createOrGetIntent({ normalizedIntent, now: atValue = now() }) {
       return transaction(() => {
@@ -953,6 +991,68 @@ export function createSqliteStores(path, {
       return farmIntentRecord(db.prepare(
         'SELECT * FROM farm_intent_work_v2 WHERE mandate_id = ? AND request_id = ?',
       ).get(mandateId, requestId));
+    },
+    claimAuthorizedSubmission({ checkpoint, authoritySnapshot, nowSeconds: atValue }) {
+      const expected = canonicalAuthorizedClaimSnapshot(authoritySnapshot);
+      if (checkpoint?.identity?.bindingId !== expected.bindingId) {
+        throw new Error('authorized Base claim binding is invalid');
+      }
+      return transaction(() => {
+        const at = safeNow(atValue);
+        const row = mandateRow(expected.mandateId);
+        const checkpointIdentity = checkpoint?.identity;
+        const owner = checkpointIdentity && db.prepare(`
+          SELECT farm.mandate_id,farm.stellar_owner,farm.kernel_address,
+                 farm.binding_id,farm.binding_hash,farm.agent_index_batch_json
+          FROM base_evidence_heads AS head
+          JOIN farm_intent_work_v2 AS farm ON farm.job_id=head.job_id
+          WHERE head.network_id=? AND head.binding_id=? AND head.execution_id=?
+            AND head.allocation_id=? AND head.child_id=?
+            AND head.job_id=? AND farm.job_id=?
+        `).get(
+          checkpointIdentity.networkId, checkpointIdentity.bindingId,
+          checkpointIdentity.executionId, checkpointIdentity.allocationId,
+          checkpointIdentity.childId, checkpointIdentity.childId, checkpointIdentity.childId,
+        );
+        let exactPersistedChild = false;
+        try {
+          const persistedBatch = owner ? JSON.parse(owner.agent_index_batch_json) : null;
+          exactPersistedChild = Array.isArray(persistedBatch?.children)
+            && persistedBatch.children.some((child) => (
+              child?.networkId === checkpointIdentity?.networkId
+              && child?.bindingId === checkpointIdentity?.bindingId
+              && child?.executionId === checkpointIdentity?.executionId
+              && child?.allocationId === checkpointIdentity?.allocationId
+              && child?.childId === checkpointIdentity?.childId
+            ));
+        } catch {}
+        const authorized = row
+          && row.status === 'active'
+          && row.session_key_envelope !== null
+          && row.stellar_owner === expected.stellarOwner
+          && row.kernel_address === expected.kernelAddress
+          && row.binding_id === expected.bindingId
+          && row.binding_hash === expected.bindingHash
+          && row.capability_hash === expected.capabilityHash
+          && (row.relayer_origin ?? null) === expected.relayerOrigin
+          && row.valid_until_seconds === expected.validUntilSeconds
+          && row.updated_at === expected.updatedAt
+          && at < row.valid_until_seconds
+          && owner?.mandate_id === expected.mandateId
+          && owner?.stellar_owner === expected.stellarOwner
+          && owner?.kernel_address === expected.kernelAddress
+          && owner?.binding_id === expected.bindingId
+          && owner?.binding_hash === expected.bindingHash
+          && exactPersistedChild
+          && checkpoint?.evidence?.caller === expected.kernelAddress;
+        if (!authorized) {
+          return {
+            claimed: false, ownerToken: null, reasonCode: 'mandate_authority_changed',
+          };
+        }
+        farmIntentFault('authorized_claim_after_authority');
+        return claimBaseSubmissionInTransaction(checkpoint);
+      });
     },
     claimIntentDelivery({ jobId, now: atValue = now(), leaseMs = 30_000 }) {
       if (!Number.isSafeInteger(leaseMs) || leaseMs <= 0) throw new Error('farm intent lease is invalid');
@@ -1166,6 +1266,30 @@ export function createSqliteStores(path, {
             || relay.expectationDigest !== row.expectation_digest) {
           throw new Error('confirmed CCTP evidence conflicts with forward farm intent');
         }
+        const publicRow = db.prepare('SELECT job FROM jobs WHERE job_id=?').get(row.job_id);
+        let publicJob;
+        try {
+          publicJob = publicRow ? JSON.parse(publicRow.job) : undefined;
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error;
+          const reasonCode = 'malformed_public_projection';
+          const blocked = db.prepare(`UPDATE farm_intent_work_v2
+            SET state='blocked',reason_code=?,lease_kind=NULL,lease_token=NULL,
+              lease_expires_at=NULL,updated_at=?
+            WHERE job_id=? AND mandate_id=? AND binding_id=? AND intent_digest=? AND state=?`)
+            .run(
+              reasonCode, atValue, row.job_id, row.mandate_id, row.binding_id,
+              row.intent_digest, row.state,
+            );
+          if (blocked.changes !== 1) throw new Error('forward farm mint projection CAS conflict');
+          writeJob(row.job_id, { jobId: row.job_id, status: 'blocked', reasonCode });
+          return farmIntentRecoveryRecord(
+            db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(row.job_id),
+          );
+        }
+        if (!exactPublicJobState(publicJob, row.job_id, row.state)) {
+          throw new Error('forward farm public projection conflict');
+        }
         const expectation = JSON.parse(row.expectation_json);
         const batch = JSON.parse(row.agent_index_batch_json);
         const burnEvidence = {
@@ -1208,8 +1332,9 @@ export function createSqliteStores(path, {
             WHERE job_id=? AND state='relay_pending' AND relay_exec_id=?
           `).run(atValue, row.job_id, row.relay_exec_id);
           if (changed.changes !== 1) throw new Error('forward farm mint projection CAS conflict');
-          const publicJob = jobs.get(row.job_id) ?? { jobId: row.job_id };
-          writeJob(row.job_id, { ...publicJob, status: 'deposit_pending' });
+          writeJob(row.job_id, {
+            ...(publicJob ?? { jobId: row.job_id }), status: 'deposit_pending',
+          });
         }
         return farmIntentRecord(db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(row.job_id));
       });
@@ -1334,6 +1459,33 @@ export function createSqliteStores(path, {
       ]);
       if (!allowed.has(from) || !allowed.has(to)) throw new Error('farm projection state is invalid');
       return transaction(() => {
+        const publicRow = db.prepare('SELECT job FROM jobs WHERE job_id=?').get(identity.jobId);
+        let publicJob;
+        try {
+          publicJob = publicRow ? JSON.parse(publicRow.job) : undefined;
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error;
+          const malformedReason = 'malformed_public_projection';
+          const blocked = db.prepare(`
+            UPDATE farm_intent_work_v2 SET state='blocked',reason_code=?,lease_kind=NULL,
+              lease_token=NULL,lease_expires_at=NULL,updated_at=?
+            WHERE job_id=? AND mandate_id=? AND binding_id=? AND intent_digest=? AND state=?
+          `).run(
+            malformedReason, atValue, identity.jobId, identity.mandateId,
+            identity.bindingId, identity.intentDigest, from,
+          );
+          const row = db.prepare(`SELECT * FROM farm_intent_work_v2
+            WHERE job_id=? AND mandate_id=? AND binding_id=? AND intent_digest=?`)
+            .get(identity.jobId, identity.mandateId, identity.bindingId, identity.intentDigest);
+          if (blocked.changes !== 1
+              && !(row?.state === 'blocked' && row.reason_code === malformedReason)) {
+            throw new Error('farm projection CAS conflict');
+          }
+          writeJob(identity.jobId, {
+            jobId: identity.jobId, status: 'blocked', reasonCode: malformedReason,
+          });
+          return farmIntentRecoveryRecord(row);
+        }
         const changed = db.prepare(`
           UPDATE farm_intent_work_v2 SET state=?,reason_code=?,lease_kind=NULL,lease_token=NULL,
             lease_expires_at=NULL,updated_at=?
@@ -1342,11 +1494,14 @@ export function createSqliteStores(path, {
           to, reasonCode, atValue, identity.jobId, identity.mandateId,
           identity.bindingId, identity.intentDigest, from,
         );
+        if (changed.changes === 1
+            && !exactPublicJobState(publicJob, identity.jobId, from)) {
+          throw new Error('farm projection CAS conflict');
+        }
         if (changed.changes !== 1) {
           const converged = db.prepare(`SELECT * FROM farm_intent_work_v2
             WHERE job_id=? AND mandate_id=? AND binding_id=? AND intent_digest=?`)
             .get(identity.jobId, identity.mandateId, identity.bindingId, identity.intentDigest);
-          const publicJob = jobs.get(identity.jobId);
           const exactTerminal = ['done', 'blocked', 'uncertain'].includes(to)
             && converged?.state === to
             && (converged.reason_code ?? null) === reasonCode
@@ -1355,8 +1510,10 @@ export function createSqliteStores(path, {
           if (!exactTerminal) throw new Error('farm projection CAS conflict');
           return farmIntentRecord(converged);
         }
-        const publicJob = jobs.get(identity.jobId) ?? { jobId: identity.jobId };
-        writeJob(identity.jobId, { ...publicJob, status: to, ...(reasonCode ? { reasonCode } : {}) });
+        writeJob(identity.jobId, {
+          ...(publicJob ?? { jobId: identity.jobId }), status: to,
+          ...(reasonCode ? { reasonCode } : {}),
+        });
         return farmIntentRecoveryRecord(
           db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(identity.jobId),
         );

@@ -449,6 +449,306 @@ describe('Task 11 forward-farm intent canonicalization', () => {
     first.db.close();
   });
 
+  it('never sanitizes or overwrites a syntactically valid mismatched public projection', () => {
+    let stores = createSqliteStores(freshPath(), { now: () => 1_000 });
+    let { normalizedIntent } = finishForwardIntent(stores);
+    let identity = {
+      mandateId: normalizedIntent.intent.mandate.mandateId,
+      jobId: normalizedIntent.intent.jobId,
+      bindingId: normalizedIntent.intent.mandate.bindingId,
+      intentDigest: normalizedIntent.intentDigest,
+    };
+    stores.db.prepare(`UPDATE farm_intent_work_v2
+      SET state='deposit_pending',updated_at=999 WHERE job_id=?`).run(identity.jobId);
+    const mismatched = { jobId: identity.jobId, status: 'done', reasonCode: 'different' };
+    stores.jobs.set(identity.jobId, mismatched);
+
+    expect(() => stores.farmIntents.advanceProjection({
+      identity, from: 'deposit_pending', to: 'deposit_confirming', now: 1_000,
+    })).toThrow(/projection.*conflict/i);
+    expect(stores.farmIntents.getByJob({
+      mandateId: identity.mandateId, jobId: identity.jobId,
+    })).toMatchObject({ state: 'deposit_pending' });
+    expect(stores.jobs.get(identity.jobId)).toEqual(mismatched);
+    stores.db.close();
+
+    stores = createSqliteStores(freshPath(), { now: () => 1_000 });
+    ({ normalizedIntent } = finishForwardIntent(stores));
+    identity = {
+      mandateId: normalizedIntent.intent.mandate.mandateId,
+      jobId: normalizedIntent.intent.jobId,
+      bindingId: normalizedIntent.intent.mandate.bindingId,
+      intentDigest: normalizedIntent.intentDigest,
+    };
+    stores.farmIntents.attachBurnAtomic({
+      identity, burnTxHash: 'bb'.repeat(32), now: 999,
+    });
+    stores.jobs.set(identity.jobId, mismatched);
+    const beforeEvidence = stores.db.prepare(
+      'SELECT COUNT(*) AS n FROM base_evidence_outbox',
+    ).get().n;
+
+    expect(() => stores.farmIntents.projectMintEvidenceAtomic({
+      identity,
+      relay: {
+        execId: `forward-farm:${identity.jobId}`, state: 'minted',
+        burnTxHash: 'bb'.repeat(32), expectationDigest: normalizedIntent.expectationDigest,
+        messageDigest: 'cc'.repeat(32), attestationDigest: 'dd'.repeat(32),
+        evidenceVersion: '1', mintTxHash: `0x${'ee'.repeat(32)}`,
+      },
+      now: 1_000,
+    })).toThrow(/projection.*conflict/i);
+    expect(stores.farmIntents.getByJob({
+      mandateId: identity.mandateId, jobId: identity.jobId,
+    })).toMatchObject({ state: 'relay_pending' });
+    expect(stores.jobs.get(identity.jobId)).toEqual(mismatched);
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM base_evidence_outbox').get().n)
+      .toBe(beforeEvidence);
+    stores.db.close();
+  });
+
+  it('atomically replaces a malformed public job projection with a sanitized blocked projection', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 1_000 });
+    const { normalizedIntent } = finishForwardIntent(stores);
+    const identity = {
+      mandateId: normalizedIntent.intent.mandate.mandateId,
+      jobId: normalizedIntent.intent.jobId,
+      bindingId: normalizedIntent.intent.mandate.bindingId,
+      intentDigest: normalizedIntent.intentDigest,
+    };
+    stores.db.prepare(`UPDATE farm_intent_work_v2
+      SET state='deposit_pending',updated_at=999 WHERE job_id=?`).run(identity.jobId);
+    stores.db.prepare(`UPDATE jobs SET job='{\"serializedApproval\":\"must-not-leak\"'
+      WHERE job_id=?`).run(identity.jobId);
+
+    expect(stores.farmIntents.advanceProjection({
+      identity, from: 'deposit_pending', to: 'deposit_confirming', now: 1_000,
+    })).toMatchObject({ state: 'blocked', reasonCode: 'malformed_public_projection' });
+    expect(stores.db.prepare(`SELECT state,reason_code FROM farm_intent_work_v2 WHERE job_id=?`)
+      .get(identity.jobId)).toEqual({
+        state: 'blocked', reason_code: 'malformed_public_projection',
+      });
+    expect(stores.jobs.get(identity.jobId)).toEqual({
+      jobId: identity.jobId, status: 'blocked', reasonCode: 'malformed_public_projection',
+    });
+    expect(JSON.stringify(stores.jobs.get(identity.jobId))).not.toMatch(/serializedApproval|must-not-leak/);
+    stores.db.close();
+  });
+
+  it('blocks malformed public JSON before projecting minted CCTP evidence', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 1_000 });
+    const { normalizedIntent } = finishForwardIntent(stores);
+    const identity = {
+      mandateId: normalizedIntent.intent.mandate.mandateId,
+      jobId: normalizedIntent.intent.jobId,
+      bindingId: normalizedIntent.intent.mandate.bindingId,
+      intentDigest: normalizedIntent.intentDigest,
+    };
+    stores.farmIntents.attachBurnAtomic({
+      identity, burnTxHash: 'bb'.repeat(32), now: 999,
+    });
+    const beforeEvidence = stores.db.prepare(
+      'SELECT COUNT(*) AS n FROM base_evidence_outbox',
+    ).get().n;
+    stores.db.prepare(`UPDATE jobs SET job='{\"serializedApproval\":\"must-not-leak\"'
+      WHERE job_id=?`).run(identity.jobId);
+
+    expect(stores.farmIntents.projectMintEvidenceAtomic({
+      identity,
+      relay: {
+        execId: `forward-farm:${identity.jobId}`, state: 'minted',
+        burnTxHash: 'bb'.repeat(32), expectationDigest: normalizedIntent.expectationDigest,
+        messageDigest: 'cc'.repeat(32), attestationDigest: 'dd'.repeat(32),
+        evidenceVersion: '1', mintTxHash: `0x${'ee'.repeat(32)}`,
+      },
+      now: 1_000,
+    })).toMatchObject({ state: 'blocked', reasonCode: 'malformed_public_projection' });
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM base_evidence_outbox').get().n)
+      .toBe(beforeEvidence);
+    expect(stores.jobs.get(identity.jobId)).toEqual({
+      jobId: identity.jobId, status: 'blocked', reasonCode: 'malformed_public_projection',
+    });
+    expect(JSON.stringify(stores.jobs.get(identity.jobId))).not.toMatch(/serializedApproval|must-not-leak/);
+    stores.db.close();
+  });
+
+  it('atomically refuses a Base submitting claim when revoke wins after the authority snapshot', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path, {
+      sessionKeyCipher: cipher(), nowSeconds: () => NOW_SECONDS,
+      now: () => 1_000, leaseToken: () => 'must-not-be-issued',
+    });
+    const second = createSqliteStores(path, {
+      sessionKeyCipher: cipher(), nowSeconds: () => NOW_SECONDS,
+      now: () => 2_000, leaseToken: () => 'contender-token',
+    });
+    first.mandateActivations.enqueue({ record: mandateRecord() });
+    first.db.prepare(`UPDATE mandates_v3 SET status='active',updated_at=? WHERE mandate_id=?`)
+      .run(NOW_SECONDS, MANDATE_ID);
+    const normalizedIntent = forwardIntentFixture({
+      request: { mandateId: MANDATE_ID, stellarOwner: OWNER, kernelAddress: KERNEL },
+      mandate: {
+        bindingId: 'binding-1', bindingHash: BINDING_HASH,
+        approvalDigest: APPROVAL_DIGEST, policyDigest: POLICY_DIGEST,
+        permissionId: PERMISSION_ID, validUntilSeconds: VALID_UNTIL_SECONDS,
+        relayerOrigin: 'https://relayer.example',
+      },
+    });
+    first.farmIntents.createOrGetIntent({ normalizedIntent, now: 900 });
+    const child = normalizedIntent.batch.children[0];
+    const recoveryIdentity = {
+      networkId: child.networkId, bindingId: child.bindingId,
+      executionId: child.executionId, allocationId: child.allocationId, childId: child.childId,
+    };
+    first.baseEvidenceOutbox.seed(recoveryIdentity, 0, { jobId: normalizedIntent.intent.jobId });
+    const authoritySnapshot = {
+      mandateId: MANDATE_ID,
+      stellarOwner: OWNER,
+      kernelAddress: KERNEL.toLowerCase(),
+      status: 'active',
+      bindingId: 'binding-1',
+      bindingHash: BINDING_HASH,
+      capabilityHash: CAPABILITY_HASH,
+      relayerOrigin: 'https://relayer.example',
+      validUntilSeconds: VALID_UNTIL_SECONDS,
+      updatedAt: NOW_SECONDS,
+    };
+    const rogueIdentity = {
+      ...recoveryIdentity,
+      executionId: `${recoveryIdentity.executionId}:rogue`,
+      allocationId: `${recoveryIdentity.allocationId}:rogue`,
+    };
+    first.baseEvidenceOutbox.seed(rogueIdentity, 0, { jobId: normalizedIntent.intent.jobId });
+    expect(first.farmIntents.claimAuthorizedSubmission({
+      checkpoint: {
+        identity: rogueIdentity, phase: 'base_deposit', status: 'submitting',
+        evidence: {
+          chainId: '84532', yieldRouterAddress: `0x${'11'.repeat(20)}`,
+          caller: KERNEL.toLowerCase(),
+          poolAddress: normalizedIntent.intent.allocations[0].poolAddress,
+          assets: '1000000', minShares: '900000',
+        },
+        observedAt: 999,
+      },
+      authoritySnapshot,
+      nowSeconds: NOW_SECONDS,
+    })).toEqual({
+      claimed: false, ownerToken: null, reasonCode: 'mandate_authority_changed',
+    });
+    expect(first.baseEvidenceOutbox.recoveryState(rogueIdentity)).toBeNull();
+    second.mandatesV3.revoke(mandateIdentity());
+
+    const claim = first.farmIntents.claimAuthorizedSubmission({
+      checkpoint: {
+        identity: recoveryIdentity, phase: 'base_deposit', status: 'submitting',
+        evidence: {
+          chainId: '84532', yieldRouterAddress: `0x${'11'.repeat(20)}`,
+          caller: KERNEL.toLowerCase(),
+          poolAddress: normalizedIntent.intent.allocations[0].poolAddress,
+          assets: '1000000', minShares: '900000',
+        },
+        observedAt: 1_000,
+      },
+      authoritySnapshot,
+      nowSeconds: NOW_SECONDS,
+    });
+
+    expect(claim).toEqual({
+      claimed: false, ownerToken: null, reasonCode: 'mandate_authority_changed',
+    });
+    expect(first.baseEvidenceOutbox.recoveryState(recoveryIdentity)).toBeNull();
+    expect(JSON.stringify(first.baseEvidenceOutbox.status(recoveryIdentity)))
+      .not.toMatch(/must-not-be-issued|capability|session/i);
+    second.db.close();
+    first.db.close();
+  });
+
+  it('holds the mandate write lock through the Base claim and preserves its fence after revoke', () => {
+    const path = freshPath();
+    let second;
+    let concurrentRevokeBlocked = false;
+    const first = createSqliteStores(path, {
+      sessionKeyCipher: cipher(), nowSeconds: () => NOW_SECONDS,
+      now: () => 1_000, leaseToken: () => 'authorized-owner',
+      farmIntentFault(point) {
+        if (point !== 'authorized_claim_after_authority') return;
+        second.db.exec('PRAGMA busy_timeout=0');
+        expect(() => second.mandatesV3.revoke(mandateIdentity()))
+          .toThrow(/temporarily unavailable|locked/i);
+        concurrentRevokeBlocked = true;
+      },
+    });
+    second = createSqliteStores(path, {
+      sessionKeyCipher: cipher(), nowSeconds: () => NOW_SECONDS,
+      now: () => 2_000, leaseToken: () => 'contender-token',
+    });
+    first.mandateActivations.enqueue({ record: mandateRecord() });
+    first.db.prepare(`UPDATE mandates_v3 SET status='active',updated_at=? WHERE mandate_id=?`)
+      .run(NOW_SECONDS, MANDATE_ID);
+    const normalizedIntent = forwardIntentFixture({
+      request: { mandateId: MANDATE_ID, stellarOwner: OWNER, kernelAddress: KERNEL },
+      mandate: {
+        bindingId: 'binding-1', bindingHash: BINDING_HASH,
+        approvalDigest: APPROVAL_DIGEST, policyDigest: POLICY_DIGEST,
+        permissionId: PERMISSION_ID, validUntilSeconds: VALID_UNTIL_SECONDS,
+        relayerOrigin: 'https://relayer.example',
+      },
+    });
+    first.farmIntents.createOrGetIntent({ normalizedIntent, now: 900 });
+    const child = normalizedIntent.batch.children[0];
+    const identity = {
+      networkId: child.networkId, bindingId: child.bindingId,
+      executionId: child.executionId, allocationId: child.allocationId, childId: child.childId,
+    };
+    first.baseEvidenceOutbox.seed(identity, 0, { jobId: normalizedIntent.intent.jobId });
+    const commonEvidence = {
+      chainId: '84532', yieldRouterAddress: `0x${'11'.repeat(20)}`,
+      caller: KERNEL.toLowerCase(), poolAddress: normalizedIntent.intent.allocations[0].poolAddress,
+      assets: '1000000', minShares: '900000',
+    };
+    const authoritySnapshotTarget = {
+      mandateId: MANDATE_ID, stellarOwner: OWNER, kernelAddress: KERNEL.toLowerCase(),
+      status: 'active', bindingId: 'binding-1', bindingHash: BINDING_HASH,
+      capabilityHash: CAPABILITY_HASH, relayerOrigin: 'https://relayer.example',
+      validUntilSeconds: VALID_UNTIL_SECONDS, updatedAt: NOW_SECONDS,
+    };
+    let capabilityReads = 0;
+    const authoritySnapshot = new Proxy(authoritySnapshotTarget, {
+      get(target, property, receiver) {
+        if (property === 'capabilityHash') {
+          capabilityReads += 1;
+          return capabilityReads === 1 ? CAPABILITY_HASH : 'bb'.repeat(32);
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const claim = first.farmIntents.claimAuthorizedSubmission({
+      checkpoint: {
+        identity, phase: 'base_deposit', status: 'submitting',
+        evidence: commonEvidence, observedAt: 1_000,
+      },
+      authoritySnapshot,
+      nowSeconds: NOW_SECONDS,
+    });
+
+    expect(concurrentRevokeBlocked).toBe(true);
+    expect(capabilityReads).toBe(1);
+    expect(claim).toMatchObject({ claimed: true, ownerToken: 'authorized-owner' });
+    expect(second.mandatesV3.revoke(mandateIdentity())).toMatchObject({ status: 'revoked' });
+    expect(second.baseEvidenceOutbox.recoveryState(identity)).toMatchObject({
+      phase: 'base_deposit', state: 'submitting',
+    });
+    expect(JSON.stringify(second.baseEvidenceOutbox.status(identity)))
+      .not.toMatch(/authorized-owner|capability|session/i);
+    expect(first.baseEvidenceOutbox.enqueueOwned({
+      identity, phase: 'base_deposit', status: 'submitted',
+      evidence: { ...commonEvidence, userOpHash: `0x${'44'.repeat(32)}` }, observedAt: 1_001,
+    }, { ownerToken: claim.ownerToken })).toMatchObject({ state: 'submitted' });
+    second.db.close();
+    first.db.close();
+  });
+
   it('quarantines legacy active farm rows once and leaves done rows as history only', () => {
     const stores = createSqliteStores(freshPath(), { now: () => 200 });
     for (const [jobId, status] of [['legacy-pending', 'pending'], ['legacy-running', 'running'], ['legacy-done', 'done']]) {

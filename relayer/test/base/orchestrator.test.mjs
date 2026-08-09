@@ -298,6 +298,39 @@ describe('dispatchDeposits', () => {
     });
   });
 
+  it('passes the final authority snapshot only to the atomic submission claim callback', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    const authoritySnapshot = {
+      mandateId: '01'.repeat(16), capabilityHash: '02'.repeat(32), updatedAt: 123,
+    };
+    const onClaimSubmitting = vi.fn(async () => ({
+      claimed: false, ownerToken: null, reasonCode: 'mandate_authority_changed',
+    }));
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn(async () => kernelClient),
+    });
+
+    const results = await orchestrator.dispatchDeposits('approval', [allocation], {
+      onBeforeClaimSubmitting: vi.fn(async () => ({ authorized: true, authoritySnapshot })),
+      onClaimSubmitting,
+      onCheckpoint: vi.fn(),
+    });
+
+    expect(onClaimSubmitting).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'submitting' }),
+      { authoritySnapshot },
+    );
+    expect(results[0]).toMatchObject({
+      status: 'held', reasonCode: 'authority_changed_before_submission',
+    });
+    expect(JSON.stringify(results)).not.toMatch(/capabilityHash|02020202/);
+    expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+  });
+
   it('stops every later sibling when the first durable submission claim is held', async () => {
     const allocations = [task10Allocation(1), task10Allocation(2)];
     const kernelClient = buildMockKernelClient();

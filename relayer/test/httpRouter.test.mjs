@@ -1364,6 +1364,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     associationOutbox: providedOutbox = null,
     baseEvidenceOutbox: providedEvidenceOutbox = null,
     farmIntents: providedFarmIntents = null,
+    cctpRelays: providedCctpRelays = null,
     forwardFarmDeployment = null,
     relayForwardMint = null,
     sanitizeErrors = false,
@@ -1561,6 +1562,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       associationOutbox,
       baseEvidenceOutbox,
       farmIntents: providedFarmIntents,
+      cctpRelays: providedCctpRelays,
       forwardFarmDeployment,
       relayForwardMint,
       sanitizeErrors,
@@ -2718,6 +2720,9 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(corrupt.res.statusCode).toBe(201);
     stores.db.prepare(`UPDATE farm_intent_work_v2
       SET state='deposit_pending',updated_at=1 WHERE job_id=?`).run(corrupt.json.jobId);
+    stores.jobs.set(corrupt.json.jobId, {
+      ...stores.jobs.get(corrupt.json.jobId), status: 'deposit_pending',
+    });
     stores.db.exec('DROP TRIGGER farm_intent_work_v2_immutable');
     stores.db.prepare(`UPDATE farm_intent_work_v2 SET intent_json='{malformed'
       WHERE job_id=?`).run(corrupt.json.jobId);
@@ -2749,6 +2754,88 @@ describe("v3 mandate route authorization and execution gates", () => {
       .toMatchObject({ state: 'awaiting_burn' });
     expect(attempts).toBe(3);
     expect(harness.buildFarm).not.toHaveBeenCalled();
+    stores.db.close();
+  });
+
+  it('blocks a malformed public projection and continues later SQLite recovery work in order', async () => {
+    const stores = createSqliteStores(
+      join(mkdtempSync(join(tmpdir(), 'vf-task11-public-corrupt-')), 'relayer.db'),
+      { sessionKeyCipher: routeCipher() },
+    );
+    const deployment = {
+      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+      baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+      stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+      poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+    };
+    const recoverDeposits = vi.fn(async ({ children }) => children.map(({ allocation }) => ({
+      identity: allocation.identity, status: 'fulfilled', executionStatus: 'deposited',
+    })));
+    const harness = makeRouteHarness({
+      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      associationOutbox: stores.associationOutbox,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      cctpRelays: stores.cctpRelays,
+      relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
+      buildFarmImplementation: () => ({ farm: vi.fn(), recoverDeposits }),
+    });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+    const create = async (requestId, burnTxHash, { projectMint = true } = {}) => {
+      const farm = await postProtected(harness, '/farm', {
+        requestId, mandateId: body.mandateId,
+        stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+        bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+        runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      });
+      expect(farm.res.statusCode).toBe(201);
+      await postProtected(harness, '/farm/attach', {
+        mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash,
+      });
+      const record = stores.farmIntents.getByJob({
+        mandateId: body.mandateId, jobId: farm.json.jobId,
+      });
+      if (projectMint) {
+        stores.farmIntents.projectMintEvidenceAtomic({
+          identity: {
+            mandateId: body.mandateId, jobId: record.jobId,
+            bindingId: record.bindingId, intentDigest: record.intentDigest,
+          },
+          relay: {
+            execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
+            expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
+            attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+            mintTxHash: `0x${'ee'.repeat(32)}`,
+          },
+          now: 2_000_000_000_000,
+        });
+      }
+      return record;
+    };
+    const corrupt = await create('01'.repeat(16), 'ba'.repeat(32), { projectMint: false });
+    const valid = await create('02'.repeat(16), 'bb'.repeat(32));
+    stores.db.prepare(`UPDATE cctp_relay_work SET state='minted',message_digest=?,
+      attestation_digest=?,evidence_version=1,mint_tx_hash=?,updated_at=? WHERE exec_id=?`)
+      .run(
+        'cc'.repeat(32), 'dd'.repeat(32), `0x${'ee'.repeat(32)}`,
+        2_000_000_000_000, corrupt.relayExecId,
+      );
+    stores.db.prepare(`UPDATE jobs SET job='{\"serializedApproval\":\"must-not-leak\"'
+      WHERE job_id=?`).run(corrupt.jobId);
+
+    const summary = await harness.router.resumeFarmJobs();
+
+    expect(summary).toEqual({
+      resumed: [valid.jobId], held: [], blocked: [corrupt.jobId], uncertain: [],
+    });
+    expect(recoverDeposits).toHaveBeenCalledTimes(1);
+    expect(stores.farmIntents.getByJob({ mandateId: body.mandateId, jobId: corrupt.jobId }))
+      .toMatchObject({ state: 'blocked', reasonCode: 'malformed_public_projection' });
+    expect(stores.jobs.get(corrupt.jobId)).toEqual({
+      jobId: corrupt.jobId, status: 'blocked', reasonCode: 'malformed_public_projection',
+    });
+    expect(JSON.stringify(summary)).not.toMatch(/serializedApproval|must-not-leak|JSON/);
     stores.db.close();
   });
 
@@ -3117,6 +3204,141 @@ describe("v3 mandate route authorization and execution gates", () => {
     stores.db.close();
   });
 
+  it('reopens a submitted receipt timeout and confirms only the exact stored UserOperation hash', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-submitted-reopen-')), 'relayer.db');
+    const deployment = {
+      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+      baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+      stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+      poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+    };
+    const word = (value) => BigInt(value).toString(16).padStart(64, '0');
+    const receiptFor = (allocation) => ({
+      userOpHash: USER_OP_HASH, sender: KERNEL, success: true,
+      logs: [{
+        address: CANONICAL_ROUTER,
+        topics: [
+          DEPOSITED_TOPIC0,
+          `0x${KERNEL.slice(2).padStart(64, '0')}`,
+          `0x${allocation.poolAddress.slice(2).padStart(64, '0')}`,
+        ],
+        data: `0x${word(allocation.units)}${word(allocation.minShares)}`,
+        logIndex: 1, transactionHash: TX_HASH,
+      }],
+      receipt: { status: 'success', transactionHash: TX_HASH, logs: [] },
+    });
+    const buildFlow = (reconstructSessionClientFn, sessionPrivateKey) => createFarmFlow({
+      watcher: {}, domains: { stellar: 27 },
+      orchestrator: createOrchestrator({
+        chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org',
+        bundlerRpcUrl: 'https://bundler', yieldRouterAddress: CANONICAL_ROUTER,
+        usdcAddress: CANONICAL_USDC, sessionPrivateKey,
+        now: () => 2_000_000_000_000, reconstructSessionClientFn,
+      }),
+    });
+    let stores = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const sendBeforeRestart = vi.fn(async () => USER_OP_HASH);
+    const waitBeforeRestart = vi.fn(async () => { throw new Error('bundler timeout'); });
+    const firstReconstruct = vi.fn(async () => ({
+      account: { address: KERNEL, encodeCalls: vi.fn(async () => '0xencoded') },
+      sendUserOperation: sendBeforeRestart,
+      waitForUserOperationReceipt: waitBeforeRestart,
+    }));
+    const first = makeRouteHarness({
+      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      associationOutbox: stores.associationOutbox,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
+      buildFarmImplementation: (sessionPrivateKey) => buildFlow(
+        firstReconstruct, sessionPrivateKey,
+      ),
+    });
+    const body = routeBody();
+    seedActiveMandate(first, body);
+    const farm = await postProtected(first, '/farm', {
+      requestId: '01'.repeat(16), mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+    });
+    expect(farm.res.statusCode).toBe(201);
+    await postProtected(first, '/farm/attach', {
+      mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash: 'bb'.repeat(32),
+    });
+    await flushMicrotasks();
+    const record = stores.farmIntents.getByJob({
+      mandateId: body.mandateId, jobId: farm.json.jobId,
+    });
+    const projectionIdentity = {
+      mandateId: body.mandateId, jobId: record.jobId,
+      bindingId: record.bindingId, intentDigest: record.intentDigest,
+    };
+    stores.farmIntents.projectMintEvidenceAtomic({
+      identity: projectionIdentity,
+      relay: {
+        execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
+        expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
+        attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+        mintTxHash: `0x${'ee'.repeat(32)}`,
+      },
+      now: 2_000_000_000_000,
+    });
+    const child = record.batch.children[0];
+    const childIdentity = {
+      networkId: child.networkId, bindingId: child.bindingId,
+      executionId: child.executionId, allocationId: child.allocationId, childId: child.childId,
+    };
+
+    expect(await first.router.resumeFarmJobs()).toEqual({
+      resumed: [], held: [record.jobId], blocked: [], uncertain: [],
+    });
+    expect(sendBeforeRestart).toHaveBeenCalledOnce();
+    expect(waitBeforeRestart).toHaveBeenCalledWith({ hash: USER_OP_HASH, timeout: 120_000 });
+    expect(stores.baseEvidenceOutbox.recoveryState(childIdentity)).toMatchObject({
+      phase: 'base_deposit', state: 'submitted', evidence: { userOpHash: USER_OP_HASH },
+    });
+    expect(stores.farmIntents.getByJob({ mandateId: body.mandateId, jobId: record.jobId }))
+      .toMatchObject({ state: 'deposit_confirming' });
+    stores.db.close();
+
+    stores = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const sendAfterRestart = vi.fn(async () => { throw new Error('must not resend'); });
+    const waitAfterRestart = vi.fn(async ({ hash }) => {
+      expect(hash).toBe(USER_OP_HASH);
+      return receiptFor(record.intent.allocations[0]);
+    });
+    const restartedEncodeCalls = vi.fn(async () => 'must-not-encode');
+    const secondReconstruct = vi.fn(async () => ({
+      account: { address: KERNEL, encodeCalls: restartedEncodeCalls },
+      sendUserOperation: sendAfterRestart,
+      waitForUserOperationReceipt: waitAfterRestart,
+    }));
+    const second = makeRouteHarness({
+      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      associationOutbox: stores.associationOutbox,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
+      buildFarmImplementation: (sessionPrivateKey) => buildFlow(
+        secondReconstruct, sessionPrivateKey,
+      ),
+    });
+
+    expect(await second.router.resumeFarmJobs()).toEqual({
+      resumed: [record.jobId], held: [], blocked: [], uncertain: [],
+    });
+    expect(sendAfterRestart).not.toHaveBeenCalled();
+    expect(restartedEncodeCalls).not.toHaveBeenCalled();
+    expect(waitAfterRestart).toHaveBeenCalledOnce();
+    expect(stores.baseEvidenceOutbox.recoveryState(childIdentity)).toMatchObject({
+      phase: 'base_deposit', state: 'confirmed',
+      evidence: { userOpHash: USER_OP_HASH, transactionHash: TX_HASH },
+    });
+    expect(stores.farmIntents.getByJob({ mandateId: body.mandateId, jobId: record.jobId }))
+      .toMatchObject({ state: 'done' });
+    stores.db.close();
+  });
+
   it('lets only the first router own two never-started children and preserves serial send order', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-two-router-send-')), 'relayer.db');
     const first = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
@@ -3260,6 +3482,66 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(summaries.flatMap(({ resumed }) => resumed)).toEqual([farm.json.jobId]);
     expect(first.farmIntents.getByJob({ mandateId: body.mandateId, jobId: farm.json.jobId }))
       .toMatchObject({ state: 'done' });
+
+    const gapBody = secondRouteBody();
+    seedActiveMandate(left, gapBody, 'active-binding-gap');
+    const gapFarm = await postProtected(left, '/farm', {
+      requestId: '03'.repeat(16), mandateId: gapBody.mandateId,
+      stellarOwner: gapBody.stellarOwner, kernelAddress: gapBody.kernelAddress,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [allocations[0]],
+    }, SECOND_CAPABILITY);
+    expect(gapFarm.res.statusCode).toBe(201);
+    await postProtected(left, '/farm/attach', {
+      mandateId: gapBody.mandateId, jobId: gapFarm.json.jobId, burnTxHash: 'bd'.repeat(32),
+    }, SECOND_CAPABILITY);
+    const gapRecord = first.farmIntents.getByJob({
+      mandateId: gapBody.mandateId, jobId: gapFarm.json.jobId,
+    });
+    const gapProjection = {
+      mandateId: gapBody.mandateId, jobId: gapRecord.jobId,
+      bindingId: gapRecord.bindingId, intentDigest: gapRecord.intentDigest,
+    };
+    first.farmIntents.projectMintEvidenceAtomic({
+      identity: gapProjection,
+      relay: {
+        execId: gapRecord.relayExecId, state: 'minted', burnTxHash: gapRecord.burnTxHash,
+        expectationDigest: gapRecord.expectationDigest, messageDigest: 'cf'.repeat(32),
+        attestationDigest: 'df'.repeat(32), evidenceVersion: '1',
+        mintTxHash: `0x${'f0'.repeat(32)}`,
+      }, now: 2_000_000_000_050,
+    });
+    let gapRevoked = false;
+    const revokeInClaimGap = () => {
+      if (gapRevoked) return;
+      gapRevoked = true;
+      second.mandatesV3.revoke(routeIdentity(gapBody));
+    };
+    const rawClaim = first.baseEvidenceOutbox.claimSubmission.bind(first.baseEvidenceOutbox);
+    leftOutbox.claimSubmission.mockImplementationOnce((checkpoint) => {
+      revokeInClaimGap();
+      return rawClaim(checkpoint);
+    });
+    const authorizedClaim = first.farmIntents.claimAuthorizedSubmission
+      .bind(first.farmIntents);
+    const claimAuthorizedSubmission = vi.fn((args) => {
+      revokeInClaimGap();
+      return authorizedClaim(args);
+    });
+    first.farmIntents.claimAuthorizedSubmission = claimAuthorizedSubmission;
+    const gapSendsBefore = sendUserOperation.mock.calls.length;
+
+    const gapSummary = await left.router.resumeFarmJobs();
+
+    expect(gapSummary.held).toContain(gapFarm.json.jobId);
+    expect(claimAuthorizedSubmission).toHaveBeenCalledOnce();
+    expect(sendUserOperation).toHaveBeenCalledTimes(gapSendsBefore);
+    const gapChild = gapRecord.batch.children[0];
+    expect(first.baseEvidenceOutbox.recoveryState({
+      networkId: gapChild.networkId, bindingId: gapChild.bindingId,
+      executionId: gapChild.executionId, allocationId: gapChild.allocationId,
+      childId: gapChild.childId,
+    })).toMatchObject({ phase: 'cctp_mint', state: 'confirmed' });
 
     const revokedFarm = await postProtected(left, '/farm', {
       requestId: '02'.repeat(16), mandateId: body.mandateId,

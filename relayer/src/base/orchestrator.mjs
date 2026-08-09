@@ -386,6 +386,7 @@ export function createOrchestrator(config) {
       try {
         try {
           if (typeof onClaimSubmitting === 'function') {
+            let claimContext;
             if (typeof onBeforeClaimSubmitting === 'function') {
               let authorityFresh = false;
               try {
@@ -393,7 +394,12 @@ export function createOrchestrator(config) {
               } catch {
                 authorityFresh = false;
               }
-              if (authorityFresh !== true) {
+              const authorizedSnapshot = authorityFresh?.authorized === true
+                && authorityFresh.authoritySnapshot
+                && typeof authorityFresh.authoritySnapshot === 'object'
+                ? authorityFresh.authoritySnapshot
+                : null;
+              if (authorityFresh !== true && !authorizedSnapshot) {
                 stopAfterUnknown = true;
                 results.push({
                   identity: allocation.identity, allocationId: allocation.identity.allocationId,
@@ -404,6 +410,7 @@ export function createOrchestrator(config) {
                 });
                 continue;
               }
+              if (authorizedSnapshot) claimContext = { authoritySnapshot: authorizedSnapshot };
             }
             const claim = await onClaimSubmitting({
               identity: allocation.identity,
@@ -411,13 +418,15 @@ export function createOrchestrator(config) {
               status: 'submitting',
               evidence: commonEvidence,
               observedAt: now(),
-            });
+            }, claimContext);
             if (claim?.claimed !== true || typeof claim.ownerToken !== 'string'
                 || claim.ownerToken.length === 0) {
               stopAfterUnknown = true;
               results.push({
                 identity: allocation.identity, allocationId: allocation.identity.allocationId,
-                pool: allocation.pool, status: 'held', reasonCode: 'submission_claim_held',
+                pool: allocation.pool, status: 'held',
+                reasonCode: claim?.reasonCode === 'mandate_authority_changed'
+                  ? 'authority_changed_before_submission' : 'submission_claim_held',
                 executionStatus: 'held', custody: { location: 'agent' }, userOpHash: null,
                 transactionHash: null, txHash: null,
               });

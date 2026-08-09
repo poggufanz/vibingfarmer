@@ -881,6 +881,30 @@ export function createRelayerRouter({
       && authority.capabilityHash === expected.capabilityHash);
   }
 
+  function privateAuthorizedClaimSnapshot(record) {
+    if (!record || record.status !== 'active'
+        || !CAPABILITY_HASH_PATTERN.test(record.capabilityHash || '')
+        || !Number.isSafeInteger(record.updatedAt) || record.updatedAt < 0) return null;
+    const snapshot = {
+      mandateId: record.mandateId,
+      stellarOwner: record.stellarOwner,
+      kernelAddress: String(record.kernelAddress).toLowerCase(),
+      status: 'active',
+      bindingId: record.bindingId,
+      bindingHash: record.bindingHash,
+      relayerOrigin: record.relayerOrigin ?? null,
+      validUntilSeconds: record.validUntilSeconds,
+      updatedAt: record.updatedAt,
+    };
+    Object.defineProperty(snapshot, 'capabilityHash', {
+      value: record.capabilityHash,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+    return Object.freeze(snapshot);
+  }
+
   function activeDurableMatches(durable, authority) {
     return Boolean(durable && authority
       && durable.status === 'active'
@@ -1104,6 +1128,12 @@ export function createRelayerRouter({
     const result = { resumed: [], held: [], blocked: [], uncertain: [] };
     let cursor = 0;
     async function process(record) {
+      const stopForMalformedProjection = (projected) => {
+        if (projected?.state !== 'blocked'
+            || projected.reasonCode !== 'malformed_public_projection') return false;
+        result.blocked.push(record.jobId);
+        return true;
+      };
       const identity = {
         mandateId: record.mandateId,
         stellarOwner: record.stellarOwner,
@@ -1178,18 +1208,20 @@ export function createRelayerRouter({
           });
           result.blocked.push(record.jobId);
         } else if (relay.state === 'blocked' || relay.state === 'uncertain') {
-          farmIntents.advanceProjection({
+          const projected = farmIntents.advanceProjection({
             identity: projectionIdentity,
             from: 'relay_pending',
             to: relay.state,
             reasonCode: relay.reasonCode,
             now: Date.now(),
           });
+          if (stopForMalformedProjection(projected)) return;
           result[relay.state].push(record.jobId);
         } else if (relay.state === 'minted') {
           record = farmIntents.projectMintEvidenceAtomic({
             identity: projectionIdentity, relay, now: Date.now(),
           });
+          if (stopForMalformedProjection(record)) return;
         } else {
           // Task 8 reconciliation owns polling/submission/known-hash confirmation and ran first.
           result.held.push(record.jobId);
@@ -1261,19 +1293,21 @@ export function createRelayerRouter({
             || Object.entries(expected).some(([field, value]) => recovery.evidence?.[field] !== value);
         });
         if (submittedMismatch) {
-          farmIntents.advanceProjection({
+          const projected = farmIntents.advanceProjection({
             identity: projectionIdentity, from: record.state, to: 'uncertain',
             reasonCode: 'submitted_evidence_conflict', now: Date.now(),
           });
+          if (stopForMalformedProjection(projected)) return;
           result.uncertain.push(record.jobId);
           return;
         }
         let projectionState = record.state;
         if (projectionState === 'deposit_pending') {
-          farmIntents.advanceProjection({
+          const projected = farmIntents.advanceProjection({
             identity: projectionIdentity, from: 'deposit_pending', to: 'deposit_confirming',
             now: Date.now(),
           });
+          if (stopForMalformedProjection(projected)) return;
           projectionState = 'deposit_confirming';
         }
         const depositResults = [];
@@ -1331,13 +1365,17 @@ export function createRelayerRouter({
             approval: authority.record.serializedApproval,
             children: [child],
             onBeforeClaimSubmitting: async () => {
-              const refreshed = await revalidateFarmAuthority(attachContext, { loadRecord: false });
-              return !refreshed.error && activeAuthorityMatches(
+              const refreshed = await revalidateFarmAuthority(attachContext);
+              const authoritySnapshot = privateAuthorizedClaimSnapshot(refreshed.record);
+              if (refreshed.error || !authoritySnapshot || !activeAuthorityMatches(
                 refreshed.authority, authority.record, refreshed.identity,
-              );
+              )) return false;
+              return { authorized: true, authoritySnapshot };
             },
-            onClaimSubmitting: async (checkpoint) => (
-              baseEvidenceOutbox.claimSubmission(checkpoint)
+            onClaimSubmitting: async (checkpoint, { authoritySnapshot } = {}) => (
+              farmIntents.claimAuthorizedSubmission({
+                checkpoint, authoritySnapshot, nowSeconds: nowSeconds(),
+              })
             ),
             onCheckpoint: async (checkpoint, ownership) => (ownership?.ownerToken
               ? baseEvidenceOutbox.enqueueOwned(checkpoint, ownership)
@@ -1352,15 +1390,17 @@ export function createRelayerRouter({
         const allFulfilled = depositResults.length === children.length
           && depositResults.every((entry) => entry?.status === 'fulfilled');
         if (allFulfilled) {
-          farmIntents.advanceProjection({
+          const projected = farmIntents.advanceProjection({
             identity: projectionIdentity, from: projectionState, to: 'done', now: Date.now(),
           });
+          if (stopForMalformedProjection(projected)) return;
           result.resumed.push(record.jobId);
         } else if (hasUncertain) {
-          farmIntents.advanceProjection({
+          const projected = farmIntents.advanceProjection({
             identity: projectionIdentity, from: projectionState, to: 'uncertain',
             reasonCode: 'base_recovery_uncertain', now: Date.now(),
           });
+          if (stopForMalformedProjection(projected)) return;
           result.uncertain.push(record.jobId);
         } else {
           result.held.push(record.jobId);

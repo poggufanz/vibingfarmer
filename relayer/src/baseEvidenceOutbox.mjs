@@ -138,6 +138,7 @@ export function createBaseEvidenceOutbox(db, {
   now = () => Date.now(),
   leaseToken = randomUUID,
   registerTransactionEnqueue = null,
+  registerTransactionClaim = null,
 } = {}) {
   if (!Number.isSafeInteger(maxAttempts) || maxAttempts <= 0) {
     throw new Error('Base evidence maxAttempts must be positive');
@@ -277,13 +278,13 @@ export function createBaseEvidenceOutbox(db, {
     return enqueueInternal(input, { transaction: true });
   }
 
-  function claimSubmission(input) {
+  function claimSubmissionInternal(input, { transaction = true } = {}) {
     const checkpoint = validateCheckpoint(input);
     if (checkpoint.phase !== 'base_deposit' || checkpoint.status !== 'submitting') {
       throw new Error('Base submission claim requires a submitting checkpoint');
     }
     const values = identityValues(checkpoint.identity);
-    db.exec('BEGIN IMMEDIATE');
+    if (transaction) db.exec('BEGIN IMMEDIATE');
     try {
       const head = db.prepare(`SELECT * FROM base_evidence_heads
         WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?`)
@@ -308,7 +309,7 @@ export function createBaseEvidenceOutbox(db, {
         })) {
           throw new Error('immutable Base evidence checkpoint conflict');
         }
-        db.exec('COMMIT');
+        if (transaction) db.exec('COMMIT');
         return { claimed: false, ownerToken: null };
       }
       const ownerToken = leaseToken();
@@ -319,12 +320,16 @@ export function createBaseEvidenceOutbox(db, {
           AND submission_owner_token IS NULL`)
         .run(ownerToken, ...values);
       if (changed.changes !== 1) throw new Error('Base submission owner claim conflict');
-      db.exec('COMMIT');
+      if (transaction) db.exec('COMMIT');
       return { claimed: true, ownerToken, event };
     } catch (error) {
-      db.exec('ROLLBACK');
+      if (transaction) db.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  function claimSubmission(input) {
+    return claimSubmissionInternal(input, { transaction: true });
   }
 
   function enqueueOwned(input, { ownerToken } = {}) {
@@ -360,6 +365,12 @@ export function createBaseEvidenceOutbox(db, {
       throw new Error('Base evidence transaction registration is invalid');
     }
     registerTransactionEnqueue((input) => enqueueInternal(input, { transaction: false }));
+  }
+  if (registerTransactionClaim != null) {
+    if (typeof registerTransactionClaim !== 'function') {
+      throw new Error('Base evidence transaction claim registration is invalid');
+    }
+    registerTransactionClaim((input) => claimSubmissionInternal(input, { transaction: false }));
   }
 
   function leaseNext({ now: at = now(), leaseMs = 30_000 } = {}) {
