@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const mountedHarness = vi.hoisted(() => ({
@@ -14,6 +14,8 @@ const mountedHarness = vi.hoisted(() => ({
   withdrawDialogProps: null,
   stopAccessDialogProps: null,
   recoveryPanelProps: null,
+  renderRealMoneyRoute: false,
+  baseWithdrawScreenMount: null,
   orchestratorConfig: null,
   dispatch: null,
   movement: null,
@@ -62,11 +64,13 @@ vi.mock('./components/strategy/StrategyRoute.jsx', async () => {
   }
 })
 
-vi.mock('./components/money/MyMoneyRoute.jsx', async () => {
+vi.mock('./components/money/MyMoneyRoute.jsx', async (importOriginal) => {
+  const actual = await importOriginal()
   const { createElement } = await import('react')
   return {
     MyMoneyRoute: (props) => {
       mountedHarness.moneyRouteProps = props
+      if (mountedHarness.renderRealMoneyRoute) return createElement(actual.MyMoneyRoute, props)
       return createElement(
         'output',
         { 'data-testid': 'mounted-money-state' },
@@ -186,6 +190,22 @@ vi.mock('./base/dashboardPositions.js', () => ({
   loadDeviceBasePositions: vi.fn(async () => []),
   loadIndexedBasePositions: vi.fn(async () => []),
 }))
+vi.mock('./base/readPositions.js', () => ({
+  readIdleUsdc: vi.fn(),
+}))
+vi.mock('./wallet/passkeyBridge.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  ensureBaseOwner: vi.fn(),
+}))
+vi.mock('./screens/Withdraw.jsx', async () => {
+  const { createElement } = await import('react')
+  return {
+    default: () => {
+      mountedHarness.baseWithdrawScreenMount?.()
+      return createElement('output', { 'data-testid': 'base-withdraw-screen' })
+    },
+  }
+})
 vi.mock('./stellar/keeperEvents.js', () => ({ fetchKeeperEvents: vi.fn(async () => []) }))
 vi.mock('./positionsStore.js', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -210,6 +230,20 @@ vi.mock('./base/relayerClient.js', async (importOriginal) => ({
   ...(await importOriginal()),
   getMandateStatus: vi.fn(),
 }))
+vi.mock('./wallet/baseBinding.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    readBaseMandate: vi.fn((...args) => actual.readBaseMandate(...args)),
+  }
+})
+vi.mock('./mergeFlowHelpers.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    buildBaseLegContext: vi.fn((...args) => actual.buildBaseLegContext(...args)),
+  }
+})
 vi.mock('./strategy/mergedCatalog.js', async (importOriginal) => ({
   ...(await importOriginal()),
   checkRelayerHealth: vi.fn(async () => true),
@@ -233,10 +267,14 @@ import { ensureExitSigner, partialWithdraw } from './stellar/partialWithdraw.js'
 import { sweepAgents } from './stellar/exit.js'
 import { revokeAgentOnChain } from './stellar/index.js'
 import { getMandateStatus } from './base/relayerClient.js'
-import { baseMandateStorageKey } from './wallet/baseBinding.js'
+import { baseMandateStorageKey, readBaseMandate } from './wallet/baseBinding.js'
+import { buildBaseLegContext } from './mergeFlowHelpers.js'
 import { BASE_POOL_CATALOG } from './config.js'
 import { readLifeboatState } from './stellar/vaultReads.js'
 import { grantMandate } from './stellar/lifeboat.js'
+import { loadDeviceBasePositions, loadIndexedBasePositions } from './base/dashboardPositions.js'
+import { readIdleUsdc } from './base/readPositions.js'
+import { ensureBaseOwner } from './wallet/passkeyBridge.js'
 
 const G = Object.freeze({
   version: 1,
@@ -467,6 +505,8 @@ beforeEach(() => {
   mountedHarness.withdrawDialogProps = null
   mountedHarness.stopAccessDialogProps = null
   mountedHarness.recoveryPanelProps = null
+  mountedHarness.renderRealMoneyRoute = false
+  mountedHarness.baseWithdrawScreenMount = vi.fn()
   mountedHarness.orchestratorConfig = null
   mountedHarness.dispatch = deferred()
   mountedHarness.movement = {
@@ -488,11 +528,99 @@ beforeEach(() => {
   getMandateStatus.mockReset().mockResolvedValue(null)
   readLifeboatState.mockReset().mockResolvedValue(null)
   grantMandate.mockClear()
+  loadDeviceBasePositions.mockReset().mockResolvedValue([])
+  loadIndexedBasePositions.mockReset().mockResolvedValue({ status: 'empty', accounts: [] })
+  readIdleUsdc.mockReset()
+  ensureBaseOwner.mockReset()
+  readBaseMandate.mockClear()
+  buildBaseLegContext.mockClear()
 })
 
 afterEach(() => cleanup())
 
 describe('active account application state', () => {
+  it('keeps real /home Base history visible but every unavailable withdraw/recovery entry inert', async () => {
+    mountedHarness.renderRealMoneyRoute = true
+    const amount = { token: 'USDC', units: '50000000', decimals: 7 }
+    const agentAddress = `C${'B'.repeat(55)}`
+    const agentPool = '0x1111111111111111111111111111111111111112'
+    const historyPool = '0x1111111111111111111111111111111111111113'
+    const historyOnlyMarker = 'Device loader history 8472'
+    const historicalPosition = {
+      pool: historyPool,
+      poolName: historyOnlyMarker,
+      shares: 5_500_000n,
+      assets: 5_250_000n,
+      minAssets: 5_223_750n,
+    }
+    const agent = {
+      address: agentAddress,
+      amount,
+      custody: { location: 'base-proxy' },
+      custodyBreakdown: [
+        {
+          location: 'base-proxy',
+          amount,
+          kernelAddress: '0x2222222222222222222222222222222222222222',
+          poolAddress: agentPool,
+          poolName: 'Agent custody decoy',
+          asset: 'USDC',
+          coverageReason: null,
+        },
+      ],
+      executionStatus: 'failed',
+      problems: ['base-execution-failed'],
+    }
+    discoverOwnerScopes.mockResolvedValue(
+      discoveryWith([{ address: agentAddress, scopeReadStatus: 'ok', revoked: false, expiry: 0 }])
+    )
+    readOwnerMoney.mockResolvedValue(moneyReads([agent]))
+    loadDeviceBasePositions.mockResolvedValue([historicalPosition])
+
+    renderMoneyApp()
+
+    await waitFor(() => expect(mountedHarness.moneyRouteProps?.model?.state).toBe('problem'))
+    await waitFor(() =>
+      expect(mountedHarness.withdrawDialogProps?.basePlan?.positions).toEqual([historicalPosition])
+    )
+    expect(loadDeviceBasePositions).toHaveBeenCalledWith({ stellarOwner: G.address })
+    const history = screen.getByRole('region', { name: 'Historical Base positions' })
+    expect(within(history).getByText(historyOnlyMarker)).toBeTruthy()
+    expect(within(history).getByText('5.25 USDC')).toBeTruthy()
+    expect(within(history).getByText(/temporarily unavailable/i)).toBeTruthy()
+    const recover = screen.getByRole('button', { name: 'Recover Base account' })
+    expect(recover.disabled).toBe(true)
+    expect(document.getElementById('recover-base-unavailable').textContent).toMatch(
+      /temporarily unavailable/i
+    )
+    fireEvent.click(recover)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review problem' }))
+    const baseTab = await screen.findByRole('tab', { name: /base full unwind/i })
+    expect(baseTab.disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: /withdraw everything from base/i })).toBeNull()
+    fireEvent.click(baseTab)
+
+    const baseStorageBefore = Object.keys(localStorage)
+      .filter((key) => key.startsWith('vf_base'))
+      .sort()
+    await act(async () => mountedHarness.moneyRouteProps.onRecoverBase())
+
+    expect(ensureBaseOwner).not.toHaveBeenCalled()
+    expect(loadIndexedBasePositions).not.toHaveBeenCalled()
+    expect(readIdleUsdc).not.toHaveBeenCalled()
+    expect(mountedHarness.baseWithdrawScreenMount).not.toHaveBeenCalled()
+    expect(
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith('vf_base'))
+        .sort()
+    ).toEqual(baseStorageBefore)
+    expect(mountedHarness.withdrawDialogProps.basePlan).toMatchObject({
+      available: false,
+      positions: [historicalPosition],
+    })
+  })
+
   it('builds one unfiltered Crew projection for the route and sidebar without wiring Withdraw', async () => {
     const assignedAddress = `C${'S'.repeat(55)}`
     const pendingAddress = `C${'P'.repeat(55)}`
@@ -1210,10 +1338,9 @@ describe('active account application state', () => {
     storageSet.mockRestore()
   })
 
-  it('mounted App rechecks a reviewed Base mandate immediately before grant and blocks every movement when it was revoked', async () => {
+  it('gates a crafted reviewed bridge before mandate/storage/context/orchestrator work when Base is unavailable', async () => {
     const reviewedEvidence = activeBaseWireEvidence()
-    let remoteEvidence = reviewedEvidence
-    getMandateStatus.mockImplementation(async () => remoteEvidence)
+    getMandateStatus.mockImplementation(async () => reviewedEvidence)
     localStorage.setItem(baseMandateStorageKey(G.address), JSON.stringify(reviewedEvidence))
 
     render(
@@ -1228,7 +1355,7 @@ describe('active account application state', () => {
 
     const pool = BASE_POOL_CATALOG[0]
     const plan = normalizeStrategyPlan({
-      runId: 'run-mounted-mandate-recheck',
+      runId: 'run-mounted-unavailable-bridge',
       risk: 'low',
       stellarUnits: 0n,
       baseAllocations: [
@@ -1243,64 +1370,52 @@ describe('active account application state', () => {
       ],
     })
     await act(async () => {
-      mountedHarness.routeProps.onAcceptPlan({ plan, fingerprint: 'PLAN-BASE-RECHECK' })
+      mountedHarness.routeProps.onAcceptPlan({ plan, fingerprint: 'PLAN-UNAVAILABLE-BRIDGE' })
     })
     await waitFor(() => expect(mountedState().stage).toBe('protect'))
     await act(async () => {
       await mountedHarness.routeProps.protectProps.onRetryPreflight({ durationSeconds: 3600 })
     })
 
-    const reviewedStatusCalls = getMandateStatus.mock.calls.length
-    remoteEvidence = {
-      ...reviewedEvidence,
-      status: 'revoked',
-      reasonCodes: ['PERMISSION_REVOKED'],
-      observed: {
-        ...reviewedEvidence.observed,
-        permission: {
-          permissionId: BASE_PERMISSION_ID,
-          permissionFlag: '0x0000',
-          signer: `0x${'00'.repeat(20)}`,
-          policyData: [],
-          digest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
-        },
-      },
-      checks: {
-        ...reviewedEvidence.checks,
-        permission: false,
-        reconstruction: false,
-      },
-    }
-    let confirmation
-    await act(async () => {
-      confirmation = mountedHarness.routeProps.protectProps.onRequestGrant()
-      confirmation.catch(() => {})
-      await Promise.resolve()
-    })
-    await waitFor(() =>
-      expect(getMandateStatus.mock.calls.length).toBeGreaterThan(reviewedStatusCalls)
-    )
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    readBaseMandate.mockClear()
+    getMandateStatus.mockClear()
+    buildBaseLegContext.mockClear()
+    preflightPermission.mockClear()
+    mountedHarness.orchestratorConfig = null
+    Object.values(mountedHarness.movement).forEach((movement) => movement.mockClear())
+    const unreachableDispatch = Promise.reject(new Error('dispatch must be unreachable'))
+    unreachableDispatch.catch(() => {})
+    mountedHarness.dispatch = { promise: unreachableDispatch }
+    const storageGet = vi.spyOn(Storage.prototype, 'getItem')
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem')
+    const storageRemove = vi.spyOn(Storage.prototype, 'removeItem')
 
-    expect(getMandateStatus).toHaveBeenLastCalledWith(BASE_MANDATE_ID, {
-      stellarOwner: G.address,
-      kernelAddress: BASE_KERNEL,
-    })
-    expect(JSON.stringify(getMandateStatus.mock.calls)).not.toMatch(
-      /serializedApproval|capability|authorization|\ballocation\b|\bamount\b|\bpool(?:Address)?\b|\bminShares\b/i
-    )
-    expect(mountedHarness.orchestratorConfig).toBeNull()
-    expect(mountedHarness.movement.grant).not.toHaveBeenCalled()
-    expect(mountedHarness.movement.pull).not.toHaveBeenCalled()
-    expect(mountedHarness.movement.burn).not.toHaveBeenCalled()
-    expect(mountedHarness.movement.farmPost).not.toHaveBeenCalled()
-    await expect(confirmation).rejects.toMatchObject({
-      phase: 'preflight',
-      code: 'VF_BASE_MANDATE_CHANGED',
-    })
+    try {
+      let confirmation
+      await act(async () => {
+        confirmation = mountedHarness.routeProps.protectProps.onRequestGrant()
+        confirmation.catch(() => {})
+        await Promise.resolve()
+      })
+
+      await expect(confirmation).rejects.toMatchObject({ code: 'BASE_CROSS_CHAIN_UNAVAILABLE' })
+      expect(readBaseMandate).not.toHaveBeenCalled()
+      expect(getMandateStatus).not.toHaveBeenCalled()
+      expect(buildBaseLegContext).not.toHaveBeenCalled()
+      expect(preflightPermission).not.toHaveBeenCalled()
+      expect(storageGet).not.toHaveBeenCalledWith(baseMandateStorageKey(G.address))
+      expect(storageSet).not.toHaveBeenCalled()
+      expect(storageRemove).not.toHaveBeenCalled()
+      expect(mountedHarness.orchestratorConfig).toBeNull()
+      expect(mountedHarness.movement.grant).not.toHaveBeenCalled()
+      expect(mountedHarness.movement.pull).not.toHaveBeenCalled()
+      expect(mountedHarness.movement.burn).not.toHaveBeenCalled()
+      expect(mountedHarness.movement.farmPost).not.toHaveBeenCalled()
+    } finally {
+      storageGet.mockRestore()
+      storageSet.mockRestore()
+      storageRemove.mockRestore()
+    }
   })
 
   it('mounted App drops stale orchestrator events and completion after a network epoch switch', async () => {

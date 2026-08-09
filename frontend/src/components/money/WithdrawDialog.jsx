@@ -8,21 +8,16 @@
 // wires onConfirmFull/onConfirmPartial/onConfirmBase to the real stellar/exit.js + Base full-unwind
 // calls, then re-renders with `pending`/`progress` as the real attempt proceeds.
 //
-// Three MUTUALLY EXCLUSIVE tabs (full / partial / base, Base only offered when `basePlan.available`)
+// Three MUTUALLY EXCLUSIVE tabs (full / partial / base). A historical Base position remains
+// represented when execution is unavailable, but its tab is disabled and bound to a public-safe
+// notice; verified availability is the only state that can expose the destructive Base CTA.
 // rather than an always-appended Base section -- every tab therefore has exactly ONE primary action
 // in the shared Dialog `actions` footer, Cancel always rendered right alongside it (brief: "Cancel
 // before/alongside a non-Harvest destructive action").
 //
-// Base blocker note (verified cleared by the task owner, NOT by this file): the deployed
-// BaseExitSweeper (0x5451a6dc..., base-contracts/src/BaseExitSweeper.sol:164) calls
-// `router.allowedPool(pool)`, matching the live YieldRouter's real selector -- exitAllAndBurn no
-// longer reverts. BaseExitSweeper.sol:152-162 documents the remaining, real limitation this file
-// must keep surfacing honestly: `allowedPool` is an owner-revocable DEPOSIT allowlist, not a
-// permanent exit-eligibility one -- a pool de-listed after a deposit is SKIPPED by the sweep
-// (`_eligible`, :163-171), not zeroed, and its balance stays on Base, recoverable by the owner
-// later. The preview below can only ever promise the KNOWN target set it was given (`basePlan.
-// positions`) plus this honest caveat -- it can never promise a complete sweep, because pool
-// eligibility is revocable in real time and this component makes no chain read of its own.
+// Hardened BaseExitSweeper checks YieldRouter.knownPool, not the owner-revocable new-deposit
+// allowlist. A pool disabled after deposit therefore remains sweepable; the preview names the
+// known target set it was given without reviving the obsolete "disabled pools are skipped" copy.
 import { useMemo, useState } from 'react'
 import { Dialog } from '../pocket/Primitives.jsx'
 import {
@@ -124,6 +119,8 @@ export function WithdrawDialog({
   const [chosenAddress, setChosenAddress] = useState(null)
   const [amountInput, setAmountInput] = useState('')
   const effectiveMode = mode === 'base' && !basePlan?.available ? 'full' : mode
+  const hasBaseHistory = (basePlan?.positions?.length ?? 0) > 0
+  const baseUnavailable = hasBaseHistory && !basePlan?.available
 
   const fullPlan = useMemo(
     () =>
@@ -303,18 +300,27 @@ export function WithdrawDialog({
         >
           Partial (one agent)
         </button>
-        {basePlan?.available && (
+        {hasBaseHistory && (
           <button
             type="button"
             role="tab"
             aria-selected={effectiveMode === 'base'}
-            disabled={pending}
-            onClick={() => setMode('base')}
+            aria-describedby={baseUnavailable ? 'withdraw-base-unavailable' : undefined}
+            disabled={pending || baseUnavailable}
+            onClick={() => {
+              if (!baseUnavailable) setMode('base')
+            }}
           >
             Base full unwind
           </button>
         )}
       </div>
+
+      {baseUnavailable && basePlan?.unavailableReason && (
+        <p id="withdraw-base-unavailable" role="status">
+          {basePlan.unavailableReason}
+        </p>
+      )}
 
       {effectiveMode === 'full' && (
         <div>
@@ -433,10 +439,9 @@ export function WithdrawDialog({
             ))}
           </ul>
           <p>
-            A pool's Base allowlist can be revoked by its owner after you deposited into it — if
-            that happens, this sweep SKIPS that pool rather than guessing at it. A skipped pool's
-            balance is not lost and is not shown as zero; it stays on Base, untouched, until it is
-            eligible again.
+            The owner can disable a pool for new deposits after you deposited. This exit uses the
+            router's known-pool record, so a disabled pool remains sweepable; disabling new deposits
+            does not strand or silently zero the position.
           </p>
           <p>One passkey signature. The relay sponsors Base gas — 0 ETH from you.</p>
         </div>

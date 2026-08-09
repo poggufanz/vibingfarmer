@@ -122,6 +122,11 @@ const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
 import { loadDeviceBasePositions, loadIndexedBasePositions } from './base/dashboardPositions.js'
 import { readIdleUsdc } from './base/readPositions.js'
+import {
+  BASE_CROSS_CHAIN_AVAILABLE,
+  BASE_CROSS_CHAIN_UNAVAILABLE_REASON,
+  assertBaseCrossChainAvailable,
+} from './base/config.js'
 // Task 10 (IA remap) — HomePage is retired; `/home` now mounts MyMoneyRoute directly (the one
 // portfolio authority), and `/agent` becomes the crew's own live console below.
 // My Money Task 13 (Pocket Crew redesign, Wave 5) — the production My money route. Replaces
@@ -2380,6 +2385,10 @@ const App = () => {
   // ZeroDev/viem chain behind it) out of the eager bundle — mirrors orchestrator.js's
   // baseLeg.js gating (Task 8).
   const handleBaseWithdrawClick = async () => {
+    if (!BASE_CROSS_CHAIN_AVAILABLE) {
+      setBaseWithdrawError(BASE_CROSS_CHAIN_UNAVAILABLE_REASON)
+      return
+    }
     const captured = activeAccount
     assertActiveAccount(captured)
     setBaseWithdrawError(null)
@@ -2452,6 +2461,10 @@ const App = () => {
   // fabricates a position: `positions` is exactly what this read returns, [] when the ceremony
   // succeeds but nothing is found there.
   async function handleRecoverBaseAccount() {
+    if (!BASE_CROSS_CHAIN_AVAILABLE) {
+      setBaseWithdrawError(BASE_CROSS_CHAIN_UNAVAILABLE_REASON)
+      return
+    }
     if (!realAddress || !activeAccount) return
     const captured = activeAccount
     assertActiveAccount(captured)
@@ -3774,6 +3787,16 @@ const App = () => {
     const plan = strategyFlowRef.current.plan
     const hasBaseLeg = (plan?.agents || []).some((agent) => agent.kind === 'bridge')
     if (hasBaseLeg) {
+      try {
+        assertBaseCrossChainAvailable()
+      } catch (cause) {
+        throw new PermissionPhaseError({
+          phase: 'preflight',
+          code: cause?.code || 'BASE_CROSS_CHAIN_UNAVAILABLE',
+          message: cause?.message || BASE_CROSS_CHAIN_UNAVAILABLE_REASON,
+          cause,
+        })
+      }
       const record = readBaseMandate(realAddress)
       const reviewedEvidence = baseView.mandateView?.evidence ?? null
       // ONE amount-free live check immediately before the grant: the mandate is named by its
@@ -4431,7 +4454,11 @@ const App = () => {
     owner: realAddress,
     networkId: 'stellar-testnet',
   })
-  const moneyBasePlan = { available: basePositions.length > 0, positions: basePositions }
+  const moneyBasePlan = {
+    available: BASE_CROSS_CHAIN_AVAILABLE && basePositions.length > 0,
+    positions: basePositions,
+    unavailableReason: BASE_CROSS_CHAIN_AVAILABLE ? null : BASE_CROSS_CHAIN_UNAVAILABLE_REASON,
+  }
   const moneyStopAccessAgent =
     moneyRead?.agents?.find((a) => a.address === moneyStopAccessAddress) ?? null
   return (
@@ -4494,6 +4521,10 @@ const App = () => {
                   onRecoverAgent={handleRecoverAgent}
                   onRecoverBase={handleRecoverBaseAccount}
                   actionPending={moneyActionPending}
+                  baseActionsAvailable={BASE_CROSS_CHAIN_AVAILABLE}
+                  baseUnavailableReason={BASE_CROSS_CHAIN_UNAVAILABLE_REASON}
+                  baseActionError={baseWithdrawError}
+                  basePlan={moneyBasePlan}
                 />
               </>
             }

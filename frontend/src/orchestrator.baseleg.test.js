@@ -11,6 +11,11 @@
 // explicitly forwards this spy into the real executeBaseLeg and its real runFarmFlow.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
+vi.mock('./base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./base/hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
 const baseLegHarness = vi.hoisted(() => ({ executeReal: null }))
 
 const submitGrantMock = vi.fn()

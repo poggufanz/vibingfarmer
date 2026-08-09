@@ -57,7 +57,17 @@ const policy = Object.freeze({
 
 const config = Object.freeze({
   publicOrigin: 'https://relayer.example',
-  base: { chain: { id: 84532 }, mandatePolicy: policy },
+  base: {
+    chain: { id: 84532 },
+    mandatePolicy: policy,
+    baseCrossChainAvailable: true,
+    hardenedDeployment: {
+      generation: 'hardened-v2',
+      chainId: 84532,
+      yieldRouter: { address: ROUTER },
+      route: { usdcAddress: USDC },
+    },
+  },
 });
 
 function sha256(value) {
@@ -283,6 +293,18 @@ describe('parseCanonicalMandate', () => {
       base: { ...config.base, chain: { id: changedPolicy.chainId }, mandatePolicy: changedPolicy },
     };
     expect(validateCanonicalMandate(params({ config: changedConfig })).ok).toBe(false);
+  });
+
+  it('rejects the otherwise canonical legacy mandate policy when hardened deployment authority is unavailable', () => {
+    const unavailable = {
+      ...config,
+      base: { ...config.base, baseCrossChainAvailable: false },
+    };
+
+    expect(validateCanonicalMandate(params({ config: unavailable }))).toMatchObject({
+      ok: false,
+      code: 'POLICY_MISMATCH',
+    });
   });
 
   it('rejects a Stellar address with a valid shape and invalid checksum', () => {

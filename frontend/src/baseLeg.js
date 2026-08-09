@@ -26,6 +26,7 @@ import { defaultMakePublicClient } from './wallet/passkeyBase.js'
 import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
 import { sanitizeReceiptData } from './strategy/dispatchSummary.js'
 import { isVerifiedBaseMandateStatus } from './base/mandateStatus.js'
+import { BASE_CROSS_CHAIN_AVAILABLE, BASE_CROSS_CHAIN_UNAVAILABLE_REASON } from './base/config.js'
 
 function unknownSubmissionRecoveryPhase(stage) {
   if (stage === 'pull') return { phase: 'pull', action: 'reconcile-pull' }
@@ -67,6 +68,25 @@ export async function executeBaseLeg({
   onEvent = () => {},
   deps = {},
 }) {
+  // Global deployment authority fence: this precedes dependency selection, mandate reads,
+  // quoting, client creation, pulls, and burns. Keep executeBaseLeg's settled-result contract.
+  if (!BASE_CROSS_CHAIN_AVAILABLE) {
+    return {
+      success: false,
+      runId,
+      grantTxHash,
+      stage: 'availability',
+      error: BASE_CROSS_CHAIN_UNAVAILABLE_REASON,
+      custody: { location: 'owner', confirmed: true, checkedAt: null },
+      bridgeAgent: bridgeAgentAddress || null,
+      kernelAddress: kernelAddress || null,
+      jobId: null,
+      attestation: null,
+      recovery: null,
+      allocations: [],
+    }
+  }
+
   // ponytail: `deps = {}` default only covers undefined; an explicit `deps: null` would throw
   // synchronously on the destructure below, outside the try — guard normalizes both.
   const {

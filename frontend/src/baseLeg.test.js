@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+vi.mock('./base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./base/hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
 import { executeBaseLeg } from './baseLeg.js'
 import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
 

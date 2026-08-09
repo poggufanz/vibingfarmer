@@ -114,7 +114,17 @@ const POLICY = Object.freeze({
 });
 const CONFIG = Object.freeze({
   publicOrigin: 'https://relayer.example',
-  base: { chain: { id: 84532 }, mandatePolicy: POLICY },
+  base: {
+    chain: { id: 84532 },
+    mandatePolicy: POLICY,
+    baseCrossChainAvailable: true,
+    hardenedDeployment: {
+      generation: 'hardened-v2',
+      chainId: 84532,
+      yieldRouter: { address: CANONICAL_ROUTER },
+      route: { usdcAddress: CANONICAL_USDC },
+    },
+  },
 });
 
 function sha256(value) {
@@ -362,6 +372,7 @@ function makeHarness({
   enqueueError,
   realStores = null,
   bindingPrefix = 'binding',
+  baseCrossChainAvailable = true,
 } = {}) {
   const events = [];
   const real = realStores ?? createMandateStoresV3({
@@ -410,7 +421,11 @@ function makeHarness({
     mandateStatusConfig: CONFIG,
     evaluateMandateStatusFn: evaluator,
     nowSeconds: () => clock.value,
-    publicRuntime: { networkId: 'stellar-testnet', mandateStatusConfig: CONFIG },
+    publicRuntime: {
+      networkId: 'stellar-testnet',
+      baseCrossChainAvailable,
+      unavailableReason: baseCrossChainAvailable ? null : 'Hardened Base deployment is not active.',
+    },
   });
   return {
     clock,
@@ -1116,6 +1131,24 @@ describe('v3 mandate registration and activation worker', () => {
     expect(harness.real.mandatesV3.get(identityOf(body)).sessionPrivateKey).toBeUndefined();
     expect(harness.events).not.toContain('store:finishActive');
   });
+
+  it('rejects new mandate registration before capability validation or mandate storage when Base is unavailable', async () => {
+    const harness = makeHarness({ baseCrossChainAvailable: false });
+    const { res, json } = await postMandate(harness, registrationBody({ capability: 'malformed' }));
+
+    expect(res.statusCode).toBe(503);
+    expect(json).toEqual({ error: 'Base cross-chain execution is unavailable' });
+    expect(harness.events).toEqual([]);
+    expect(harness.real.mandatesV3.size).toBe(0);
+  });
+
+  it('does not resume activation work or touch activation storage when Base is unavailable', async () => {
+    const harness = makeHarness({ baseCrossChainAvailable: false });
+
+    await expect(harness.router.resumeMandateActivations())
+      .resolves.toEqual({ resumed: [], held: [] });
+    expect(harness.events).toEqual([]);
+  });
 });
 
 describe('v3 mandate canonical registration validation', () => {
@@ -1370,6 +1403,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     sanitizeErrors = false,
     relayUnwindMint: providedRelayUnwindMint,
     poolTargets: providedPoolTargets = null,
+    baseCrossChainAvailable = true,
   } = {}) {
     const events = [];
     const requestUrls = [];
@@ -1549,7 +1583,8 @@ describe("v3 mandate route authorization and execution gates", () => {
       publicRuntime: {
         networkId: "stellar-testnet",
         readiness: { ready: true },
-        mandateStatusConfig: CONFIG,
+        baseCrossChainAvailable,
+        unavailableReason: baseCrossChainAvailable ? null : 'Hardened Base deployment is not active.',
       },
       evaluateMandateStatusFn: evaluator,
       mandateStatusConfig: CONFIG,
@@ -1794,7 +1829,12 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(jsonOf(config)).toMatchObject({
       networkId: "stellar-testnet",
       readiness: { ready: true },
+      baseCrossChainAvailable: true,
+      unavailableReason: null,
     });
+    expect(config.body).not.toMatch(
+      /deployment|verification|rpc|runtimeCodeHash|adminSafe|selector/i,
+    );
     expectPrivateMaterialAbsent(config.body);
 
     const unknown = mockRes();
@@ -1919,6 +1959,97 @@ describe("v3 mandate route authorization and execution gates", () => {
       expect(harness.reports).toHaveLength(0);
     },
   );
+
+  it('preserves bearer indistinguishability before the unavailable gate on protected Base writes', async () => {
+    const harness = makeRouteHarness({ baseCrossChainAvailable: false });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+
+    for (const [path, payload] of [
+      ['/farm', farmBody(body)],
+      ['/farm/attach', attachBody(PRIVATE_JOB_ID, body)],
+    ]) {
+      const { res, json } = await postProtected(harness, path, payload, WRONG_CAPABILITY);
+      expect(res.statusCode).toBe(401);
+      expect(json).toEqual({ error: 'unauthorized' });
+      expect(res.body).not.toMatch(/unavailable|hardened|legacy/i);
+    }
+  });
+
+  it('rejects authenticated farm and attach before evidence, intent-store, RPC, or build work', async () => {
+    const poisonIntents = new Proxy({}, {
+      get() { throw new Error('intent store must not be touched while Base is unavailable'); },
+    });
+    const harness = makeRouteHarness({
+      baseCrossChainAvailable: false,
+      farmIntents: poisonIntents,
+      transformMandateGet: () => {
+        throw new Error('session key must not be decrypted while Base is unavailable');
+      },
+    });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+
+    for (const [path, payload] of [
+      ['/farm', farmBody(body)],
+      ['/farm/attach', attachBody(PRIVATE_JOB_ID, body)],
+    ]) {
+      const { res, json } = await postProtected(harness, path, payload);
+      expect(res.statusCode).toBe(503);
+      expect(json).toEqual({ error: 'Base cross-chain execution is unavailable' });
+    }
+    expect(harness.evaluator).not.toHaveBeenCalled();
+    expect(harness.buildFarm).not.toHaveBeenCalled();
+    expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
+  });
+
+  it('keeps authenticated status and revoke available while Base writes are closed', async () => {
+    const harness = makeRouteHarness({ baseCrossChainAvailable: false });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+
+    const status = await postProtected(harness, '/mandate/status', statusBody(body));
+    expect(status.res.statusCode).toBe(200);
+    expect(status.json.status).toBe('active');
+
+    const revoke = await postProtected(harness, '/mandate/revoke', statusBody(body));
+    expect(revoke.res.statusCode).toBe(200);
+    expect(revoke.json).toMatchObject({ ok: true, status: 'revoked' });
+  });
+
+  it('rejects unwind before reserving a job or invoking the reverse relay', async () => {
+    const harness = makeRouteHarness({ baseCrossChainAvailable: false });
+    const res = mockRes();
+
+    await harness.router({
+      method: 'POST',
+      url: '/api/vf-cross/unwind',
+      body: { unwindTxHash: '0xowner-signed-exit-and-burn', stellarRecipient: OWNER },
+      headers: {},
+    }, res);
+
+    expect(res.statusCode).toBe(503);
+    expect(jsonOf(res)).toEqual({ error: 'Base cross-chain execution is unavailable' });
+    expect(harness.jobs.size).toBe(0);
+    expect(harness.relayUnwindMint).not.toHaveBeenCalled();
+    expect(harness.buildFarm).not.toHaveBeenCalled();
+  });
+
+  it('does not resume farm recovery or touch recovery storage when Base is unavailable', async () => {
+    const poisonIntents = new Proxy({}, {
+      get() { throw new Error('recovery store must not be touched while Base is unavailable'); },
+    });
+    const harness = makeRouteHarness({
+      baseCrossChainAvailable: false,
+      farmIntents: poisonIntents,
+    });
+
+    await expect(harness.router.resumeFarmJobs()).resolves.toEqual({
+      resumed: [], held: [], blocked: [], uncertain: [],
+    });
+    expect(harness.buildFarm).not.toHaveBeenCalled();
+    expect(harness.evaluator).not.toHaveBeenCalled();
+  });
 
   it("does not distinguish an existing and unknown attach job before bearer authorization", async () => {
     const harness = makeRouteHarness();
@@ -3234,6 +3365,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org',
         bundlerRpcUrl: 'https://bundler', yieldRouterAddress: CANONICAL_ROUTER,
         usdcAddress: CANONICAL_USDC, sessionPrivateKey,
+        baseCrossChainAvailable: true,
         now: () => 2_000_000_000_000, reconstructSessionClientFn,
       }),
     });
@@ -3364,6 +3496,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org',
         bundlerRpcUrl: 'https://bundler', yieldRouterAddress: CANONICAL_ROUTER,
         usdcAddress: CANONICAL_USDC, sessionPrivateKey,
+        baseCrossChainAvailable: true,
         now: () => 2_000_000_000_000, reconstructSessionClientFn,
       }),
     });
@@ -3492,6 +3625,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org',
         bundlerRpcUrl: 'https://bundler', yieldRouterAddress: CANONICAL_ROUTER,
         usdcAddress: CANONICAL_USDC, sessionPrivateKey,
+        baseCrossChainAvailable: true,
         now: () => 2_000_000_000_000, reconstructSessionClientFn,
       }),
     });
@@ -3685,6 +3819,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://bundler',
         yieldRouterAddress: CANONICAL_ROUTER, usdcAddress: CANONICAL_USDC,
         sessionPrivateKey: SESSION_KEY, now: () => 2_000_000_000_000,
+        baseCrossChainAvailable: true,
         reconstructSessionClientFn,
       }),
     });

@@ -3,7 +3,7 @@ import { decodeFunctionData } from 'viem';
 import {
   APPROVE_ABI,
   YIELD_ROUTER_ABI,
-  createOrchestrator,
+  createOrchestrator as createOrchestratorProduction,
 } from '../../src/base/orchestrator.mjs';
 import { MAX_CALL_CAP_UNITS } from '../../src/base/session.mjs';
 import {
@@ -20,6 +20,10 @@ const SECOND_USER_OP_HASH = `0x${'2'.repeat(64)}`;
 const THIRD_USER_OP_HASH = `0x${'3'.repeat(64)}`;
 const KERNEL_ADDRESS = '0x00000000000000000000000000000000000000aa';
 const DEPOSITED_TOPIC0 = '0xf5681f9d0db1b911ac18ee83d515a1cf1051853a9eae418316a2fdf7dea427c5';
+
+function createOrchestrator(config) {
+  return createOrchestratorProduction({ baseCrossChainAvailable: true, ...config });
+}
 
 function word(value) {
   return BigInt(value).toString(16).padStart(64, '0');
@@ -885,5 +889,58 @@ describe('activateMandate', () => {
     });
 
     await expect(orchestrator.activateMandate('serialized-approval')).rejects.toThrow();
+  });
+});
+
+describe('Base deployment availability gate', () => {
+  it.each([
+    ['string false', 'false'],
+    ['numeric one', 1],
+    ['object', {}],
+  ])('rejects truthy non-boolean availability: %s', async (_label, baseCrossChainAvailable) => {
+    const reconstructSessionClientFn = vi.fn(() => {
+      throw new Error('session client must not be reconstructed');
+    });
+    const orchestrator = createOrchestratorProduction({
+      baseCrossChainAvailable,
+      reconstructSessionClientFn,
+    });
+
+    await expect(orchestrator.activateMandate('legacy-approval'))
+      .rejects.toThrow('Base cross-chain execution is unavailable');
+    expect(reconstructSessionClientFn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a caller omits deployment availability', async () => {
+    const reconstructSessionClientFn = vi.fn();
+    const orchestrator = createOrchestratorProduction({ reconstructSessionClientFn });
+
+    await expect(orchestrator.dispatchDeposits('legacy-approval', []))
+      .rejects.toThrow('Base cross-chain execution is unavailable');
+    expect(reconstructSessionClientFn).not.toHaveBeenCalled();
+  });
+
+  it('rejects activation, deposit dispatch, and submitted recovery before key/client/RPC work', async () => {
+    const reconstructSessionClientFn = vi.fn(() => {
+      throw new Error('session client must not be reconstructed');
+    });
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 },
+      rpcUrl: 'https://legacy-rpc.invalid',
+      bundlerRpcUrl: 'https://legacy-bundler.invalid',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xlegacy-session-key',
+      baseCrossChainAvailable: false,
+      reconstructSessionClientFn,
+    });
+
+    await expect(orchestrator.activateMandate('legacy-approval'))
+      .rejects.toThrow('Base cross-chain execution is unavailable');
+    await expect(orchestrator.dispatchDeposits('legacy-approval', []))
+      .rejects.toThrow('Base cross-chain execution is unavailable');
+    await expect(orchestrator.reconcileSubmittedDeposit('legacy-approval', null, null))
+      .rejects.toThrow('Base cross-chain execution is unavailable');
+    expect(reconstructSessionClientFn).not.toHaveBeenCalled();
   });
 });

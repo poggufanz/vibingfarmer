@@ -16,6 +16,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import Withdraw from './Withdraw.jsx'
 
+vi.mock('../base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('../base/hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
 const signAndSubmitUnwind = vi.fn()
 const postUnwind = vi.fn()
 const pollFarmStatus = vi.fn()
@@ -103,7 +108,11 @@ describe('Withdraw (Base full exit)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
     await waitFor(() => expect(baseProps.onDone).toHaveBeenCalled())
     expect(signAndSubmitUnwind).toHaveBeenCalledWith(
-      expect.objectContaining({ positions: baseProps.positions, idleUsdc: 500_000n })
+      expect.objectContaining({
+        positions: baseProps.positions,
+        idleUsdc: 500_000n,
+        deadline: expect.any(BigInt),
+      })
     )
     expect(postUnwind).toHaveBeenCalledWith({
       unwindTxHash: '0xUNWIND',
@@ -113,6 +122,39 @@ describe('Withdraw (Base full exit)', () => {
     expect(pollFarmStatus.mock.calls[0][0]).not.toHaveProperty('mandateId')
     expect(pollFarmStatus.mock.calls[0][0]).not.toHaveProperty('serializedApproval')
   })
+
+  it('offers exactly the 5/10/15-minute authorization windows and defaults to 10 minutes', () => {
+    render(<Withdraw {...baseProps} />)
+    const select = screen.getByLabelText(/authorization expires/i)
+
+    expect([...select.options].map((option) => [option.value, option.textContent])).toEqual([
+      ['5', '5 minutes'],
+      ['10', '10 minutes'],
+      ['15', '15 minutes'],
+    ])
+    expect(select.value).toBe('10')
+  })
+
+  it.each([5, 10, 15])(
+    'encodes the owner-selected %i-minute authorization window as an exact absolute deadline',
+    async (minutes) => {
+      const nowMs = 2_000_000_000_000
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(nowMs)
+      render(<Withdraw {...baseProps} />)
+      fireEvent.change(screen.getByLabelText(/authorization expires/i), {
+        target: { value: String(minutes) },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+      await waitFor(() => expect(signAndSubmitUnwind).toHaveBeenCalled())
+      expect(signAndSubmitUnwind).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nowSeconds: 2_000_000_000n,
+          deadline: 2_000_000_000n + BigInt(minutes * 60),
+        })
+      )
+      nowSpy.mockRestore()
+    }
+  )
 
   it('keeps job-only unwind status fail-closed instead of borrowing mandate authority', async () => {
     pollFarmStatus.mockRejectedValue(new Error('unwind capability unavailable'))

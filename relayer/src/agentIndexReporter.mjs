@@ -434,7 +434,7 @@ export function createAgentIndexReporter({
     );
   }
 
-  async function probe() {
+  async function probe({ baseCrossChainAvailable = true } = {}) {
     if (!endpoint || !secret) throw new Error('agent index reporter is not configured');
     const response = await fetchWithTimeout(fetchImpl, actionUrl(endpoint, 'base-child-ready'), {
       method: 'POST',
@@ -459,11 +459,12 @@ export function createAgentIndexReporter({
     if (acknowledgement.schemaVersion !== schemaVersion) {
       throw new Error('agent index reporter schema mismatch');
     }
-    if (
-      acknowledgement?.stores?.executionReceipts !== true
-      || acknowledgement?.stores?.baseChildIntents !== true
-      || acknowledgement?.stores?.baseRecoveryEvidence !== true
-    ) {
+    const requireBaseStores = baseCrossChainAvailable === true;
+    if (acknowledgement?.stores?.executionReceipts !== true
+      || (requireBaseStores && (
+        acknowledgement?.stores?.baseChildIntents !== true
+        || acknowledgement?.stores?.baseRecoveryEvidence !== true
+      ))) {
       throw new Error('agent index reporter canonical stores are not ready');
     }
     return acknowledgement;

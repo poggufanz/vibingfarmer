@@ -7,7 +7,7 @@
 // JSON body names the public mandate/job identity the proxy maps back onto that cookie. A
 // cross-origin `VITE_CROSS_RELAYER_BASE` override is deliberately ignored here — capability
 // flows must never bypass the proxy's cookie translation boundary.
-import { toBaseChainUnits, BASE_USDC_DECIMALS } from './config.js'
+import { toBaseChainUnits, BASE_USDC_DECIMALS, assertBaseCrossChainAvailable } from './config.js'
 import { BASE_POOL_CATALOG } from '../config.js'
 import {
   isVerifiedBaseMandateStatus,
@@ -226,6 +226,8 @@ export async function postFarm({
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
+  assertBaseCrossChainAvailable()
+
   const base = requireSameOriginBaseUrl(baseUrl)
   requireMandateIdentity(mandateId)
   const { fetchImpl = fetch } = deps
@@ -252,7 +254,10 @@ export async function postFarm({
   } catch (error) {
     throw new Error('farm intent acknowledgement is malformed', { cause: error })
   }
-  if (acknowledgement?.acknowledged !== true || !CANONICAL_MANDATE_ID.test(acknowledgement?.jobId)) {
+  if (
+    acknowledgement?.acknowledged !== true ||
+    !CANONICAL_MANDATE_ID.test(acknowledgement?.jobId)
+  ) {
     throw new Error('farm intent acknowledgement is malformed')
   }
   if (acknowledgement.schemaVersion !== 1) throw new Error('farm intent schema mismatch')
@@ -273,6 +278,8 @@ export async function postFarmAttach({
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
+  assertBaseCrossChainAvailable()
+
   const base = requireSameOriginBaseUrl(baseUrl)
   requireMandateIdentity(mandateId)
   requireJobIdentity(jobId)
@@ -381,6 +388,8 @@ export async function postMandate({
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
+  assertBaseCrossChainAvailable()
+
   const base = requireSameOriginBaseUrl(baseUrl)
   requireMandateIdentity(mandateId, 'mandate registration requires a canonical mandate identity')
   if (!CANONICAL_CAPABILITY.test(capability)) {
@@ -507,7 +516,11 @@ export async function waitForMandateActivation({
       continue
     }
     if (evidence.status === 'active' && isVerifiedBaseMandateStatus(evidence)) return evidence
-    if (['activation_uncertain', 'revoked', 'expired', 'mismatch', 'unknown'].includes(evidence.status)) {
+    if (
+      ['activation_uncertain', 'revoked', 'expired', 'mismatch', 'unknown'].includes(
+        evidence.status
+      )
+    ) {
       throw new Error(`Base mandate activation stopped: ${evidence.status}`)
     }
     if (attempt + 1 < maxTries) await sleep(intervalMs)
@@ -554,6 +567,8 @@ export async function postUnwind({
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
+  assertBaseCrossChainAvailable()
+
   const base = requireSameOriginBaseUrl(baseUrl)
   const { fetchImpl = fetch } = deps
   const res = await fetchImpl(`${base}/unwind`, {

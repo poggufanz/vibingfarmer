@@ -15,6 +15,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
+
+vi.mock('../../base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } =
+    await import('../../base/hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
 import { PlanStage } from './PlanStage.jsx'
 import { StrategyRoute } from './StrategyRoute.jsx'
 import { FIRST_DEPOSIT_MIN_UNITS } from '../../strategy/amountValidation.js'

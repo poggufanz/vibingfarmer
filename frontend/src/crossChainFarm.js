@@ -9,6 +9,7 @@
 import { signAndSubmitStellarBurn } from './stellar/cctpBurn.js'
 import { postFarm, postFarmAttach, pollFarmStatus } from './base/relayerClient.js'
 import { BASE_POOL_CATALOG } from './config.js'
+import { assertBaseCrossChainAvailable } from './base/config.js'
 
 const CCTP_STELLAR_DOMAIN = 27
 
@@ -65,6 +66,8 @@ export async function runFarmFlow({
   onEvent = () => {},
   deps = {},
 }) {
+  assertBaseCrossChainAvailable()
+
   if (typeof burnUnits7 !== 'bigint' || burnUnits7 <= 0n) {
     throw new Error('burnUnits7 must be a positive bigint')
   }

@@ -232,7 +232,13 @@ export function createOrchestrator(config) {
     chain, rpcUrl, bundlerRpcUrl, yieldRouterAddress, usdcAddress, sessionPrivateKey,
     reconstructSessionClientFn = reconstructSessionClient,
     now = () => Date.now(),
+    baseCrossChainAvailable = false,
   } = config;
+  const requireBaseExecution = () => {
+    if (baseCrossChainAvailable !== true) {
+      throw new Error('Base cross-chain execution is unavailable');
+    }
+  };
 
   /**
    * Activates a mandate by clearing the session account's allowance to YieldRouter.
@@ -240,6 +246,7 @@ export function createOrchestrator(config) {
    * @param {{onSubmitted?: (userOpHash: string) => Promise<void> | void}} [options]
    */
   async function activateMandate(approval, { onSubmitted } = {}) {
+    requireBaseExecution();
     const kernelClient = await reconstructSessionClientFn({
       chain, rpcUrl, bundlerRpcUrl, approval, sessionPrivateKey,
     });
@@ -272,6 +279,7 @@ export function createOrchestrator(config) {
   async function dispatchDeposits(
     approval, allocations, { onCheckpoint, onClaimSubmitting, onBeforeClaimSubmitting } = {},
   ) {
+    requireBaseExecution();
     const durableMode = typeof onCheckpoint === 'function';
     const normalizedAllocations = durableMode ? allocations.map(normalizeAllocation) : allocations;
     if (durableMode && normalizedAllocations.length > 1) {
@@ -607,6 +615,7 @@ export function createOrchestrator(config) {
   async function reconcileSubmittedDeposit(
     approval, allocationInput, userOpHashInput, { onCheckpoint } = {},
   ) {
+    requireBaseExecution();
     if (typeof onCheckpoint !== 'function') {
       throw new Error('submitted deposit reconciliation requires a durable checkpoint callback');
     }

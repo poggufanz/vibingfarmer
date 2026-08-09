@@ -19,7 +19,13 @@ contract MockAdversarialERC4626 {
         return address(assetToken);
     }
 
-    function deposit(uint256 assets, address /* receiver */) external returns (uint256 shares) {
+    function deposit(
+        uint256 assets,
+        address /* receiver */
+    )
+        external
+        returns (uint256 shares)
+    {
         assetToken.transferFrom(msg.sender, address(this), assets);
         shares = 1; // adversarial: always "mints" 1 wei of shares, regardless of deposit size
     }

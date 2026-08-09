@@ -36,6 +36,7 @@ import {
   assertActiveOwner,
 } from './stellar/activeAccount.js'
 import { getActiveAccount } from './stellar/walletKit.js'
+import { assertBaseCrossChainAvailable } from './base/config.js'
 // Task 6 chunk C1 -- the real AllocationReceiptV2 evidence producer (Chunk A) and its authenticated
 // transport (Chunk B), both closed/reviewed. Neither import pulls in `./stellar/config.js` or
 // `./stellar/agentCache.js` (allocationReceipt.js has NO imports at all; agentIndexReceiptClient.js
@@ -749,6 +750,10 @@ export class OrchestratorAgent {
    * @returns {Promise<{completed:number, failed:number, results:Array, sessionId:string, baseLeg:object|null}>}
    */
   async dispatch(strategyOrPlan, totalAmountOrOptions) {
+    const hasBaseAllocation =
+      (strategyOrPlan?.agents || []).some((agent) => agent?.kind === 'bridge') ||
+      (strategyOrPlan?.vaults || []).some((vault) => vault?.chain === 'base')
+    if (hasBaseAllocation) assertBaseCrossChainAvailable()
     this.assertCurrentAccount()
     // Strategy Task 7 (Pocket Crew redesign, Wave 1) — dispatch is overloaded by the SHAPE of its
     // second argument, never by an explicit flag, so every pre-Task-7 call site (a plain
@@ -1140,6 +1145,7 @@ export class OrchestratorAgent {
     const planAgents = strategyPlan.agents || []
     const bridgeAgents = planAgents.filter((agent) => agent.kind === 'bridge')
     const depositAgents = planAgents.filter((agent) => agent.kind !== 'bridge')
+    if (bridgeAgents.length > 0) assertBaseCrossChainAvailable()
     if (bridgeAgents.length > 1) {
       throw new PermissionPhaseError({
         phase: 'preflight',
@@ -1727,6 +1733,7 @@ export class OrchestratorAgent {
   /** After the shared fresh grant confirms, both execution branches are settled data. A Base
    * failure must therefore never erase completed Stellar deposits (and vice versa). */
   async dispatchConfirmedMixed({ strategyPlan, confirmed, workers, bridgeAgent, baseMandate }) {
+    assertBaseCrossChainAvailable()
     const mandate = baseMandate
     const bridgeWorker = workers.find((worker) => worker.allocationId === bridgeAgent.allocationId)
     const bridgeMaterialError =
@@ -2378,6 +2385,9 @@ export class OrchestratorAgent {
    * exactly once; never touches the reuse cache reads.
    */
   async grantFreshFromDecision(strategyPlan, workers, permissionDecision) {
+    if ((strategyPlan?.agents || []).some((agent) => agent?.kind === 'bridge')) {
+      assertBaseCrossChainAvailable()
+    }
     const reviewedByAllocation = new Map(
       (permissionDecision.reviewedAgentInits || []).map((r) => [r.allocationId, r])
     )
@@ -2520,6 +2530,7 @@ export class OrchestratorAgent {
 
   async dispatchLegacy(strategy, totalAmount) {
     const allVaults = strategy.vaults || []
+    if (allVaults.some((vault) => vault?.chain === 'base')) assertBaseCrossChainAvailable()
     const receiptRunId = strategy.runId || this.sessionId
     const baseVaults = allVaults
       .filter((v) => v.chain === 'base')
@@ -3068,6 +3079,7 @@ export class OrchestratorAgent {
    *   agent's address is known (or null, when no grant ran or it failed)
    */
   async setupViaRouter(workers, expiry, bridgeInit = null, resolveBridgeAgent = () => {}) {
+    if (bridgeInit) assertBaseCrossChainAvailable()
     const nowSec = Math.floor(Date.now() / 1000)
     const totalUnits = workers.reduce((acc, w) => acc + w.amount, 0n)
 
@@ -3210,6 +3222,7 @@ export class OrchestratorAgent {
    * @returns {Promise<string|null>} the deployed bridge agent's address, or null when none was requested
    */
   async grantFreshAgents(workers, totalUnits, expiry, nowSec, bridgeInit = null) {
+    if (bridgeInit) assertBaseCrossChainAvailable()
     const budget =
       this.grantBudgetUnits != null && this.grantBudgetUnits > totalUnits
         ? this.grantBudgetUnits

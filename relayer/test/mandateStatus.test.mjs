@@ -137,6 +137,13 @@ function makeHarness({ approvalOptions, record: recordOverrides } = {}) {
       chain: { id: 84532 },
       rpcUrl: 'https://base.example',
       bundlerRpcUrl: 'https://bundler.example',
+      baseCrossChainAvailable: true,
+      hardenedDeployment: {
+        generation: 'hardened-v2',
+        chainId: 84532,
+        yieldRouter: { address: ROUTER },
+        route: { usdcAddress: USDC },
+      },
       mandatePolicy: {
         chainId: 84532,
         kernelVersion: '0.3.1',

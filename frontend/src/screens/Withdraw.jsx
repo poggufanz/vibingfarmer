@@ -5,6 +5,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { signAndSubmitUnwind } from '../base/withdrawBatch.js'
 import { postUnwind, pollFarmStatus } from '../base/relayerClient.js'
+import { BASE_CROSS_CHAIN_AVAILABLE, BASE_CROSS_CHAIN_UNAVAILABLE_REASON } from '../base/config.js'
 
 const STAGES = [
   { key: 'sign', label: 'Sign unwind' },
@@ -61,6 +62,7 @@ export default function Withdraw({
   const [failedAt, setFailedAt] = useState(null)
   const [jobId, setJobId] = useState(null)
   const [outcome, setOutcome] = useState(null) // { burned, exited, skipped } once settled
+  const [deadlineMinutes, setDeadlineMinutes] = useState(10)
   const confirmRef = useRef(null)
 
   // Sum of what the positions are WORTH plus idle. Never minAssets: that is a
@@ -87,17 +89,23 @@ export default function Withdraw({
   }, [busy, onClose])
 
   const startWithdraw = useCallback(async () => {
+    if (!BASE_CROSS_CHAIN_AVAILABLE) return
+
     setStatus('signing')
     setErrorMessage(null)
     setFailedAt(null)
     let stage = 'sign'
     try {
+      const nowSeconds = BigInt(Math.floor(Date.now() / 1000))
+      const deadline = nowSeconds + BigInt(deadlineMinutes) * 60n
       const { unwindTxHash, burned, exited, skipped } = await signAndSubmitUnwind({
         ownerKernelAccount,
         publicClient,
         positions,
         stellarRecipient,
         idleUsdc,
+        deadline,
+        nowSeconds,
       })
       // Outcome comes from the sweeper's own `Swept` event (decoded in signAndSubmitUnwind),
       // NOT from the relayer job record: runUnwindJob (relayer/src/httpRouter.mjs) only ever
@@ -134,7 +142,15 @@ export default function Withdraw({
       setStatus('error')
       setErrorMessage(friendlyError(err))
     }
-  }, [ownerKernelAccount, publicClient, positions, stellarRecipient, idleUsdc, onDone])
+  }, [
+    ownerKernelAccount,
+    publicClient,
+    positions,
+    stellarRecipient,
+    idleUsdc,
+    deadlineMinutes,
+    onDone,
+  ])
 
   // 'pending' only means pollFarmStatus's ~2-minute window closed before the bridge finished —
   // a standard-finality CCTP leg takes ~15-25 min. Keep re-polling slowly while the modal is
@@ -192,6 +208,7 @@ export default function Withdraw({
               : 0
 
   const primaryLabel = () => {
+    if (!BASE_CROSS_CHAIN_AVAILABLE) return 'Base unavailable'
     if (status === 'signing') return 'Signing...'
     if (status === 'relaying') return 'Relaying...'
     if (status === 'polling') return 'Bridging...'
@@ -204,6 +221,7 @@ export default function Withdraw({
   }
 
   const onPrimary = () => {
+    if (!BASE_CROSS_CHAIN_AVAILABLE) return
     if (finished) {
       onClose?.()
       return
@@ -246,6 +264,12 @@ export default function Withdraw({
               the bridge; no second wallet popup.
             </div>
 
+            {!BASE_CROSS_CHAIN_AVAILABLE && (
+              <div className="wd-callout" role="status" data-testid="base-unavailable-notice">
+                {BASE_CROSS_CHAIN_UNAVAILABLE_REASON} Your historical Base balances remain visible.
+              </div>
+            )}
+
             <div className="grant-receipt wd-receipt" role="region" aria-label="Unwind summary">
               {positions.map((p) => (
                 <div className="grant-receipt-row" key={p.pool}>
@@ -277,6 +301,24 @@ export default function Withdraw({
                 <span className="grant-receipt-k">Network fee</span>
                 <span className="grant-receipt-v grant-receipt-v--ok">0, sponsored</span>
               </div>
+              {BASE_CROSS_CHAIN_AVAILABLE && (
+                <div className="grant-receipt-row">
+                  <label className="grant-receipt-k" htmlFor="base-unwind-deadline">
+                    Authorization expires
+                  </label>
+                  <select
+                    id="base-unwind-deadline"
+                    className="grant-receipt-v"
+                    value={deadlineMinutes}
+                    onChange={(event) => setDeadlineMinutes(Number(event.target.value))}
+                    disabled={busy}
+                  >
+                    <option value={5}>5 minutes</option>
+                    <option value={10}>10 minutes</option>
+                    <option value={15}>15 minutes</option>
+                  </select>
+                </div>
+              )}
             </div>
 
             {(busy || status === 'pending') && (
@@ -379,7 +421,7 @@ export default function Withdraw({
             type="button"
             className={`btn btn-primary${busy ? ' is-loading' : ''}`}
             onClick={onPrimary}
-            disabled={busy || (status === 'idle' && nothingToDo)}
+            disabled={!BASE_CROSS_CHAIN_AVAILABLE || busy || (status === 'idle' && nothingToDo)}
             aria-busy={busy || undefined}
           >
             {busy && <span className="think-spin wd-btn-spin" aria-hidden="true" />}

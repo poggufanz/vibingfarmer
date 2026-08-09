@@ -2,6 +2,7 @@
 pragma solidity ^0.8.23;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -16,7 +17,7 @@ import {IERC4626} from "./interfaces/IERC4626.sol";
 /// docs/superpowers/specs/2026-07-04-approach-c-hybrid-cross-chain-design.md
 /// §4): a compromised session key can call deposit/withdraw against a
 /// whitelisted pool and nothing else, and never receives funds itself.
-contract YieldRouter is Ownable, ReentrancyGuard {
+contract YieldRouter is Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     address public immutable canonicalAsset;
@@ -27,6 +28,8 @@ contract YieldRouter is Ownable, ReentrancyGuard {
     event Deposited(address indexed caller, address indexed pool, uint256 assets, uint256 shares);
     event Withdrawn(address indexed caller, address indexed pool, uint256 shares, uint256 assets);
     event PoolAllowedSet(address indexed pool, bool allowed);
+
+    error OwnershipRenounceDisabled();
 
     constructor(address initialOwner, address canonicalAsset_) Ownable(initialOwner) {
         require(canonicalAsset_ != address(0), "YieldRouter: asset is zero");
@@ -102,6 +105,10 @@ contract YieldRouter is Ownable, ReentrancyGuard {
         }
         allowedPool[pool] = allowed;
         emit PoolAllowedSet(pool, allowed);
+    }
+
+    function renounceOwnership() public pure override {
+        revert OwnershipRenounceDisabled();
     }
 
     function _validatePool(address pool) private view {

@@ -4,6 +4,7 @@ pragma solidity ^0.8.23;
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {YieldRouter} from "../src/YieldRouter.sol";
 import {AaveV3Adapter4626} from "../src/AaveV3Adapter4626.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
@@ -11,14 +12,26 @@ import {MockERC4626} from "./mocks/MockERC4626.sol";
 import {MockReentrantERC4626} from "./mocks/MockReentrantERC4626.sol";
 import {MockAToken} from "./mocks/MockAToken.sol";
 import {MockMaliciousAavePool} from "./mocks/MockMaliciousAavePool.sol";
+import {MockFalseUSDC} from "./mocks/MockFalseUSDC.sol";
+
+interface IOwnable2StepView {
+    function pendingOwner() external view returns (address);
+    function acceptOwnership() external;
+}
 
 contract YieldRouterTest is Test {
+    event Deposited(address indexed caller, address indexed pool, uint256 assets, uint256 shares);
+    event Withdrawn(address indexed caller, address indexed pool, uint256 shares, uint256 assets);
+    event PoolAllowedSet(address indexed pool, bool allowed);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+
     YieldRouter router;
     MockUSDC usdc;
     MockERC4626 vault;
 
     address owner = address(0xA11CE);
     address user = address(0xB0B);
+    address safe = address(0x5AFE);
 
     function setUp() public {
         usdc = new MockUSDC();
@@ -41,6 +54,35 @@ contract YieldRouterTest is Test {
         assertEq(deployed, address(0), "zero canonical asset must reject construction");
     }
 
+    function test_constructorRejectsZeroOwnerAndBadAsset() public {
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0)));
+        new YieldRouter(address(0), address(usdc));
+
+        vm.expectRevert(bytes("YieldRouter: asset is zero"));
+        new YieldRouter(owner, address(0));
+
+        vm.expectRevert(bytes("YieldRouter: asset has no code"));
+        new YieldRouter(owner, address(0xCAFE));
+    }
+
+    function test_enableSetsAllowedAndKnownWithTruthfulEvent() public {
+        MockERC4626 nextPool = new MockERC4626(usdc);
+        vm.expectEmit(true, false, false, true, address(router));
+        emit PoolAllowedSet(address(nextPool), true);
+        vm.prank(owner);
+        router.setPool(address(nextPool), true);
+        assertTrue(router.allowedPool(address(nextPool)));
+        assertTrue(router.knownPool(address(nextPool)));
+    }
+
+    function test_neverEnabledPoolIsNeverKnown() public {
+        address neverEnabled = address(0xBEEF);
+        vm.prank(owner);
+        router.setPool(neverEnabled, false);
+        assertFalse(router.allowedPool(neverEnabled));
+        assertFalse(router.knownPool(neverEnabled));
+    }
+
     function test_constructor_revertsForNonContractCanonicalAsset() public {
         vm.expectRevert(bytes("YieldRouter: asset has no code"));
         new YieldRouter(owner, address(0xCAFE));
@@ -60,6 +102,42 @@ contract YieldRouterTest is Test {
         assertEq(usdc.balanceOf(address(router)), 0, "router holds no USDC (zero-custody)");
         assertEq(usdc.allowance(address(router), address(vault)), 0, "pool allowance is cleared");
         assertEq(usdc.balanceOf(user), 1_000_000_000 - amount, "USDC left the caller");
+    }
+
+    function test_depositAndWithdrawEventsUseMeasuredDeltasAtExactFloors() public {
+        uint256 amount = 1_000_000;
+        vm.startPrank(user);
+        usdc.approve(address(router), amount);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit Deposited(user, address(vault), amount, amount);
+        uint256 shares = router.deposit(address(vault), amount, amount);
+
+        vault.approve(address(router), shares);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit Withdrawn(user, address(vault), shares, amount);
+        uint256 assets = router.withdraw(address(vault), shares, amount);
+        vm.stopPrank();
+
+        assertEq(shares, amount);
+        assertEq(assets, amount);
+        assertEq(usdc.balanceOf(address(router)), 0);
+        assertEq(vault.balanceOf(address(router)), 0);
+    }
+
+    function test_depositRejectsFalseReturningMandatoryAssetPull() public {
+        MockFalseUSDC falseToken = new MockFalseUSDC();
+        YieldRouter falseRouter = new YieldRouter(owner, address(falseToken));
+        MockERC4626 falseVault = new MockERC4626(falseToken);
+        vm.prank(owner);
+        falseRouter.setPool(address(falseVault), true);
+        falseToken.mint(user, 1_000_000);
+        vm.startPrank(user);
+        falseToken.approve(address(falseRouter), 1_000_000);
+        falseToken.setReturnFalse(true);
+        vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(falseToken)));
+        falseRouter.deposit(address(falseVault), 1_000_000, 1);
+        vm.stopPrank();
+        assertEq(falseToken.balanceOf(user), 1_000_000);
     }
 
     function test_withdraw_redeemsSharesToUSDC() public {
@@ -144,6 +222,118 @@ contract YieldRouterTest is Test {
         vm.prank(owner);
         router.setPool(newPool, true);
         assertTrue(router.allowedPool(newPool), "owner can whitelist a pool");
+    }
+
+    function test_transferOwnershipOnlySetsPendingOwner() public {
+        vm.expectEmit(true, true, false, true, address(router));
+        emit OwnershipTransferStarted(owner, safe);
+        vm.prank(owner);
+        router.transferOwnership(safe);
+
+        assertEq(router.owner(), owner, "proposal must not replace the active owner");
+        assertEq(IOwnable2StepView(address(router)).pendingOwner(), safe, "Safe must be pending until it accepts");
+    }
+
+    function test_onlyPendingOwnerCanAccept() public {
+        vm.prank(owner);
+        router.transferOwnership(safe);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user));
+        IOwnable2StepView(address(router)).acceptOwnership();
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, owner));
+        IOwnable2StepView(address(router)).acceptOwnership();
+
+        vm.prank(safe);
+        IOwnable2StepView(address(router)).acceptOwnership();
+        assertEq(router.owner(), safe);
+        assertEq(IOwnable2StepView(address(router)).pendingOwner(), address(0));
+    }
+
+    function test_oldOwnerRemainsAuthoritativeBeforeAcceptance() public {
+        MockERC4626 nextPool = new MockERC4626(usdc);
+        vm.prank(owner);
+        router.transferOwnership(safe);
+
+        vm.prank(safe);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, safe));
+        router.setPool(address(nextPool), true);
+        vm.prank(owner);
+        router.setPool(address(nextPool), true);
+
+        assertEq(router.owner(), owner);
+        assertTrue(router.allowedPool(address(nextPool)));
+    }
+
+    function test_disableClearsAllowedButNeverKnown() public {
+        vm.prank(owner);
+        router.setPool(address(vault), false);
+        assertFalse(router.allowedPool(address(vault)));
+        assertTrue(router.knownPool(address(vault)));
+
+        vm.prank(owner);
+        router.setPool(address(vault), true);
+        vm.prank(owner);
+        router.setPool(address(vault), false);
+        assertTrue(router.knownPool(address(vault)), "known history is monotonic");
+    }
+
+    function test_transferOwnershipZeroOnlyCancelsPending() public {
+        vm.startPrank(owner);
+        router.transferOwnership(safe);
+        router.transferOwnership(address(0));
+        vm.stopPrank();
+
+        assertEq(router.owner(), owner);
+        assertEq(IOwnable2StepView(address(router)).pendingOwner(), address(0));
+    }
+
+    function test_renounceOwnershipCannotFreezePoolAdministration() public {
+        vm.prank(owner);
+        (bool ok,) = address(router).call(abi.encodeWithSignature("renounceOwnership()"));
+        assertFalse(ok, "router administration must not be permanently frozen");
+        assertEq(router.owner(), owner);
+    }
+
+    function test_acceptedOwnerAloneCanSetPool() public {
+        MockERC4626 nextPool = new MockERC4626(usdc);
+        vm.prank(owner);
+        router.transferOwnership(safe);
+        vm.prank(safe);
+        IOwnable2StepView(address(router)).acceptOwnership();
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, owner));
+        router.setPool(address(nextPool), true);
+        vm.prank(safe);
+        router.setPool(address(nextPool), true);
+        assertTrue(router.allowedPool(address(nextPool)));
+    }
+
+    function test_actorCannotSpendAnotherActorsAssetsOrShares() public {
+        address victim = address(0x71C71);
+        address attacker = address(0xBAD);
+        usdc.mint(victim, 10_000_000);
+        vm.startPrank(victim);
+        usdc.approve(address(router), 10_000_000);
+        uint256 shares = router.deposit(address(vault), 10_000_000, 10_000_000);
+        vault.approve(address(router), shares);
+        usdc.approve(address(router), type(uint256).max);
+        vm.stopPrank();
+
+        uint256 victimAssetsBefore = usdc.balanceOf(victim);
+        uint256 victimSharesBefore = vault.balanceOf(victim);
+        vm.startPrank(attacker);
+        vm.expectRevert();
+        router.withdraw(address(vault), shares, 0);
+        vm.expectRevert();
+        router.deposit(address(vault), 1, 0);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(victim), victimAssetsBefore);
+        assertEq(vault.balanceOf(victim), victimSharesBefore);
     }
 
     function test_setPool_revertsForMismatchedAsset() public {

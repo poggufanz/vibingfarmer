@@ -353,6 +353,23 @@ describe('durable Base child reporter protocol', () => {
     );
   });
 
+  it('requires only the global receipt store when Base execution is closed', async () => {
+    const acknowledgement = {
+      ready: true,
+      schemaVersion: 1,
+      stores: { executionReceipts: true },
+    };
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index',
+      secret: SECRET,
+      schemaVersion: 1,
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => acknowledgement }),
+    });
+
+    await expect(reporter.probe({ baseCrossChainAvailable: false }))
+      .resolves.toEqual(acknowledgement);
+  });
+
   it.each([
     ['unauthorized', { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) }],
     ['schema mismatch', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 2, stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true } }) }],

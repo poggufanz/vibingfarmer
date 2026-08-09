@@ -11,6 +11,11 @@ import {
 } from './base/relayerClient.js'
 import { BASE_POOL_CATALOG } from './config.js'
 import {
+  BASE_CROSS_CHAIN_AVAILABLE,
+  BASE_CROSS_CHAIN_UNAVAILABLE_REASON,
+  assertBaseCrossChainAvailable,
+} from './base/config.js'
+import {
   baseOwnerStorageKey,
   baseMandateStorageKey,
   readBaseOwner,
@@ -111,6 +116,8 @@ export function checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner
  * @returns {Promise<object>} the verified active v3 record (public evidence only)
  */
 export async function setupBaseMandate({ connectedAddress, deps = {} }) {
+  assertBaseCrossChainAvailable()
+
   const {
     ensureBaseOwner = defaultEnsureBaseOwner,
     createMandate = defaultCreateMandate,
@@ -223,14 +230,16 @@ export function resolveBaseAvailability(input) {
   const mandateView = connected
     ? boundMandateView
     : { ...boundMandateView, status: 'unavailable', ready: false }
-  const baseAvailable = (async () => {
-    try {
-      const healthy = await (typeof health === 'function' ? health() : health)
-      return connected && healthy === true && mandateView.ready
-    } catch {
-      return false
-    }
-  })()
+  const baseAvailable = BASE_CROSS_CHAIN_AVAILABLE
+    ? (async () => {
+        try {
+          const healthy = await (typeof health === 'function' ? health() : health)
+          return connected && healthy === true && mandateView.ready
+        } catch {
+          return false
+        }
+      })()
+    : Promise.resolve(false)
   const action =
     connection.setupSucceeded === true
       ? { label: 'Rebuild plan', invalidatesPlan: true }
@@ -244,7 +253,7 @@ export function resolveBaseAvailability(input) {
 // would actually fix the gate — a relayer outage or missing Circle USDC funding are not fixed by
 // setupBaseMandate, so the button stays hidden for those (no dead-end tap).
 export function needsBaseMandateSetup({ healthy, mandateOk }) {
-  return !!healthy && !mandateOk
+  return BASE_CROSS_CHAIN_AVAILABLE && !!healthy && !mandateOk
 }
 
 /**
@@ -426,6 +435,9 @@ export function mapBaseLegEvent(evName, data = {}) {
 // this function exists to prevent, just one storage layer down from where it was proven live.
 export function applyBaseLegOutcome(baseLeg, { storage, stellarOwner } = {}) {
   if (!baseLeg) return null
+  if (!BASE_CROSS_CHAIN_AVAILABLE) {
+    return { event: 'AgentFailed', meta: BASE_CROSS_CHAIN_UNAVAILABLE_REASON }
+  }
   if (!baseLeg.success) {
     return {
       event: 'AgentFailed',

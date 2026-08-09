@@ -1,5 +1,11 @@
 // frontend/src/base/relayerClient.test.js
 import { describe, test, expect, vi } from 'vitest'
+
+vi.mock('./deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
 import * as relayerClient from './relayerClient.js'
 
 const {

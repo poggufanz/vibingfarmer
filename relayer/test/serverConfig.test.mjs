@@ -8,6 +8,16 @@ import * as serverModule from '../src/server.mjs';
 import { createSqliteStores } from '../src/sqliteStores.mjs';
 
 const { runtimeServerConfig } = serverModule;
+const APPROVED_POOLS = [
+  '0x389250872044368759D3db5C09b2706A6628d4e0',
+  '0x5E843A639F0555E2A6669601621befC887Bdb479',
+  '0xadD3c1A75c7Cef2516b51750959BD829a4AD4761',
+];
+const APPROVED_POOL_TARGETS = new Map([
+  ['0x389250872044368759d3db5c09b2706a6628d4e0', 'aave-v3'],
+  ['0x5e843a639f0555e2a6669601621befc887bdb479', 'morpho-blue'],
+  ['0xadd3c1a75c7cef2516b51750959bd829a4ad4761', 'moonwell'],
+]);
 
 function sha256Json(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -20,15 +30,64 @@ function serverConfig(overrides = {}) {
     publicOrigin: 'https://canonical-relay.example',
     reporter: { url: null, schema: 1, hasSecret: false },
     runtime: { proxyKey: '', reporterSecret: '', debugErrors: false },
-    publicRuntime: { readiness: { ready: true }, digests: {} },
+    publicRuntime: {
+      readiness: { ready: true },
+      digests: {},
+      baseCrossChainAvailable: false,
+      unavailableReason: 'Hardened Base deployment is not active.',
+    },
     cctp: {},
     base: {
       chain: {}, rpcUrl: 'http://127.0.0.1:8545', bundlerRpcUrl: 'http://127.0.0.1:4337',
       yieldRouterAddress: `0x${'11'.repeat(20)}`, usdcAddress: `0x${'22'.repeat(20)}`,
+      allowedPools: [], baseCrossChainAvailable: false,
     },
     domains: { base: 6 },
     ...overrides,
   };
+}
+
+function productionListenHarness({ baseCrossChainAvailable, local, remote }) {
+  const config = serverConfig({ mode: 'production', dbPath: '/var/lib/vf/relayer.db' });
+  config.base.baseCrossChainAvailable = baseCrossChainAvailable;
+  config.base.allowedPools = baseCrossChainAvailable ? [...APPROVED_POOLS] : [];
+  config.base.hardenedDeployment = baseCrossChainAvailable
+    ? { pools: { enabled: [...APPROVED_POOLS] } }
+    : null;
+  config.publicRuntime.baseCrossChainAvailable = baseCrossChainAvailable;
+  config.publicRuntime.unavailableReason = baseCrossChainAvailable
+    ? null : 'Hardened Base deployment is not active.';
+  Object.defineProperty(config, 'sessionKeyCipher', {
+    value: Object.freeze({ seal() {}, open() {} }),
+    enumerable: false,
+  });
+  const state = { listenerCalls: 0, reporterOptions: null };
+  const sqlite = {
+    probe: async () => local,
+    jobs: new Map(),
+    mandatesV3: {},
+    mandateActivations: {},
+  };
+  const router = async () => {};
+  router.resumeMandateActivations = async () => ({ resumed: [], held: [] });
+  router.resumeFarmJobs = async () => ({ resumed: [], held: [], blocked: [], uncertain: [] });
+  const httpServer = {
+    listen() { state.listenerCalls += 1; },
+    on() { return this; },
+    close() {},
+  };
+  const relayer = serverModule.createRelayerServer(config, {
+    openSqlite: () => sqlite,
+    createReporter: () => ({
+      probe: async (options) => {
+        state.reporterOptions = options;
+        return remote;
+      },
+    }),
+    createRouter: () => router,
+    createHttpServer: () => httpServer,
+  });
+  return { relayer, state, httpServer };
 }
 
 describe('runtimeServerConfig', () => {
@@ -82,6 +141,43 @@ describe('runtimeServerConfig', () => {
       sqlite: { probe: async () => { throw new Error('read only'); } },
       reporter,
     })).rejects.toThrow(/read only/);
+  });
+
+  it('requires only global local/remote readiness when Base execution is closed', async () => {
+    let probeOptions;
+    const sqlite = { probe: async () => ({
+      writable: true,
+      legacyMandateTables: [],
+      mandateMigrationCleanupPending: false,
+    }) };
+    const reporter = { probe: async (options) => {
+      probeOptions = options;
+      return { ready: true, schemaVersion: 1, stores: { executionReceipts: true } };
+    } };
+
+    await expect(serverModule.verifyRelayerReadiness({
+      sqlite,
+      reporter,
+      baseCrossChainAvailable: false,
+    })).resolves.toEqual({ writable: true, reporterSchema: 1 });
+    expect(probeOptions).toEqual({ baseCrossChainAvailable: false });
+  });
+
+  it('retains every Base durability/readiness requirement when Base execution is active', async () => {
+    let reporterCalls = 0;
+    await expect(serverModule.verifyRelayerReadiness({
+      sqlite: { probe: async () => ({
+        writable: true,
+        legacyMandateTables: [],
+        mandateMigrationCleanupPending: false,
+      }) },
+      reporter: { probe: async () => {
+        reporterCalls += 1;
+        return { ready: true, schemaVersion: 1, stores: { executionReceipts: true } };
+      } },
+      baseCrossChainAvailable: true,
+    })).rejects.toThrow(/Base evidence|farm intent|durable/i);
+    expect(reporterCalls).toBe(0);
   });
 
   it.each([
@@ -348,6 +444,179 @@ describe('runtimeServerConfig', () => {
 
   it('allows the explicit in-memory development server without a persistence cipher', () => {
     expect(() => serverModule.createRelayerServer(serverConfig({ dbPath: null }))).not.toThrow();
+  });
+
+  it('propagates closed Base availability to composed builders and omits forward deployment facts', async () => {
+    let routerDeps;
+    const base = {
+      chain: { id: 84532 },
+      rpcUrl: 'https://legacy-rpc.invalid',
+      bundlerRpcUrl: 'https://legacy-bundler.invalid',
+      yieldRouterAddress: `0x${'11'.repeat(20)}`,
+      usdcAddress: `0x${'22'.repeat(20)}`,
+      tokenMessengerV2Address: `0x${'33'.repeat(20)}`,
+      baseCrossChainAvailable: false,
+    };
+    serverModule.createRelayerServer(serverConfig({
+      dbPath: null,
+      base,
+      stellar: { tokenMessengerMinter: 'stellar-messenger', usdcSac: 'stellar-usdc' },
+      domains: { base: 6, stellar: 27 },
+    }), {
+      createRouter(deps) {
+        routerDeps = deps;
+        return async () => {};
+      },
+    });
+
+    expect(routerDeps.forwardFarmDeployment).toBeNull();
+    await expect(routerDeps.buildMandateActivator('legacy-session-key').activateMandate('approval'))
+      .rejects.toThrow('Base cross-chain execution is unavailable');
+    await expect(routerDeps.buildFarm('legacy-session-key').recoverDeposits({
+      approval: 'approval',
+      children: [{ allocation: {}, recovery: { phase: 'cctp_mint', state: 'confirmed' } }],
+      onCheckpoint() {},
+    })).rejects.toThrow('Base cross-chain execution is unavailable');
+  });
+
+  it.each([
+    ['string false', 'false'],
+    ['numeric one', 1],
+    ['object', {}],
+  ])('rejects non-boolean Base availability before composing the server: %s', (_label, value) => {
+    const config = serverConfig({ dbPath: null });
+    config.base.baseCrossChainAvailable = value;
+    config.publicRuntime.baseCrossChainAvailable = value;
+    let routerComposed = false;
+
+    expect(() => serverModule.createRelayerServer(config, {
+      createRouter() { routerComposed = true; return async () => {}; },
+    })).toThrow(/Base.*availability.*boolean/i);
+    expect(routerComposed).toBe(false);
+  });
+
+  it('rejects inconsistent private/public Base availability before composing HTTP or builders', () => {
+    const config = serverConfig({ dbPath: null });
+    config.base.baseCrossChainAvailable = true;
+    config.publicRuntime.baseCrossChainAvailable = false;
+    let routerComposed = false;
+
+    expect(() => serverModule.createRelayerServer(config, {
+      createRouter() { routerComposed = true; return async () => {}; },
+    })).toThrow(/Base.*availability.*disagree/i);
+    expect(routerComposed).toBe(false);
+  });
+
+  it('wires only the exact active record-approved pool map into HTTP and forward deployment', () => {
+    const config = serverConfig({ dbPath: null });
+    config.base.baseCrossChainAvailable = true;
+    config.publicRuntime.baseCrossChainAvailable = true;
+    config.publicRuntime.unavailableReason = null;
+    config.base.allowedPools = [...APPROVED_POOLS];
+    config.base.hardenedDeployment = { pools: { enabled: [...APPROVED_POOLS] } };
+    config.base.tokenMessengerV2Address = `0x${'33'.repeat(20)}`;
+    config.stellar = { tokenMessengerMinter: 'stellar-messenger', usdcSac: 'stellar-usdc' };
+    config.domains = { base: 6, stellar: 27 };
+    let routerDeps;
+
+    serverModule.createRelayerServer(config, {
+      createRouter(deps) { routerDeps = deps; return async () => {}; },
+    });
+
+    expect(routerDeps.poolTargets).toEqual(APPROVED_POOL_TARGETS);
+    expect(routerDeps.forwardFarmDeployment.poolTargets).toBe(routerDeps.poolTargets);
+  });
+
+  it.each([
+    ['missing pool', APPROVED_POOLS.slice(0, 2)],
+    ['unknown pool', [...APPROVED_POOLS.slice(0, 2), '0xABcdEFABcdEFabcdEfAbCdefabcdeFABcDEFabCD']],
+    ['extra pool', [...APPROVED_POOLS, '0xABcdEFABcdEFabcdEfAbCdefabcdeFABcDEFabCD']],
+    ['duplicate pool', [APPROVED_POOLS[0], APPROVED_POOLS[0], APPROVED_POOLS[2]]],
+  ])('rejects active record/catalog pool mismatch before router composition: %s', (_label, allowedPools) => {
+    const config = serverConfig({ dbPath: null });
+    config.base.baseCrossChainAvailable = true;
+    config.publicRuntime.baseCrossChainAvailable = true;
+    config.publicRuntime.unavailableReason = null;
+    config.base.allowedPools = allowedPools;
+    config.base.hardenedDeployment = { pools: { enabled: [...allowedPools] } };
+    let routerComposed = false;
+
+    expect(() => serverModule.createRelayerServer(config, {
+      createRouter() { routerComposed = true; return async () => {}; },
+    })).toThrow(/approved.*pool|pool.*catalog|pool.*mapping/i);
+    expect(routerComposed).toBe(false);
+  });
+
+  it('rejects an active approved set when the configured protocol catalog is missing a mapping', () => {
+    const config = serverConfig({ dbPath: null });
+    config.base.baseCrossChainAvailable = true;
+    config.publicRuntime.baseCrossChainAvailable = true;
+    config.publicRuntime.unavailableReason = null;
+    config.base.allowedPools = [...APPROVED_POOLS];
+    config.base.hardenedDeployment = { pools: { enabled: [...APPROVED_POOLS] } };
+
+    expect(() => serverModule.createRelayerServer(config, {
+      poolTargetCatalog: new Map([...APPROVED_POOL_TARGETS].slice(0, 2)),
+    })).toThrow(/approved.*pool|pool.*catalog|pool.*mapping/i);
+  });
+
+  it.each([
+    ['missing hardened record', null],
+    ['record/config mismatch', { pools: { enabled: APPROVED_POOLS.slice(0, 2) } }],
+  ])('rejects active pool authority not sourced from the exact hardened record: %s', (_label, hardenedDeployment) => {
+    const config = serverConfig({ dbPath: null });
+    config.base.baseCrossChainAvailable = true;
+    config.publicRuntime.baseCrossChainAvailable = true;
+    config.publicRuntime.unavailableReason = null;
+    config.base.allowedPools = [...APPROVED_POOLS];
+    config.base.hardenedDeployment = hardenedDeployment;
+
+    expect(() => serverModule.createRelayerServer(config))
+      .toThrow(/hardened.*pool|pool.*record|approved.*pool/i);
+  });
+
+  it('does not wire the static legacy pool catalog while Base execution is closed', () => {
+    const config = serverConfig({ dbPath: null });
+    config.base.allowedPools = [...APPROVED_POOLS];
+    let routerDeps;
+
+    serverModule.createRelayerServer(config, {
+      createRouter(deps) { routerDeps = deps; return async () => {}; },
+    });
+
+    expect(routerDeps.poolTargets).toEqual(new Map());
+    expect(routerDeps.forwardFarmDeployment).toBeNull();
+  });
+
+  it('lets the actual production listener start without Base-only readiness while Base is closed', async () => {
+    const { relayer, state, httpServer } = productionListenHarness({
+      baseCrossChainAvailable: false,
+      local: {
+        writable: true,
+        legacyMandateTables: [],
+        mandateMigrationCleanupPending: false,
+      },
+      remote: { ready: true, schemaVersion: 1, stores: { executionReceipts: true } },
+    });
+
+    await expect(relayer.listen(8788)).resolves.toBe(httpServer);
+    expect(state.listenerCalls).toBe(1);
+    expect(state.reporterOptions).toEqual({ baseCrossChainAvailable: false });
+  });
+
+  it('keeps the actual production listener closed when active Base durability is absent', async () => {
+    const { relayer, state } = productionListenHarness({
+      baseCrossChainAvailable: true,
+      local: {
+        writable: true,
+        legacyMandateTables: [],
+        mandateMigrationCleanupPending: false,
+      },
+      remote: { ready: true, schemaVersion: 1, stores: { executionReceipts: true } },
+    });
+
+    await expect(relayer.listen(8788)).rejects.toThrow(/Base evidence|farm intent|durable/i);
+    expect(state.listenerCalls).toBe(0);
   });
 
   it('rejects the offline plaintext-key migration flag before constructing an HTTP server', () => {

@@ -1,6 +1,12 @@
 // frontend/src/mergeFlowHelpers.test.js — preserves the money/custody projection tests while the
 // mandate setup boundary migrates to owner-scoped, non-secret v3 records.
 import { describe, it, expect, vi } from 'vitest'
+
+vi.mock('./base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./base/hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
 import {
   applyBaseLegOutcome,
   mapBaseLegEvent,

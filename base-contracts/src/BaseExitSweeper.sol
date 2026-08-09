@@ -9,170 +9,180 @@ import {IYieldRouter} from "./interfaces/IYieldRouter.sol";
 import {ITokenMessengerV2} from "./interfaces/ITokenMessengerV2.sol";
 import {HookDataLib} from "./HookDataLib.sol";
 
-/// @title BaseExitSweeper
-/// @notice One call exits every Base position the caller holds, sweeps their
-/// idle USDC, and burns the exact total home to Stellar via CCTP v2. Amounts
-/// are read at execution time because a userOp's calldata is fixed when the
-/// passkey signs it, and CCTP provides no max sentinel.
-///
-/// Mirrors soroban/contracts/exit_router's sweep: read balances live, try each
-/// position independently, report partial success honestly.
-///
-/// Holds no funds beyond one transaction — the same invariant YieldRouter
-/// states for itself. There is deliberately NO admin surface and NO rescue
-/// function: one instance serves every user, so an owner-gated sweep would let
-/// the owner take funds in flight for someone else's transaction. The
-/// zero-residue check below is therefore the only safety net, by design.
+/// @notice Stateless, caller-isolated full-balance exit into a constructor-pinned
+/// Stellar CCTP route. Kernel/EntryPoint authorization is outside this contract;
+/// this contract can only use shares and USDC approved by msg.sender.
 contract BaseExitSweeper is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     IERC20 public immutable usdc;
     IYieldRouter public immutable router;
     ITokenMessengerV2 public immutable tokenMessenger;
+    uint32 public immutable stellarDomain;
+    bytes32 public immutable mintRecipient;
+    bytes32 public immutable destinationCaller;
 
-    /// @notice Gas forwarded to each pool's redeem.
-    /// @dev Mandatory, not tuning. Because maxRedeem does not report Aave-side
-    /// pause state (AaveV3Adapter4626 does not override it; OZ's default just
-    /// returns balanceOf), every iteration may legitimately attempt a call that
-    /// is expected to fail. Solidity forwards 63/64 of remaining gas by default,
-    /// so a pool that burns its stipend before reverting would starve the later
-    /// iterations AND the closing checks — reverting the whole atomic exit,
-    /// exactly what try/catch exists to prevent. The cap also bounds
-    /// returndatacopy against an oversized return blob.
+    uint32 public constant FINALITY_THRESHOLD = 1000;
+    uint256 public constant VIEW_GAS_CAP = 50_000;
     uint256 public constant REDEEM_GAS_CAP = 1_200_000;
 
     event Swept(address indexed owner, uint256 burned, uint256 exited, uint256 skipped);
 
     error ZeroAddress();
+    error NoCode(address target);
+    error InvalidStellarDomain(uint32 domain);
+    error Expired(uint256 deadline, uint256 timestamp);
     error LengthMismatch();
     error NothingToExit();
     error Slippage(address pool, uint256 got, uint256 floor);
     error Residue(uint256 left);
+    error AllowanceResidue(uint256 left);
+    error OnlySelf();
+    error RedeemFailed();
 
-    constructor(address usdc_, address router_, address tokenMessenger_) {
-        if (usdc_ == address(0) || router_ == address(0) || tokenMessenger_ == address(0)) {
-            revert ZeroAddress();
-        }
+    constructor(
+        address usdc_,
+        address router_,
+        address tokenMessenger_,
+        uint32 stellarDomain_,
+        bytes32 mintRecipient_,
+        bytes32 destinationCaller_
+    ) {
+        if (
+            usdc_ == address(0) || router_ == address(0) || tokenMessenger_ == address(0)
+                || mintRecipient_ == bytes32(0) || destinationCaller_ == bytes32(0)
+        ) revert ZeroAddress();
+        if (usdc_.code.length == 0) revert NoCode(usdc_);
+        if (router_.code.length == 0) revert NoCode(router_);
+        if (tokenMessenger_.code.length == 0) revert NoCode(tokenMessenger_);
+        if (stellarDomain_ != 27) revert InvalidStellarDomain(stellarDomain_);
+
         usdc = IERC20(usdc_);
         router = IYieldRouter(router_);
         tokenMessenger = ITokenMessengerV2(tokenMessenger_);
+        stellarDomain = stellarDomain_;
+        mintRecipient = mintRecipient_;
+        destinationCaller = destinationCaller_;
     }
 
-    /// @notice Exit every listed pool plus idle USDC, burn the total to Stellar.
-    /// @dev `owner` is always msg.sender and is never a parameter. That is the
-    /// entire access-control model: the contract can structurally only move the
-    /// caller's own funds. It is also what defuses cross-pool reentrancy — a
-    /// malicious pool re-entering from its own redeem callback arrives with
-    /// msg.sender == pool, and allowance(pool, sweeper) is zero. nonReentrant is
-    /// applied anyway as cheap defence in depth.
     function exitAllAndBurn(
         address[] calldata pools,
         uint256[] calldata minAssetsPerPool,
-        bytes32 mintRecipient,
-        bytes32 destinationCaller,
-        uint32 destinationDomain,
         uint256 maxFee,
-        uint32 minFinalityThreshold,
+        uint256 deadline,
         bytes calldata hookData
     ) external nonReentrant returns (uint256 burned, uint256 exited, uint256 skipped) {
-        // Not merely for the revert (bare 0.8 indexing would revert anyway) but
-        // to forbid any "defensive" padding that would silently zero the floor
-        // for the tail pools.
+        // The owner-selected deadline deliberately binds execution to timestamp, not block height.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp > deadline) revert Expired(deadline, block.timestamp);
         if (pools.length != minAssetsPerPool.length) revert LengthMismatch();
-
         HookDataLib.validate(hookData);
 
         address owner = msg.sender;
-
         for (uint256 i = 0; i < pools.length; i++) {
             address pool = pools[i];
-
             if (!_eligible(pool)) {
                 skipped++;
                 continue;
             }
 
-            uint256 shares = _redeemableShares(pool, owner);
-            if (shares == 0) {
+            (bool readable, uint256 shares) = _redeemableShares(pool, owner);
+            if (!readable || shares == 0) {
                 skipped++;
                 continue;
             }
 
-            uint256 balBefore = usdc.balanceOf(address(this));
-
-            // A pool that reverts (paused, illiquid, hostile) moves nothing and
-            // is skipped. Its RETURN VALUE is deliberately discarded — see below.
-            try IERC4626(pool).redeem{gas: REDEEM_GAS_CAP}(shares, address(this), owner) returns (
-                uint256
-            ) {
-                // measured below, never trusted from the pool
-            } catch {
+            uint256 balanceBefore = usdc.balanceOf(address(this));
+            if (!_tryRedeem(pool, shares, owner)) {
                 skipped++;
                 continue;
             }
 
-            // Measured delta, exactly as YieldRouter.sol:80 does. A slippage floor
-            // checked against a pool's self-reported number is a floor the pool
-            // chose for itself.
-            uint256 got = usdc.balanceOf(address(this)) - balBefore;
+            uint256 balanceAfter = usdc.balanceOf(address(this));
+            uint256 got = balanceAfter >= balanceBefore ? balanceAfter - balanceBefore : 0;
             if (got < minAssetsPerPool[i]) revert Slippage(pool, got, minAssetsPerPool[i]);
             exited++;
         }
 
-        // Best effort. Assets have not moved if this fails, so it must not abort
-        // an otherwise good exit. A zero-amount transferFrom is a valid no-op.
         uint256 idle = usdc.balanceOf(owner);
-        if (idle > 0) {
-            try IERC20(address(usdc)).transferFrom(owner, address(this), idle) returns (bool) {}
-            catch {}
-        }
+        if (idle != 0) _tryTransferFrom(owner, idle);
 
         burned = usdc.balanceOf(address(this));
         if (burned == 0) revert NothingToExit();
 
-        SafeERC20.forceApprove(usdc, address(tokenMessenger), burned);
+        usdc.forceApprove(address(tokenMessenger), burned);
         tokenMessenger.depositForBurnWithHook(
-            burned,
-            destinationDomain,
-            mintRecipient,
-            address(usdc),
-            destinationCaller,
-            maxFee,
-            minFinalityThreshold,
-            hookData
+            burned, stellarDomain, mintRecipient, address(usdc), destinationCaller, maxFee, FINALITY_THRESHOLD, hookData
         );
-        SafeERC20.forceApprove(usdc, address(tokenMessenger), 0);
+        usdc.forceApprove(address(tokenMessenger), 0);
 
+        uint256 allowanceLeft = usdc.allowance(address(this), address(tokenMessenger));
+        if (allowanceLeft != 0) revert AllowanceResidue(allowanceLeft);
         uint256 left = usdc.balanceOf(address(this));
         if (left != 0) revert Residue(left);
 
         emit Swept(owner, burned, exited, skipped);
     }
 
-    /// @dev The live 2026-07-05 router (0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d)
-    /// exposes only `allowedPool` — an owner-revocable *deposit* allowlist, not
-    /// a permanent exit-eligibility one. Ceiling: if the owner disables a pool
-    /// via allowedPool after depositing into it, this sweep SKIPS that pool
-    /// (reported honestly via `skipped`, not silently) — funds stay in the pool,
-    /// still recoverable by the owner calling pool.redeem directly. The
-    /// per-call re-validation below (code size + asset match) still holds
-    /// regardless. When the hardened router (with the permanent `knownPool`
-    /// mapping — see YieldRouter.sol) is deployed, switch this back to
-    /// knownPool and redeploy this stateless sweeper; see
-    /// BaseExitSweeper.t.sol's selector-pin test for the tripwire.
+    /// @dev A self-call gives every pool redemption its own rollback boundary. The
+    /// low-level pool call deliberately copies no returndata, so a malicious pool
+    /// cannot force unbounded memory expansion. A malformed successful return
+    /// reverts this frame, rolling back that pool's token/share movements while
+    /// allowing the outer sweep to continue.
+    function isolatedRedeem(address pool, uint256 shares, address owner) external {
+        if (msg.sender != address(this)) revert OnlySelf();
+
+        bytes memory data = abi.encodeCall(IERC4626.redeem, (shares, address(this), owner));
+        bool ok;
+        uint256 returnSize;
+        assembly ("memory-safe") {
+            ok := call(gas(), pool, 0, add(data, 0x20), mload(data), 0, 0)
+            returnSize := returndatasize()
+        }
+        if (!ok || returnSize != 32) revert RedeemFailed();
+    }
+
     function _eligible(address pool) private view returns (bool) {
-        if (!router.allowedPool(pool)) return false;
         if (pool.code.length == 0) return false;
-        try IERC4626(pool).asset() returns (address a) {
-            return a == address(usdc);
-        } catch {
-            return false;
+        (bool knownOk, uint256 known) =
+            _staticUint(address(router), abi.encodeWithSelector(IYieldRouter.knownPool.selector, pool));
+        if (!knownOk || known != 1) return false;
+        (bool assetOk, uint256 assetWord) = _staticUint(pool, abi.encodeWithSelector(IERC4626.asset.selector));
+        if (!assetOk || assetWord >> 160 != 0) return false;
+        // Upper bits were checked above, so narrowing the ABI address word is safe.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return address(uint160(assetWord)) == address(usdc);
+    }
+
+    function _redeemableShares(address pool, address owner) private view returns (bool, uint256) {
+        (bool balanceOk, uint256 balance) = _staticUint(pool, abi.encodeWithSelector(IERC20.balanceOf.selector, owner));
+        if (!balanceOk) return (false, 0);
+        (bool allowanceOk, uint256 allowance) =
+            _staticUint(pool, abi.encodeWithSelector(IERC20.allowance.selector, owner, address(this)));
+        if (!allowanceOk) return (false, 0);
+        return (true, balance < allowance ? balance : allowance);
+    }
+
+    function _tryRedeem(address pool, uint256 shares, address owner) private returns (bool ok) {
+        bytes memory data = abi.encodeCall(this.isolatedRedeem, (pool, shares, owner));
+        address self = address(this);
+        uint256 gasCap = REDEEM_GAS_CAP;
+        assembly ("memory-safe") {
+            ok := call(gasCap, self, 0, add(data, 0x20), mload(data), 0, 0)
         }
     }
 
-    function _redeemableShares(address pool, address owner) private view returns (uint256) {
-        uint256 bal = IERC4626(pool).balanceOf(owner);
-        uint256 allowed = IERC20(pool).allowance(owner, address(this));
-        return bal < allowed ? bal : allowed;
+    function _staticUint(address target, bytes memory data) private view returns (bool ok, uint256 value) {
+        assembly ("memory-safe") {
+            ok := staticcall(VIEW_GAS_CAP, target, add(data, 0x20), mload(data), 0, 0x20)
+            if and(ok, eq(returndatasize(), 0x20)) { value := mload(0) }
+            if iszero(eq(returndatasize(), 0x20)) { ok := 0 }
+        }
+    }
+
+    function _tryTransferFrom(address owner, uint256 amount) private {
+        (bool ok, bytes memory result) =
+            address(usdc).call(abi.encodeCall(IERC20.transferFrom, (owner, address(this), amount)));
+        if (!ok || (result.length != 0 && (result.length != 32 || !abi.decode(result, (bool))))) return;
     }
 }

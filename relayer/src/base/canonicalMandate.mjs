@@ -140,12 +140,21 @@ export function canonicalTxHash(value) {
 
 function assertPinnedConfig(config) {
   const policy = config?.base?.mandatePolicy;
+  const deployment = config?.base?.hardenedDeployment;
   if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
     fail('POLICY_MISMATCH', 'canonical mandate policy is unavailable');
   }
+  if (config?.base?.baseCrossChainAvailable !== true
+    || deployment?.generation !== 'hardened-v2'
+    || deployment?.chainId !== 84532
+    || !sameAddress(deployment?.yieldRouter?.address, policy.yieldRouterAddress)
+    || !sameAddress(deployment?.route?.usdcAddress, policy.usdcAddress)) {
+    fail('POLICY_MISMATCH', 'hardened deployment authority is unavailable');
+  }
   const expectedKeys = Object.keys(CANONICAL_BASE_MANDATE_POLICY);
   if (Object.keys(policy).length !== expectedKeys.length
-    || expectedKeys.some((key) => policy[key] !== CANONICAL_BASE_MANDATE_POLICY[key])) {
+    || expectedKeys.some((key) => !['usdcAddress', 'yieldRouterAddress'].includes(key)
+      && policy[key] !== CANONICAL_BASE_MANDATE_POLICY[key])) {
     fail('POLICY_MISMATCH', 'canonical mandate policy facts do not match pinned deployment facts');
   }
   if (config?.base?.chain?.id !== policy.chainId) {

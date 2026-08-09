@@ -6,6 +6,7 @@
 
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { getAddress } from 'viem';
 import { createWatcher } from './cctp/watcher.mjs';
 import { createOrchestrator } from './base/orchestrator.mjs';
 import { createFarmFlow } from './flows/farm.mjs';
@@ -31,14 +32,19 @@ export function runtimeServerConfig(config) {
   };
 }
 
-export async function verifyRelayerReadiness({ sqlite, reporter }) {
+export async function verifyRelayerReadiness({
+  sqlite,
+  reporter,
+  baseCrossChainAvailable = true,
+}) {
   if (!sqlite?.probe || !reporter?.probe) throw new Error('relayer durable readiness is not configured');
+  const requireBaseReadiness = baseCrossChainAvailable === true;
   const local = await sqlite.probe();
   if (local?.writable !== true) throw new Error('relayer SQLite store is not writable');
-  if (local?.baseEvidenceDurable !== true) {
+  if (requireBaseReadiness && local?.baseEvidenceDurable !== true) {
     throw new Error('relayer SQLite Base evidence store is not durable');
   }
-  if (local?.farmIntentDurable !== true) {
+  if (requireBaseReadiness && local?.farmIntentDurable !== true) {
     throw new Error('relayer SQLite forward-farm intent store is not durable');
   }
   if (!Array.isArray(local.legacyMandateTables)) {
@@ -50,13 +56,17 @@ export async function verifyRelayerReadiness({ sqlite, reporter }) {
   if (local.mandateMigrationCleanupPending !== false) {
     throw new Error('offline mandate migration cleanup is pending');
   }
-  const remote = await reporter.probe();
+  const remote = await reporter.probe({
+    baseCrossChainAvailable: requireBaseReadiness,
+  });
   if (
     remote?.ready !== true
     || remote?.schemaVersion !== 1
     || remote?.stores?.executionReceipts !== true
-    || remote?.stores?.baseChildIntents !== true
-    || remote?.stores?.baseRecoveryEvidence !== true
+    || (requireBaseReadiness && (
+      remote?.stores?.baseChildIntents !== true
+      || remote?.stores?.baseRecoveryEvidence !== true
+    ))
   ) {
     throw new Error('agent index reporter schema/store is not ready');
   }
@@ -111,6 +121,55 @@ export function withProxyKeyAuth(handler, key) {
   };
 }
 
+function deriveActivePoolTargets(
+  baseCrossChainAvailable,
+  allowedPools,
+  hardenedDeployment,
+  catalog,
+) {
+  if (!baseCrossChainAvailable) return new Map();
+  const recordedPools = hardenedDeployment?.pools?.enabled;
+  if (!Array.isArray(recordedPools)
+      || !Array.isArray(allowedPools)
+      || recordedPools.length !== allowedPools.length
+      || recordedPools.some((pool, index) => pool !== allowedPools[index])) {
+    throw new Error('active approved pool set disagrees with hardened deployment record');
+  }
+  if (!Array.isArray(allowedPools) || !(catalog instanceof Map) || catalog.size === 0) {
+    throw new Error('active approved pool catalog is not configured');
+  }
+  const normalizedPools = [];
+  for (const pool of allowedPools) {
+    let checksum;
+    try {
+      checksum = typeof pool === 'string' ? getAddress(pool) : null;
+    } catch {
+      checksum = null;
+    }
+    if (!checksum || checksum !== pool
+        || pool === '0x0000000000000000000000000000000000000000') {
+      throw new Error('active approved pool address is not canonical');
+    }
+    normalizedPools.push(pool.toLowerCase());
+  }
+  const approvedSet = new Set(normalizedPools);
+  if (approvedSet.size !== normalizedPools.length || approvedSet.size !== catalog.size) {
+    throw new Error('active approved pool set disagrees with protocol catalog');
+  }
+  const poolTargets = new Map();
+  for (const [pool, protocol] of catalog) {
+    if (typeof pool !== 'string' || pool !== pool.toLowerCase()
+        || typeof protocol !== 'string' || !protocol || !approvedSet.has(pool)) {
+      throw new Error('active approved pool mapping disagrees with protocol catalog');
+    }
+    poolTargets.set(pool, protocol);
+  }
+  if (poolTargets.size !== approvedSet.size) {
+    throw new Error('active approved pool mapping is incomplete');
+  }
+  return poolTargets;
+}
+
 /**
  * @param {ReturnType<typeof import('./config.mjs').loadConfig>} config
  * @returns {{ handler: Function, listen: (port: number) => Promise<import('node:http').Server> }}
@@ -118,7 +177,9 @@ export function withProxyKeyAuth(handler, key) {
 export function createRelayerServer(config, {
   openSqlite = createSqliteStores,
   createRouter = createRelayerRouter,
+  createReporter = createAgentIndexReporter,
   createHttpServer = createServer,
+  poolTargetCatalog = BASE_SEPOLIA_POOL_TARGETS,
   recoveryLimit = 100,
   recoveryConcurrency = 4,
 } = {}) {
@@ -128,6 +189,22 @@ export function createRelayerServer(config, {
   if (!Number.isSafeInteger(recoveryConcurrency) || recoveryConcurrency < 1 || recoveryConcurrency > 32) {
     throw new Error('recoveryConcurrency must be between 1 and 32');
   }
+  const privateBaseAvailability = config?.base?.baseCrossChainAvailable;
+  const publicBaseAvailability = config?.publicRuntime?.baseCrossChainAvailable;
+  if (typeof privateBaseAvailability !== 'boolean'
+      || typeof publicBaseAvailability !== 'boolean') {
+    throw new Error('Base execution availability must be boolean');
+  }
+  if (privateBaseAvailability !== publicBaseAvailability) {
+    throw new Error('private/public Base execution availability disagree');
+  }
+  const baseCrossChainAvailable = privateBaseAvailability === true;
+  const poolTargets = deriveActivePoolTargets(
+    baseCrossChainAvailable,
+    config.base.allowedPools,
+    config.base.hardenedDeployment,
+    poolTargetCatalog,
+  );
   if (process.env.RELAYER_OFFLINE_KEY_MIGRATION === '1') {
     throw new Error('RELAYER_OFFLINE_KEY_MIGRATION cannot run in the HTTP relayer process');
   }
@@ -157,7 +234,7 @@ export function createRelayerServer(config, {
   // below. Also what every /mandate response reports as `relayerOrigin`, so the
   // client (frontend/src/wallet/baseBinding.js) can start enforcing it.
   const relayerOrigin = runtimeConfig.relayerOrigin;
-  const agentIndexReporter = createAgentIndexReporter({
+  const agentIndexReporter = createReporter({
     endpoint: runtimeConfig.reporterEndpoint,
     secret: runtimeConfig.reporterSecret,
     schemaVersion: runtimeConfig.reporterSchema,
@@ -174,6 +251,7 @@ export function createRelayerServer(config, {
       yieldRouterAddress: config.base.yieldRouterAddress,
       usdcAddress: config.base.usdcAddress,
       sessionPrivateKey,
+      baseCrossChainAvailable,
     });
     return createFarmFlow({ watcher, orchestrator, domains: config.domains });
   }
@@ -186,6 +264,7 @@ export function createRelayerServer(config, {
       yieldRouterAddress: config.base.yieldRouterAddress,
       usdcAddress: config.base.usdcAddress,
       sessionPrivateKey,
+      baseCrossChainAvailable,
     });
   }
 
@@ -221,7 +300,7 @@ export function createRelayerServer(config, {
       relayerOrigin,
       sanitizeErrors: runtimeConfig.sanitizeErrors,
       networkId: 'stellar-testnet',
-      poolTargets: BASE_SEPOLIA_POOL_TARGETS,
+      poolTargets,
       agentIndexReporter,
       associationOutbox,
       baseEvidenceOutbox: sqlite?.baseEvidenceOutbox ?? null,
@@ -230,7 +309,8 @@ export function createRelayerServer(config, {
       relayForwardMint: (relayIntent) => watcher.relayMint(relayIntent),
       recoveryLimit,
       recoveryConcurrency,
-      forwardFarmDeployment: config.stellar?.tokenMessengerMinter && config.stellar?.usdcSac
+      forwardFarmDeployment: baseCrossChainAvailable
+        && config.stellar?.tokenMessengerMinter && config.stellar?.usdcSac
         && config.base?.tokenMessengerV2Address && config.domains?.stellar ? {
         networkId: 'stellar-testnet',
         sourceDomain: config.domains.stellar,
@@ -238,7 +318,7 @@ export function createRelayerServer(config, {
         tokenMessengerMinter: config.stellar.tokenMessengerMinter,
         baseTokenMessenger: config.base.tokenMessengerV2Address,
         stellarUsdcSac: config.stellar.usdcSac,
-        poolTargets: BASE_SEPOLIA_POOL_TARGETS,
+        poolTargets,
       } : null,
       publicRuntime: runtimeConfig.publicRuntime,
     });
@@ -251,14 +331,18 @@ export function createRelayerServer(config, {
     const production = config.mode === 'production' || config.mode === 'staging';
     const started = await startVerifiedRelayer({
       verifyReadiness: production
-        ? () => verifyRelayerReadiness({ sqlite, reporter: agentIndexReporter })
+        ? () => verifyRelayerReadiness({
+          sqlite,
+          reporter: agentIndexReporter,
+          baseCrossChainAvailable,
+        })
         : async () => ({ writable: Boolean(sqlite), reporterSchema: runtimeConfig.reporterSchema }),
       resumeMandateActivations: () => router.resumeMandateActivations(),
-      reconcileCctpRelays: () => (sqlite
+      reconcileCctpRelays: () => (sqlite && baseCrossChainAvailable
         ? watcher.sweepStuck({ limit: recoveryLimit })
         : Promise.resolve({ redriven: [], held: [], blocked: [], uncertain: [] })),
       resumeFarmJobs: () => router.resumeFarmJobs(),
-      startBaseEvidenceWorker: () => (sqlite?.baseEvidenceOutbox
+      startBaseEvidenceWorker: () => (baseCrossChainAvailable && sqlite?.baseEvidenceOutbox
         ? startBaseEvidenceOutboxWorker({
           outbox: sqlite.baseEvidenceOutbox,
           reporter: agentIndexReporter,

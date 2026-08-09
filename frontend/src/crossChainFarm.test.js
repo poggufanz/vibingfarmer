@@ -1,5 +1,11 @@
 // frontend/src/crossChainFarm.test.js
 import { describe, test, expect, vi } from 'vitest'
+
+vi.mock('./base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./base/hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
 import { runFarmFlow } from './crossChainFarm.js'
 import { BASE_POOL_CATALOG } from './config.js'
 

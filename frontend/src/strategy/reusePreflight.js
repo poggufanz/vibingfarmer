@@ -24,6 +24,7 @@ import { newSessionKey } from '../stellar/sessionKey.js'
 import { resolveRouterSchema } from '../stellar/routerSchema.js'
 import { proveReusablePermission } from './permissionGrantV3.js'
 import { SOROBAN_FUNDING_ROUTER_ADDRESS, NETWORK_PASSPHRASE } from '../stellar/config.js'
+import { assertBaseCrossChainAvailable } from '../base/config.js'
 
 // Mirrors grant.js's SECONDS_PER_LEDGER (not exported there — testnet's ~5s/ledger convention).
 // Used only to translate the agentCache expiry safety margin into ledger-space for the
@@ -447,6 +448,14 @@ export async function preflightPermission({
 }) {
   if (!agentInits || agentInits.length === 0) {
     throw new Error('preflightPermission requires at least one reviewed agent.')
+  }
+
+  // A stale/crafted bridge plan must stop before resolveSchema, signer generation, salt
+  // randomness, prepared-material storage, or any allowance/agent proof. This is deliberately
+  // inside the low-level preflight as well as higher-level strategy eligibility: callers can
+  // retain an old reviewed plan across a deployment rollback.
+  if (agentInits.some((agent) => Number(agent?.kind) === AGENT_KIND_BRIDGE)) {
+    assertBaseCrossChainAvailable()
   }
 
   if (resolveSchema(router)?.version === 3) {

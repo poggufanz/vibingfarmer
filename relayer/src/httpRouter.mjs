@@ -160,10 +160,14 @@ export function createRelayerRouter({
   relayForwardMint = null, recoveryLimit = 100, recoveryConcurrency = 4,
   forwardFarmDeployment = null,
 }) {
+  const baseExecutionAvailable = publicRuntime?.baseCrossChainAvailable === true;
   const activeMandateActivations = new Map();
   const activeMandateRegistrations = new Map();
   const activeIntentDeliveries = new Map();
   let activeFarmResumeV2 = null;
+  const baseUnavailable = (res) => sendJson(
+    res, 503, { error: 'Base cross-chain execution is unavailable' },
+  );
   // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
   // error is always available server-side (console.error) for debugging. Never stores the key.
   // `context` (runId/bridgeAgent/grantTxHash for a farm job; omitted for unwind, which has none)
@@ -293,6 +297,7 @@ export function createRelayerRouter({
   }
 
   async function runMandateActivation(claimed) {
+    if (!baseExecutionAvailable) return;
     const identity = {
       mandateId: claimed.mandateId,
       stellarOwner: claimed.stellarOwner,
@@ -427,6 +432,7 @@ export function createRelayerRouter({
   }
 
   function dispatchMandateActivation(identity) {
+    if (!baseExecutionAvailable) return Promise.resolve(false);
     const key = activationIdentityKey(identity);
     const active = activeMandateActivations.get(key);
     if (active) return active;
@@ -660,6 +666,7 @@ export function createRelayerRouter({
   }
 
   function handleMandate(req, res) {
+    if (!baseExecutionAvailable) return baseUnavailable(res);
     if (!mandatesV3 || !mandateActivations || !buildMandateActivator || !mandateStatusConfig) {
       return sendJson(res, 503, { error: 'mandate activation is unavailable' });
     }
@@ -667,6 +674,7 @@ export function createRelayerRouter({
   }
 
   async function resumeMandateActivations() {
+    if (!baseExecutionAvailable) return { resumed: [], held: [] };
     if (!mandateActivations) return;
     await mandateActivations.reconcileExpired({ nowSeconds: nowSeconds() });
     const recoverable = await mandateActivations.listRecoverable({ nowSeconds: nowSeconds() });
@@ -1110,6 +1118,9 @@ export function createRelayerRouter({
   }
 
   async function resumeFarmJobs() {
+    if (!baseExecutionAvailable) {
+      return { resumed: [], held: [], blocked: [], uncertain: [] };
+    }
     if (!farmIntents) throw new Error('durable forward farm intent store is unavailable');
     if (activeFarmResumeV2) return activeFarmResumeV2;
     activeFarmResumeV2 = resumeFarmIntentsV2().finally(() => { activeFarmResumeV2 = null; });
@@ -1426,8 +1437,15 @@ export function createRelayerRouter({
 
   async function handleFarm(req, res) {
     res.setHeader('Cache-Control', 'no-store');
-    const authenticated = await authenticateBodyMandate(req, res, { activeOnly: true });
-    if (!authenticated) return;
+    const preauthenticated = await authenticateBodyMandate(
+      req, res, { activeOnly: true, loadRecord: false },
+    );
+    if (!preauthenticated) return;
+    if (!baseExecutionAvailable) return baseUnavailable(res);
+    const authenticated = await authenticateMandate(
+      req, preauthenticated.identity, { activeOnly: true, loadRecord: true },
+    );
+    if (!authenticated) return unauthorized(res);
     if (!farmIntents) {
       return sendJson(res, 503, { error: 'forward farm intent store is unavailable' });
     }
@@ -1540,8 +1558,11 @@ export function createRelayerRouter({
   async function handleFarmAttach(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     if (farmIntents) return handleFarmAttachV2(req, res);
-    const authenticated = await authenticateBodyMandate(req, res, { activeOnly: true });
+    const authenticated = await authenticateBodyMandate(
+      req, res, { activeOnly: true, loadRecord: false },
+    );
     if (!authenticated) return;
+    if (!baseExecutionAvailable) return baseUnavailable(res);
     return sendJson(res, 503, { error: 'forward farm intent store is unavailable' });
   }
 
@@ -1549,6 +1570,7 @@ export function createRelayerRouter({
     const body = req.body || {};
     const preauthenticated = await authenticateMandateAuthority(req, body.mandateId, { activeOnly: false });
     if (!preauthenticated) return unauthorized(res);
+    if (!baseExecutionAvailable) return baseUnavailable(res);
     try {
       requireExactFields(body, FARM_ATTACH_V2_FIELDS, 'farm attach');
     } catch (error) {
@@ -1676,6 +1698,7 @@ export function createRelayerRouter({
   }
 
   function handleUnwind(req, res) {
+    if (!baseExecutionAvailable) return baseUnavailable(res);
     try {
       requireExactFields(req.body || {}, UNWIND_FIELDS, 'unwind');
     } catch (err) {
