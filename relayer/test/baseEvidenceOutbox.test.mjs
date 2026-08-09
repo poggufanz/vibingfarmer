@@ -171,6 +171,44 @@ describe('SQLite Base evidence outbox', () => {
     });
   });
 
+  it('grants exactly one durable submission owner across two SQLite connections', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path, {
+      now: () => 1000,
+      leaseToken: () => 'owner-first',
+    });
+    const second = createSqliteStores(path, {
+      now: () => 1000,
+      leaseToken: () => 'owner-second',
+    });
+    first.baseEvidenceOutbox.seed(identity, 0);
+    first.baseEvidenceOutbox.enqueue(directCheckpoint('cctp_mint', 'confirmed', supportedEvidence[4][3]));
+
+    const submitting = checkpoint('submitting');
+    const winners = [
+      first.baseEvidenceOutbox.claimSubmission(submitting),
+      second.baseEvidenceOutbox.claimSubmission(submitting),
+    ];
+
+    expect(winners).toEqual([
+      expect.objectContaining({ claimed: true, ownerToken: 'owner-first' }),
+      { claimed: false, ownerToken: null },
+    ]);
+    expect(() => second.baseEvidenceOutbox.enqueueOwned(
+      checkpoint('submitted', { userOpHash: digests.userOp }),
+      { ownerToken: 'owner-second' },
+    )).toThrow(/owner|claim/i);
+    expect(first.baseEvidenceOutbox.enqueueOwned(
+      checkpoint('submitted', { userOpHash: digests.userOp }),
+      { ownerToken: 'owner-first' },
+    )).toMatchObject({ state: 'submitted' });
+    expect(first.baseEvidenceOutbox.recoveryState(identity)).toMatchObject({
+      phase: 'base_deposit', state: 'submitted',
+    });
+    second.db.close();
+    first.db.close();
+  });
+
   it('exposes the exact latest durable checkpoint only through the internal recovery seam', () => {
     const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
     baseEvidenceOutbox.seed(identity, 0);

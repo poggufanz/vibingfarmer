@@ -273,6 +273,80 @@ export function createBaseEvidenceOutbox(db, {
     return enqueueInternal(input, { transaction: true });
   }
 
+  function claimSubmission(input) {
+    const checkpoint = validateCheckpoint(input);
+    if (checkpoint.phase !== 'base_deposit' || checkpoint.status !== 'submitting') {
+      throw new Error('Base submission claim requires a submitting checkpoint');
+    }
+    const values = identityValues(checkpoint.identity);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const head = db.prepare(`SELECT * FROM base_evidence_heads
+        WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?`)
+        .get(...values);
+      if (!head) throw new Error('Base evidence identity has not been seeded');
+      if (head.latest_phase === 'base_deposit' && head.latest_state === 'submitting') {
+        const existing = db.prepare(`SELECT report_json FROM base_evidence_outbox
+          WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?
+            AND phase='base_deposit' AND state='submitting'`)
+          .get(...values);
+        const original = existing ? JSON.parse(existing.report_json).event : null;
+        if (!original || canonicalJson({
+          identity: checkpoint.identity,
+          phase: original.phase,
+          status: original.state,
+          evidence: original.evidence,
+          observedAt: original.observedAt,
+        }) !== canonicalJson(checkpoint)) {
+          throw new Error('immutable Base evidence checkpoint conflict');
+        }
+        db.exec('COMMIT');
+        return { claimed: false, ownerToken: null };
+      }
+      const ownerToken = leaseToken();
+      const event = enqueueInternal(checkpoint, { transaction: false });
+      const changed = db.prepare(`UPDATE base_evidence_heads SET submission_owner_token=?
+        WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?
+          AND latest_phase='base_deposit' AND latest_state='submitting'
+          AND submission_owner_token IS NULL`)
+        .run(ownerToken, ...values);
+      if (changed.changes !== 1) throw new Error('Base submission owner claim conflict');
+      db.exec('COMMIT');
+      return { claimed: true, ownerToken, event };
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  function enqueueOwned(input, { ownerToken } = {}) {
+    const checkpoint = validateCheckpoint(input);
+    if (checkpoint.phase !== 'base_deposit' || checkpoint.status === 'submitting') {
+      throw new Error('owned Base submission transition is invalid');
+    }
+    const values = identityValues(checkpoint.identity);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const head = db.prepare(`SELECT submission_owner_token FROM base_evidence_heads
+        WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?`)
+        .get(...values);
+      if (!ownerToken || head?.submission_owner_token !== ownerToken) {
+        throw new Error('Base submission owner claim is stale');
+      }
+      const event = enqueueInternal(checkpoint, { transaction: false });
+      const changed = db.prepare(`UPDATE base_evidence_heads SET submission_owner_token=NULL
+        WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?
+          AND submission_owner_token=?`)
+        .run(...values, ownerToken);
+      if (changed.changes !== 1) throw new Error('Base submission owner claim is stale');
+      db.exec('COMMIT');
+      return event;
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   if (registerTransactionEnqueue != null) {
     if (typeof registerTransactionEnqueue !== 'function') {
       throw new Error('Base evidence transaction registration is invalid');
@@ -418,7 +492,7 @@ export function createBaseEvidenceOutbox(db, {
 
   return Object.freeze({
     seed, enqueue, leaseNext, markDelivered, markRetry, markDead, markConflict, status,
-    recoveryState,
+    recoveryState, claimSubmission, enqueueOwned,
   });
 }
 

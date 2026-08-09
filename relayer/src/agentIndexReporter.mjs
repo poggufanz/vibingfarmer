@@ -46,6 +46,15 @@ export class AgentIndexReporterRetryableError extends AgentIndexReporterError {
 export class AgentIndexEvidenceConflictError extends AgentIndexReporterError {
   constructor(message, options = {}) { super(message, { ...options, code: 'EVIDENCE_CONFLICT' }); }
 }
+export class AgentIndexBatchRetryableError extends AgentIndexReporterError {
+  constructor(message, options = {}) { super(message, { ...options, code: 'BATCH_RETRYABLE' }); }
+}
+export class AgentIndexBatchPermanentError extends AgentIndexReporterError {
+  constructor(message, options = {}) { super(message, { ...options, code: 'BATCH_PERMANENT' }); }
+}
+export class AgentIndexBatchConflictError extends AgentIndexReporterError {
+  constructor(message, options = {}) { super(message, { ...options, code: 'BATCH_CONFLICT' }); }
+}
 
 export const BASE_SEPOLIA_POOL_TARGETS = new Map([
   ['0x389250872044368759d3db5c09b2706a6628d4e0', 'aave-v3'],
@@ -284,17 +293,29 @@ export function createAgentIndexReporter({
       childId: entry.childId,
     }));
     const requestDigest = createHash('sha256').update(canonicalJson(batch)).digest('hex');
-    const response = await fetchWithTimeout(fetchImpl, actionUrl(endpoint, 'base-child-intent-batch'), {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
-      body: canonicalJson(batch),
-    }, timeoutMs);
+    let response;
+    try {
+      response = await fetchWithTimeout(fetchImpl, actionUrl(endpoint, 'base-child-intent-batch'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
+        body: canonicalJson(batch),
+      }, timeoutMs);
+    } catch (cause) {
+      throw new AgentIndexBatchRetryableError('agent index batch delivery is unavailable', { cause });
+    }
     if (response?.status !== 201 || !response?.ok) {
-      throw new Error(`agent index reporter returned HTTP ${response?.status ?? 'unknown'}`);
+      const status = response?.status ?? null;
+      const ErrorType = status === 409
+        ? AgentIndexBatchConflictError
+        : (status === 429 || status >= 500 || status == null)
+          ? AgentIndexBatchRetryableError : AgentIndexBatchPermanentError;
+      throw new ErrorType(`agent index reporter returned HTTP ${status ?? 'unknown'}`, { status });
     }
     let acknowledgement;
     try { acknowledgement = await response.json(); } catch (error) {
-      throw new Error('agent index reporter acknowledgement is malformed', { cause: error });
+      throw new AgentIndexBatchPermanentError(
+        'agent index reporter acknowledgement is malformed', { cause: error },
+      );
     }
     let exactAcknowledgement = true;
     try {
@@ -309,6 +330,9 @@ export function createAgentIndexReporter({
       || acknowledgement.children.length !== identities.length
       || !Number.isSafeInteger(acknowledgement.written)
       || !Number.isSafeInteger(acknowledgement.duplicates)
+      || acknowledgement.written < 0
+      || acknowledgement.duplicates < 0
+      || acknowledgement.written + acknowledgement.duplicates !== identities.length
       || acknowledgement.children.some((entry, index) => {
         try {
           exactObject(entry, BATCH_CHILD_ACK_FIELDS, 'batch child acknowledgement');
@@ -318,7 +342,7 @@ export function createAgentIndexReporter({
             || entry.recoveryVersion < 0;
         } catch { return true; }
       })) {
-      throw new Error('agent index reporter batch acknowledgement is malformed');
+      throw new AgentIndexBatchPermanentError('agent index reporter batch acknowledgement is malformed');
     }
     return acknowledgement;
   }

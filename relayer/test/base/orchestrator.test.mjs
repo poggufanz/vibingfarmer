@@ -127,6 +127,30 @@ describe('dispatchDeposits', () => {
     });
   });
 
+  it('keeps a transient submitted-hash receipt observation retryable without writing unknown', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.waitForUserOperationReceipt.mockRejectedValue(new Error('bundler timeout'));
+    const onCheckpoint = vi.fn();
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const result = await orchestrator.reconcileSubmittedDeposit(
+      'approval', allocation, USER_OP_HASH, { onCheckpoint },
+    );
+
+    expect(result).toMatchObject({
+      status: 'held', executionStatus: 'confirming', reasonCode: 'submitted_receipt_pending',
+      userOpHash: USER_OP_HASH,
+    });
+    expect(onCheckpoint).not.toHaveBeenCalled();
+    expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+  });
+
   it('awaits durable checkpoints around send/wait and confirms exactly one scoped Deposited event', async () => {
     const allocation = task10Allocation();
     const order = [];
@@ -179,6 +203,51 @@ describe('dispatchDeposits', () => {
       identity: allocation.identity, status: 'fulfilled', userOpHash: USER_OP_HASH,
       transactionHash: TX_HASH, executionStatus: 'deposited', custody: { location: 'base-proxy' },
     });
+  });
+
+  it('never encodes or sends when another process owns the durable submitting fence', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const results = await orchestrator.dispatchDeposits('approval', [allocation], {
+      onClaimSubmitting: vi.fn(async () => ({ claimed: false, ownerToken: null })),
+      onCheckpoint: vi.fn(),
+    });
+
+    expect(results).toMatchObject([{
+      status: 'held', executionStatus: 'held', reasonCode: 'submission_claim_held',
+    }]);
+    expect(kernelClient.account.encodeCalls).not.toHaveBeenCalled();
+    expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it('carries the private submission owner only to later durable callbacks', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(task10Receipt(allocation));
+    const checkpoints = [];
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    await orchestrator.dispatchDeposits('approval', [allocation], {
+      onClaimSubmitting: vi.fn(async () => ({ claimed: true, ownerToken: 'private-owner' })),
+      onCheckpoint: vi.fn(async (entry, ownership) => checkpoints.push([entry.status, ownership])),
+    });
+
+    expect(checkpoints).toEqual([
+      ['submitted', { ownerToken: 'private-owner' }],
+      ['confirmed', undefined],
+    ]);
   });
 
   it('marks a successful receipt without top-level scoped proof unknown and holds later sends', async () => {

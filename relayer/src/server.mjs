@@ -85,7 +85,7 @@ export async function startVerifiedRelayer({
     if (startBaseEvidenceWorker) workers.push(startBaseEvidenceWorker());
     if (startAssociationWorker) workers.push(startAssociationWorker());
     else if (startWorker) workers.push(startWorker());
-    const server = openListener();
+    const server = await openListener();
     return { worker: workers[workers.length - 1] ?? null, workers, stopWorkers, server };
   } catch (error) {
     stopWorkers();
@@ -225,7 +225,6 @@ export function createRelayerServer(config, {
       agentIndexReporter,
       associationOutbox,
       baseEvidenceOutbox: sqlite?.baseEvidenceOutbox ?? null,
-      farmExecutions: sqlite?.farmExecutions ?? null,
       farmIntents: sqlite?.farmIntents ?? null,
       cctpRelays: sqlite?.cctpRelays ?? null,
       relayForwardMint: (relayIntent) => watcher.relayMint(relayIntent),
@@ -264,15 +263,20 @@ export function createRelayerServer(config, {
           outbox: sqlite.baseEvidenceOutbox,
           reporter: agentIndexReporter,
           onConflict: (leased) => {
-            try {
+            const authority = sqlite.farmIntents.evidenceConflictAuthority({
+              identity: leased.identity,
+            });
+            if (authority === 'v2') {
               return sqlite.farmIntents.blockEvidenceConflict(
                 { identity: leased.identity }, { transaction: false },
               );
-            } catch {
+            }
+            if (authority === 'legacy') {
               return sqlite.farmExecutions.blockEvidenceConflict(
                 { identity: leased.identity }, { transaction: false },
               );
             }
+            throw new Error('Base evidence conflict has no owning authority');
           },
         })
         : null),
@@ -281,8 +285,28 @@ export function createRelayerServer(config, {
         : null),
       openListener: () => {
         const server = createHttpServer(handler);
-        server.listen(port);
-        return server;
+        if (typeof server.once !== 'function') {
+          server.listen(port);
+          return server;
+        }
+        return new Promise((resolve, reject) => {
+          const onError = (error) => {
+            server.off?.('listening', onListening);
+            try { server.close(); } catch {}
+            reject(error);
+          };
+          const onListening = () => {
+            server.off?.('error', onError);
+            resolve(server);
+          };
+          server.once('error', onError);
+          server.once('listening', onListening);
+          try {
+            server.listen(port);
+          } catch (error) {
+            onError(error);
+          }
+        });
       },
     });
     started.server.on('close', () => started.stopWorkers());

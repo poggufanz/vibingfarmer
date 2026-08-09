@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AgentIndexBatchConflictError,
+  AgentIndexBatchPermanentError,
+  AgentIndexBatchRetryableError,
   AgentIndexEvidenceConflictError,
   AgentIndexReporterRetryableError,
   createAgentIndexReporter,
@@ -142,6 +145,37 @@ describe('durable Base child reporter protocol', () => {
       fetchImpl: vi.fn(async () => ({ ok: true, status: 201, json: async () => acknowledgement })),
     });
     await expect(reporter.commitIntentBatch(batch)).rejects.toThrow(/acknowledgement/i);
+  });
+
+  it.each([
+    [409, AgentIndexBatchConflictError],
+    [503, AgentIndexBatchRetryableError],
+    [400, AgentIndexBatchPermanentError],
+  ])('classifies batch HTTP %s for durable intent recovery', async (status, ErrorType) => {
+    const batch = { idempotencyKey: 'burn-intent-42', burnUnits7: '10000000', children: [child] };
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET,
+      fetchImpl: vi.fn(async () => ({ ok: false, status })),
+    });
+    await expect(reporter.commitIntentBatch(batch)).rejects.toBeInstanceOf(ErrorType);
+  });
+
+  it.each([
+    ['negative written', { written: -1, duplicates: 2 }],
+    ['negative duplicates', { written: 2, duplicates: -1 }],
+    ['count sum mismatch', { written: 0, duplicates: 0 }],
+  ])('permanently rejects %s in a batch acknowledgement', async (_label, counts) => {
+    const batch = { idempotencyKey: 'burn-intent-42', burnUnits7: '10000000', children: [child] };
+    const acknowledgement = {
+      acknowledged: true, schemaVersion: 1, idempotencyKey: batch.idempotencyKey,
+      requestDigest: createHash('sha256').update(canonicalJson(batch)).digest('hex'),
+      children: [{ identity: recoveryIdentity, recoveryVersion: 0 }], ...counts,
+    };
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET,
+      fetchImpl: vi.fn(async () => ({ ok: true, status: 201, json: async () => acknowledgement })),
+    });
+    await expect(reporter.commitIntentBatch(batch)).rejects.toBeInstanceOf(AgentIndexBatchPermanentError);
   });
 
   it.each([

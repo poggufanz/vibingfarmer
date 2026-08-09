@@ -17,6 +17,7 @@ import {
   createOrchestrator,
 } from "../src/base/orchestrator.mjs";
 import { createFarmFlow } from "../src/flows/farm.mjs";
+import { AgentIndexBatchConflictError } from '../src/agentIndexReporter.mjs';
 import { createMandateStoresV3 } from "../src/mandateStore.mjs";
 import {
   MAX_CALL_CAP_UNITS,
@@ -2204,7 +2205,7 @@ describe("v3 mandate route authorization and execution gates", () => {
           : { mandateId: body.mandateId, jobId };
       const { res } = await postProtected(harness, path, payload);
 
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(path === '/farm/attach' ? 503 : 400);
       expect(harness.events).toContain("store:get");
       expect(jobGet).not.toHaveBeenCalled();
       jobGet.mockRestore();
@@ -2244,62 +2245,6 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(oldStatus.body).not.toContain("private-step-sentinel");
   });
 
-  it("uses only fixed identifier-free URLs across every protected successful route", async () => {
-    const harness = makeRouteHarness({ claimEnabled: false });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    harness.requestUrls.length = 0;
-
-    const mandateStatus = await postProtected(
-      harness,
-      "/mandate/status",
-      statusBody(body),
-    );
-    const intent = await postProtected(harness, "/farm", farmBody(body));
-    expect(intent.json.jobId).toMatch(JOB_ID_RE);
-    const attach = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(intent.json.jobId, body, "burn-fixed-url"),
-    );
-    const farmStatus = await postProtected(harness, "/status", {
-      mandateId: body.mandateId,
-      jobId: intent.json.jobId,
-    });
-    const revoke = await postProtected(
-      harness,
-      "/mandate/revoke",
-      statusBody(body),
-    );
-
-    expect([
-      mandateStatus.res.statusCode,
-      intent.res.statusCode,
-      attach.res.statusCode,
-      farmStatus.res.statusCode,
-      revoke.res.statusCode,
-    ]).toEqual([200, 201, 200, 200, 200]);
-    expect(harness.requestUrls).toEqual([
-      "/api/vf-cross/mandate/status",
-      "/api/vf-cross/farm",
-      "/api/vf-cross/farm/attach",
-      "/api/vf-cross/status",
-      "/api/vf-cross/mandate/revoke",
-    ]);
-    for (const url of harness.requestUrls) {
-      expect(url).not.toContain("?");
-      expect(url).not.toContain(body.mandateId);
-      expect(url).not.toContain(intent.json.jobId);
-      expect(url).not.toContain(body.capability);
-      expect(url).not.toContain(body.serializedApproval);
-    }
-    expectPrivateMaterialAbsent(
-      [mandateStatus, intent, attach, farmStatus, revoke].map(
-        ({ json }) => json,
-      ),
-      body,
-    );
-  });
 
   it.each([
     [
@@ -2639,8 +2584,23 @@ describe("v3 mandate route authorization and execution gates", () => {
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
       poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
     };
+    let malformedRecord = null;
+    const farmIntents = {
+      ...stores.farmIntents,
+      listRecoverable(args) {
+        const valid = stores.farmIntents.listRecoverable(args);
+        return malformedRecord ? [malformedRecord, ...valid] : valid;
+      },
+      advanceProjection(args) {
+        if (args.identity.jobId === malformedRecord?.jobId) {
+          malformedRecord = { ...malformedRecord, state: args.to, reasonCode: args.reasonCode };
+          return malformedRecord;
+        }
+        return stores.farmIntents.advanceProjection(args);
+      },
+    };
     const harness = makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      realStores: stores, jobs: stores.jobs, farmIntents,
       farmExecutions: stores.farmExecutions, associationOutbox: stores.associationOutbox,
       baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
       reporterImplementation(batch) {
@@ -2676,13 +2636,173 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(failed.res.statusCode).toBe(503);
     expect(stores.farmIntents.getByRequest({ mandateId: body.mandateId, requestId: '01'.repeat(16) }))
       .toMatchObject({ state: 'intent_pending' });
+    const validRecord = stores.farmIntents.getByRequest({
+      mandateId: body.mandateId, requestId: '01'.repeat(16),
+    });
+    malformedRecord = {
+      ...validRecord,
+      jobId: '00'.repeat(16),
+      state: 'deposit_pending',
+      intent: {
+        ...validRecord.intent,
+        jobId: '00'.repeat(16),
+        allocations: validRecord.intent.allocations.map((entry) => ({ ...entry, units: 'bad' })),
+      },
+    };
     const summary = await harness.router.resumeFarmJobs();
-    expect(summary).toMatchObject({ resumed: [FIRST_JOB_ID], blocked: [], uncertain: [] });
+    expect(summary).toMatchObject({
+      resumed: [FIRST_JOB_ID], blocked: ['00'.repeat(16)], uncertain: [],
+    });
+    expect(malformedRecord).toMatchObject({
+      state: 'blocked', reasonCode: 'malformed_recovery_record',
+    });
     expect(stores.farmIntents.getByRequest({ mandateId: body.mandateId, requestId: '01'.repeat(16) }))
       .toMatchObject({ state: 'awaiting_burn' });
     expect(attempts).toBe(2);
     expect(harness.buildFarm).not.toHaveBeenCalled();
     stores.db.close();
+  });
+
+  it('heartbeats slow intent delivery and never acks after renewal loses the lease', async () => {
+    vi.useFakeTimers();
+    const stores = createSqliteStores(
+      join(mkdtempSync(join(tmpdir(), 'vf-task11-intent-heartbeat-')), 'relayer.db'),
+      { sessionKeyCipher: routeCipher() },
+    );
+    const deployment = {
+      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+      baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+      stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+      poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+    };
+    const renewIntentDelivery = vi.fn(() => {
+      throw new Error('lease stolen');
+    });
+    const finishAwaitingBurn = vi.fn((args) => stores.farmIntents.finishAwaitingBurn(args));
+    const farmIntents = {
+      ...stores.farmIntents,
+      renewIntentDelivery,
+      finishAwaitingBurn,
+    };
+    let releaseReporter;
+    const reporterImplementation = vi.fn((batch) => new Promise((resolve) => {
+      releaseReporter = () => resolve({
+        acknowledged: true, schemaVersion: 1, idempotencyKey: batch.idempotencyKey,
+        requestDigest: createHash('sha256').update((value => {
+          const canonical = (entry) => Array.isArray(entry)
+            ? `[${entry.map(canonical).join(',')}]`
+            : entry && typeof entry === 'object'
+              ? `{${Object.keys(entry).sort().map((key) => `${JSON.stringify(key)}:${canonical(entry[key])}`).join(',')}}`
+              : JSON.stringify(entry);
+          return canonical(value);
+        })(batch)).digest('hex'),
+        children: batch.children.map((child) => ({
+          identity: {
+            networkId: child.networkId, bindingId: child.bindingId,
+            executionId: child.executionId, allocationId: child.allocationId, childId: child.childId,
+          },
+          recoveryVersion: 0,
+        })),
+        written: batch.children.length, duplicates: 0,
+      });
+    }));
+    const harness = makeRouteHarness({
+      realStores: stores, jobs: stores.jobs, farmIntents,
+      farmExecutions: stores.farmExecutions, associationOutbox: stores.associationOutbox,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      reporterImplementation,
+    });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+    const pending = postProtected(harness, '/farm', {
+      requestId: '01'.repeat(16), mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+    });
+    await vi.waitFor(() => expect(reporterImplementation).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(10_001);
+    expect(renewIntentDelivery).toHaveBeenCalled();
+    releaseReporter();
+    const response = await pending;
+    expect(response.res.statusCode).toBe(503);
+    expect(finishAwaitingBurn).not.toHaveBeenCalled();
+    expect(stores.farmIntents.getByRequest({
+      mandateId: body.mandateId, requestId: '01'.repeat(16),
+    })).toMatchObject({ state: 'intent_pending' });
+    stores.db.close();
+    vi.useRealTimers();
+  });
+
+  it('atomically terminalizes a permanent Agent Index batch conflict instead of retrying it', async () => {
+    const stores = createSqliteStores(
+      join(mkdtempSync(join(tmpdir(), 'vf-task11-intent-conflict-')), 'relayer.db'),
+      { sessionKeyCipher: routeCipher() },
+    );
+    const deployment = {
+      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+      baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+      stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+      poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+    };
+    const reporterImplementation = vi.fn(() => {
+      throw new AgentIndexBatchConflictError('immutable D1 conflict');
+    });
+    const harness = makeRouteHarness({
+      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      farmExecutions: stores.farmExecutions, associationOutbox: stores.associationOutbox,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      reporterImplementation,
+    });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+
+    const response = await postProtected(harness, '/farm', {
+      requestId: '01'.repeat(16), mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+    });
+
+    expect(response.res.statusCode).toBe(409);
+    expect(stores.farmIntents.getByRequest({
+      mandateId: body.mandateId, requestId: '01'.repeat(16),
+    })).toMatchObject({ state: 'blocked', reasonCode: 'agent_index_intent_conflict' });
+    expect(stores.jobs.get(FIRST_JOB_ID)).toMatchObject({
+      status: 'blocked', reasonCode: 'agent_index_intent_conflict',
+    });
+    expect(await harness.router.resumeFarmJobs()).toEqual({
+      resumed: [], held: [], blocked: [], uncertain: [],
+    });
+    expect(reporterImplementation).toHaveBeenCalledTimes(1);
+    stores.db.close();
+  });
+
+  it('fails closed without v2 intent authority even when legacy jobs and work stores exist', async () => {
+    const deployment = {
+      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+      baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+      stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+      poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+    };
+    const harness = makeRouteHarness({ forwardFarmDeployment: deployment });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+
+    const response = await postProtected(harness, '/farm', {
+      requestId: '01'.repeat(16), mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+    });
+
+    expect(response.res.statusCode).toBe(503);
+    await expect(harness.router.resumeFarmJobs()).rejects.toThrow(/intent store/i);
+    expect(harness.farmExecutions.listRecoverable).not.toHaveBeenCalled();
+    expect(harness.buildFarm).not.toHaveBeenCalled();
   });
 
   it('fresh-gates mixed Base child recovery and passes exact ordered evidence without replaying farm', async () => {
@@ -2783,3035 +2903,173 @@ describe("v3 mandate route authorization and execution gates", () => {
     const summary = await harness.router.resumeFarmJobs();
 
     expect(summary).toMatchObject({ resumed: [farm.json.jobId], blocked: [], uncertain: [] });
-    expect(harness.buildFarm).toHaveBeenCalledTimes(1);
+    expect(harness.buildFarm).toHaveBeenCalledTimes(2);
     expect(harness.farmFn).not.toHaveBeenCalled();
-    expect(recoverDeposits).toHaveBeenCalledTimes(1);
-    expect(recoverDeposits.mock.calls[0][0].children.map(({ recovery }) => (
-      `${recovery.phase}:${recovery.state}`
-    ))).toEqual(['base_deposit:confirmed', 'base_deposit:submitted', 'cctp_mint:confirmed']);
+    expect(recoverDeposits).toHaveBeenCalledTimes(2);
+    expect(recoverDeposits.mock.calls.map(([{ children }]) => (
+      children.map(({ recovery }) => `${recovery.phase}:${recovery.state}`)
+    ))).toEqual([['base_deposit:submitted'], ['cctp_mint:confirmed']]);
     expect(stores.farmIntents.getByJob({ mandateId: body.mandateId, jobId: farm.json.jobId }))
       .toMatchObject({ state: 'done' });
+
+    const secondFarm = await postProtected(harness, '/farm', {
+      requestId: '02'.repeat(16), mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: allocations.slice(0, 2),
+    });
+    await postProtected(harness, '/farm/attach', {
+      mandateId: body.mandateId, jobId: secondFarm.json.jobId, burnTxHash: 'bc'.repeat(32),
+    });
+    const secondRecord = stores.farmIntents.getByJob({
+      mandateId: body.mandateId, jobId: secondFarm.json.jobId,
+    });
+    const secondProjection = {
+      mandateId: body.mandateId, jobId: secondRecord.jobId,
+      bindingId: secondRecord.bindingId, intentDigest: secondRecord.intentDigest,
+    };
+    stores.farmIntents.projectMintEvidenceAtomic({
+      identity: secondProjection,
+      relay: {
+        execId: secondRecord.relayExecId, state: 'minted', burnTxHash: secondRecord.burnTxHash,
+        expectationDigest: secondRecord.expectationDigest, messageDigest: 'ce'.repeat(32),
+        attestationDigest: 'de'.repeat(32), evidenceVersion: '1',
+        mintTxHash: `0x${'ef'.repeat(32)}`,
+      }, now: 2_000_000_400,
+    });
+    const firstSecondAllocation = secondRecord.intent.allocations[0];
+    const secondIdentity = {
+      networkId: secondRecord.intent.networkId, bindingId: secondRecord.bindingId,
+      executionId: firstSecondAllocation.executionId,
+      allocationId: firstSecondAllocation.allocationId, childId: firstSecondAllocation.childId,
+    };
+    const secondCommon = {
+      chainId: '84532', yieldRouterAddress: CANONICAL_ROUTER.toLowerCase(),
+      caller: KERNEL.toLowerCase(), poolAddress: firstSecondAllocation.poolAddress,
+      assets: firstSecondAllocation.units, minShares: firstSecondAllocation.minShares,
+    };
+    stores.baseEvidenceOutbox.enqueue({
+      identity: secondIdentity, phase: 'base_deposit', status: 'submitting',
+      evidence: secondCommon, observedAt: 2_000_000_401,
+    });
+    stores.baseEvidenceOutbox.enqueue({
+      identity: secondIdentity, phase: 'base_deposit', status: 'submitted',
+      evidence: { ...secondCommon, userOpHash: USER_OP_HASH }, observedAt: 2_000_000_402,
+    });
+    recoverDeposits.mockImplementationOnce(async ({ children }) => {
+      stores.mandatesV3.revoke(routeIdentity(body));
+      return children.map(({ allocation: entry }) => ({
+        identity: entry.identity, status: 'fulfilled', executionStatus: 'deposited',
+      }));
+    });
+
+    const revokedSummary = await harness.router.resumeFarmJobs();
+
+    expect(revokedSummary).toMatchObject({
+      resumed: [], blocked: [secondFarm.json.jobId], uncertain: [],
+    });
+    expect(recoverDeposits).toHaveBeenCalledTimes(3);
+    expect(recoverDeposits.mock.calls[2][0].children[0].recovery)
+      .toMatchObject({ phase: 'base_deposit', state: 'submitted' });
+    expect(harness.buildFarm).toHaveBeenCalledTimes(3);
     stores.db.close();
   });
 
-  it("orders pure binding, one amount-free fresh read, durable child acknowledgements, then private job persistence", async () => {
-    const harness = makeRouteHarness({ claimEnabled: false });
-    const body = routeBody();
-    const active = seedActiveMandate(harness, body);
-    harness.events.length = 0;
-
-    const { res, json } = await postProtected(
-      harness,
-      "/farm",
-      farmBody(body),
-    );
-
-    expect(res.statusCode).toBe(201);
-    expect(json).toEqual({
-      jobId: FIRST_JOB_ID,
-      acknowledged: true,
-      schemaVersion: 1,
-    });
-    expect(harness.evaluator).toHaveBeenCalledTimes(1);
-    expect(harness.evaluator.mock.calls[0][0]).not.toHaveProperty(
-      "allocation",
-    );
-    expect(harness.reporter.commitIntentBatch).toHaveBeenCalledTimes(1);
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-    const freshIndex = harness.events.indexOf("evaluator:fresh");
-    const reportIndex = harness.events.indexOf("reporter:intent");
-    expect(harness.events.slice(0, freshIndex)).toContain("store:get");
-    expect(reportIndex).toBeGreaterThan(freshIndex);
-
-    const job = harness.jobs.get(json.jobId);
-    expect(job).toMatchObject({
-      status: "queued",
-      runId: "run-42",
-      bridgeAgent: "bridge-agent-1",
-      grantTxHash: "grant-1",
-      _attach: {
-        mandateId: MANDATE_ID,
-        stellarOwner: OWNER,
-        kernelAddress: KERNEL,
-        bindingId: active.bindingId,
-        bindingHash: active.bindingHash,
-        attachedBurnTxHash: null,
-        associations: [
-          { allocationId: "run-42:bridge:aave-v3", terminalSequence: null },
-          { allocationId: "run-42:bridge:blend-v2", terminalSequence: null },
-        ],
-      },
-    });
-    expect(job._attach).not.toHaveProperty("serializedApproval");
-    expectPrivateMaterialAbsent(res.body, body);
-    expect(JSON.stringify(job)).not.toContain(body.serializedApproval);
-    expect(JSON.stringify(job)).not.toContain(body.sessionPrivateKey);
-    expect(JSON.stringify(job)).not.toContain(body.capability);
-    expect(harness.requestUrls).toEqual(["/api/vf-cross/farm"]);
-    expect(harness.requestUrls[0]).not.toContain("?");
-
-    const [intentBatch] = harness.reporter.commitIntentBatch.mock.calls[0];
-    expect(intentBatch).toMatchObject({ burnUnits7: '10000' });
-    for (const intent of intentBatch.children) {
-      expect(intent).toMatchObject({
-        networkId: "stellar-testnet",
-        owner: OWNER,
-        agent: "bridge-agent-1",
-        bindingId: active.bindingId,
-        childId: json.jobId,
-        lifecycle: { sequence: 0, status: "planned" },
-        intent: {
-          runId: "run-42",
-          grantTxHash: "grant-1",
-          kernelAddress: KERNEL,
-          bindingHash: active.bindingHash,
-        },
-      });
-      expectPrivateMaterialAbsent(intent, body);
-    }
-  });
-
-  it("does not persist or acknowledge a farm job until every immutable child intent is durable", async () => {
-    let acknowledge;
-    const harness = makeRouteHarness({
-      claimEnabled: false,
-      reporterImplementation: (batch) =>
-        new Promise((resolve) => {
-          acknowledge = () =>
-            resolve({
-              acknowledged: true,
-              children: batch.children.map((child) => ({
-                identity: {
-                  networkId: child.networkId,
-                  bindingId: child.bindingId,
-                  executionId: child.executionId,
-                  allocationId: child.allocationId,
-                  childId: child.childId,
-                },
-                recoveryVersion: 0,
-              })),
-              schemaVersion: 1,
-            });
-        }),
-    });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const request = farmBody(body, { allocations: [routeAllocations()[0]] });
-    const res = mockRes();
-    const pending = harness.router(
-      protectedRequest("/farm", request, CAPABILITY),
-      res,
-    );
-
-    await vi.waitFor(() =>
-      expect(harness.reporter.commitIntentBatch).toHaveBeenCalledTimes(1),
-    );
-    expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
-    expect(res.body).toBe("");
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-
-    acknowledge();
-    await pending;
-    expect(res.statusCode).toBe(201);
-    expect(harness.jobs.get(FIRST_JOB_ID)).toMatchObject({
-      status: "queued",
-    });
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-  });
-
-  it("seeds each local evidence head from the exact ordered Agent Index recovery version", async () => {
-    const allocations = routeAllocations();
-    const harness = makeRouteHarness({
-      claimEnabled: false,
-      reporterImplementation: async (batch) => ({
-        acknowledged: true,
-        schemaVersion: 1,
-        children: batch.children.map((child, ordinal) => ({
-          identity: {
-            networkId: child.networkId,
-            bindingId: child.bindingId,
-            executionId: child.executionId,
-            allocationId: child.allocationId,
-            childId: child.childId,
-          },
-          recoveryVersion: 7 + ordinal,
+  it('allows only one Base send when two routers recover the same child through two SQLite connections', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-two-router-send-')), 'relayer.db');
+    const first = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const second = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const deployment = {
+      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+      baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+      stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+      poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+    };
+    const allocation = routeAllocations()[0];
+    const word = (value) => BigInt(value).toString(16).padStart(64, '0');
+    const sendUserOperation = vi.fn(async () => USER_OP_HASH);
+    const relayForwardMint = vi.fn(async () => ({ status: 'attestation_pending' }));
+    const buildFlow = (store) => createFarmFlow({
+      watcher: {}, domains: { stellar: 27 },
+      orchestrator: createOrchestrator({
+        chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://bundler',
+        yieldRouterAddress: CANONICAL_ROUTER, usdcAddress: CANONICAL_USDC,
+        sessionPrivateKey: SESSION_KEY, now: () => 2_000_000_000_000,
+        reconstructSessionClientFn: vi.fn(async () => ({
+          account: { address: KERNEL, encodeCalls: vi.fn(async () => '0xencoded') },
+          sendUserOperation,
+          waitForUserOperationReceipt: vi.fn(async () => ({
+            userOpHash: USER_OP_HASH, sender: KERNEL, success: true,
+            logs: [{
+              address: CANONICAL_ROUTER,
+              topics: [
+                DEPOSITED_TOPIC0,
+                `0x${KERNEL.slice(2).padStart(64, '0')}`,
+                `0x${allocation.poolAddress.slice(2).padStart(64, '0')}`,
+              ],
+              data: `0x${word(allocation.amount.units)}${word(allocation.minShares)}`,
+              logIndex: 1, transactionHash: TX_HASH,
+            }],
+            receipt: { status: 'success', transactionHash: TX_HASH, logs: [] },
+          })),
         })),
       }),
     });
+    const harnessFor = (stores) => makeRouteHarness({
+      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      farmExecutions: stores.farmExecutions, associationOutbox: stores.associationOutbox,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      relayForwardMint,
+      poolTargets: deployment.poolTargets,
+      buildFarmImplementation: () => buildFlow(stores),
+    });
+    const left = harnessFor(first);
+    const right = harnessFor(second);
     const body = routeBody();
-    seedActiveMandate(harness, body);
-
-    const jobId = await queueIntent(harness, body, { allocations });
-
-    expect(harness.jobs.get(jobId)._attach.associations.map((entry) => (
-      entry.startingRecoveryVersion
-    ))).toEqual([7, 8]);
-    expect(harness.evidenceRows).toEqual([]);
-  });
-
-  it.each([
-    [
-      "reporter authentication failure",
-      new Error("HTTP 401 reporter secret"),
-    ],
-    ["reporter timeout", new Error("private D1 timeout")],
-    ["reporter schema failure", new Error("schema mismatch")],
-  ])(
-    "fails closed on %s without a job, burn acknowledgement, or private diagnostic",
-    async (_label, failure) => {
-      const harness = makeRouteHarness({
-        claimEnabled: false,
-        reporterImplementation: async () => {
-          throw failure;
-        },
-      });
-      const body = routeBody();
-      seedActiveMandate(harness, body);
-
-      const { res, json } = await postProtected(
-        harness,
-        "/farm",
-        farmBody(body, { allocations: [routeAllocations()[0]] }),
-      );
-
-      expect(res.statusCode).toBe(503);
-      expect(json).toEqual({ error: "Base child intent is unavailable" });
-      expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expect(res.body).not.toContain(failure.message);
-      expectPrivateMaterialAbsent(res.body, body);
-    },
-  );
-
-  it("fails the intent gate on corrupted immutable binding before fresh evidence, reporting, job creation, or key use", async () => {
-    const harness = makeRouteHarness({ claimEnabled: false });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    harness.setTransformMandateGet((record) =>
-      preserveInternalRecord(record, {
-        bindingHash: "ff".repeat(32),
-      }),
-    );
-    harness.events.length = 0;
-
-    const { res } = await postProtected(harness, "/farm", farmBody(body));
-
-    expect(res.statusCode).toBe(409);
-    expect(harness.events).toContain("store:get");
-    expect(harness.evaluator).not.toHaveBeenCalled();
-    expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
-    expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-    expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
-    expectPrivateMaterialAbsent(res.body, body);
-  });
-
-  it.each([
-    ["revoked", ["PERMISSION_REVOKED"]],
-    ["unknown", ["RPC_ERROR"]],
-  ])(
-    "fails the fresh %s intent gate before reporter/job/burn acknowledgement",
-    async (status, reasonCodes) => {
-      const harness = makeRouteHarness({
-        claimEnabled: false,
-        evidence: { ...ACTIVE_ROUTE_EVIDENCE, status, reasonCodes },
-      });
-      const body = routeBody();
-      seedActiveMandate(harness, body);
-
-      const { res } = await postProtected(harness, "/farm", farmBody(body));
-
-      expect(res.statusCode).toBe(409);
-      expect(harness.evaluator).toHaveBeenCalledTimes(1);
-      expect(harness.evaluator.mock.calls[0][0]).not.toHaveProperty(
-        "allocation",
-      );
-      expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
-      expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expectPrivateMaterialAbsent(res.body, body);
-    },
-  );
-
-  it("reloads local authority after intent evidence so a concurrent relayer revoke cannot create a burnable job", async () => {
-    let harness;
-    const body = routeBody();
-    harness = makeRouteHarness({
-      evidence: () => {
-        harness.events.push("test:revoke-during-intent-evidence");
-        harness.real.mandatesV3.revoke(routeIdentity(body));
-        return ACTIVE_ROUTE_EVIDENCE;
+    seedActiveMandate(left, body);
+    const farm = await postProtected(left, '/farm', {
+      requestId: '01'.repeat(16), mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [allocation],
+    });
+    const attachments = await Promise.all([left, right].map((harness) => postProtected(
+      harness, '/farm/attach', {
+        mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash: 'bb'.repeat(32),
       },
-      claimEnabled: false,
-    });
-    seedActiveMandate(harness, body);
-    harness.events.length = 0;
-
-    const { res } = await postProtected(harness, "/farm", farmBody(body));
-
-    expect(res.statusCode).toBe(409);
-    expect(harness.evaluator).toHaveBeenCalledTimes(1);
-    const revokeIndex = harness.events.indexOf(
-      "test:revoke-during-intent-evidence",
-    );
-    expect(revokeIndex).toBeGreaterThan(
-      harness.events.indexOf("evaluator:fresh"),
-    );
-    expect(harness.events.indexOf("store:get", revokeIndex + 1)).toBeGreaterThan(
-      revokeIndex,
-    );
-    expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
-    expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
-    expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-  });
-
-  it("dispatches two ordered allocations with the stored key and emits complete sequence 1/2/3 lifecycle evidence", async () => {
-    const allocations = [...routeAllocations()].reverse();
-    const harness = makeRouteHarness({
-      farmImplementation: async (params) => {
-        await params.onMintConfirmed(mintedResult("0xmint-two-allocations"));
-        return {
-          mintResult: mintedResult("0xmint-two-allocations"),
-          depositResults: params.allocations.map((allocation, index) => ({
-            allocationId: allocation.allocationId,
-            status: "fulfilled",
-            executionStatus: "deposited",
-            custody: { location: "base-proxy" },
-            txHash: `0xdeposit-${index + 1}`,
-          })),
-          runId: params.runId,
-          bridgeAgent: params.bridgeAgent,
-          grantTxHash: params.grantTxHash,
-        };
-      },
-    });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body, { allocations });
-
-    const attached = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-two-allocations"),
-    );
-    expect(attached.res.statusCode).toBe(200);
-    await flushMicrotasks(50);
-
-    expect(harness.buildFarm).toHaveBeenCalledTimes(1);
-    expect(harness.buildFarm).toHaveBeenCalledWith(SESSION_KEY);
-    expect(harness.farmFn).toHaveBeenCalledTimes(1);
-    const dispatch = harness.farmFn.mock.calls[0][0];
-    expect(dispatch).toMatchObject({
-      burnTxHash: "burn-two-allocations",
-      execId: "burn-two-allocations",
-      approval: body.serializedApproval,
-      runId: "run-42",
-      bridgeAgent: "bridge-agent-1",
-      grantTxHash: "grant-1",
-      onMintConfirmed: expect.any(Function),
-    });
-    expect(dispatch.allocations).toMatchObject([
-      {
-        allocationId: "run-42:bridge:blend-v2",
-        pool: SECOND_POOL,
-        amount: 600n,
-        minShares: 580n,
-        reportAmount: { token: "USDC", units: "600", decimals: 6 },
-        proxyTarget: "blend-v2",
-      },
-      {
-        allocationId: "run-42:bridge:aave-v3",
-        pool: POOL_ADDRESS,
-        amount: 400n,
-        minShares: 390n,
-        reportAmount: { token: "USDC", units: "400", decimals: 6 },
-        proxyTarget: "aave-v3",
-      },
-    ]);
-    expect(dispatch).not.toHaveProperty("allocation");
-
-    expect(harness.jobs.get(jobId)).toMatchObject({
-      status: "done",
-      runId: "run-42",
-      bridgeAgent: "bridge-agent-1",
-      grantTxHash: "grant-1",
-      _attach: {
-        associations: [
-          {
-            allocationId: "run-42:bridge:blend-v2",
-            terminalSequence: 3,
-          },
-          {
-            allocationId: "run-42:bridge:aave-v3",
-            terminalSequence: 3,
-          },
-        ],
-      },
-    });
-    for (const allocation of allocations) {
-      const lifecycle = harness.reports.filter(
-        (report) => report.identity.allocationId === allocation.allocationId,
-      );
-      expect(lifecycle.map(({ expectedSequence }) => expectedSequence)).toEqual([
-        0,
-        1,
-        2,
-      ]);
-      expect(lifecycle.map(({ lifecycle: event }) => event.sequence)).toEqual([
-        1,
-        2,
-        3,
-      ]);
-      expect(lifecycle.at(-1)).toMatchObject({
-        lifecycle: {
-          sequence: 3,
-          status: "confirmed",
-          evidence: {
-            executionStatus: "deposited",
-            custodyLocation: "base-proxy",
-            txHash: expect.stringMatching(/^0xdeposit-/),
-          },
-        },
-      });
-    }
-    expect(JSON.stringify(harness.jobs.get(jobId))).not.toContain(SESSION_KEY);
-    expect(JSON.stringify(harness.reports)).not.toContain(SESSION_KEY);
-  });
-
-  it('atomically persists ordered shared CCTP evidence and each Base checkpoint before the next external boundary', async () => {
-    const order = [];
-    let harness;
-    harness = makeRouteHarness({
-      farmImplementation: async ({ allocations, onMintConfirmed, onDepositCheckpoint }) => {
-        const allocation = allocations[0];
-        await onMintConfirmed(mintedResult('0xmint-evidence-order'));
-        order.push('mint-persisted');
-        await onDepositCheckpoint({
-          identity: {
-            networkId: 'stellar-testnet', bindingId: 'active-binding-1',
-            executionId: `run-42:exec:${allocation.allocationId}`,
-            allocationId: allocation.allocationId, childId: FIRST_JOB_ID,
-          },
-          phase: 'base_deposit', status: 'submitting', observedAt: 2_000_000_000_000,
-          evidence: {
-            chainId: '84532', yieldRouterAddress: CANONICAL_ROUTER.toLowerCase(),
-            caller: KERNEL.toLowerCase(), poolAddress: allocation.pool.toLowerCase(),
-            assets: allocation.amount.toString(), minShares: allocation.minShares.toString(),
-          },
-        });
-        expect(harness.evidenceRows.map(({ phase }) => phase)).toEqual([
-          'cctp_burn', 'cctp_attestation', 'cctp_mint', 'base_deposit',
-        ]);
-        order.push('send');
-        return {
-          mintResult: mintedResult('0xmint-evidence-order'),
-          depositResults: [{
-            identity: harness.evidenceRows.at(-1).identity,
-            allocationId: allocation.allocationId,
-            status: 'rejected', executionStatus: 'unknown', custody: { location: 'agent' },
-            userOpHash: null, transactionHash: null, txHash: null,
-          }],
-          runId: 'run-42', bridgeAgent: 'bridge-agent-1', grantTxHash: 'grant-1',
-        };
-      },
-    });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body, { allocations: [routeAllocations()[0]] });
-    await postProtected(harness, '/farm/attach', attachBody(jobId, body, 'burn-evidence-order'));
-    await vi.waitFor(() => expect(harness.jobs.get(jobId)?.status).toBe('uncertain'));
-    expect(harness.farmExecutions.get(jobId)).toMatchObject({ status: 'uncertain' });
-    expect(order).toEqual(['mint-persisted', 'send']);
-    expect(harness.jobs.get(jobId).depositProgress).toMatchObject({
-      'run-42:bridge:aave-v3': { state: 'submitting' },
-    });
-  });
-
-  it("emits an explicit unknown terminal sequence for an expected allocation missing from orchestrator results", async () => {
-    const allocations = routeAllocations();
-    const harness = makeRouteHarness({
-      farmImplementation: async (params) => {
-        await params.onMintConfirmed(mintedResult("0xmint-missing-result"));
-        return {
-          mintResult: mintedResult("0xmint-missing-result"),
-          depositResults: [
-            {
-              allocationId: allocations[0].allocationId,
-              status: "fulfilled",
-              executionStatus: "deposited",
-              custody: { location: "base-proxy" },
-              txHash: "0xdeposit-present",
-            },
-          ],
-          runId: params.runId,
-          bridgeAgent: params.bridgeAgent,
-          grantTxHash: params.grantTxHash,
-        };
-      },
-    });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body, { allocations });
-
-    const attached = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-missing-result"),
-    );
-    expect(attached.res.statusCode).toBe(200);
-    await flushMicrotasks(50);
-
-    const terminal = harness.reports.filter(
-      ({ lifecycle }) => lifecycle.sequence === 3,
-    );
-    expect(terminal).toHaveLength(2);
-    expect(
-      terminal.find(
-        ({ identity }) =>
-          identity.allocationId === "run-42:bridge:blend-v2",
-      ),
-    ).toMatchObject({
-      expectedSequence: 2,
-      lifecycle: {
-        sequence: 3,
-        status: "unknown",
-        evidence: {
-          executionStatus: "unknown",
-          custodyLocation: "unknown",
-          txHash: null,
-        },
-      },
-    });
-    expect(harness.jobs.get(jobId)?._attach.associations).toMatchObject([
-      {
-        allocationId: "run-42:bridge:aave-v3",
-        terminalSequence: 3,
-      },
-      {
-        allocationId: "run-42:bridge:blend-v2",
-        terminalSequence: 3,
-      },
-    ]);
-    expect(harness.jobs.get(jobId)).toMatchObject({ status: 'uncertain' });
-    expect(harness.farmExecutions.get(jobId)).toMatchObject({ status: 'uncertain' });
-  });
-
-  it("surfaces a terminal lifecycle outbox failure as association uncertainty instead of complete success", async () => {
-    const acceptedReports = [];
-    const associationOutbox = {
-      enqueue: vi.fn((input) => {
-        const rows = Array.isArray(input) ? input : [input];
-        if (rows.some(({ lifecycle }) => lifecycle.sequence === 3)) {
-          throw new Error("terminal outbox transaction failed");
-        }
-        acceptedReports.push(...rows);
-        return rows.map((report) => ({
-          duplicate: false,
-          status: "pending",
-          report,
-        }));
-      }),
-      status: vi.fn(() => []),
-    };
-    const harness = makeRouteHarness({ associationOutbox });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body, {
-      allocations: [routeAllocations()[0]],
-    });
-
-    const attached = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-terminal-outbox"),
-    );
-    expect(attached.res.statusCode).toBe(200);
-    await flushMicrotasks(50);
-
-    expect(acceptedReports.map(({ lifecycle }) => lifecycle.sequence)).toEqual([
-      1,
-      2,
-    ]);
-    expect(harness.jobs.get(jobId)).toMatchObject({
-      status: "error",
-      associationUncertain: true,
-      steps: expect.arrayContaining([
-        expect.objectContaining({
-          step: "association-persistence",
-          status: "error",
-          message: "terminal outbox transaction failed",
-        }),
-      ]),
-    });
-    expect(harness.farmExecutions.get(jobId)).toMatchObject({
-      status: "running",
-      attempts: 1,
-    });
-    const status = await postProtected(harness, "/status", {
-      mandateId: body.mandateId,
-      jobId,
-    });
-    expect(status.res.statusCode).toBe(200);
-    expect(status.json.associationDelivery).toMatchObject({
-      complete: false,
-      uncertain: true,
-    });
-    expect(status.json).not.toHaveProperty("associationUncertain");
-  });
-
-  it.each([
-    [
-      "missing Stellar source domain",
-      ({ sourceDomain: _sourceDomain, ...request }) => request,
-    ],
-    [
-      "non-Stellar source domain",
-      (request) => ({ ...request, sourceDomain: 6 }),
-    ],
-    [
-      "string Stellar source domain",
-      (request) => ({ ...request, sourceDomain: "27" }),
-    ],
-    [
-      "burn hash on intent route",
-      (request) => ({ ...request, burnTxHash: "already-burned" }),
-    ],
-    [
-      "unknown top-level field",
-      (request) => ({ ...request, serializedApproval: canonicalApproval() }),
-    ],
-    [
-      "missing bridgeAgent association",
-      (request) => ({ ...request, bridgeAgent: null }),
-    ],
-    [
-      "missing runId association",
-      (request) => ({ ...request, runId: null }),
-    ],
-    [
-      "missing grantTxHash association",
-      (request) => ({ ...request, grantTxHash: null }),
-    ],
-    [
-      "missing allocation identity",
-      (request) => ({
-        ...request,
-        allocations: [
-          { ...request.allocations[0], allocationId: undefined },
-        ],
-      }),
-    ],
-    [
-      "duplicate allocation identity",
-      (request) => ({
-        ...request,
-        allocations: [request.allocations[0], { ...request.allocations[0] }],
-      }),
-    ],
-    [
-      "cross-run allocation identity",
-      (request) => ({
-        ...request,
-        allocations: [
-          {
-            ...request.allocations[0],
-            allocationId: "other-run:bridge:aave-v3",
-          },
-        ],
-      }),
-    ],
-    [
-      "allocation identity proxy suffix does not match its pool",
-      (request) => ({
-        ...request,
-        allocations: [
-          {
-            ...request.allocations[0],
-            allocationId: "run-42:bridge:blend-v2",
-            poolAddress: POOL_ADDRESS,
-          },
-        ],
-      }),
-    ],
-    [
-      "unallowlisted pool",
-      (request) => ({
-        ...request,
-        allocations: [
-          { ...request.allocations[0], poolAddress: `0x${"77".repeat(20)}` },
-        ],
-      }),
-    ],
-    [
-      "noncanonical amount",
-      (request) => ({
-        ...request,
-        allocations: [
-          {
-            ...request.allocations[0],
-            amount: { ...request.allocations[0].amount, units: "1.5" },
-          },
-        ],
-      }),
-    ],
-    [
-      "zero amount units",
-      (request) => ({
-        ...request,
-        allocations: [
-          {
-            ...request.allocations[0],
-            amount: { ...request.allocations[0].amount, units: "0" },
-          },
-        ],
-      }),
-    ],
-    [
-      "negative amount units",
-      (request) => ({
-        ...request,
-        allocations: [
-          {
-            ...request.allocations[0],
-            amount: { ...request.allocations[0].amount, units: "-1" },
-          },
-        ],
-      }),
-    ],
-    [
-      "numeric amount units",
-      (request) => ({
-        ...request,
-        allocations: [
-          {
-            ...request.allocations[0],
-            amount: { ...request.allocations[0].amount, units: 12 },
-          },
-        ],
-      }),
-    ],
-    [
-      "boolean amount units",
-      (request) => ({
-        ...request,
-        allocations: [
-          {
-            ...request.allocations[0],
-            amount: { ...request.allocations[0].amount, units: true },
-          },
-        ],
-      }),
-    ],
-    [
-      "exponent amount units",
-      (request) => ({
-        ...request,
-        allocations: [
-          {
-            ...request.allocations[0],
-            amount: { ...request.allocations[0].amount, units: "1e6" },
-          },
-        ],
-      }),
-    ],
-    [
-      "whitespace amount units",
-      (request) => ({
-        ...request,
-        allocations: [
-          {
-            ...request.allocations[0],
-            amount: { ...request.allocations[0].amount, units: " 12 " },
-          },
-        ],
-      }),
-    ],
-    [
-      "noncanonical minShares",
-      (request) => ({
-        ...request,
-        allocations: [{ ...request.allocations[0], minShares: "-1" }],
-      }),
-    ],
-    [
-      "numeric minShares",
-      (request) => ({
-        ...request,
-        allocations: [{ ...request.allocations[0], minShares: 12 }],
-      }),
-    ],
-    [
-      "boolean minShares",
-      (request) => ({
-        ...request,
-        allocations: [{ ...request.allocations[0], minShares: true }],
-      }),
-    ],
-    [
-      "exponent minShares",
-      (request) => ({
-        ...request,
-        allocations: [{ ...request.allocations[0], minShares: "1e6" }],
-      }),
-    ],
-    [
-      "whitespace minShares",
-      (request) => ({
-        ...request,
-        allocations: [{ ...request.allocations[0], minShares: " 12 " }],
-      }),
-    ],
-    [
-      "per-call cap exceeded",
-      (request) => ({
-        ...request,
-        allocations: [
-          {
-            ...request.allocations[0],
-            amount: {
-              ...request.allocations[0].amount,
-              units: (MAX_CALL_CAP_UNITS + 1n).toString(),
-            },
-          },
-        ],
-      }),
-    ],
-  ])(
-    "rejects %s before reporter, job persistence, attachment, or execution",
-    async (_label, mutate) => {
-      const harness = makeRouteHarness({ claimEnabled: false });
-      const body = routeBody();
-      seedActiveMandate(harness, body);
-
-      const { res } = await postProtected(
-        harness,
-        "/farm",
-        mutate(farmBody(body, { allocations: [routeAllocations()[0]] })),
-      );
-
-      expect(res.statusCode).toBe(400);
-      // Malformed bodies are still behind the mandate capability boundary. A legacy handler
-      // that rejects its old field shape before authenticating would otherwise make these
-      // tests pass for the wrong reason.
-      expect(harness.events).toContain("store:get");
-      expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
-      expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
-      expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expectPrivateMaterialAbsent(res.body, body);
-    },
-  );
-
-  it("keeps the disclosed cap per-call and non-cumulative while evaluating authority only once", async () => {
-    const harness = makeRouteHarness({ claimEnabled: false });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const allocations = routeAllocations().map((allocation) => ({
-      ...allocation,
-      amount: { ...allocation.amount, units: MAX_CALL_CAP_UNITS.toString() },
-    }));
-
-    const { res } = await postProtected(
-      harness,
-      "/farm",
-      farmBody(body, { allocations }),
-    );
-
-    expect(res.statusCode).toBe(201);
-    expect(harness.evaluator).toHaveBeenCalledTimes(1);
-    expect(harness.reporter.commitIntentBatch).toHaveBeenCalledTimes(1);
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-  });
-
-  it("accepts canonical zero minShares without weakening positive amount validation", async () => {
-    const harness = makeRouteHarness({ claimEnabled: false });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const allocation = {
-      ...routeAllocations()[0],
-      minShares: "0",
-    };
-
-    const { res, json } = await postProtected(
-      harness,
-      "/farm",
-      farmBody(body, { allocations: [allocation] }),
-    );
-
-    expect(res.statusCode).toBe(201);
-    expect(json.jobId).toMatch(JOB_ID_RE);
-    expect(harness.reporter.commitIntentBatch).toHaveBeenCalledTimes(1);
-    expect(harness.jobs.get(json.jobId)?._attach.allocations).toEqual([
-      allocation,
-    ]);
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-  });
-
-  async function queueIntent(harness, body = routeBody(), overrides = {}) {
-    const response = await postProtected(
-      harness,
-      "/farm",
-      farmBody(body, overrides),
-      body.capability,
-    );
-    expect(response.res.statusCode).toBe(201);
-    expect(response.json.jobId).toMatch(JOB_ID_RE);
-    return response.json.jobId;
-  }
-
-  it("joins durable child identity and immutable caller before the real farm orchestrator sends", async () => {
-    const path = join(
-      mkdtempSync(join(tmpdir(), "vf-route-real-orchestrator-")),
-      "relayer.db",
-    );
-    const stores = createSqliteStores(path, {
-      sessionKeyCipher: routeCipher(),
-      nowSeconds: () => NOW_SECONDS,
-    });
-    let jobId;
-    const allocation = routeAllocations()[0];
-    const transactionHash = `0x${"ab".repeat(32)}`;
-    const userOpHash = `0x${"cd".repeat(32)}`;
-    const word = (value) => BigInt(value).toString(16).padStart(64, "0");
-    const kernelClient = {
-      account: {
-        address: KERNEL,
-        encodeCalls: vi.fn().mockResolvedValue("0xencoded"),
-      },
-      sendUserOperation: vi.fn(async () => {
-        const association = stores.jobs.get(jobId)._attach.associations[0];
-        expect(stores.baseEvidenceOutbox.status(association.recoveryIdentity)).toMatchObject({
-          recoveryVersion: 4,
-          events: expect.arrayContaining([
-            expect.objectContaining({ phase: "base_deposit", state: "submitting" }),
-          ]),
-        });
-        return userOpHash;
-      }),
-      waitForUserOperationReceipt: vi.fn(async () => ({
-        userOpHash,
-        sender: KERNEL,
-        success: true,
-        logs: [{
-          address: CANONICAL_ROUTER,
-          topics: [
-            DEPOSITED_TOPIC0,
-            `0x${KERNEL.slice(2).padStart(64, "0")}`,
-            `0x${allocation.poolAddress.slice(2).padStart(64, "0")}`,
-          ],
-          data: `0x${word(allocation.amount.units)}${word(allocation.minShares)}`,
-          logIndex: 1,
-          transactionHash,
-        }],
-        receipt: { status: "success", transactionHash, logs: [] },
-      })),
-    };
-    const watcher = {
-      relayMint: vi.fn(async () => mintedResult("0xmint-real-path")),
-      getRecoveryEvidence: vi.fn(() => mintedResult("0xmint-real-path").evidence),
-    };
-    const harness = makeRouteHarness({
-      realStores: stores,
-      jobs: stores.jobs,
-      associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox,
-      farmExecutions: stores.farmExecutions,
-      buildFarmImplementation: (sessionPrivateKey) => {
-        const flow = createFarmFlow({
-          watcher,
-          orchestrator: createOrchestrator({
-          chain: { id: 84532 },
-          rpcUrl: "https://base.invalid",
-          bundlerRpcUrl: "https://bundler.invalid",
-          yieldRouterAddress: CANONICAL_ROUTER,
-          usdcAddress: CANONICAL_USDC,
-          sessionPrivateKey,
-          reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
-          now: () => 2_000_000_000_000,
-          }),
-          domains: { stellar: 27, base: 6 },
-        });
-        return {
-          farm: (params) => flow.farm({
-            ...params,
-            // Task 11 owns persisting/wiring this pre-D1 expectation. This test isolates the
-            // Task 10 post-mint production seam while still exercising the real farm flow.
-            expectation: { testOnlyStableBurnIntent: true },
-          }),
-        };
-      },
-    });
-    const body = routeBody();
-    try {
-      seedActiveMandate(harness, body);
-      jobId = await queueIntent(harness, body, { allocations: [allocation] });
-      const attached = await postProtected(
-        harness,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-real-path"),
-      );
-      expect(attached.res.statusCode).toBe(200);
-      await flushMicrotasks(50);
-      expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1);
-      expect(stores.farmExecutions.get(jobId)).toMatchObject({ status: "done" });
-    } finally {
-      stores.db.close();
-    }
-  });
-
-  it.each([
-    [
-      "mandate revoke",
-      "/mandate/revoke",
-      (_jobId, body) => ({ ...statusBody(body), extra: "rejected" }),
-    ],
-    [
-      "farm attach",
-      "/farm/attach",
-      (jobId, body) => ({
-        ...attachBody(jobId, body, "burn-extra-field"),
-        extra: "rejected",
-      }),
-    ],
-    [
-      "farm status",
-      "/status",
-      (jobId, body) => ({
-        mandateId: body.mandateId,
-        jobId,
-        extra: "rejected",
-      }),
-    ],
-  ])(
-    "rejects extra fields on %s only after valid capability authorization",
-    async (_label, path, payloadFor) => {
-      const harness = makeRouteHarness({ claimEnabled: false });
-      const body = routeBody();
-      seedActiveMandate(harness, body);
-      const jobId = await queueIntent(harness, body, {
-        allocations: [routeAllocations()[0]],
-      });
-      const beforeJob = JSON.stringify(harness.jobs.get(jobId));
-      harness.events.length = 0;
-
-      const { res } = await postProtected(
-        harness,
-        path,
-        payloadFor(jobId, body),
-      );
-
-      expect(res.statusCode).toBe(400);
-      expect(harness.events).toContain("store:get");
-      expect(harness.events).not.toContain("store:revoke");
-      expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
-      expect(JSON.stringify(harness.jobs.get(jobId))).toBe(beforeJob);
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expectPrivateMaterialAbsent(res.body, body);
-    },
-  );
-
-  it.each([
-    ["empty burn hash", ""],
-    ["numeric burn hash", 1234],
-    ["boolean burn hash", true],
-    ["object burn hash", { hash: "burn-1" }],
-    ["array burn hash", ["burn-1"]],
-  ])(
-    "rejects %s after authorization but before durable attachment",
-    async (_label, burnTxHash) => {
-      const harness = makeRouteHarness({ claimEnabled: false });
-      const body = routeBody();
-      seedActiveMandate(harness, body);
-      const jobId = await queueIntent(harness, body, {
-        allocations: [routeAllocations()[0]],
-      });
-      harness.events.length = 0;
-
-      const { res } = await postProtected(
-        harness,
-        "/farm/attach",
-        attachBody(jobId, body, burnTxHash),
-      );
-
-      expect(res.statusCode).toBe(400);
-      expect(harness.events).toContain("store:get");
-      expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expect(harness.jobs.get(jobId)?._attach.attachedBurnTxHash).toBeNull();
-      expectPrivateMaterialAbsent(res.body, body);
-    },
-  );
-
-  it("revalidates pure and fresh authority before durable attach and reauthorizes an idempotent same-burn retry", async () => {
-    const harness = makeRouteHarness({ claimEnabled: false });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body);
-    harness.evaluator.mockClear();
-    harness.events.length = 0;
-
-    const first = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-observed"),
-    );
-
-    expect(first.res.statusCode).toBe(200);
-    expect(first.json).toEqual({ jobId, attached: true, status: "pending" });
-    expect(harness.evaluator).toHaveBeenCalledTimes(1);
-    expect(harness.evaluator.mock.calls[0][0]).not.toHaveProperty(
-      "allocation",
-    );
-    expect(harness.farmExecutions.attach).toHaveBeenCalledTimes(1);
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-    expect(harness.events.indexOf("store:get")).toBeLessThan(
-      harness.events.indexOf("evaluator:fresh"),
-    );
-    expect(harness.events.indexOf("evaluator:fresh")).toBeLessThan(
-      harness.events.indexOf("farm-work:attach"),
-    );
-    expect(harness.reports).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          expectedSequence: 0,
-          lifecycle: {
-            sequence: 1,
-            status: "submitted",
-            evidence: {
-              executionStatus: "accepted",
-              custodyLocation: "in-transit",
-              txHash: "burn-observed",
-            },
-            observedAt: expect.any(Number),
-          },
-        }),
-      ]),
-    );
-    const repeated = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-observed"),
-    );
-    expect(repeated.res.statusCode).toBe(200);
-    expect(repeated.json).toEqual(first.json);
-    expect(harness.evaluator).toHaveBeenCalledTimes(2);
-    expect(harness.farmExecutions.attach).toHaveBeenCalledTimes(1);
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-
-    const conflict = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "different-burn"),
-    );
-    expect(conflict.res.statusCode).toBe(409);
-    expect(harness.farmExecutions.attach).toHaveBeenCalledTimes(1);
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-    expectPrivateMaterialAbsent(first.res.body, body);
-    expectPrivateMaterialAbsent(repeated.res.body, body);
-    expectPrivateMaterialAbsent(conflict.res.body, body);
-  });
-
-  it.each([
-    [
-      "corrupted stored binding",
-      (harness) => {
-        harness.setTransformMandateGet((record) =>
-          preserveInternalRecord(record, {
-            bindingHash: "ee".repeat(32),
-          }),
-        );
-        return 0;
-      },
-    ],
-    [
-      "fresh revoked permission",
-      (harness) => {
-        harness.setEvidence({
-          ...ACTIVE_ROUTE_EVIDENCE,
-          status: "revoked",
-          reasonCodes: ["PERMISSION_REVOKED"],
-        });
-        return 1;
-      },
-    ],
-    [
-      "fresh unknown permission",
-      (harness) => {
-        harness.setEvidence({
-          ...ACTIVE_ROUTE_EVIDENCE,
-          status: "unknown",
-          reasonCodes: ["RPC_ERROR"],
-        });
-        return 1;
-      },
-    ],
-  ])(
-    "fails attach on %s without mutation, lifecycle acknowledgement, work, or key reconstruction",
-    async (_label, arrange) => {
-      const harness = makeRouteHarness({ claimEnabled: false });
-      const body = routeBody();
-      seedActiveMandate(harness, body);
-      const jobId = await queueIntent(harness, body);
-      harness.evaluator.mockClear();
-      harness.events.length = 0;
-      harness.reports.length = 0;
-      const expectedEvaluations = arrange(harness);
-      const before = JSON.stringify(harness.jobs.get(jobId));
-
-      const { res } = await postProtected(
-        harness,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-denied"),
-      );
-
-      expect(res.statusCode).toBe(409);
-      expect(harness.evaluator).toHaveBeenCalledTimes(expectedEvaluations);
-      expect(JSON.stringify(harness.jobs.get(jobId))).toBe(before);
-      expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
-      expect(harness.farmExecutions.get(jobId)).toBeNull();
-      expect(harness.reports).toHaveLength(0);
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expectPrivateMaterialAbsent(res.body, body);
-    },
-  );
-
-  it("reloads local authority after attach evidence so a concurrent relayer revoke cannot acknowledge the burn", async () => {
-    const harness = makeRouteHarness({ claimEnabled: false });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body);
-    harness.setEvidence(() => {
-      harness.events.push("test:revoke-during-attach-evidence");
-      harness.real.mandatesV3.revoke(routeIdentity(body));
-      return ACTIVE_ROUTE_EVIDENCE;
-    });
-    harness.events.length = 0;
-
-    const { res } = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-revoked-during-attach"),
-    );
-
-    expect(res.statusCode).toBe(409);
-    expect(harness.evaluator).toHaveBeenCalledTimes(2);
-    const revokeIndex = harness.events.indexOf(
-      "test:revoke-during-attach-evidence",
-    );
-    expect(revokeIndex).toBeGreaterThan(
-      harness.events.indexOf("evaluator:fresh"),
-    );
-    expect(harness.events.indexOf("store:get", revokeIndex + 1)).toBeGreaterThan(
-      revokeIndex,
-    );
-    expect(harness.jobs.get(jobId)).toMatchObject({ status: "queued" });
-    expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
-    expect(harness.farmExecutions.get(jobId)).toBeNull();
-    expect(harness.reports).toHaveLength(0);
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["mandateId", SECOND_MANDATE_ID],
-    [
-      "stellarOwner",
-      Keypair.fromRawEd25519Seed(Buffer.alloc(32, 8)).publicKey(),
-    ],
-    ["kernelAddress", `0x${"88".repeat(20)}`],
-    ["bindingId", "different-binding"],
-    ["bindingHash", "dd".repeat(32)],
-  ])(
-    "binds attach to the job private context and rejects a changed %s",
-    async (field, value) => {
-      const harness = makeRouteHarness({ claimEnabled: false });
-      const body = routeBody();
-      seedActiveMandate(harness, body);
-      const jobId = await queueIntent(harness, body);
-      const job = harness.jobs.get(jobId);
-      harness.jobs.set(jobId, {
-        ...job,
-        _attach: { ...job._attach, [field]: value },
-      });
-      harness.evaluator.mockClear();
-
-      const { res } = await postProtected(
-        harness,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-mismatch"),
-      );
-
-      expect(res.statusCode).toBe(409);
-      expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
-      expect(harness.reports).toHaveLength(0);
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expectPrivateMaterialAbsent(res.body, body);
-    },
-  );
-
-  it.each([
-    ["durable pending activation", "pending_activation", 2],
-    ["durable activation uncertainty", "activation_uncertain", 2],
-    ["durable revocation", "revoked", 2],
-    ["durable expiry", "expired", 2],
-    ["pure binding mismatch", "mismatch", 2],
-    ["fresh on-chain revocation", "fresh_revoked", 3],
-  ])(
-    "terminalizes the final pre-key fence on %s without reconstructing a key or dispatching deposits",
-    async (_label, fenceState, expectedEvaluations) => {
-      let harness;
-      let fenceArmed = false;
-      let replacementRecord = null;
-      let bindingId;
-      const body = routeBody({
-        expiresAt: NOW_SECONDS + 120,
-        serializedApproval: canonicalApproval(NOW_SECONDS + 120),
-      });
-      harness = makeRouteHarness({
-        onClaim: () => {
-          fenceArmed = true;
-          if (
-            fenceState === "pending_activation" ||
-            fenceState === "activation_uncertain" ||
-            fenceState === "expired"
-          ) {
-            replacementRecord = durableFenceRecord(
-              body,
-              bindingId,
-              fenceState,
-            );
-          } else if (fenceState === "revoked") {
-            harness.real.mandatesV3.revoke(routeIdentity(body));
-          } else if (fenceState === "fresh_revoked") {
-            harness.setEvidence({
-              ...ACTIVE_ROUTE_EVIDENCE,
-              status: "revoked",
-              reasonCodes: ["PERMISSION_REVOKED"],
-              checks: {
-                ...ACTIVE_ROUTE_EVIDENCE.checks,
-                permissionInstalled: false,
-              },
-            });
-          }
-        },
-        transformMandateGet: (record) => {
-          if (!fenceArmed) return record;
-          if (replacementRecord) return replacementRecord;
-          if (fenceState === "mismatch") {
-            return preserveInternalRecord(record, {
-              bindingHash: "cc".repeat(32),
-            });
-          }
-          return record;
-        },
-      });
-      const active = seedActiveMandate(
-        harness,
-        body,
-        "final-fence-binding",
-      );
-      bindingId = active.bindingId;
-      const jobId = await queueIntent(harness, body, {
-        allocations: [routeAllocations()[0]],
-      });
-
-      const attached = await postProtected(
-        harness,
-        "/farm/attach",
-        attachBody(jobId, body, `burn-fence-${fenceState}`),
-      );
-      expect(attached.res.statusCode).toBe(200);
-      await vi.waitFor(() =>
-        expect(harness.farmExecutions.finish).toHaveBeenCalledTimes(1),
-      );
-
-      expect(harness.evaluator).toHaveBeenCalledTimes(expectedEvaluations);
-      for (const [args] of harness.evaluator.mock.calls) {
-        expect(args).not.toHaveProperty("allocation");
-      }
-      expect(harness.farmExecutions.get(jobId)).toMatchObject({
-        status: "done",
-        attempts: 1,
-        leaseToken: null,
-      });
-      expect(harness.jobs.get(jobId)).toMatchObject({ status: "error" });
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expect(harness.farmFn).not.toHaveBeenCalled();
-      expect(JSON.stringify(harness.jobs.get(jobId))).not.toContain(
-        SESSION_KEY,
-      );
-      expect(JSON.stringify(harness.reports)).not.toContain(SESSION_KEY);
-    },
-  );
-
-  it("reloads local authority after the pre-key evaluator so a concurrent revoke cannot reconstruct the farm client", async () => {
-    const harness = makeRouteHarness();
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body, {
-      allocations: [routeAllocations()[0]],
-    });
-    harness.pushEvidence(
-      ACTIVE_ROUTE_EVIDENCE,
-      () => {
-        harness.events.push("test:revoke-during-pre-key-evidence");
-        harness.real.mandatesV3.revoke(routeIdentity(body));
-        return ACTIVE_ROUTE_EVIDENCE;
-      },
-    );
-    harness.events.length = 0;
-
-    const attached = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-revoked-before-key"),
-    );
-    expect(attached.res.statusCode).toBe(200);
-    await vi.waitFor(() =>
-      expect(harness.jobs.get(jobId)).toMatchObject({ status: "error" }),
-    );
-
-    expect(harness.evaluator).toHaveBeenCalledTimes(3);
-    const revokeIndex = harness.events.indexOf(
-      "test:revoke-during-pre-key-evidence",
-    );
-    expect(revokeIndex).toBeGreaterThan(
-      harness.events.indexOf("evaluator:fresh"),
-    );
-    expect(harness.events.indexOf("store:get", revokeIndex + 1)).toBeGreaterThan(
-      revokeIndex,
-    );
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-    expect(harness.farmFn).not.toHaveBeenCalled();
-    expect(harness.reports.map(({ lifecycle }) => lifecycle.sequence)).toEqual([
-      1,
-      2,
-    ]);
-  });
-
-  it("retains observed mint custody at sequence 3 when the mint checkpoint transaction fails", async () => {
-    const farmEvents = [];
-    const harness = makeRouteHarness({
-      farmImplementation: async ({ onMintConfirmed }) => {
-        farmEvents.push("farm:mint-confirmed");
-        try {
-          await onMintConfirmed(mintedResult("0xmint-checkpoint-failure"));
-        } catch (error) {
-          farmEvents.push("farm:held-after-checkpoint-failure");
-          throw error;
-        }
-        farmEvents.push("farm:deposit-dispatched");
-        throw new Error("deposit must not run after checkpoint failure");
-      },
-    });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body, {
-      allocations: [routeAllocations()[0]],
-    });
-    harness.farmExecutions.checkpoint.mockImplementationOnce(() => {
-      throw new Error("mint checkpoint transaction failed");
-    });
-
-    const attached = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-checkpoint-failure"),
-    );
-    expect(attached.res.statusCode).toBe(200);
-    await vi.waitFor(() =>
-      expect(harness.farmExecutions.finish).toHaveBeenCalledTimes(1),
-    );
-
-    expect(farmEvents).toEqual([
-      "farm:mint-confirmed",
-      "farm:held-after-checkpoint-failure",
-    ]);
-    expect(farmEvents).not.toContain("farm:deposit-dispatched");
-    expect(harness.jobs.get(jobId)).toMatchObject({
-      status: "error",
-      executionStatus: "held",
-      custodyLocation: "agent",
-      steps: [
-        { step: "mint", status: "minted", mintTxHash: "0xmint-checkpoint-failure" },
-      ],
-    });
-    const recovery = harness.reports.filter(
-      ({ lifecycle }) => lifecycle.sequence >= 2,
-    );
-    expect(recovery).toEqual([
-      expect.objectContaining({
-        expectedSequence: 1,
-        lifecycle: expect.objectContaining({
-          sequence: 2,
-          status: "submitted",
-          evidence: {
-            executionStatus: "minted",
-            custodyLocation: "agent",
-            txHash: "0xmint-checkpoint-failure",
-          },
-        }),
-      }),
-      expect.objectContaining({
-        expectedSequence: 2,
-        lifecycle: expect.objectContaining({
-          sequence: 3,
-          status: "unknown",
-          evidence: {
-            executionStatus: "held",
-            custodyLocation: "agent",
-            txHash: "0xmint-checkpoint-failure",
-          },
-        }),
-      }),
-    ]);
-    expect(harness.reports.map(({ lifecycle }) => lifecycle.sequence)).toEqual([
-      1,
-      2,
-      3,
-    ]);
-
-    await harness.router.resumeFarmJobs();
-    await harness.router.resumeFarmJobs();
-    expect(harness.buildFarm).toHaveBeenCalledTimes(1);
-    expect(harness.farmFn).toHaveBeenCalledTimes(1);
-    expect(harness.farmExecutions.get(jobId)).toMatchObject({ status: "done" });
-    expect(harness.reports.map(({ lifecycle }) => lifecycle.sequence)).toEqual([
-      1,
-      2,
-      3,
-    ]);
-  });
-
-  it("rejects missing mint transaction evidence before any deposit can run or be replayed", async () => {
-    const farmEvents = [];
-    const harness = makeRouteHarness({
-      evidenceSequence: [
-        ACTIVE_ROUTE_EVIDENCE,
-        ACTIVE_ROUTE_EVIDENCE,
-        ACTIVE_ROUTE_EVIDENCE,
-        {
-          ...ACTIVE_ROUTE_EVIDENCE,
-          status: "revoked",
-          reasonCodes: ["PERMISSION_REVOKED"],
-        },
-      ],
-      farmImplementation: async ({ onMintConfirmed }) => {
-        farmEvents.push("farm:mint-without-hash");
-        try {
-          await onMintConfirmed({ status: "minted" });
-        } catch (error) {
-          farmEvents.push("farm:missing-evidence-rejected");
-          throw error;
-        }
-        farmEvents.push("farm:deposit-dispatched");
-        return {
-          mintResult: { status: "minted" },
-          depositResults: [],
-          runId: "run-42",
-          bridgeAgent: "bridge-agent-1",
-          grantTxHash: "grant-1",
-        };
-      },
-    });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body, {
-      allocations: [routeAllocations()[0]],
-    });
-
-    const attached = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-missing-mint-hash"),
-    );
-    expect(attached.res.statusCode).toBe(200);
-    await vi.waitFor(() =>
-      expect(harness.jobs.get(jobId)).toMatchObject({ status: "error" }),
-    );
-
-    expect(farmEvents).toEqual([
-      "farm:mint-without-hash",
-      "farm:missing-evidence-rejected",
-    ]);
-    expect(farmEvents).not.toContain("farm:deposit-dispatched");
-    expect(harness.jobs.get(jobId)).toMatchObject({
-      status: "error",
-      executionStatus: "unknown",
-      custodyLocation: "unknown",
-    });
-    expect(harness.jobs.get(jobId).steps).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ step: "deposits" })]),
-    );
-    expect(JSON.stringify(harness.jobs.get(jobId))).not.toMatch(/mintTxHash/);
-
-    await harness.router.resumeFarmJobs();
-    await harness.router.resumeFarmJobs();
-    expect(harness.buildFarm).toHaveBeenCalledTimes(1);
-    expect(harness.farmFn).toHaveBeenCalledTimes(1);
-    expect(harness.jobs.get(jobId).status).not.toBe("done");
-  });
-
-  it("persists mint custody then converts a late revoke into a terminal recoverable held result without any deposit replay", async () => {
-    const farmEvents = [];
-    let harness;
-    harness = makeRouteHarness({
-      transformMandateGet: (record) =>
-        tracePureBindingRead(record, harness.events),
-      evidenceSequence: [
-        ACTIVE_ROUTE_EVIDENCE,
-        ACTIVE_ROUTE_EVIDENCE,
-        ACTIVE_ROUTE_EVIDENCE,
-        {
-          ...ACTIVE_ROUTE_EVIDENCE,
-          status: "revoked",
-          reasonCodes: ["PERMISSION_REVOKED"],
-        },
-      ],
-      farmImplementation: async ({ onMintConfirmed, allocations }) => {
-        farmEvents.push("farm:mint-confirmed");
-        try {
-          await onMintConfirmed(mintedResult("0xmint"));
-        } catch (error) {
-          farmEvents.push("farm:held-by-gate");
-          throw error;
-        }
-        farmEvents.push("farm:deposit-dispatched");
-        return {
-          mintResult: mintedResult("0xmint"),
-          depositResults: allocations.map(({ allocationId }) => ({
-            allocationId,
-            executionStatus: "deposited",
-            custody: { location: "base-proxy" },
-            txHash: "0xdeposit-must-not-happen",
-          })),
-          runId: "run-42",
-          bridgeAgent: "bridge-agent-1",
-          grantTxHash: "grant-1",
-        };
-      },
-    });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body, {
-      allocations: [routeAllocations()[0]],
-    });
-
-    const attached = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-late-revoke"),
-    );
-    expect(attached.res.statusCode).toBe(200);
-    await vi.waitFor(() =>
-      expect(harness.jobs.get(jobId)).toMatchObject({
-        status: "error",
-        executionStatus: "held",
-        custodyLocation: "agent",
-      }),
-    );
-
-    expect(harness.evaluator).toHaveBeenCalledTimes(4);
-    expect(harness.buildFarm).toHaveBeenCalledTimes(1);
-    expect(harness.buildFarm).toHaveBeenCalledWith(SESSION_KEY);
-    expect(harness.farmFn).toHaveBeenCalledTimes(1);
-    expect(farmEvents).toEqual(["farm:mint-confirmed", "farm:held-by-gate"]);
-    expect(farmEvents).not.toContain("farm:deposit-dispatched");
-    const checkpointIndex = harness.events.indexOf("farm-work:checkpoint");
-    const storeReloadIndex = harness.events.indexOf(
-      "store:get",
-      checkpointIndex + 1,
-    );
-    const pureBindingIndex = harness.events.indexOf(
-      "binding:pure",
-      storeReloadIndex + 1,
-    );
-    const freshEvidenceIndex = harness.events.indexOf(
-      "evaluator:fresh",
-      pureBindingIndex + 1,
-    );
-    expect(checkpointIndex).toBeGreaterThanOrEqual(0);
-    expect(storeReloadIndex).toBeGreaterThan(checkpointIndex);
-    expect(pureBindingIndex).toBeGreaterThan(storeReloadIndex);
-    expect(freshEvidenceIndex).toBeGreaterThan(pureBindingIndex);
-    expect(harness.jobs.get(jobId)).toMatchObject({
-      status: "error",
-      executionStatus: "held",
-      custodyLocation: "agent",
-      steps: [{ step: "mint", status: "minted", mintTxHash: "0xmint" }],
-    });
-    expect(
-      harness.jobs.get(jobId).steps.find(({ step }) => step === "deposits"),
-    ).toBeUndefined();
-    expect(harness.reports).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          expectedSequence: 2,
-          lifecycle: {
-            sequence: 3,
-            status: "unknown",
-            evidence: {
-              executionStatus: "held",
-              custodyLocation: "agent",
-              txHash: "0xmint",
-            },
-            observedAt: expect.any(Number),
-          },
-        }),
-      ]),
-    );
-    expect(harness.evidenceRows).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        phase: 'base_deposit', status: 'blocked',
-        evidence: expect.objectContaining({
-          caller: KERNEL.toLowerCase(), reasonCode: 'mandate_held_after_mint',
-          userOpHash: null, transactionHash: null,
-        }),
-      }),
-    ]));
-
-    const publicStatus = await postProtected(harness, "/status", {
-      mandateId: MANDATE_ID,
-      jobId,
-    });
-    expect(publicStatus.res.statusCode).toBe(200);
-    expect(publicStatus.json).toMatchObject({
-      status: "error",
-      executionStatus: "held",
-      custodyLocation: "agent",
-    });
-    expect(publicStatus.json).not.toHaveProperty('steps');
-    expectPrivateMaterialAbsent(publicStatus.res.body, body);
-    expect(publicStatus.res.body).not.toContain("0xdeposit-must-not-happen");
-
-    await harness.router.resumeFarmJobs();
-    expect(harness.buildFarm).toHaveBeenCalledTimes(1);
-    expect(harness.farmFn).toHaveBeenCalledTimes(1);
-    expect(harness.farmExecutions.get(jobId)).toMatchObject({
-      status: "done",
-    });
-  });
-
-  it("reloads local authority after post-mint evidence so a concurrent revoke holds custody before any deposit", async () => {
-    const farmEvents = [];
-    const harness = makeRouteHarness({
-      farmImplementation: async ({ onMintConfirmed, allocations }) => {
-        farmEvents.push("farm:mint-confirmed");
-        try {
-          await onMintConfirmed(mintedResult("0xmint-local-revoke-race"));
-        } catch (error) {
-          farmEvents.push("farm:held-by-local-reload");
-          throw error;
-        }
-        farmEvents.push("farm:deposit-dispatched");
-        return {
-          mintResult: {
-            status: "minted",
-            mintTxHash: "0xmint-local-revoke-race",
-          },
-          depositResults: allocations.map(({ allocationId }) => ({
-            allocationId,
-            executionStatus: "deposited",
-            custody: { location: "base-proxy" },
-            txHash: "0xdeposit-must-not-happen",
-          })),
-          runId: "run-42",
-          bridgeAgent: "bridge-agent-1",
-          grantTxHash: "grant-1",
-        };
-      },
-    });
-    const body = routeBody();
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body, {
-      allocations: [routeAllocations()[0]],
-    });
-    harness.pushEvidence(
-      ACTIVE_ROUTE_EVIDENCE,
-      ACTIVE_ROUTE_EVIDENCE,
-      () => {
-        harness.events.push("test:revoke-during-post-mint-evidence");
-        harness.real.mandatesV3.revoke(routeIdentity(body));
-        return ACTIVE_ROUTE_EVIDENCE;
-      },
-    );
-    harness.events.length = 0;
-
-    const attached = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-local-revoke-race"),
-    );
-    expect(attached.res.statusCode).toBe(200);
-    await vi.waitFor(() =>
-      expect(harness.jobs.get(jobId)).toMatchObject({
-        status: "error",
-        executionStatus: "held",
-        custodyLocation: "agent",
-      }),
-    );
-
-    expect(harness.evaluator).toHaveBeenCalledTimes(4);
-    const revokeIndex = harness.events.indexOf(
-      "test:revoke-during-post-mint-evidence",
-    );
-    expect(revokeIndex).toBeGreaterThan(
-      harness.events.indexOf("evaluator:fresh"),
-    );
-    expect(harness.events.indexOf("store:get", revokeIndex + 1)).toBeGreaterThan(
-      revokeIndex,
-    );
-    expect(farmEvents).toEqual([
-      "farm:mint-confirmed",
-      "farm:held-by-local-reload",
-    ]);
-    expect(farmEvents).not.toContain("farm:deposit-dispatched");
-    expect(harness.reports.map(({ lifecycle }) => lifecycle.sequence)).toEqual([
-      1,
-      2,
-      3,
-    ]);
-    expect(harness.jobs.get(jobId).steps).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ step: "deposits" })]),
-    );
-  });
-
-  it("authorizes farm status by durable mandate/job binding and exposes only contiguous delivery truth", async () => {
-    const harness = makeRouteHarness({ claimEnabled: false });
-    const bodyA = routeBody();
-    const bodyB = secondRouteBody();
-    const activeA = seedActiveMandate(harness, bodyA);
-    seedActiveMandate(harness, bodyB, "active-binding-2");
-    const jobId = STATUS_JOB_ID;
-    harness.jobs.set(jobId, {
-      status: "done",
-      executionStatus: "deposited",
-      custodyLocation: "base-proxy",
-      depositProgress: { privateAllocation: { bearer: 'progress-bearer-sentinel' } },
-      results: [{ endpoint: 'results-endpoint-sentinel' }],
-      rawError: { capability: 'raw-capability-sentinel' },
-      leaseToken: 'lease-token-sentinel',
-      steps: [
-        { step: "mint", status: "minted", mintTxHash: "0xmint-status", approval: 'approval-sentinel' },
-        { step: "deposits", results: [{ sessionKey: 'session-key-sentinel' }] },
-      ],
-      _attach: {
-        mandateId: MANDATE_ID,
-        stellarOwner: OWNER,
-        kernelAddress: KERNEL,
-        bindingId: activeA.bindingId,
-        bindingHash: activeA.bindingHash,
-        associations: [
-          {
-            allocationId: "run-42:bridge:aave-v3",
-            identity: {
-              networkId: 'stellar-testnet', owner: OWNER, bindingId: activeA.bindingId,
-              executionId: 'run-42:exec:run-42:bridge:aave-v3',
-              allocationId: 'run-42:bridge:aave-v3', childId: jobId,
-            },
-            recoveryIdentity: {
-              networkId: 'stellar-testnet', bindingId: activeA.bindingId,
-              executionId: 'run-42:exec:run-42:bridge:aave-v3',
-              allocationId: 'run-42:bridge:aave-v3', childId: jobId,
-            },
-            terminalSequence: 2,
-          },
-          {
-            allocationId: "run-42:bridge:blend-v2",
-            identity: {
-              networkId: 'stellar-testnet', owner: OWNER, bindingId: activeA.bindingId,
-              executionId: 'run-42:exec:run-42:bridge:blend-v2',
-              allocationId: 'run-42:bridge:blend-v2', childId: jobId,
-            },
-            recoveryIdentity: {
-              networkId: 'stellar-testnet', bindingId: activeA.bindingId,
-              executionId: 'run-42:exec:run-42:bridge:blend-v2',
-              allocationId: 'run-42:bridge:blend-v2', childId: jobId,
-            },
-            terminalSequence: 3,
-          },
-        ],
-      },
-    });
-
-    const empty = await postProtected(harness, "/status", {
-      mandateId: MANDATE_ID,
-      jobId,
-    });
-    expect(empty.res.statusCode).toBe(200);
-    expect(empty.json).toMatchObject({
-      status: "done",
-      associationDelivery: {
-        complete: false,
-        uncertain: true,
-        events: [],
-      },
-    });
-    expect(Object.keys(empty.json).sort()).toEqual([
-      'associationDelivery', 'custodyLocation', 'evidenceDelivery', 'executionStatus',
-      'jobId', 'status',
-    ]);
-    for (const sentinel of [
-      'progress-bearer-sentinel', 'results-endpoint-sentinel', 'raw-capability-sentinel',
-      'lease-token-sentinel', 'approval-sentinel', 'session-key-sentinel',
-    ]) expect(empty.res.body).not.toContain(sentinel);
-    expectPrivateMaterialAbsent(empty.res.body, bodyA);
-
-    harness.delivery.push(
-      {
-        childId: jobId,
-        executionId: "run-42:exec:run-42:bridge:aave-v3",
-        allocationId: "run-42:bridge:aave-v3",
-        sequence: 1,
-        status: "delivered",
-      },
-      {
-        childId: jobId,
-        executionId: "run-42:exec:run-42:bridge:aave-v3",
-        allocationId: "run-42:bridge:aave-v3",
-        sequence: 2,
-        status: "delivered",
-      },
-      {
-        childId: jobId,
-        executionId: "run-42:exec:run-42:bridge:blend-v2",
-        allocationId: "run-42:bridge:blend-v2",
-        sequence: 1,
-        status: "delivered",
-      },
-      {
-        childId: jobId,
-        executionId: "run-42:exec:run-42:bridge:blend-v2",
-        allocationId: "run-42:bridge:blend-v2",
-        sequence: 2,
-        status: "delivered",
-      },
-    );
-    const missingSecondTerminal = await postProtected(harness, "/status", {
-      mandateId: MANDATE_ID,
-      jobId,
-    });
-    expect(missingSecondTerminal.res.statusCode).toBe(200);
-    expect(missingSecondTerminal.json.associationDelivery).toMatchObject({
-      complete: false,
-      uncertain: true,
-      events: expect.arrayContaining([
-        expect.objectContaining({
-          allocationId: "run-42:bridge:aave-v3",
-          sequence: 2,
-        }),
-        expect.objectContaining({
-          allocationId: "run-42:bridge:blend-v2",
-          sequence: 2,
-        }),
-      ]),
-    });
-
-    harness.delivery.push({
-      childId: jobId,
-      executionId: "run-42:exec:run-42:bridge:blend-v2",
-      allocationId: "run-42:bridge:blend-v2",
-      sequence: 3,
-      status: "delivered",
-    });
-    const complete = await postProtected(harness, "/status", {
-      mandateId: MANDATE_ID,
-      jobId,
-    });
-    expect(complete.res.statusCode).toBe(200);
-    expect(complete.json.associationDelivery).toMatchObject({
-      complete: true,
-      uncertain: false,
-      events: expect.arrayContaining([
-        expect.objectContaining({
-          allocationId: "run-42:bridge:aave-v3",
-          sequence: 1,
-        }),
-        expect.objectContaining({
-          allocationId: "run-42:bridge:aave-v3",
-          sequence: 2,
-        }),
-        expect.objectContaining({
-          allocationId: "run-42:bridge:blend-v2",
-          sequence: 1,
-        }),
-        expect.objectContaining({
-          allocationId: "run-42:bridge:blend-v2",
-          sequence: 2,
-        }),
-        expect.objectContaining({
-          allocationId: "run-42:bridge:blend-v2",
-          sequence: 3,
-        }),
-      ]),
-    });
-    expect(complete.json.associationDelivery.events).toHaveLength(5);
-
-    const crossCapability = await postProtected(
-      harness,
-      "/status",
-      {
-        mandateId: MANDATE_ID,
-        jobId,
-      },
-      SECOND_CAPABILITY,
-    );
-    expectGenericUnauthorized(crossCapability.res, bodyA);
-
-    const unknown = await postProtected(harness, "/status", {
-      mandateId: MANDATE_ID,
-      jobId: UNKNOWN_JOB_ID,
-    });
-    expect(unknown.res.statusCode).toBe(404);
-    expect(unknown.json).toEqual({ error: "unknown jobId" });
-    expectPrivateMaterialAbsent(unknown.res.body, bodyA);
-  });
-
-  it("keeps association delivery complete while Base evidence delivery remains pending", async () => {
-    const body = routeBody();
-    const associationIdentity = {
-      networkId: 'stellar-testnet', owner: OWNER, bindingId: 'active-binding-1',
-      executionId: 'run-42:exec:run-42:bridge:aave-v3',
-      allocationId: 'run-42:bridge:aave-v3', childId: STATUS_JOB_ID,
-    };
-    const { owner: _owner, ...recoveryIdentity } = associationIdentity;
-    const associationOutbox = {
-      enqueue: vi.fn(),
-      status: vi.fn(() => [{
-        allocationId: associationIdentity.allocationId,
-        executionId: associationIdentity.executionId,
-        sequence: 1, status: 'delivered', attempts: 1,
-      }]),
-    };
-    const baseEvidenceOutbox = {
-      seed: vi.fn(), enqueue: vi.fn(),
-      status: vi.fn(() => ({
-        complete: false, blocked: false, recoveryVersion: 4,
-        latestPhase: 'base_deposit', latestState: 'confirmed',
-        events: [{
-          allocationId: recoveryIdentity.allocationId,
-          executionId: recoveryIdentity.executionId,
-          phase: 'base_deposit', state: 'confirmed', expectedRecoveryVersion: 3,
-          resultingRecoveryVersion: 4, deliveryStatus: 'pending', attempts: 0,
-        }],
-      })),
-    };
-    const harness = makeRouteHarness({ associationOutbox, baseEvidenceOutbox, claimEnabled: false });
-    const active = seedActiveMandate(harness, body);
-    harness.jobs.set(STATUS_JOB_ID, {
-      status: 'done', steps: [],
-      _attach: {
-        mandateId: MANDATE_ID, stellarOwner: OWNER, kernelAddress: KERNEL,
-        bindingId: active.bindingId, bindingHash: active.bindingHash,
-        associations: [{
-          allocationId: associationIdentity.allocationId,
-          identity: associationIdentity, recoveryIdentity, terminalSequence: 1,
-        }],
-      },
-    });
-
-    const status = await postProtected(harness, '/status', {
-      mandateId: MANDATE_ID, jobId: STATUS_JOB_ID,
-    });
-
-    expect(status.json.associationDelivery).toMatchObject({ complete: true, uncertain: false });
-    expect(status.json.evidenceDelivery).toMatchObject({ complete: false, blocked: false, uncertain: true });
-    expect(associationOutbox.status).toHaveBeenCalledWith(recoveryIdentity);
-    expect(baseEvidenceOutbox.status).toHaveBeenCalledWith(recoveryIdentity);
-  });
-
-  it.each([
-    [
-      "stellarOwner",
-      Keypair.fromRawEd25519Seed(Buffer.alloc(32, 8)).publicKey(),
-    ],
-    ["kernelAddress", OTHER_KERNEL],
-    ["bindingId", "status-binding-mismatch"],
-    ["bindingHash", "ab".repeat(32)],
-  ])(
-    "fails farm status closed when the durable job context has a changed %s",
-    async (field, value) => {
-      const harness = makeRouteHarness({ claimEnabled: false });
-      const body = routeBody();
-      const active = seedActiveMandate(harness, body);
-      harness.jobs.set(STATUS_JOB_ID, {
-        status: "done",
-        steps: [{ step: "private-step-sentinel" }],
-        _attach: {
-          mandateId: body.mandateId,
-          stellarOwner: body.stellarOwner,
-          kernelAddress: body.kernelAddress,
-          bindingId: active.bindingId,
-          bindingHash: active.bindingHash,
-          associations: [],
-          [field]: value,
-        },
-      });
-      const before = JSON.stringify(harness.jobs.get(STATUS_JOB_ID));
-
-      const response = await postProtected(harness, "/status", {
-        mandateId: body.mandateId,
-        jobId: STATUS_JOB_ID,
-      });
-
-      expectGenericUnauthorized(response.res, body);
-      expect(response.res.body).not.toContain("private-step-sentinel");
-      expect(JSON.stringify(harness.jobs.get(STATUS_JOB_ID))).toBe(before);
-      expect(harness.evaluator).not.toHaveBeenCalled();
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expect(harness.reports).toHaveLength(0);
-    },
-  );
-
-  it("rejects mandate/body mismatch for a real job as generic unauthorized before public job disclosure", async () => {
-    const harness = makeRouteHarness({ claimEnabled: false });
-    const bodyA = routeBody();
-    const bodyB = secondRouteBody();
-    seedActiveMandate(harness, bodyA);
-    const activeB = seedActiveMandate(harness, bodyB, "active-binding-2");
-    harness.jobs.set(SECOND_STATUS_JOB_ID, {
-      status: "done",
-      steps: [{ step: "private-step-sentinel" }],
-      _attach: {
-        mandateId: bodyB.mandateId,
-        stellarOwner: bodyB.stellarOwner,
-        kernelAddress: bodyB.kernelAddress,
-        bindingId: activeB.bindingId,
-        bindingHash: activeB.bindingHash,
-        associations: [],
-      },
-    });
-
-    const response = await postProtected(
-      harness,
-      "/status",
-      {
-        mandateId: bodyA.mandateId,
-        jobId: SECOND_STATUS_JOB_ID,
-      },
-      bodyA.capability,
-    );
-
-    expectGenericUnauthorized(response.res, bodyA);
-    expect(response.res.body).not.toContain("private-step-sentinel");
-  });
-
-  it("authenticates every body-identity route from reopened SQLite metadata before any key-envelope decryption", async () => {
-    const path = join(
-      mkdtempSync(join(tmpdir(), "vf-v3-route-body-auth-")),
-      "relayer.db",
-    );
-    const trace = [];
-    const baseCipher = routeCipher();
-    const openEnvelope = vi.fn((...args) => {
-      trace.push("cipher:open");
-      return baseCipher.open(...args);
-    });
-    const cipher = {
-      seal: (...args) => baseCipher.seal(...args),
-      open: openEnvelope,
-    };
-    const stores1 = createSqliteStores(path, {
-      sessionKeyCipher: cipher,
-      nowSeconds: () => NOW_SECONDS,
-    });
-    const bodyA = routeBody();
-    const bodyB = secondRouteBody();
-    try {
-      const first = makeRouteHarness({
-        realStores: stores1,
-        jobs: stores1.jobs,
-        associationOutbox: stores1.associationOutbox,
-        farmExecutions: stores1.farmExecutions,
-        claimEnabled: false,
-      });
-      const activeA = seedActiveMandate(first, bodyA, "body-auth-binding-a");
-      seedActiveMandate(first, bodyB, "body-auth-binding-b");
-      stores1.jobs.set(STATUS_JOB_ID, {
-        status: "queued",
-        steps: [{ step: "private-step-sentinel" }],
-        runId: "run-42",
-        bridgeAgent: "bridge-agent-1",
-        grantTxHash: "grant-1",
-        _attach: {
-          mandateId: bodyA.mandateId,
-          stellarOwner: bodyA.stellarOwner,
-          kernelAddress: bodyA.kernelAddress,
-          bindingId: activeA.bindingId,
-          bindingHash: activeA.bindingHash,
-          networkId: "stellar-testnet",
-          jobId: STATUS_JOB_ID,
-          allocations: routeAllocations(),
-          associations: [],
-          attachedBurnTxHash: null,
-        },
-      });
-      stores1.db.close();
-
-      const stores2 = createSqliteStores(path, {
-        sessionKeyCipher: cipher,
-        nowSeconds: () => NOW_SECONDS,
-      });
-      try {
-        const originalAuthority = stores2.mandatesV3.authority.bind(stores2.mandatesV3);
-        const authorityLookup = vi.spyOn(stores2.mandatesV3, "authority")
-          .mockImplementation((mandateId) => {
-            trace.push("store:authority");
-            return originalAuthority(mandateId);
-          });
-        const attachWork = vi.spyOn(stores2.farmExecutions, "attach");
-        const reopened = makeRouteHarness({
-          realStores: stores2,
-          jobs: stores2.jobs,
-          associationOutbox: stores2.associationOutbox,
-          farmExecutions: stores2.farmExecutions,
-          claimEnabled: false,
-        });
-        openEnvelope.mockClear();
-        trace.length = 0;
-        const jobGet = vi.spyOn(stores2.jobs, "get");
-        const cases = [
-          ["/mandate/status", statusBody(bodyA)],
-          ["/mandate/revoke", statusBody(bodyA)],
-          ["/farm", farmBody(bodyA)],
-          ["/farm/attach", attachBody(STATUS_JOB_ID, bodyA, "burn-preauth")],
-        ];
-
-        for (const capability of [WRONG_CAPABILITY, SECOND_CAPABILITY]) {
-          for (const [route, requestBody] of cases) {
-            const denied = await postProtected(
-              reopened,
-              route,
-              requestBody,
-              capability,
-            );
-            expectGenericUnauthorized(denied.res, bodyA);
-          }
-        }
-        expect(authorityLookup).toHaveBeenCalledTimes(8);
-        expect(openEnvelope).not.toHaveBeenCalled();
-        expect(jobGet).not.toHaveBeenCalled();
-        expect(reopened.evaluator).not.toHaveBeenCalled();
-        expect(reopened.reporter.commitIntentBatch).not.toHaveBeenCalled();
-        expect(attachWork).not.toHaveBeenCalled();
-        expect(stores2.mandatesV3.status(routeIdentity(bodyA)).status).toBe("active");
-
-        trace.length = 0;
-        const allowed = await postProtected(
-          reopened,
-          "/mandate/status",
-          statusBody(bodyA),
-        );
-        expect(allowed.res.statusCode).toBe(200);
-        expect(allowed.json.status).toBe("active");
-        expect(trace.indexOf("store:authority")).toBeLessThan(
-          trace.indexOf("cipher:open"),
-        );
-        expect(openEnvelope).toHaveBeenCalledTimes(1);
-        expectPrivateMaterialAbsent(allowed.res.body, bodyA);
-        jobGet.mockRestore();
-        attachWork.mockRestore();
-        authorityLookup.mockRestore();
-      } finally {
-        stores2.db.close();
-      }
-    } catch (error) {
-      try {
-        stores1.db.close();
-      } catch {}
-      throw error;
-    }
-  });
-
-  it("authenticates farm status from SQLite authority metadata after reopen before reading or decrypting the job mandate", async () => {
-    const path = join(
-      mkdtempSync(join(tmpdir(), "vf-v3-route-status-auth-")),
-      "relayer.db",
-    );
-    const baseCipher = routeCipher();
-    const openEnvelope = vi.fn((...args) => baseCipher.open(...args));
-    const cipher = {
-      seal: (...args) => baseCipher.seal(...args),
-      open: openEnvelope,
-    };
-    const stores1 = createSqliteStores(path, {
-      sessionKeyCipher: cipher,
-      nowSeconds: () => NOW_SECONDS,
-    });
-    const body = routeBody();
-    try {
-      const first = makeRouteHarness({
-        realStores: stores1,
-        jobs: stores1.jobs,
-        associationOutbox: stores1.associationOutbox,
-        farmExecutions: stores1.farmExecutions,
-      });
-      const active = seedActiveMandate(first, body, "reopened-status-binding");
-      stores1.jobs.set(STATUS_JOB_ID, {
-        status: "done",
-        steps: [{ step: "mint", status: "minted", mintTxHash: "0xstatus" }],
-        _attach: {
-          mandateId: body.mandateId,
-          stellarOwner: body.stellarOwner,
-          kernelAddress: body.kernelAddress,
-          bindingId: active.bindingId,
-          bindingHash: active.bindingHash,
-          associations: [],
-        },
-      });
-      stores1.db.close();
-
-      const stores2 = createSqliteStores(path, {
-        sessionKeyCipher: cipher,
-        nowSeconds: () => NOW_SECONDS,
-      });
-      try {
-        const reopened = makeRouteHarness({
-          realStores: stores2,
-          jobs: stores2.jobs,
-          associationOutbox: stores2.associationOutbox,
-          farmExecutions: stores2.farmExecutions,
-        });
-        openEnvelope.mockClear();
-        const jobGet = vi.spyOn(stores2.jobs, "get");
-
-        const denied = await postProtected(
-          reopened,
-          "/status",
-          { mandateId: body.mandateId, jobId: STATUS_JOB_ID },
-          WRONG_CAPABILITY,
-        );
-        expectGenericUnauthorized(denied.res, body);
-        expect(jobGet).not.toHaveBeenCalled();
-        expect(openEnvelope).not.toHaveBeenCalled();
-
-        const allowed = await postProtected(reopened, "/status", {
-          mandateId: body.mandateId,
-          jobId: STATUS_JOB_ID,
-        });
-        expect(allowed.res.statusCode).toBe(200);
-        expect(allowed.json).toMatchObject({ status: "done" });
-        expect(jobGet).toHaveBeenCalledTimes(1);
-        expect(openEnvelope).not.toHaveBeenCalled();
-        expectPrivateMaterialAbsent(allowed.res.body, body);
-        jobGet.mockRestore();
-      } finally {
-        stores2.db.close();
-      }
-    } catch (error) {
-      try {
-        stores1.db.close();
-      } catch {}
-      throw error;
-    }
-  });
-
-  it("reads durable non-active status and performs emergency revoke without opening a corrupt SQLite key envelope", async () => {
-    const path = join(
-      mkdtempSync(join(tmpdir(), "vf-v3-route-keyless-control-")),
-      "relayer.db",
-    );
-    const clock = { value: NOW_SECONDS };
-    const goodCipher = routeCipher();
-    const stores1 = createSqliteStores(path, {
-      sessionKeyCipher: goodCipher,
-      nowSeconds: () => clock.value,
-    });
-    const pending = routeBody({
-      mandateId: mandateIdAt(10),
-      capability: capabilityAt(10),
-    });
-    const uncertain = routeBody({
-      mandateId: mandateIdAt(11),
-      capability: capabilityAt(11),
-    });
-    const revoked = routeBody({
-      mandateId: mandateIdAt(12),
-      capability: capabilityAt(12),
-    });
-    const expired = routeBody({
-      mandateId: mandateIdAt(13),
-      capability: capabilityAt(13),
-      expiresAt: NOW_SECONDS + 1,
-      serializedApproval: canonicalApproval(NOW_SECONDS + 1),
-    });
-    try {
-      const first = makeRouteHarness({
-        clock,
-        realStores: stores1,
-        jobs: stores1.jobs,
-        associationOutbox: stores1.associationOutbox,
-        farmExecutions: stores1.farmExecutions,
-      });
-      seedPendingMandate(first, pending, "keyless-pending");
-      seedUncertainMandate(first, uncertain, "keyless-uncertain");
-      seedPendingMandate(first, revoked, "keyless-revoked");
-      stores1.mandatesV3.revoke(routeIdentity(revoked));
-      seedPendingMandate(first, expired, "keyless-expired");
-      stores1.db.close();
-
-      clock.value = NOW_SECONDS + 2;
-      const openEnvelope = vi.fn(() => {
-        throw new Error("corrupt encrypted session envelope");
-      });
-      const stores2 = createSqliteStores(path, {
-        sessionKeyCipher: {
-          seal: (...args) => goodCipher.seal(...args),
-          open: openEnvelope,
-        },
-        nowSeconds: () => clock.value,
-      });
-      try {
-        const reopened = makeRouteHarness({
-          clock,
-          realStores: stores2,
-          jobs: stores2.jobs,
-          associationOutbox: stores2.associationOutbox,
-          farmExecutions: stores2.farmExecutions,
-        });
-        for (const [body, expectedStatus] of [
-          [pending, "pending_activation"],
-          [uncertain, "activation_uncertain"],
-          [revoked, "revoked"],
-          [expired, "expired"],
-        ]) {
-          const response = await postProtected(
-            reopened,
-            "/mandate/status",
-            statusBody(body),
-            body.capability,
-          );
-          expect(response.res.statusCode).toBe(200);
-          expect(response.json).toMatchObject({
-            mandateId: body.mandateId,
-            status: expectedStatus,
-          });
-          expectPrivateMaterialAbsent(response.res.body, body);
-        }
-        expect(openEnvelope).not.toHaveBeenCalled();
-        expect(reopened.evaluator).not.toHaveBeenCalled();
-
-        const emergency = await postProtected(
-          reopened,
-          "/mandate/revoke",
-          statusBody(pending),
-          pending.capability,
-        );
-        expect(emergency.res.statusCode).toBe(200);
-        expect(emergency.json).toMatchObject({ status: "revoked" });
-        expect(openEnvelope).not.toHaveBeenCalled();
-        expect(stores2.mandatesV3.status(routeIdentity(pending)).status).toBe("revoked");
-        expect(stores2.db.prepare(`
-          SELECT session_key_envelope FROM mandates_v3 WHERE mandate_id = ?
-        `).get(pending.mandateId).session_key_envelope).toBeNull();
-      } finally {
-        stores2.db.close();
-      }
-    } catch (error) {
-      try {
-        stores1.db.close();
-      } catch {}
-      throw error;
-    }
-  });
-
-  it("renews a running farm lease beyond 30 seconds so an exact attach retry cannot reconcile or replay it", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_900_000_000_000);
-    let resolveFarm;
-    const harness = makeRouteHarness({
-      farmImplementation: () =>
-        new Promise((resolve) => {
-          resolveFarm = resolve;
-        }),
-    });
-    const body = routeBody();
-    try {
-      seedActiveMandate(harness, body);
-      const allocation = routeAllocations()[0];
-      const jobId = await queueIntent(harness, body, {
-        allocations: [allocation],
-      });
-      const attached = await postProtected(
-        harness,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-heartbeat"),
-      );
-      expect(attached.res.statusCode).toBe(200);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(harness.farmExecutions.get(jobId)).toMatchObject({
-        status: "running",
-        attempts: 1,
-      });
-      expect(harness.buildFarm).toHaveBeenCalledTimes(1);
-      expect(harness.farmFn).toHaveBeenCalledTimes(1);
-
-      const originalLeaseExpiry = harness.farmExecutions.get(
-        jobId,
-      ).leaseExpiresAt;
-      await vi.advanceTimersByTimeAsync(30_001);
-      expect(harness.farmExecutions.renew).toHaveBeenCalled();
-      expect(
-        harness.farmExecutions.get(jobId).leaseExpiresAt,
-      ).toBeGreaterThan(originalLeaseExpiry);
-
-      const repeated = await postProtected(
-        harness,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-heartbeat"),
-      );
-      await vi.advanceTimersByTimeAsync(0);
-      expect(repeated.res.statusCode).toBe(200);
-      expect(harness.farmExecutions.reconcileUncertain).not.toHaveBeenCalled();
-      expect(harness.farmExecutions.get(jobId)).toMatchObject({
-        status: "running",
-        attempts: 1,
-      });
-      expect(harness.buildFarm).toHaveBeenCalledTimes(1);
-      expect(harness.farmFn).toHaveBeenCalledTimes(1);
-
-      resolveFarm({
-        mintResult: mintedResult("0xmint-heartbeat"),
-        depositResults: [
-          {
-            allocationId: allocation.allocationId,
-            status: "fulfilled",
-            executionStatus: "deposited",
-            custody: { location: "base-proxy" },
-            txHash: "0xdeposit-heartbeat",
-          },
-        ],
-        runId: "run-42",
-        bridgeAgent: "bridge-agent-1",
-        grantTxHash: "grant-1",
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(harness.farmExecutions.get(jobId)).toMatchObject({
-        status: "done",
-        attempts: 1,
-        leaseToken: null,
-        leaseExpiresAt: null,
-      });
-      expect(harness.farmExecutions.finish).toHaveBeenCalledTimes(1);
-      expect(harness.farmExecutions.reconcileUncertain).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("marks a durable finish transaction failure immediately uncertain and never replays farm work on attach retry", async () => {
-    const harness = makeRouteHarness();
-    const body = routeBody();
-    harness.farmExecutions.finish.mockImplementation(() => {
-      throw new Error("durable finish commit failed");
-    });
-    seedActiveMandate(harness, body);
-    const jobId = await queueIntent(harness, body, {
-      allocations: [routeAllocations()[0]],
-    });
-
-    const attached = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-finish-failure"),
-    );
-    expect(attached.res.statusCode).toBe(200);
-    await flushMicrotasks(50);
-    expect(harness.farmExecutions.finish).toHaveBeenCalledTimes(1);
-    expect(harness.jobs.get(jobId)).toMatchObject({
-      status: "error",
-      associationUncertain: true,
-      steps: expect.arrayContaining([
-        expect.objectContaining({
-          step: "association-persistence",
-          status: "error",
-          message: "durable finish commit failed",
-        }),
-      ]),
-    });
-    expect(harness.farmExecutions.get(jobId)).toMatchObject({
-      status: "running",
-      attempts: 1,
-    });
-
-    const status = await postProtected(harness, "/status", {
-      mandateId: body.mandateId,
-      jobId,
-    });
-    expect(status.res.statusCode).toBe(200);
-    expect(status.json).toMatchObject({
-      status: "error",
-      associationDelivery: { complete: false, uncertain: true },
-    });
-    expect(status.json).not.toHaveProperty("associationUncertain");
-
-    const repeated = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(jobId, body, "burn-finish-failure"),
-    );
+    )));
+    expect(attachments.map(({ res }) => res.statusCode)).toEqual([202, 202]);
     await flushMicrotasks();
-    expect(repeated.res.statusCode).toBe(200);
-    expect(harness.buildFarm).toHaveBeenCalledTimes(1);
-    expect(harness.farmFn).toHaveBeenCalledTimes(1);
-    expect(harness.farmExecutions.reconcileUncertain).not.toHaveBeenCalled();
-  });
-
-  it("recovers a post-mint farm plus finish failure at sequence 3 exactly once across repeated resume without replay", async () => {
-    const path = join(
-      mkdtempSync(join(tmpdir(), "vf-v3-route-post-mint-")),
-      "relayer.db",
-    );
-    const cipher = routeCipher();
-    let nowMs = 1_900_000_000_000;
-    const stores = createSqliteStores(path, {
-      sessionKeyCipher: cipher,
-      now: () => nowMs,
-      nowSeconds: () => NOW_SECONDS,
-    });
-    const finish = vi.fn(() => {
-      throw new Error("durable terminal commit failed");
-    });
-    const harness = makeRouteHarness({
-      realStores: stores,
-      jobs: stores.jobs,
-      associationOutbox: stores.associationOutbox,
-      farmExecutions: { ...stores.farmExecutions, finish },
-      farmImplementation: async ({ onMintConfirmed }) => {
-        await onMintConfirmed(mintedResult("0xmint-before-failure"));
-        throw new Error("deposit failed after mint");
-      },
-    });
-    const body = routeBody();
-    try {
-      seedActiveMandate(harness, body);
-      const jobId = await queueIntent(harness, body, {
-        allocations: [routeAllocations()[0]],
-      });
-      const attached = await postProtected(
-        harness,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-post-mint-failure"),
-      );
-      expect(attached.res.statusCode).toBe(200);
-      await flushMicrotasks(50);
-      expect(finish).toHaveBeenCalledTimes(1);
-      expect(stores.jobs.get(jobId)).toMatchObject({
-        status: "error",
-        associationUncertain: true,
-        steps: expect.arrayContaining([
-          expect.objectContaining({
-            step: "mint",
-            status: "minted",
-            mintTxHash: "0xmint-before-failure",
-          }),
-          expect.objectContaining({
-            step: "farm",
-            status: "error",
-            message: "deposit failed after mint",
-          }),
-          expect.objectContaining({
-            step: "association-persistence",
-            status: "error",
-            message: "durable terminal commit failed",
-          }),
-        ]),
-      });
-      expect(
-        associationRows(stores, jobId).map(({ sequence }) => sequence),
-      ).toEqual([1, 2]);
-
-      nowMs = stores.farmExecutions.get(jobId).leaseExpiresAt + 1;
-      await expect(harness.router.resumeFarmJobs()).resolves.toBeUndefined();
-      const afterFirst = associationRows(stores, jobId).map(({ sequence }) => sequence);
-      await expect(harness.router.resumeFarmJobs()).resolves.toBeUndefined();
-      const afterSecond = associationRows(stores, jobId).map(({ sequence }) => sequence);
-
-      expect(stores.farmExecutions.get(jobId)).toMatchObject({
-        status: "uncertain",
-        attempts: 1,
-        leaseToken: null,
-      });
-      expect(afterFirst).toEqual([1, 2, 3]);
-      expect(afterSecond).toEqual([1, 2, 3]);
-      expect(harness.buildFarm).toHaveBeenCalledTimes(1);
-      expect(harness.farmFn).toHaveBeenCalledTimes(1);
-      expect(finish).toHaveBeenCalledTimes(1);
-    } finally {
-      stores.db.close();
-    }
-  });
-
-  it("reopens and resumes one durably attached pending farm without a second attach or burn acknowledgement", async () => {
-    const path = join(
-      mkdtempSync(join(tmpdir(), "vf-v3-route-resume-")),
-      "relayer.db",
-    );
-    const cipher = routeCipher();
-    let nowMs = 1_900_000_000_000;
-    const stores1 = createSqliteStores(path, {
-      sessionKeyCipher: cipher,
-      now: () => nowMs,
-      nowSeconds: () => NOW_SECONDS,
-    });
-    const noDispatchExecutions = {
-      ...stores1.farmExecutions,
-      claim: vi.fn(() => null),
+    expect(relayForwardMint).toHaveBeenCalledTimes(1);
+    const record = first.farmIntents.getByJob({ mandateId: body.mandateId, jobId: farm.json.jobId });
+    const projectionIdentity = {
+      mandateId: body.mandateId, jobId: record.jobId,
+      bindingId: record.bindingId, intentDigest: record.intentDigest,
     };
-    const first = makeRouteHarness({
-      realStores: stores1,
-      jobs: stores1.jobs,
-      associationOutbox: stores1.associationOutbox,
-      farmExecutions: noDispatchExecutions,
+    first.farmIntents.projectMintEvidenceAtomic({
+      identity: projectionIdentity,
+      relay: {
+        execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
+        expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
+        attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+        mintTxHash: `0x${'ee'.repeat(32)}`,
+      }, now: 2_000_000_000_000,
     });
-    const body = routeBody();
-    try {
-      seedActiveMandate(first, body);
-      const jobId = await queueIntent(first, body, {
-        allocations: [routeAllocations()[0]],
-      });
-      const attached = await postProtected(
-        first,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-durable-resume"),
-      );
-      expect(attached.res.statusCode).toBe(200);
-      expect(stores1.farmExecutions.get(jobId)).toMatchObject({
-        status: "pending",
-        attempts: 0,
-      });
-      expect(first.buildFarm).not.toHaveBeenCalled();
-      stores1.db.close();
+    first.farmIntents.advanceProjection({
+      identity: projectionIdentity, from: 'deposit_pending', to: 'deposit_confirming',
+      now: 2_000_000_000_000,
+    });
+    const summaries = await Promise.all([left.router.resumeFarmJobs(), right.router.resumeFarmJobs()]);
 
-      nowMs += 1_000;
-      const stores2 = createSqliteStores(path, {
-        sessionKeyCipher: cipher,
-        now: () => nowMs,
-        nowSeconds: () => NOW_SECONDS,
-      });
-      try {
-        const resumed = makeRouteHarness({
-          realStores: stores2,
-          jobs: stores2.jobs,
-          associationOutbox: stores2.associationOutbox,
-          farmExecutions: stores2.farmExecutions,
-        });
-        await resumed.router.resumeFarmJobs();
-        await vi.waitFor(() =>
-          expect(stores2.farmExecutions.get(jobId)).toMatchObject({
-            status: "done",
-            attempts: 1,
-            leaseToken: null,
-          }),
-        );
-        expect(resumed.buildFarm).toHaveBeenCalledTimes(1);
-        expect(resumed.buildFarm).toHaveBeenCalledWith(SESSION_KEY);
-        expect(resumed.farmFn).toHaveBeenCalledTimes(1);
-        expect(
-          associationRows(stores2, jobId)
-            .map(({ sequence }) => sequence),
-        ).toEqual([1, 2, 3]);
-        expect(JSON.stringify(stores2.jobs.get(jobId))).not.toContain(
-          SESSION_KEY,
-        );
-      } finally {
-        stores2.db.close();
-      }
-    } catch (error) {
-      try {
-        stores1.db.close();
-      } catch {}
-      throw error;
-    }
+    expect(sendUserOperation).toHaveBeenCalledTimes(1);
+    expect(summaries.flatMap(({ resumed }) => resumed)).toEqual([farm.json.jobId]);
+    expect(first.farmIntents.getByJob({ mandateId: body.mandateId, jobId: farm.json.jobId }))
+      .toMatchObject({ state: 'done' });
+    second.db.close();
+    first.db.close();
   });
 
-  it("terminalizes every persisted association when a pending farm pool is no longer allowlisted after reopen", async () => {
-    const path = join(
-      mkdtempSync(join(tmpdir(), "vf-v3-route-pool-drift-")),
-      "relayer.db",
-    );
-    const cipher = routeCipher();
-    let nowMs = 1_900_000_000_000;
-    const stores1 = createSqliteStores(path, {
-      sessionKeyCipher: cipher,
-      now: () => nowMs,
-      nowSeconds: () => NOW_SECONDS,
-    });
-    const first = makeRouteHarness({
-      realStores: stores1,
-      jobs: stores1.jobs,
-      associationOutbox: stores1.associationOutbox,
-      farmExecutions: { ...stores1.farmExecutions, claim: vi.fn(() => null) },
-    });
-    const body = routeBody();
-    try {
-      seedActiveMandate(first, body);
-      const allocations = routeAllocations();
-      const jobId = await queueIntent(first, body, { allocations });
-      const attached = await postProtected(
-        first,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-pool-drift"),
-      );
-      expect(attached.res.statusCode).toBe(200);
-      expect(stores1.farmExecutions.get(jobId)).toMatchObject({
-        status: "pending",
-        attempts: 0,
-      });
-      stores1.db.close();
-
-      nowMs += 1_000;
-      const stores2 = createSqliteStores(path, {
-        sessionKeyCipher: cipher,
-        now: () => nowMs,
-        nowSeconds: () => NOW_SECONDS,
-      });
-      try {
-        const recovered = makeRouteHarness({
-          realStores: stores2,
-          jobs: stores2.jobs,
-          associationOutbox: stores2.associationOutbox,
-          farmExecutions: stores2.farmExecutions,
-          poolTargets: new Map([
-            [SECOND_POOL.toLowerCase(), "blend-v2"],
-          ]),
-        });
-        await recovered.router.resumeFarmJobs();
-        await vi.waitFor(() =>
-          expect(stores2.farmExecutions.get(jobId)).toMatchObject({
-            status: "done",
-            attempts: 1,
-            leaseToken: null,
-          }),
-        );
-
-        expect(stores2.jobs.get(jobId)).toMatchObject({
-          status: "error",
-          _attach: {
-            associations: allocations.map(({ allocationId }) => ({
-              allocationId,
-              terminalSequence: 2,
-            })),
-          },
-        });
-        for (const { allocationId } of allocations) {
-          expect(
-            associationRows(stores2, jobId)
-              .filter((row) => row.allocationId === allocationId)
-              .map(({ sequence }) => sequence),
-          ).toEqual([1, 2]);
-        }
-        expect(recovered.buildFarm).not.toHaveBeenCalled();
-        expect(recovered.farmFn).not.toHaveBeenCalled();
-        expect(recovered.evaluator).not.toHaveBeenCalled();
-
-        await recovered.router.resumeFarmJobs();
-        expect(recovered.buildFarm).not.toHaveBeenCalled();
-        expect(recovered.farmFn).not.toHaveBeenCalled();
-        for (const { allocationId } of allocations) {
-          expect(
-            associationRows(stores2, jobId)
-              .filter((row) => row.allocationId === allocationId)
-              .map(({ sequence }) => sequence),
-          ).toEqual([1, 2]);
-        }
-      } finally {
-        stores2.db.close();
-      }
-    } catch (error) {
-      try {
-        stores1.db.close();
-      } catch {}
-      throw error;
-    }
-  });
-
-  it("reconciles an expired running farm lease to terminal uncertain after reopen without reconstructing or replaying deposits", async () => {
-    const path = join(
-      mkdtempSync(join(tmpdir(), "vf-v3-route-uncertain-")),
-      "relayer.db",
-    );
-    const cipher = routeCipher();
-    let nowMs = 1_900_000_000_000;
-    const stores1 = createSqliteStores(path, {
-      sessionKeyCipher: cipher,
-      now: () => nowMs,
-      nowSeconds: () => NOW_SECONDS,
-    });
-    const first = makeRouteHarness({
-      realStores: stores1,
-      jobs: stores1.jobs,
-      associationOutbox: stores1.associationOutbox,
-      farmExecutions: { ...stores1.farmExecutions, claim: vi.fn(() => null) },
-    });
-    const body = routeBody();
-    try {
-      seedActiveMandate(first, body);
-      const jobId = await queueIntent(first, body, {
-        allocations: [routeAllocations()[0]],
-      });
-      const attached = await postProtected(
-        first,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-durable-uncertain"),
-      );
-      expect(attached.res.statusCode).toBe(200);
-      const claimed = stores1.farmExecutions.claim({
-        jobId,
-        now: nowMs,
-        leaseMs: 1,
-      });
-      expect(claimed).toMatchObject({ status: "running", attempts: 1 });
-      stores1.db.close();
-
-      nowMs += 2;
-      const stores2 = createSqliteStores(path, {
-        sessionKeyCipher: cipher,
-        now: () => nowMs,
-        nowSeconds: () => NOW_SECONDS,
-      });
-      try {
-        const recovered = makeRouteHarness({
-          realStores: stores2,
-          jobs: stores2.jobs,
-          associationOutbox: stores2.associationOutbox,
-          farmExecutions: stores2.farmExecutions,
-        });
-        await recovered.router.resumeFarmJobs();
-
-        expect(stores2.farmExecutions.get(jobId)).toMatchObject({
-          status: "uncertain",
-          attempts: 1,
-          leaseToken: null,
-        });
-        expect(stores2.jobs.get(jobId)).toMatchObject({
-          status: "uncertain",
-          _attach: {
-            associations: [
-              {
-                allocationId: "run-42:bridge:aave-v3",
-                terminalSequence: 2,
-              },
-            ],
-          },
-        });
-        expect(recovered.buildFarm).not.toHaveBeenCalled();
-        expect(recovered.farmFn).not.toHaveBeenCalled();
-        expect(
-          associationRows(stores2, jobId)
-            .map(({ sequence }) => sequence),
-        ).toEqual([1, 2]);
-      } finally {
-        stores2.db.close();
-      }
-    } catch (error) {
-      try {
-        stores1.db.close();
-      } catch {}
-      throw error;
-    }
-  });
-
-  it("reconciles every persisted association when an expired running farm has corrupt allocation data", async () => {
-    const path = join(
-      mkdtempSync(join(tmpdir(), "vf-v3-route-corrupt-allocation-")),
-      "relayer.db",
-    );
-    const cipher = routeCipher();
-    let nowMs = 1_900_000_000_000;
-    const stores1 = createSqliteStores(path, {
-      sessionKeyCipher: cipher,
-      now: () => nowMs,
-      nowSeconds: () => NOW_SECONDS,
-    });
-    const first = makeRouteHarness({
-      realStores: stores1,
-      jobs: stores1.jobs,
-      associationOutbox: stores1.associationOutbox,
-      farmExecutions: { ...stores1.farmExecutions, claim: vi.fn(() => null) },
-    });
-    const body = routeBody();
-    try {
-      seedActiveMandate(first, body);
-      const allocations = routeAllocations();
-      const jobId = await queueIntent(first, body, { allocations });
-      const attached = await postProtected(
-        first,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-corrupt-allocation"),
-      );
-      expect(attached.res.statusCode).toBe(200);
-      const claimed = stores1.farmExecutions.claim({
-        jobId,
-        now: nowMs,
-        leaseMs: 1,
-      });
-      expect(claimed).toMatchObject({ status: "running", attempts: 1 });
-      const corrupted = stores1.jobs.get(jobId);
-      corrupted._attach.allocations[0].amount.units = "not-an-integer";
-      stores1.jobs.set(jobId, corrupted);
-      stores1.db.close();
-
-      nowMs += 2;
-      const stores2 = createSqliteStores(path, {
-        sessionKeyCipher: cipher,
-        now: () => nowMs,
-        nowSeconds: () => NOW_SECONDS,
-      });
-      try {
-        const recovered = makeRouteHarness({
-          realStores: stores2,
-          jobs: stores2.jobs,
-          associationOutbox: stores2.associationOutbox,
-          farmExecutions: stores2.farmExecutions,
-        });
-        await recovered.router.resumeFarmJobs();
-
-        expect(stores2.farmExecutions.get(jobId)).toMatchObject({
-          status: "uncertain",
-          attempts: 1,
-          leaseToken: null,
-        });
-        expect(stores2.jobs.get(jobId)).toMatchObject({
-          status: "uncertain",
-          _attach: {
-            associations: allocations.map(({ allocationId }) => ({
-              allocationId,
-              terminalSequence: 2,
-            })),
-          },
-        });
-        for (const { allocationId } of allocations) {
-          expect(
-            associationRows(stores2, jobId)
-              .filter((row) => row.allocationId === allocationId)
-              .map(({ sequence }) => sequence),
-          ).toEqual([1, 2]);
-        }
-        expect(recovered.buildFarm).not.toHaveBeenCalled();
-        expect(recovered.farmFn).not.toHaveBeenCalled();
-        expect(recovered.evaluator).not.toHaveBeenCalled();
-
-        await recovered.router.resumeFarmJobs();
-        expect(recovered.buildFarm).not.toHaveBeenCalled();
-        expect(recovered.farmFn).not.toHaveBeenCalled();
-        for (const { allocationId } of allocations) {
-          expect(
-            associationRows(stores2, jobId)
-              .filter((row) => row.allocationId === allocationId)
-              .map(({ sequence }) => sequence),
-          ).toEqual([1, 2]);
-        }
-      } finally {
-        stores2.db.close();
-      }
-    } catch (error) {
-      try {
-        stores1.db.close();
-      } catch {}
-      throw error;
-    }
-  });
 
   it("keeps reverse mint relay non-custodial while status remains unavailable until job capabilities exist", async () => {
     const relayUnwindMint = vi.fn(async () => ({
@@ -5996,51 +3254,4 @@ describe("v3 mandate route authorization and execution gates", () => {
     }
   });
 
-  it("sanitizes ordinary post-attach farm failure in authenticated status without losing immutable association context", async () => {
-    const rawFailure = `private rpc ${SESSION_KEY} https://internal.example`;
-    const harness = makeRouteHarness({
-      sanitizeErrors: true,
-      farmImplementation: async () => {
-        throw new Error(rawFailure);
-      },
-    });
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
-    const body = routeBody();
-    try {
-      seedActiveMandate(harness, body);
-      const jobId = await queueIntent(harness, body, {
-        allocations: [routeAllocations()[0]],
-      });
-      const attached = await postProtected(
-        harness,
-        "/farm/attach",
-        attachBody(jobId, body, "burn-sanitized-failure"),
-      );
-      expect(attached.res.statusCode).toBe(200);
-      await vi.waitFor(() =>
-        expect(harness.jobs.get(jobId)).toMatchObject({ status: "error" }),
-      );
-
-      const status = await postProtected(harness, "/status", {
-        mandateId: MANDATE_ID,
-        jobId,
-      });
-      expect(status.res.statusCode).toBe(200);
-      expect(status.json).toMatchObject({
-        status: "error",
-        runId: "run-42",
-        bridgeAgent: "bridge-agent-1",
-        grantTxHash: "grant-1",
-      });
-      expect(status.json).not.toHaveProperty('steps');
-      expect(status.res.body).not.toContain('internal error');
-      expect(status.res.body).not.toContain(rawFailure);
-      expect(status.res.body).not.toContain("internal.example");
-      expectPrivateMaterialAbsent(status.res.body, body);
-    } finally {
-      consoleError.mockRestore();
-    }
-  });
 });

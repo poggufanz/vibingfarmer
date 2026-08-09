@@ -532,4 +532,20 @@ describe('Task 11 production startup ordering', () => {
     started.stopWorkers();
     expect(order.slice(-2)).toEqual(['association-stop', 'base-evidence-stop']);
   });
+
+  it('stops both workers when the listener rejects asynchronously', async () => {
+    const order = [];
+    await expect(serverModule.startVerifiedRelayer({
+      verifyReadiness: async () => {},
+      resumeMandateActivations: async () => {},
+      reconcileCctpRelays: async () => {},
+      resumeFarmJobs: async () => {},
+      startBaseEvidenceWorker: () => ({ stop: () => order.push('base-stop') }),
+      startAssociationWorker: () => ({ stop: () => order.push('association-stop') }),
+      openListener: () => Promise.reject(Object.assign(new Error('address in use'), {
+        code: 'EADDRINUSE',
+      })),
+    })).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    expect(order).toEqual(['association-stop', 'base-stop']);
+  });
 });

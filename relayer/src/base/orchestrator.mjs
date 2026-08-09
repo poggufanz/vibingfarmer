@@ -269,7 +269,9 @@ export function createOrchestrator(config) {
    * @param {string} approval - serialized session approval from the SP3 mandate ceremony
    * @param {{pool:string, amount:bigint, minShares:bigint}[]} allocations
    */
-  async function dispatchDeposits(approval, allocations, { onCheckpoint } = {}) {
+  async function dispatchDeposits(
+    approval, allocations, { onCheckpoint, onClaimSubmitting } = {},
+  ) {
     const durableMode = typeof onCheckpoint === 'function';
     const normalizedAllocations = durableMode ? allocations.map(normalizeAllocation) : allocations;
     if (durableMode && normalizedAllocations.length > 1) {
@@ -371,18 +373,40 @@ export function createOrchestrator(config) {
         assets: allocation.amount.toString(10),
         minShares: allocation.minShares.toString(10),
       };
+      let submissionOwnerToken = null;
       const checkpoint = async (status, evidence) => onCheckpoint({
         identity: allocation.identity,
         phase: 'base_deposit',
         status,
         evidence,
         observedAt: now(),
-      });
+      }, submissionOwnerToken ? { ownerToken: submissionOwnerToken } : undefined);
       let userOpHash = null;
       let transactionHash = null;
       try {
         try {
-          await checkpoint('submitting', commonEvidence);
+          if (typeof onClaimSubmitting === 'function') {
+            const claim = await onClaimSubmitting({
+              identity: allocation.identity,
+              phase: 'base_deposit',
+              status: 'submitting',
+              evidence: commonEvidence,
+              observedAt: now(),
+            });
+            if (claim?.claimed !== true || typeof claim.ownerToken !== 'string'
+                || claim.ownerToken.length === 0) {
+              results.push({
+                identity: allocation.identity, allocationId: allocation.identity.allocationId,
+                pool: allocation.pool, status: 'held', reasonCode: 'submission_claim_held',
+                executionStatus: 'held', custody: { location: 'agent' }, userOpHash: null,
+                transactionHash: null, txHash: null,
+              });
+              continue;
+            }
+            submissionOwnerToken = claim.ownerToken;
+          } else {
+            await checkpoint('submitting', commonEvidence);
+          }
         } catch (reason) {
           if (reason?.checkpointOutcome !== 'not_committed') {
             stopAfterUnknown = true;
@@ -451,6 +475,7 @@ export function createOrchestrator(config) {
         }
         try {
           await checkpoint('submitted', { ...commonEvidence, userOpHash });
+          submissionOwnerToken = null;
         } catch (reason) {
           try {
             await checkpoint('unknown', {
@@ -579,9 +604,21 @@ export function createOrchestrator(config) {
       assets: allocation.amount.toString(10),
       minShares: allocation.minShares.toString(10),
     };
-    const receipt = await kernelClient.waitForUserOperationReceipt({
-      hash: userOpHash, timeout: USEROP_TIMEOUT_MS,
-    });
+    let receipt;
+    try {
+      receipt = await kernelClient.waitForUserOperationReceipt({
+        hash: userOpHash, timeout: USEROP_TIMEOUT_MS,
+      });
+    } catch (reason) {
+      return {
+        identity: allocation.identity,
+        allocationId: allocation.identity.allocationId,
+        pool: allocation.pool,
+        status: 'held', reason, reasonCode: 'submitted_receipt_pending',
+        userOpHash, transactionHash: null, executionStatus: 'confirming',
+        custody: { location: 'agent' }, txHash: null,
+      };
+    }
     const proof = proveDepositReceipt(
       receipt, allocation, commonEvidence.yieldRouterAddress, userOpHash,
     );

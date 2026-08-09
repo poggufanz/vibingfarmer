@@ -435,6 +435,30 @@ describe('Task 11 forward-farm intent canonicalization', () => {
     stores.db.close();
   });
 
+  it('never lets more than the limit of retained done history starve a legacy active row', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 500 });
+    for (let index = 0; index < 2; index += 1) {
+      const jobId = `legacy-done-${String(index).padStart(3, '0')}`;
+      stores.jobs.set(jobId, { jobId, status: 'done' });
+      stores.db.prepare(`INSERT INTO farm_execution_work
+        (job_id,burn_tx_hash,status,attempts,lease_token,lease_expires_at,created_at,updated_at)
+        VALUES (?,?, 'done',0,NULL,NULL,?,?)`).run(jobId, `burn-${jobId}`, index, index);
+    }
+    stores.jobs.set('legacy-active-last', {
+      jobId: 'legacy-active-last', status: 'pending', serializedApproval: 'must-scrub',
+    });
+    stores.db.prepare(`INSERT INTO farm_execution_work
+      (job_id,burn_tx_hash,status,attempts,lease_token,lease_expires_at,created_at,updated_at)
+      VALUES ('legacy-active-last','burn-active-last','pending',0,NULL,NULL,1000,1000)`).run();
+
+    expect(stores.farmIntents.quarantineLegacyActive({ now: 500, limit: 1 }))
+      .toContain('legacy-active-last');
+    expect(stores.jobs.get('legacy-active-last')).toEqual({
+      jobId: 'legacy-active-last', status: 'uncertain', reasonCode: 'legacy_record_unrecoverable',
+    });
+    stores.db.close();
+  });
+
   it('blocks the owning v2 farm projection when Task 10 reports an immutable evidence conflict', () => {
     const stores = createSqliteStores(freshPath(), { now: () => 300 });
     const { normalizedIntent, acknowledgement } = finishForwardIntent(stores);
@@ -467,6 +491,40 @@ describe('Task 11 forward-farm intent canonicalization', () => {
     expect(stores.jobs.get(normalizedIntent.intent.jobId)).toMatchObject({
       status: 'blocked', reasonCode: 'base_evidence_conflict',
     });
+    stores.db.close();
+  });
+
+  it('rolls back evidence conflict delivery instead of falling back when the v2 owner is terminal', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 300 });
+    const { normalizedIntent, acknowledgement } = finishForwardIntent(stores);
+    const projectionIdentity = {
+      mandateId: normalizedIntent.intent.mandate.mandateId,
+      jobId: normalizedIntent.intent.jobId,
+      bindingId: normalizedIntent.intent.mandate.bindingId,
+      intentDigest: normalizedIntent.intentDigest,
+    };
+    stores.farmIntents.advanceProjection({
+      identity: projectionIdentity, from: 'awaiting_burn', to: 'done', now: 301,
+    });
+    stores.baseEvidenceOutbox.enqueue({
+      identity: acknowledgement.children[0].identity,
+      phase: 'cctp_burn', status: 'submitted', observedAt: 302,
+      evidence: {
+        burnTxHash: 'bb'.repeat(32), expectationDigest: normalizedIntent.expectationDigest,
+        burnUnits7: normalizedIntent.expectation.burnUnits7,
+      },
+    });
+    const leased = stores.baseEvidenceOutbox.leaseNext({ now: 303, leaseMs: 100 });
+
+    expect(() => stores.baseEvidenceOutbox.markConflict({
+      id: leased.id, leaseToken: leased.leaseToken, now: 304,
+      block: () => stores.farmIntents.blockEvidenceConflict(
+        { identity: leased.identity }, { transaction: false },
+      ),
+    })).toThrow(/terminal/i);
+    expect(stores.baseEvidenceOutbox.status(leased.identity).events.at(-1))
+      .toMatchObject({ deliveryStatus: 'leased' });
+    expect(stores.jobs.get(normalizedIntent.intent.jobId)).toMatchObject({ status: 'done' });
     stores.db.close();
   });
 });

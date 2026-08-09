@@ -31,6 +31,10 @@ import {
 } from './capability.mjs';
 import { evaluateBaseMandateStatus } from './mandateStatus.mjs';
 import { buildForwardFarmIntent } from './farmIntent.mjs';
+import {
+  AgentIndexBatchConflictError,
+  AgentIndexBatchPermanentError,
+} from './agentIndexReporter.mjs';
 
 async function ensureBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return;
@@ -63,26 +67,9 @@ function errorMessage(err) {
 
 const WIRE_ALLOCATION_FIELDS = new Set(['allocationId', 'poolAddress', 'amount', 'minShares']);
 const WIRE_AMOUNT_FIELDS = new Set(['token', 'units', 'decimals']);
-const FARM_FIELDS = new Set([
-  'sourceDomain',
-  'mandateId',
-  'allocations',
-  'stellarOwner',
-  'kernelAddress',
-  'bridgeAgent',
-  'runId',
-  'grantTxHash',
-]);
 const FARM_V2_FIELDS = new Set([
   'requestId', 'mandateId', 'allocations', 'stellarOwner', 'kernelAddress',
   'bridgeAgent', 'runId', 'grantTxHash',
-]);
-const FARM_ATTACH_FIELDS = new Set([
-  'jobId',
-  'burnTxHash',
-  'mandateId',
-  'stellarOwner',
-  'kernelAddress',
 ]);
 const FARM_ATTACH_V2_FIELDS = new Set(['jobId', 'burnTxHash', 'mandateId']);
 const MANDATE_STATUS_FIELDS = new Set(['mandateId', 'stellarOwner', 'kernelAddress']);
@@ -169,14 +156,12 @@ export function createRelayerRouter({
   mandateStatusConfig = publicRuntime?.mandateStatusConfig ?? null,
   nowSeconds = () => Math.floor(Date.now() / 1000),
   poolTargets = new Map(), agentIndexReporter = null, associationOutbox = null,
-  baseEvidenceOutbox = null, farmExecutions = null, farmIntents = null, cctpRelays = null,
+  baseEvidenceOutbox = null, farmIntents = null, cctpRelays = null,
   relayForwardMint = null, recoveryLimit = 100, recoveryConcurrency = 4,
   forwardFarmDeployment = null,
 }) {
-  const activeFarmJobs = new Set();
   const activeMandateActivations = new Map();
   const activeMandateRegistrations = new Map();
-  const memoryFarmWork = new Map();
   const activeIntentDeliveries = new Map();
   let activeFarmResumeV2 = null;
   // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
@@ -937,137 +922,6 @@ export function createRelayerRouter({
     return { ...authenticated, ...reloaded, canonical, evidence };
   }
 
-  function storedWireAllocations(allocations) {
-    return allocations.map((allocation) => ({
-      allocationId: allocation.allocationId,
-      poolAddress: allocation.pool,
-      amount: allocation.reportAmount,
-      minShares: allocation.minShares.toString(),
-    }));
-  }
-
-  function childIdentity(context, allocationId) {
-    return {
-      networkId: context.networkId,
-      owner: context.stellarOwner,
-      bindingId: context.bindingId,
-      executionId: `${context.runId}:exec:${allocationId}`,
-      allocationId,
-      childId: context.jobId,
-    };
-  }
-
-  function recoveryIdentity(context, allocationId) {
-    const { owner: _owner, ...identity } = childIdentity(context, allocationId);
-    return identity;
-  }
-
-  function executionAllocations(context, allocations) {
-    const associations = Array.isArray(context?.associations) ? context.associations : [];
-    if (associations.length !== allocations.length) {
-      throw new Error('persisted child associations do not match farm allocations');
-    }
-    return allocations.map((allocation) => {
-      const matches = associations.filter(({ allocationId }) => (
-        allocationId === allocation.allocationId
-      ));
-      const expected = recoveryIdentity(context, allocation.allocationId);
-      const durable = matches[0]?.recoveryIdentity;
-      if (matches.length !== 1 || !durable
-          || Object.keys(expected).some((field) => durable[field] !== expected[field])
-          || Object.keys(durable).length !== Object.keys(expected).length) {
-        throw new Error('persisted child association identity is invalid');
-      }
-      return {
-        ...allocation,
-        identity: { ...durable },
-        caller: context.kernelAddress,
-      };
-    });
-  }
-
-  function acknowledgedRecoveryVersions(acknowledgement, intents) {
-    if (!Array.isArray(acknowledgement?.children)
-        || acknowledgement.children.length !== intents.length) {
-      throw new Error('Base child acknowledgement is incomplete');
-    }
-    return acknowledgement.children.map((entry, ordinal) => {
-      const child = intents[ordinal];
-      const expected = {
-        networkId: child.networkId,
-        bindingId: child.bindingId,
-        executionId: child.executionId,
-        allocationId: child.allocationId,
-        childId: child.childId,
-      };
-      const actual = entry?.identity;
-      if (!actual || Object.keys(actual).length !== Object.keys(expected).length
-          || Object.keys(expected).some((field) => actual[field] !== expected[field])
-          || !Number.isSafeInteger(entry.recoveryVersion)
-          || entry.recoveryVersion < 0
-          || Object.keys(entry).length !== 2) {
-        throw new Error('Base child acknowledgement is invalid');
-      }
-      return entry.recoveryVersion;
-    });
-  }
-
-  function childIntent({ jobId, record, stellarOwner, bridgeAgent, runId, grantTxHash, kernelAddress, allocation }) {
-    return {
-      version: 1,
-      networkId,
-      owner: stellarOwner,
-      agent: bridgeAgent,
-      bindingId: record.bindingId,
-      executionId: `${runId}:exec:${allocation.allocationId}`,
-      allocationId: allocation.allocationId,
-      childId: jobId,
-      intent: {
-        token: allocation.reportAmount.token,
-        units: allocation.reportAmount.units,
-        decimals: allocation.reportAmount.decimals,
-        poolAddress: allocation.pool,
-        proxyTarget: allocation.proxyTarget,
-        minShares: allocation.minShares.toString(),
-        runId,
-        grantTxHash,
-        kernelAddress,
-        bindingHash: record.bindingHash,
-        baseJobId: jobId,
-      },
-      lifecycle: {
-        sequence: 0,
-        status: 'planned',
-        evidence: {},
-        observedAt: Date.now(),
-      },
-    };
-  }
-
-  function lifecycleStatus(executionStatus) {
-    if (executionStatus === 'deposited') return 'confirmed';
-    if (executionStatus === 'failed') return 'failed';
-    if (executionStatus === 'held' || executionStatus === 'unknown') return 'unknown';
-    return 'submitted';
-  }
-
-  function lifecycleReports(context, allocations, sequence, executionStatus, custodyLocation, txHash) {
-    return allocations.map((allocation) => ({
-      identity: childIdentity(context, allocation.allocationId),
-      expectedSequence: sequence - 1,
-      lifecycle: {
-        sequence,
-        status: lifecycleStatus(executionStatus),
-        evidence: {
-          executionStatus,
-          custodyLocation,
-          txHash: txHash ?? null,
-        },
-        observedAt: Date.now(),
-      },
-    }));
-  }
-
   function publicJob(job, jobId) {
     if (!job) return job;
     const { _attach, associationUncertain = false } = job;
@@ -1139,121 +993,6 @@ export function createRelayerRouter({
     };
   }
 
-  function associationsWithTerminal(context, terminalSequence) {
-    return (context.associations || []).map((association) => ({
-      ...association,
-      terminalSequence,
-    }));
-  }
-
-  // Recovery must not depend on reparsing mutable execution inputs. These identities were
-  // durably acknowledged before the burn was attached, so they remain the authoritative set
-  // to terminalize if pool configuration or a persisted allocation later becomes unreadable.
-  function allocationsFromAssociations(context) {
-    const seen = new Set();
-    if (!Array.isArray(context?.associations)) return [];
-    return context.associations.flatMap(({ allocationId } = {}) => {
-      if (typeof allocationId !== 'string' || !allocationId || seen.has(allocationId)) return [];
-      seen.add(allocationId);
-      return [{ allocationId }];
-    });
-  }
-
-  function persistenceUncertain(jobId, job, err) {
-    if (sanitizeErrors) {
-      console.error(`[relayer] job ${jobId} terminal association persistence failed:`, err);
-    }
-    jobs.set(jobId, {
-      ...job,
-      status: 'error',
-      associationUncertain: true,
-      steps: [
-        ...(Array.isArray(job.steps) ? job.steps : []),
-        {
-          step: 'association-persistence',
-          status: 'error',
-          message: sanitizeErrors ? 'internal error' : errorMessage(err),
-        },
-      ],
-    });
-  }
-
-  function attachWork({ jobId, burnTxHash, job, reports }) {
-    if (farmExecutions?.attach) {
-      return farmExecutions.attach({ jobId, burnTxHash, job, reports });
-    }
-    const existing = memoryFarmWork.get(jobId);
-    if (existing) {
-      if (existing.burnTxHash !== burnTxHash) throw new Error('farm execution already has a different burn hash');
-      return { duplicate: true, work: existing };
-    }
-    associationOutbox.enqueue(reports);
-    jobs.set(jobId, job);
-    const work = { jobId, burnTxHash, status: 'pending', attempts: 0, leaseToken: null };
-    memoryFarmWork.set(jobId, work);
-    return { duplicate: false, work };
-  }
-
-  function claimWork(jobId) {
-    if (farmExecutions?.claim) return farmExecutions.claim({ jobId, leaseMs: FARM_LEASE_MS });
-    if (activeFarmJobs.has(jobId)) return null;
-    let work = memoryFarmWork.get(jobId);
-    const job = jobs.get(jobId);
-    if (!work && job?._attach?.attachedBurnTxHash && job.status === 'pending') {
-      work = {
-        jobId,
-        burnTxHash: job._attach.attachedBurnTxHash,
-        status: 'pending',
-        attempts: 0,
-        leaseToken: null,
-      };
-      memoryFarmWork.set(jobId, work);
-    }
-    if (!work || work.status !== 'pending') return null;
-    const claimed = { ...work, status: 'running', attempts: work.attempts + 1, leaseToken: `memory:${jobId}` };
-    memoryFarmWork.set(jobId, claimed);
-    return claimed;
-  }
-
-  function checkpointWork({ jobId, leaseToken, job, reports = [], baseEvidenceReports = [] }) {
-    if (farmExecutions?.checkpoint) {
-      return farmExecutions.checkpoint({
-        jobId, leaseToken, job, reports, baseEvidenceReports,
-      });
-    }
-    associationOutbox.enqueue(reports);
-    for (const report of baseEvidenceReports) baseEvidenceOutbox.enqueue(report);
-    jobs.set(jobId, job);
-  }
-
-  function finishWork({
-    jobId, leaseToken, job, reports = [], baseEvidenceReports = [], status = 'done',
-  }) {
-    if (farmExecutions?.finish) {
-      return farmExecutions.finish({
-        jobId, leaseToken, job, reports, baseEvidenceReports, status,
-      });
-    }
-    associationOutbox.enqueue(reports);
-    for (const report of baseEvidenceReports) baseEvidenceOutbox.enqueue(report);
-    jobs.set(jobId, job);
-    const work = memoryFarmWork.get(jobId);
-    if (work) memoryFarmWork.set(jobId, { ...work, status, leaseToken: null });
-  }
-
-  function startFarmLeaseHeartbeat(jobId, leaseToken) {
-    if (!farmExecutions?.renew) return () => {};
-    const timer = setInterval(() => {
-      try {
-        farmExecutions.renew({ jobId, leaseToken, leaseMs: FARM_LEASE_MS });
-      } catch (err) {
-        if (sanitizeErrors) console.error(`[relayer] job ${jobId} lease renewal failed:`, err);
-      }
-    }, FARM_HEARTBEAT_MS);
-    timer.unref?.();
-    return () => clearInterval(timer);
-  }
-
   function activeRecordMatchesFarmContext(record, identity, attachContext) {
     const canonical = canonicalStoredBinding(record, identity);
     if (!canonical
@@ -1302,456 +1041,55 @@ export function createRelayerRouter({
     return { identity, record, evidence, ...finalReload };
   }
 
-  function failedFarmContext(attachContext, terminalSequence) {
-    return {
-      ...attachContext,
-      associations: associationsWithTerminal(attachContext, terminalSequence),
+  async function deliverClaimedIntent(claimed) {
+    let leaseLost = false;
+    let renewal = Promise.resolve();
+    const renew = () => {
+      renewal = renewal.then(() => farmIntents.renewIntentDelivery({
+        jobId: claimed.jobId,
+        leaseToken: claimed.leaseToken,
+        now: Date.now(),
+        leaseMs: FARM_LEASE_MS,
+      })).catch(() => { leaseLost = true; });
+      return renewal;
     };
-  }
-
-  function finishFarmAuthorityFailure({ jobId, job, attachContext, leaseToken, allocations, message }) {
-    const terminalContext = failedFarmContext(attachContext, 2);
-    const failedJob = {
-      ...job,
-      status: 'error',
-      _attach: terminalContext,
-      steps: [{
-        step: 'farm',
-        status: 'error',
-        message: sanitizeErrors ? 'internal error' : message,
-      }],
-    };
+    const timer = setInterval(() => { void renew(); }, FARM_HEARTBEAT_MS);
+    timer.unref?.();
     try {
-      finishWork({
-        jobId,
-        leaseToken,
-        job: failedJob,
-        reports: lifecycleReports(terminalContext, allocations, 2, 'failed', 'unknown', null),
+      const acknowledgement = await agentIndexReporter.commitIntentBatch(claimed.batch);
+      await renewal;
+      await renew();
+      if (leaseLost) throw new Error('farm intent delivery lease is stale');
+      return farmIntents.finishAwaitingBurn({
+        jobId: claimed.jobId,
+        leaseToken: claimed.leaseToken,
+        acknowledgement,
+        now: Date.now(),
       });
-    } catch (error) {
-      persistenceUncertain(jobId, failedJob, error);
+    } finally {
+      clearInterval(timer);
     }
   }
 
-  function heldAfterMintError(message = 'mandate authority changed after mint') {
-    const error = new Error(message);
-    error.code = 'VF_MANDATE_HELD_AFTER_MINT';
-    return error;
-  }
-
-  function missingMintEvidenceError() {
-    const error = new Error('mint confirmation evidence is missing');
-    error.code = 'VF_MINT_EVIDENCE_MISSING';
-    return error;
-  }
-
-  async function runFarmJobBody(jobId, mandateRecord, farmParams, attachContext, leaseToken) {
-    let mintCheckpointed = false;
-    let observedMintResult = null;
-    let observedMintReports = null;
-    const cctpEvidenceReports = (mintResult) => {
-      const evidence = mintResult?.evidence;
-      const required = [
-        'burnTxHash', 'expectationDigest', 'messageDigest',
-        'attestationDigest', 'evidenceVersion', 'mintTxHash',
-      ];
-      if (!evidence || required.some((field) => typeof evidence[field] !== 'string' || !evidence[field])) {
-        throw missingMintEvidenceError();
-      }
-      const burnUnits7 = (farmParams.allocations.reduce((sum, allocation) => (
-        sum + allocation.amount
-      ), 0n) * 10n).toString(10);
-      const observedAt = Date.now();
-      return attachContext.associations.flatMap((association) => {
-        const identity = association.recoveryIdentity;
-        return [
-          {
-            identity, phase: 'cctp_burn', status: 'confirmed', observedAt,
-            evidence: {
-              burnTxHash: evidence.burnTxHash,
-              expectationDigest: evidence.expectationDigest,
-              burnUnits7,
-            },
-          },
-          {
-            identity, phase: 'cctp_attestation', status: 'confirmed', observedAt,
-            evidence: {
-              burnTxHash: evidence.burnTxHash,
-              expectationDigest: evidence.expectationDigest,
-              messageDigest: evidence.messageDigest,
-              attestationDigest: evidence.attestationDigest,
-              evidenceVersion: evidence.evidenceVersion,
-            },
-          },
-          {
-            identity, phase: 'cctp_mint', status: 'confirmed', observedAt,
-            evidence: {
-              burnTxHash: evidence.burnTxHash,
-              expectationDigest: evidence.expectationDigest,
-              messageDigest: evidence.messageDigest,
-              attestationDigest: evidence.attestationDigest,
-              evidenceVersion: evidence.evidenceVersion,
-              mintTxHash: evidence.mintTxHash,
-            },
-          },
-        ];
-      });
-    };
-    const onMintConfirmed = async (mintResult) => {
-      if (mintCheckpointed) return;
-      if (typeof mintResult?.mintTxHash !== 'string' || !mintResult.mintTxHash) {
-        throw missingMintEvidenceError();
-      }
-      observedMintResult = {
-        status: mintResult.status,
-        mintTxHash: mintResult.mintTxHash,
-      };
-      observedMintReports = lifecycleReports(
-        attachContext, farmParams.allocations, 2, 'minted', 'agent', mintResult.mintTxHash,
-      );
-      const current = jobs.get(jobId) || { status: 'pending', steps: [] };
-      const baseEvidenceReports = cctpEvidenceReports(mintResult);
-      try {
-        checkpointWork({
-          jobId,
-          leaseToken,
-          reports: observedMintReports,
-          job: {
-            ...current,
-            status: 'depositing',
-            steps: [{ step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash }],
-            _attach: attachContext,
-          },
-          baseEvidenceReports,
-        });
-      } catch {
-        throw heldAfterMintError('mint checkpoint persistence is uncertain');
-      }
-      mintCheckpointed = true;
-      const authority = await revalidateFarmAuthority(attachContext, { loadRecord: false });
-      if (authority.error) throw heldAfterMintError();
-    };
-
-    let result;
-    const onDepositCheckpoint = async (checkpoint) => {
-      const current = jobs.get(jobId) || { status: 'depositing', steps: [] };
-      const existing = current.depositProgress && typeof current.depositProgress === 'object'
-        ? current.depositProgress : {};
-      checkpointWork({
-        jobId,
-        leaseToken,
-        reports: [],
-        baseEvidenceReports: [checkpoint],
-        job: {
-          ...current,
-          status: 'depositing',
-          depositProgress: {
-            ...existing,
-            [checkpoint.identity.allocationId]: {
-              identity: checkpoint.identity,
-              phase: checkpoint.phase,
-              state: checkpoint.status,
-              observedAt: checkpoint.observedAt,
-              userOpHash: checkpoint.evidence.userOpHash ?? null,
-              transactionHash: checkpoint.evidence.transactionHash ?? null,
-              reasonCode: checkpoint.evidence.reasonCode ?? null,
-            },
-          },
-        },
-      });
-    };
-    try {
-      const { farm } = buildFarm(mandateRecord.sessionPrivateKey);
-      result = await farm({ ...farmParams, onMintConfirmed, onDepositCheckpoint });
-      await onMintConfirmed(result.mintResult);
-    } catch (err) {
-      const current = jobs.get(jobId) || { status: 'pending', steps: [] };
-      const durableMint = current.steps
-        ?.find((step) => step.step === 'mint' && step.mintTxHash);
-      const observedMintTxHash = durableMint?.mintTxHash
-        ?? observedMintResult?.mintTxHash
-        ?? null;
-      if (err?.code === 'VF_MANDATE_HELD_AFTER_MINT' && observedMintTxHash) {
-        const heldContext = failedFarmContext(attachContext, 3);
-        const mintStep = durableMint ?? {
-          step: 'mint',
-          status: observedMintResult?.status,
-          mintTxHash: observedMintTxHash,
-        };
-        const heldJob = {
-          runId: farmParams.runId,
-          bridgeAgent: farmParams.bridgeAgent,
-          grantTxHash: farmParams.grantTxHash,
-          status: 'error',
-          executionStatus: 'held',
-          custodyLocation: 'agent',
-          steps: [mintStep],
-          _attach: heldContext,
-        };
-        try {
-          const heldReports = lifecycleReports(
-            heldContext,
-            farmParams.allocations,
-            3,
-            'held',
-            'agent',
-            observedMintTxHash,
-          );
-          const blockedAt = Date.now();
-          const blockedBaseReports = farmParams.allocations.map((allocation) => ({
-            identity: allocation.identity,
-            phase: 'base_deposit',
-            status: 'blocked',
-            observedAt: blockedAt,
-            evidence: {
-              chainId: String(mandateStatusConfig?.base?.chain?.id),
-              yieldRouterAddress: String(
-                mandateStatusConfig?.base?.mandatePolicy?.yieldRouterAddress,
-              ).toLowerCase(),
-              caller: String(attachContext.kernelAddress).toLowerCase(),
-              poolAddress: String(allocation.pool).toLowerCase(),
-              assets: allocation.amount.toString(10),
-              minShares: allocation.minShares.toString(10),
-              userOpHash: null,
-              transactionHash: null,
-              reasonCode: 'mandate_held_after_mint',
-            },
-          }));
-          finishWork({
-            jobId,
-            leaseToken,
-            job: heldJob,
-            reports: mintCheckpointed
-              ? heldReports
-              : [...(observedMintReports ?? []), ...heldReports],
-            baseEvidenceReports: blockedBaseReports,
-          });
-        } catch (finishError) {
-          persistenceUncertain(jobId, heldJob, finishError);
-        }
-        return;
-      }
-      if (err?.code === 'VF_MINT_EVIDENCE_MISSING') {
-        const uncertainContext = failedFarmContext(attachContext, 2);
-        const uncertainJob = {
-          runId: farmParams.runId,
-          bridgeAgent: farmParams.bridgeAgent,
-          grantTxHash: farmParams.grantTxHash,
-          status: 'error',
-          executionStatus: 'unknown',
-          custodyLocation: 'unknown',
-          steps: [{
-            step: 'mint',
-            status: 'uncertain',
-            message: sanitizeErrors ? 'internal error' : errorMessage(err),
-          }],
-          _attach: uncertainContext,
-        };
-        try {
-          finishWork({
-            jobId,
-            leaseToken,
-            job: uncertainJob,
-            reports: lifecycleReports(
-              uncertainContext,
-              farmParams.allocations,
-              2,
-              'unknown',
-              'unknown',
-              null,
-            ),
-          });
-        } catch (finishError) {
-          persistenceUncertain(jobId, uncertainJob, finishError);
-        }
-        return;
-      }
-      const terminalSequence = observedMintTxHash ? 3 : 2;
-      const failedContext = failedFarmContext(attachContext, terminalSequence);
-      const failedJob = {
-        runId: farmParams.runId,
-        bridgeAgent: farmParams.bridgeAgent,
-        grantTxHash: farmParams.grantTxHash,
-        _attach: failedContext,
-        status: 'error',
-        steps: [
-          ...(Array.isArray(current.steps) ? current.steps : []),
-          { step: 'farm', status: 'error', message: sanitizeErrors ? 'internal error' : errorMessage(err) },
-        ],
-      };
-      if (sanitizeErrors) console.error(`[relayer] job ${jobId} step farm failed:`, err);
-      try {
-        finishWork({
-          jobId,
-          leaseToken,
-          job: failedJob,
-          reports: lifecycleReports(
-            failedContext,
-            farmParams.allocations,
-            terminalSequence,
-            'failed',
-            observedMintTxHash ? 'agent' : 'unknown',
-            observedMintTxHash,
-          ),
-        });
-      } catch (finishError) {
-        persistenceUncertain(jobId, failedJob, finishError);
-      }
-      return;
-    }
-
-    const { mintResult, depositResults = [], runId, bridgeAgent, grantTxHash } = result;
-    const results = new Map(depositResults.map((deposit) => [deposit?.allocationId, deposit]));
-    const terminalReports = farmParams.allocations.map((allocation) => {
-      const deposit = results.get(allocation.allocationId);
-      const executionStatus = deposit?.executionStatus || 'unknown';
-      const custodyLocation = deposit?.custody?.location || 'unknown';
-      const txHash = deposit?.txHash
-        ?? (custodyLocation === 'agent' ? mintResult.mintTxHash : null)
-        ?? null;
-      return lifecycleReports(
-        attachContext, [allocation], 3, executionStatus, custodyLocation, txHash,
-      )[0];
-    });
-    const terminalContext = {
-      ...attachContext,
-      associations: associationsWithTerminal(attachContext, 3),
-    };
-    const terminalUncertain = farmParams.allocations.some((allocation) => {
-      const deposit = results.get(allocation.allocationId);
-      return !deposit || deposit.executionStatus === 'unknown'
-        || deposit.reasonCode === 'not_dispatched_after_unknown';
-    });
-    const durableProgress = jobs.get(jobId) || {};
-    const doneJob = {
-        ...durableProgress,
-        status: terminalUncertain ? 'uncertain' : 'done',
-        executionStatus: terminalUncertain ? 'unknown' : 'confirmed',
-        runId, bridgeAgent, grantTxHash,
-        _attach: terminalContext,
-        steps: [
-          { step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash },
-          { step: 'deposits', results: depositResults },
-        ],
-    };
-    try {
-      finishWork({
-        jobId, leaseToken, job: doneJob, reports: terminalReports,
-        status: terminalUncertain ? 'uncertain' : 'done',
-      });
-    } catch (err) {
-      persistenceUncertain(jobId, doneJob, err);
-    }
-  }
-
-  function dispatchFarmWork(jobId) {
-    if (activeFarmJobs.has(jobId)) return false;
-    const job = jobs.get(jobId);
-    const attachContext = job?._attach;
-    if (!job || !attachContext?.attachedBurnTxHash) return false;
-    const claimed = claimWork(jobId);
-    if (!claimed) return false;
-    activeFarmJobs.add(jobId);
-    const stopHeartbeat = startFarmLeaseHeartbeat(jobId, claimed.leaseToken);
-    void (async () => {
-      let parsedAllocations;
-      try {
-        parsedAllocations = executionAllocations(
-          attachContext,
-          parseWireAllocations(attachContext.allocations, job.runId),
-        );
-      } catch (error) {
-        finishFarmAuthorityFailure({
-          jobId,
-          job,
-          attachContext,
-          leaseToken: claimed.leaseToken,
-          allocations: allocationsFromAssociations(attachContext),
-          message: errorMessage(error),
-        });
-        return;
-      }
-
-      const authority = await revalidateFarmAuthority(attachContext);
-      if (authority.error) {
-        finishFarmAuthorityFailure({
-          jobId,
-          job,
-          attachContext,
-          leaseToken: claimed.leaseToken,
-          allocations: parsedAllocations,
-          message: authority.error,
-        });
-        return;
-      }
-
-      await runFarmJobBody(jobId, authority.record, {
-        burnTxHash: attachContext.attachedBurnTxHash,
-        execId: attachContext.attachedBurnTxHash,
-        approval: authority.record.serializedApproval,
-        allocations: parsedAllocations,
-        runId: job.runId,
-        bridgeAgent: job.bridgeAgent,
-        grantTxHash: job.grantTxHash,
-      }, attachContext, claimed.leaseToken);
-    })().finally(() => {
-      stopHeartbeat();
-      activeFarmJobs.delete(jobId);
-    });
-    return true;
-  }
-
-  function reconcileExpiredWork(work) {
-    const job = jobs.get(work.jobId);
-    const context = job?._attach;
-    if (!job || !context || !farmExecutions?.reconcileUncertain) return;
-    let allocations;
-    try {
-      allocations = parseWireAllocations(context.allocations, job.runId);
-    } catch {
-      allocations = allocationsFromAssociations(context);
-    }
-    const mintTxHash = job.steps?.find((step) => step.step === 'mint')?.mintTxHash ?? null;
-    const terminalSequence = mintTxHash ? 3 : 2;
-    const terminalContext = {
-      ...context,
-      associations: associationsWithTerminal(context, terminalSequence),
-    };
-    const uncertainJob = { ...job, status: 'uncertain', _attach: terminalContext };
-    farmExecutions.reconcileUncertain({
-      jobId: work.jobId,
-      job: uncertainJob,
-      reports: lifecycleReports(
-        terminalContext,
-        allocations,
-        terminalSequence,
-        'unknown',
-        mintTxHash ? 'agent' : 'unknown',
-        mintTxHash,
-      ),
+  function terminalizeIntentDelivery(record, error) {
+    const reasonCode = error instanceof AgentIndexBatchConflictError
+      ? 'agent_index_intent_conflict' : 'agent_index_intent_invalid';
+    return farmIntents.advanceProjection({
+      identity: {
+        mandateId: record.mandateId,
+        jobId: record.jobId,
+        bindingId: record.bindingId,
+        intentDigest: record.intentDigest,
+      },
+      from: 'intent_pending', to: 'blocked', reasonCode, now: Date.now(),
     });
   }
 
   async function resumeFarmJobs() {
-    if (farmIntents) {
-      if (activeFarmResumeV2) return activeFarmResumeV2;
-      activeFarmResumeV2 = resumeFarmIntentsV2().finally(() => { activeFarmResumeV2 = null; });
-      return activeFarmResumeV2;
-    }
-    if (farmExecutions?.listRecoverable) {
-      for (const work of farmExecutions.listRecoverable()) {
-        if (work.status === 'running') {
-          if (!activeFarmJobs.has(work.jobId)) reconcileExpiredWork(work);
-        }
-        else dispatchFarmWork(work.jobId);
-      }
-      return;
-    }
-    if (typeof jobs?.entries === 'function') {
-      for (const [jobId, job] of jobs.entries()) {
-        if (job?.status === 'pending' && job?._attach?.attachedBurnTxHash) dispatchFarmWork(jobId);
-      }
-    }
+    if (!farmIntents) throw new Error('durable forward farm intent store is unavailable');
+    if (activeFarmResumeV2) return activeFarmResumeV2;
+    activeFarmResumeV2 = resumeFarmIntentsV2().finally(() => { activeFarmResumeV2 = null; });
+    return activeFarmResumeV2;
   }
 
   async function resumeFarmIntentsV2() {
@@ -1802,15 +1140,15 @@ export function createRelayerRouter({
             return;
           }
           try {
-            const acknowledgement = await agentIndexReporter.commitIntentBatch(claimed.batch);
-            farmIntents.finishAwaitingBurn({
-              jobId: record.jobId,
-              leaseToken: claimed.leaseToken,
-              acknowledgement,
-              now: Date.now(),
-            });
+            await deliverClaimedIntent(claimed);
             result.resumed.push(record.jobId);
-          } catch {
+          } catch (error) {
+            if (error instanceof AgentIndexBatchConflictError
+                || error instanceof AgentIndexBatchPermanentError) {
+              terminalizeIntentDelivery(record, error);
+              result.blocked.push(record.jobId);
+              return;
+            }
             try {
               farmIntents.releaseIntentDelivery({
                 jobId: record.jobId, leaseToken: claimed.leaseToken, now: Date.now(),
@@ -1859,34 +1197,38 @@ export function createRelayerRouter({
           bindingId: record.bindingId,
           bindingHash: record.bindingHash,
         };
-        const authority = await revalidateFarmAuthority(attachContext);
-        if (authority.error) {
+        let children;
+        try {
+          children = record.intent.allocations.map((allocation) => {
+            const identityWithChild = {
+              networkId: record.intent.networkId,
+              bindingId: record.bindingId,
+              executionId: allocation.executionId,
+              allocationId: allocation.allocationId,
+              childId: allocation.childId,
+            };
+            return {
+              allocation: {
+                identity: identityWithChild,
+                caller: record.kernelAddress,
+                pool: allocation.poolAddress,
+                amount: BigInt(allocation.units),
+                minShares: BigInt(allocation.minShares),
+              },
+              recovery: baseEvidenceOutbox?.recoveryState?.(identityWithChild) ?? null,
+            };
+          });
+        } catch (error) {
+          if (!(error instanceof SyntaxError || error instanceof TypeError || error instanceof RangeError)) {
+            throw error;
+          }
           farmIntents.advanceProjection({
             identity: projectionIdentity, from: record.state, to: 'blocked',
-            reasonCode: 'mandate_inactive', now: Date.now(),
+            reasonCode: 'malformed_recovery_record', now: Date.now(),
           });
           result.blocked.push(record.jobId);
           return;
         }
-        const children = record.intent.allocations.map((allocation) => {
-          const identityWithChild = {
-            networkId: record.intent.networkId,
-            bindingId: record.bindingId,
-            executionId: allocation.executionId,
-            allocationId: allocation.allocationId,
-            childId: allocation.childId,
-          };
-          return {
-            allocation: {
-              identity: identityWithChild,
-              caller: record.kernelAddress,
-              pool: allocation.poolAddress,
-              amount: BigInt(allocation.units),
-              minShares: BigInt(allocation.minShares),
-            },
-            recovery: baseEvidenceOutbox?.recoveryState?.(identityWithChild) ?? null,
-          };
-        });
         if (children.some(({ recovery }) => !recovery)) {
           farmIntents.advanceProjection({
             identity: projectionIdentity, from: record.state, to: 'blocked',
@@ -1918,26 +1260,91 @@ export function createRelayerRouter({
           result.uncertain.push(record.jobId);
           return;
         }
-        const flow = buildFarm(authority.record.sessionPrivateKey);
-        if (typeof flow?.recoverDeposits !== 'function') {
-          throw new Error('Base recovery flow is not configured');
+        let projectionState = record.state;
+        if (projectionState === 'deposit_pending') {
+          farmIntents.advanceProjection({
+            identity: projectionIdentity, from: 'deposit_pending', to: 'deposit_confirming',
+            now: Date.now(),
+          });
+          projectionState = 'deposit_confirming';
         }
-        const depositResults = await flow.recoverDeposits({
-          approval: authority.record.serializedApproval,
-          children,
-          onCheckpoint: async (checkpoint) => baseEvidenceOutbox.enqueue(checkpoint),
-        });
+        const depositResults = [];
+        let holdLater = false;
+        for (const child of children) {
+          if (child.recovery.phase === 'base_deposit' && child.recovery.state === 'confirmed') {
+            depositResults.push({
+              identity: child.allocation.identity,
+              allocationId: child.allocation.identity.allocationId,
+              pool: child.allocation.pool,
+              status: 'fulfilled', executionStatus: 'deposited',
+              custody: { location: 'base-proxy' }, recovered: true,
+            });
+            continue;
+          }
+          if (holdLater) {
+            depositResults.push({
+              identity: child.allocation.identity,
+              allocationId: child.allocation.identity.allocationId,
+              pool: child.allocation.pool,
+              status: 'held', executionStatus: 'held',
+              reasonCode: 'not_dispatched_after_unknown', custody: { location: 'agent' },
+            });
+            continue;
+          }
+          if (child.recovery.phase === 'base_deposit'
+              && ['submitting', 'unknown'].includes(child.recovery.state)) {
+            holdLater = true;
+            depositResults.push({
+              identity: child.allocation.identity,
+              allocationId: child.allocation.identity.allocationId,
+              pool: child.allocation.pool,
+              status: 'uncertain', executionStatus: 'unknown',
+              reasonCode: `recovery_${child.recovery.state}`, custody: { location: 'agent' },
+            });
+            continue;
+          }
+
+          // Every actionable child gets a new post-await authority reload and a newly
+          // reconstructed client. No key survives receipt waits from an earlier child.
+          const authority = await revalidateFarmAuthority(attachContext);
+          if (authority.error) {
+            farmIntents.advanceProjection({
+              identity: projectionIdentity, from: projectionState, to: 'blocked',
+              reasonCode: 'mandate_inactive', now: Date.now(),
+            });
+            result.blocked.push(record.jobId);
+            return;
+          }
+          const flow = buildFarm(authority.record.sessionPrivateKey);
+          if (typeof flow?.recoverDeposits !== 'function') {
+            throw new Error('Base recovery flow is not configured');
+          }
+          const [entry] = await flow.recoverDeposits({
+            approval: authority.record.serializedApproval,
+            children: [child],
+            onClaimSubmitting: async (checkpoint) => (
+              baseEvidenceOutbox.claimSubmission(checkpoint)
+            ),
+            onCheckpoint: async (checkpoint, ownership) => (ownership?.ownerToken
+              ? baseEvidenceOutbox.enqueueOwned(checkpoint, ownership)
+              : baseEvidenceOutbox.enqueue(checkpoint)),
+          });
+          depositResults.push(entry);
+          if (entry?.status === 'uncertain' || entry?.executionStatus === 'confirming') {
+            holdLater = true;
+          }
+        }
         const hasUncertain = depositResults.some((entry) => entry?.status === 'uncertain');
         const allFulfilled = depositResults.length === children.length
           && depositResults.every((entry) => entry?.status === 'fulfilled');
         if (allFulfilled) {
           farmIntents.advanceProjection({
-            identity: projectionIdentity, from: record.state, to: 'done', now: Date.now(),
+            identity: projectionIdentity, from: projectionState, to: 'done', now: Date.now(),
           });
           result.resumed.push(record.jobId);
         } else if (hasUncertain) {
           farmIntents.advanceProjection({
-            identity: projectionIdentity, from: record.state, to: 'uncertain',
+            identity: projectionIdentity, from: projectionState, to: 'uncertain',
             reasonCode: 'base_recovery_uncertain', now: Date.now(),
           });
           result.uncertain.push(record.jobId);
@@ -1956,6 +1363,10 @@ export function createRelayerRouter({
       }
     });
     await Promise.all(workers);
+    const originalIndex = new Map(work.map(({ jobId }, index) => [jobId, index]));
+    for (const values of Object.values(result)) {
+      values.sort((left, right) => originalIndex.get(left) - originalIndex.get(right));
+    }
     return result;
   }
 
@@ -1963,124 +1374,10 @@ export function createRelayerRouter({
     res.setHeader('Cache-Control', 'no-store');
     const authenticated = await authenticateBodyMandate(req, res, { activeOnly: true });
     if (!authenticated) return;
-    if (farmIntents) return handleFarmV2(req, res, authenticated);
-    try {
-      requireExactFields(req.body || {}, FARM_FIELDS, 'farm');
-    } catch (err) {
-      return sendJson(res, 400, { error: errorMessage(err) });
+    if (!farmIntents) {
+      return sendJson(res, 503, { error: 'forward farm intent store is unavailable' });
     }
-    const {
-      sourceDomain, mandateId, allocations, stellarOwner, kernelAddress,
-      bridgeAgent = null, runId = null, grantTxHash = null,
-    } = req.body || {};
-    if (sourceDomain !== 27) {
-      return sendJson(res, 400, { error: 'sourceDomain must be the Stellar domain 27' });
-    }
-    if (!mandateId || !stellarOwner || !kernelAddress
-      || !Array.isArray(allocations) || allocations.length === 0) {
-      return sendJson(res, 400, {
-        error: 'mandateId, stellarOwner, kernelAddress and allocations are all required',
-      });
-    }
-    if (!bridgeAgent || !runId || !grantTxHash) {
-      return sendJson(res, 400, {
-        error: 'bridgeAgent, runId and grantTxHash are required for exact farm association',
-      });
-    }
-
-    let parsedAllocations;
-    try {
-      parsedAllocations = parseWireAllocations(allocations, runId);
-    } catch (err) {
-      return sendJson(res, 400, { error: errorMessage(err) });
-    }
-    const overCap = parsedAllocations.find((a) => a.amount > MAX_CALL_CAP_UNITS);
-    if (overCap) return sendJson(res, 400, { error: 'allocation exceeds the 10,000 USDC per-call cap' });
-
-    // Amounts are intentionally absent from the permission read. The disclosed per-call cap is
-    // enforced above; authority freshness is one mandate-level read regardless of allocation
-    // count, followed by durable child-intent acknowledgements.
-    const gate = await freshActiveMandateGate(authenticated);
-    if (gate.error) return sendJson(res, 409, { error: 'Base mandate evidence is not active' });
-    const { record } = gate;
-
-    const jobId = genId();
-    if (!JOB_ID_PATTERN.test(jobId)) return sendJson(res, 503, { error: 'Base child intent is unavailable' });
-    if (!agentIndexReporter?.commitIntentBatch || !associationOutbox?.enqueue
-        || !baseEvidenceOutbox?.seed) {
-      return sendJson(res, 503, { error: 'Base child intent is unavailable' });
-    }
-    const intents = parsedAllocations.map((allocation) => childIntent({
-      jobId, record, stellarOwner, bridgeAgent, runId, grantTxHash, kernelAddress, allocation,
-    }));
-    let acknowledgement;
-    let startingRecoveryVersions;
-    try {
-      const burnUnits7 = (parsedAllocations.reduce((sum, allocation) => (
-        sum + allocation.amount
-      ), 0n) * 10n).toString(10);
-      const idempotencyKey = createHash('sha256').update(JSON.stringify([
-        'vf-base-child-intent-batch-v1', networkId, record.bindingId, runId, jobId,
-        parsedAllocations.map(({ allocationId }) => allocationId), burnUnits7,
-      ])).digest('hex');
-      acknowledgement = await agentIndexReporter.commitIntentBatch({
-        idempotencyKey, burnUnits7, children: intents,
-      });
-      startingRecoveryVersions = acknowledgedRecoveryVersions(acknowledgement, intents);
-    } catch {
-      return sendJson(res, 503, { error: 'Base child intent is unavailable' });
-    }
-    const job = {
-      status: 'queued',
-      steps: [],
-      runId,
-      bridgeAgent,
-      grantTxHash,
-      _attach: {
-        mandateId,
-        stellarOwner,
-        kernelAddress,
-        bindingId: record.bindingId,
-        bindingHash: record.bindingHash,
-        networkId,
-        runId,
-        jobId,
-        allocations: storedWireAllocations(parsedAllocations),
-        associations: parsedAllocations.map(({ allocationId }, ordinal) => ({
-          allocationId,
-          identity: childIdentity({
-            networkId, stellarOwner, bindingId: record.bindingId, runId, jobId,
-          }, allocationId),
-          recoveryIdentity: recoveryIdentity({
-            networkId, stellarOwner, bindingId: record.bindingId, runId, jobId,
-          }, allocationId),
-          startingRecoveryVersion: startingRecoveryVersions[ordinal],
-          terminalSequence: null,
-        })),
-        attachedBurnTxHash: null,
-      },
-    };
-    const evidenceHeads = job._attach.associations.map((association) => ({
-      identity: association.recoveryIdentity,
-      recoveryVersion: association.startingRecoveryVersion,
-    }));
-    try {
-      if (farmExecutions?.prepare) {
-        farmExecutions.prepare({ jobId, job, evidenceHeads });
-      } else {
-        for (const head of evidenceHeads) {
-          baseEvidenceOutbox.seed(head.identity, head.recoveryVersion, { jobId });
-        }
-        jobs.set(jobId, job);
-      }
-    } catch {
-      return sendJson(res, 503, { error: 'Base child intent is unavailable' });
-    }
-    return sendJson(res, 201, {
-      jobId,
-      acknowledged: true,
-      schemaVersion: acknowledgement?.schemaVersion,
-    });
+    return handleFarmV2(req, res, authenticated);
   }
 
   async function handleFarmV2(req, res, authenticated) {
@@ -2104,6 +1401,10 @@ export function createRelayerRouter({
         mandate: gate.record,
         deployment: forwardFarmDeployment,
       });
+    } catch {
+      return sendJson(res, 400, { error: 'invalid forward farm intent' });
+    }
+    try {
       const created = farmIntents.createOrGetIntent({ normalizedIntent, now: Date.now() });
       normalizedIntent = {
         intent: created.record.intent,
@@ -2115,10 +1416,10 @@ export function createRelayerRouter({
         batchDigest: created.record.batchDigest,
       };
     } catch (error) {
-      return sendJson(res, error?.code === 'FARM_INTENT_CONFLICT' ? 409 : 400, {
+      return sendJson(res, error?.code === 'FARM_INTENT_CONFLICT' ? 409 : 503, {
         error: error?.code === 'FARM_INTENT_CONFLICT'
           ? 'immutable forward farm intent conflict'
-          : 'invalid forward farm intent',
+          : 'forward farm intent store is unavailable',
       });
     }
     const jobId = normalizedIntent.intent.jobId;
@@ -2142,14 +1443,12 @@ export function createRelayerRouter({
         });
         if (!claimed) return null;
         try {
-          const acknowledgement = await agentIndexReporter.commitIntentBatch(claimed.batch);
-          return farmIntents.finishAwaitingBurn({
-            jobId,
-            leaseToken: claimed.leaseToken,
-            acknowledgement,
-            now: Date.now(),
-          });
+          return await deliverClaimedIntent(claimed);
         } catch (error) {
+          if (error instanceof AgentIndexBatchConflictError
+              || error instanceof AgentIndexBatchPermanentError) {
+            return terminalizeIntentDelivery(claimed, error);
+          }
           try {
             farmIntents.releaseIntentDelivery({
               jobId, leaseToken: claimed.leaseToken, now: Date.now(),
@@ -2168,6 +1467,9 @@ export function createRelayerRouter({
       return sendJson(res, 503, { error: 'Base child intent is unavailable' });
     }
     if (!record) return sendJson(res, 202, { jobId, acknowledged: false, status: 'intent_pending' });
+    if (record.state === 'blocked') {
+      return sendJson(res, 409, { error: 'forward farm intent is not burn-ready' });
+    }
     return sendJson(res, 201, {
       jobId,
       acknowledged: true,
@@ -2181,83 +1483,7 @@ export function createRelayerRouter({
     if (farmIntents) return handleFarmAttachV2(req, res);
     const authenticated = await authenticateBodyMandate(req, res, { activeOnly: true });
     if (!authenticated) return;
-    try {
-      requireExactFields(req.body || {}, FARM_ATTACH_FIELDS, 'farm attach');
-    } catch (err) {
-      return sendJson(res, 400, { error: errorMessage(err) });
-    }
-    const {
-      jobId, burnTxHash, mandateId, stellarOwner, kernelAddress,
-    } = req.body || {};
-    if (!JOB_ID_PATTERN.test(jobId || '') || !isValidBurnTxHash(burnTxHash)
-      || !mandateId || !stellarOwner || !kernelAddress) {
-      return sendJson(res, 400, {
-        error: 'jobId, burnTxHash, mandateId, stellarOwner and kernelAddress are required',
-      });
-    }
-    const job = jobs.get(jobId);
-    if (!job) return sendJson(res, 404, { error: 'unknown jobId' });
-    const context = job._attach;
-    if (!context) return sendJson(res, 409, { error: 'job does not accept a burn attachment' });
-    const gate = await freshActiveMandateGate(authenticated);
-    if (gate.error) return sendJson(res, 409, { error: 'Base mandate evidence is not active' });
-    const { record } = gate;
-    if (context.mandateId !== mandateId
-      || context.stellarOwner !== stellarOwner
-      || String(context.kernelAddress).toLowerCase() !== String(kernelAddress).toLowerCase()
-      || context.bindingId !== record.bindingId
-      || context.bindingHash !== record.bindingHash) {
-      return sendJson(res, 409, { error: 'farm attach mandate binding mismatch' });
-    }
-    if (context.attachedBurnTxHash) {
-      if (context.attachedBurnTxHash !== burnTxHash) {
-        return sendJson(res, 409, { error: 'farm job already has a different burn hash' });
-      }
-      const work = farmExecutions?.get?.(jobId);
-      if (!work || work.status === 'pending') dispatchFarmWork(jobId);
-      else if (
-        work.status === 'running'
-        && !activeFarmJobs.has(jobId)
-        && work.leaseExpiresAt <= Date.now()
-      ) {
-        try {
-          reconcileExpiredWork(work);
-        } catch {
-          // The durable running row remains observable and will be retried at startup.
-        }
-      }
-      return sendJson(res, 200, { jobId, attached: true, status: job.status });
-    }
-    if (job.status !== 'queued') {
-      return sendJson(res, 409, { error: 'farm job is not waiting for a burn hash' });
-    }
-    let parsedAllocations;
-    try {
-      parsedAllocations = parseWireAllocations(context.allocations, job.runId);
-    } catch (err) {
-      return sendJson(res, 400, { error: errorMessage(err) });
-    }
-    try {
-      const attachContext = { ...job._attach, attachedBurnTxHash: burnTxHash };
-      const attachedJob = {
-        ...job,
-        status: 'pending',
-        steps: [],
-        _attach: attachContext,
-      };
-      attachWork({
-        jobId,
-        burnTxHash,
-        job: attachedJob,
-        reports: lifecycleReports(
-          attachContext, parsedAllocations, 1, 'accepted', 'in-transit', burnTxHash,
-        ),
-      });
-      dispatchFarmWork(jobId);
-    } catch {
-      return sendJson(res, 503, { error: 'Base child lifecycle outbox is unavailable' });
-    }
-    return sendJson(res, 200, { jobId, attached: true, status: 'pending' });
+    return sendJson(res, 503, { error: 'forward farm intent store is unavailable' });
   }
 
   async function handleFarmAttachV2(req, res) {
@@ -2349,19 +1575,28 @@ export function createRelayerRouter({
       return sendJson(res, 400, { error: 'invalid jobId' });
     }
 
-    const job = jobs.get(body.jobId);
-    if (!job) return sendJson(res, 404, { error: 'unknown jobId' });
-    const authority = job._attach;
-    const mandate = authenticated.authority;
-    if (!authority
-      || authority.mandateId !== mandateId
-      || authority.stellarOwner !== mandate.stellarOwner
-      || String(authority.kernelAddress).toLowerCase() !== String(mandate.kernelAddress).toLowerCase()
-      || authority.bindingId !== mandate.bindingId
-      || authority.bindingHash !== mandate.bindingHash) {
-      return unauthorized(res);
+    if (farmIntents) {
+      let intent;
+      try {
+        intent = farmIntents.getByJob({ mandateId, jobId: body.jobId });
+      } catch {
+        return sendJson(res, 503, { error: 'forward farm intent store is unavailable' });
+      }
+      if (!intent) return sendJson(res, 404, { error: 'unknown jobId' });
+      const mandate = authenticated.authority;
+      if (intent.mandateId !== mandateId
+          || intent.stellarOwner !== mandate.stellarOwner
+          || String(intent.kernelAddress).toLowerCase() !== String(mandate.kernelAddress).toLowerCase()
+          || intent.bindingId !== mandate.bindingId
+          || intent.bindingHash !== mandate.bindingHash) {
+        return unauthorized(res);
+      }
+      const projection = jobs.get(body.jobId);
+      if (!projection) return sendJson(res, 503, { error: 'forward farm projection is unavailable' });
+      return sendJson(res, 200, publicJob(projection, body.jobId));
     }
-    return sendJson(res, 200, publicJob(job, body.jobId));
+    return sendJson(res, 503, { error: 'forward farm intent store is unavailable' });
+
   }
 
   async function runUnwindJob(jobId, unwindTxHash, stellarRecipient) {

@@ -656,6 +656,7 @@ export function createSqliteStores(path, {
       next_recovery_version INTEGER NOT NULL CHECK (next_recovery_version >= 0),
       latest_phase TEXT,
       latest_state TEXT,
+      submission_owner_token TEXT,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (network_id,binding_id,execution_id,allocation_id,child_id)
     );
@@ -720,6 +721,11 @@ export function createSqliteStores(path, {
       END;
     ${MANDATE_V3_SCHEMA}
     `);
+    const baseHeadColumns = new Set(db.prepare('PRAGMA table_info(base_evidence_heads)')
+      .all().map(({ name }) => name));
+    if (!baseHeadColumns.has('submission_owner_token')) {
+      db.exec('ALTER TABLE base_evidence_heads ADD COLUMN submission_owner_token TEXT');
+    }
   } catch (error) {
     db.close();
     throw error;
@@ -735,6 +741,7 @@ export function createSqliteStores(path, {
   const baseEvidenceOutbox = createBaseEvidenceOutbox(db, {
     maxAttempts: outboxMaxAttempts,
     now,
+    leaseToken,
     registerTransactionEnqueue: (enqueue) => { enqueueBaseEvidenceInTransaction = enqueue; },
   });
 
@@ -995,6 +1002,9 @@ export function createSqliteStores(path, {
           && acknowledgement.requestDigest === row.agent_index_batch_digest
           && Number.isSafeInteger(acknowledgement.written)
           && Number.isSafeInteger(acknowledgement.duplicates)
+          && acknowledgement.written >= 0
+          && acknowledgement.duplicates >= 0
+          && acknowledgement.written + acknowledgement.duplicates === expectedIdentities.length
           && Array.isArray(acknowledgement.children)
           && acknowledgement.children.length === expectedIdentities.length
           && acknowledgement.children.every((child, index) => exactKeys(child, childKeys)
@@ -1189,8 +1199,11 @@ export function createSqliteStores(path, {
         throw new Error('legacy farm quarantine limit is invalid');
       }
       return transaction(() => {
-        const rows = db.prepare(`SELECT job_id,status FROM farm_execution_work
-          WHERE status IN ('pending','running','done') ORDER BY created_at,job_id LIMIT ?`).all(limit);
+        const activeRows = db.prepare(`SELECT job_id,status FROM farm_execution_work
+          WHERE status IN ('pending','running') ORDER BY created_at,job_id LIMIT ?`).all(limit);
+        const doneRows = db.prepare(`SELECT job_id,status FROM farm_execution_work
+          WHERE status='done' ORDER BY created_at,job_id LIMIT ?`).all(limit);
+        const rows = [...activeRows, ...doneRows];
         const quarantined = [];
         for (const row of rows) {
           if (row.status === 'done') {
@@ -1241,6 +1254,22 @@ export function createSqliteStores(path, {
         return { jobId: row.job_id, status: 'blocked' };
       };
       return ownTransaction ? transaction(apply) : apply();
+    },
+    evidenceConflictAuthority({ identity }) {
+      const head = db.prepare(`SELECT job_id FROM base_evidence_heads
+        WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?`)
+        .get(
+          identity?.networkId, identity?.bindingId, identity?.executionId,
+          identity?.allocationId, identity?.childId,
+        );
+      if (!head?.job_id) return null;
+      if (db.prepare('SELECT 1 FROM farm_intent_work_v2 WHERE job_id=?').get(head.job_id)) {
+        return 'v2';
+      }
+      if (db.prepare('SELECT 1 FROM farm_execution_work WHERE job_id=?').get(head.job_id)) {
+        return 'legacy';
+      }
+      return null;
     },
     reconcileExpired({ now: atValue = now(), limit = 100 } = {}) {
       if (!Number.isSafeInteger(atValue) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
