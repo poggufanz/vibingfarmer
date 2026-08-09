@@ -881,9 +881,24 @@ const executionIdentity = {
   networkId: 'stellar-testnet',
   owner: `G${'A'.repeat(55)}`,
   bindingId: 'binding-1',
+  executionId: 'run-1:exec:run-1:bridge:aave-v3',
   allocationId: 'run-1:bridge:aave-v3',
   childId: 'job-1',
 };
+const recoveryIdentity = {
+  networkId: executionIdentity.networkId,
+  bindingId: executionIdentity.bindingId,
+  executionId: executionIdentity.executionId,
+  allocationId: executionIdentity.allocationId,
+  childId: executionIdentity.childId,
+};
+const depositCheckpoint = (status, evidence, observedAt = 2_000_000_000_100) => ({
+  identity: recoveryIdentity,
+  phase: 'base_deposit',
+  status,
+  evidence,
+  observedAt,
+});
 
 function executionReport(sequence, executionStatus = 'accepted') {
   return {
@@ -944,6 +959,82 @@ describe('sqliteStores', () => {
       },
     };
 
+    it('atomically commits a farm job checkpoint with its Base evidence head and outbox row', () => {
+      const stores = createSqliteStores(freshPath(), { now: () => 1000 });
+      stores.jobs.set('job-1', queuedJob);
+      stores.farmExecutions.attach({
+        jobId: 'job-1', burnTxHash: 'burn-1', job: attachedJob, reports: [executionReport(1)],
+        evidenceHeads: [{ identity: recoveryIdentity, recoveryVersion: 0 }],
+      });
+      const claimed = stores.farmExecutions.claim({ jobId: 'job-1', now: 1000, leaseMs: 100 });
+      const depositing = { ...attachedJob, status: 'depositing' };
+      stores.farmExecutions.checkpoint({
+        jobId: 'job-1', leaseToken: claimed.leaseToken, job: depositing,
+        baseEvidenceReports: [depositCheckpoint('submitting', {
+          chainId: '84532', yieldRouterAddress: `0x${'11'.repeat(20)}`,
+          caller: `0x${'22'.repeat(20)}`, poolAddress: `0x${'33'.repeat(20)}`,
+          assets: '1000000', minShares: '900000',
+        })],
+      });
+      expect(stores.jobs.get('job-1')).toEqual(depositing);
+      expect(stores.baseEvidenceOutbox.status(recoveryIdentity)).toMatchObject({
+        recoveryVersion: 1,
+        events: [{ state: 'submitting', expectedRecoveryVersion: 0 }],
+      });
+    });
+
+    it('rolls back job and evidence together when a stale lease or evidence conflict wins', () => {
+      const stores = createSqliteStores(freshPath(), { now: () => 1000 });
+      stores.jobs.set('job-1', queuedJob);
+      stores.farmExecutions.attach({
+        jobId: 'job-1', burnTxHash: 'burn-1', job: attachedJob, reports: [executionReport(1)],
+        evidenceHeads: [{ identity: recoveryIdentity, recoveryVersion: 0 }],
+      });
+      const claimed = stores.farmExecutions.claim({ jobId: 'job-1', now: 1000, leaseMs: 100 });
+      const report = depositCheckpoint('submitting', {
+        chainId: '84532', yieldRouterAddress: `0x${'11'.repeat(20)}`,
+        caller: `0x${'22'.repeat(20)}`, poolAddress: `0x${'33'.repeat(20)}`,
+        assets: '1000000', minShares: '900000',
+      });
+      expect(() => stores.farmExecutions.checkpoint({
+        jobId: 'job-1', leaseToken: 'stale', job: { ...attachedJob, status: 'bad' },
+        baseEvidenceReports: [report],
+      })).toThrow(/lease/i);
+      expect(stores.jobs.get('job-1')).toEqual(attachedJob);
+      expect(stores.baseEvidenceOutbox.status(recoveryIdentity).events).toEqual([]);
+
+      stores.farmExecutions.checkpoint({
+        jobId: 'job-1', leaseToken: claimed.leaseToken,
+        job: { ...attachedJob, status: 'depositing' }, baseEvidenceReports: [report],
+      });
+      expect(() => stores.farmExecutions.checkpoint({
+        jobId: 'job-1', leaseToken: claimed.leaseToken,
+        job: { ...attachedJob, status: 'corrupt' },
+        baseEvidenceReports: [{ ...report, evidence: { ...report.evidence, assets: '1000001' } }],
+      })).toThrow(/conflict|immutable/i);
+      expect(stores.jobs.get('job-1').status).toBe('depositing');
+    });
+
+    it('rejects direct SQL mutation or deletion of immutable Base evidence', () => {
+      const stores = createSqliteStores(freshPath(), { now: () => 1000 });
+      stores.baseEvidenceOutbox.seed(recoveryIdentity, 0, { jobId: 'job-1' });
+      stores.baseEvidenceOutbox.enqueue(depositCheckpoint('submitting', {
+        chainId: '84532', yieldRouterAddress: `0x${'11'.repeat(20)}`,
+        caller: `0x${'22'.repeat(20)}`, poolAddress: `0x${'33'.repeat(20)}`,
+        assets: '1000000', minShares: '900000',
+      }));
+
+      for (const statement of [
+        "UPDATE base_evidence_outbox SET report_json='{}'",
+        "UPDATE base_evidence_outbox SET execution_id='other'",
+        'UPDATE base_evidence_outbox SET expected_recovery_version=9',
+        'DELETE FROM base_evidence_outbox',
+      ]) {
+        expect(() => stores.db.exec(statement)).toThrow(/immutable|evidence/i);
+      }
+      expect(stores.baseEvidenceOutbox.status(recoveryIdentity).events).toHaveLength(1);
+    });
+
     // Defect caught: accepted lifecycle insertion, burn attachment, and executable work were
     // three crash-separated writes instead of one SQLite transaction.
     it('atomically persists burn attachment, accepted reports, and pending work', () => {
@@ -960,8 +1051,9 @@ describe('sqliteStores', () => {
       expect(second.farmExecutions.get('job-1')).toMatchObject({
         jobId: 'job-1', burnTxHash: 'burn-1', status: 'pending', attempts: 0,
       });
-      expect(second.associationOutbox.status('job-1')).toEqual([{
+      expect(second.associationOutbox.status(executionIdentity)).toEqual([{
         allocationId: executionIdentity.allocationId,
+        executionId: executionIdentity.executionId,
         sequence: 1,
         status: 'pending',
         attempts: 0,
@@ -980,7 +1072,7 @@ describe('sqliteStores', () => {
       })).toThrow(/sequence|order/i);
       expect(stores.jobs.get('job-1')).toEqual(queuedJob);
       expect(stores.farmExecutions.get('job-1')).toBeNull();
-      expect(stores.associationOutbox.status('job-1')).toEqual([]);
+      expect(stores.associationOutbox.status(executionIdentity)).toEqual([]);
     });
 
     // Defect caught: restart had no durable dispatcher-owned claim, while same-hash retries either
@@ -1011,7 +1103,7 @@ describe('sqliteStores', () => {
       expect(third.farmExecutions.attach({
         jobId: 'job-1', burnTxHash: 'burn-1', job: attachedJob, reports: [executionReport(1)],
       })).toMatchObject({ duplicate: true, work: { status: 'running', attempts: 1 } });
-      expect(third.associationOutbox.status('job-1')).toHaveLength(1);
+      expect(third.associationOutbox.status(executionIdentity)).toHaveLength(1);
     });
   });
 

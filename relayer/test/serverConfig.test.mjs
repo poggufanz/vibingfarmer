@@ -65,13 +65,14 @@ describe('runtimeServerConfig', () => {
   it('gates startup on local writable-store and authenticated reporter probes', async () => {
     const localProbe = { probe: async () => ({
       writable: true,
+      baseEvidenceDurable: true,
       legacyMandateTables: [],
       mandateMigrationCleanupPending: false,
     }) };
     const reporter = { probe: async () => ({
       ready: true,
       schemaVersion: 1,
-      stores: { executionReceipts: true, baseChildIntents: true },
+      stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
     }) };
     expect(typeof serverModule.verifyRelayerReadiness).toBe('function');
     await expect(serverModule.verifyRelayerReadiness({ sqlite: localProbe, reporter }))
@@ -83,13 +84,18 @@ describe('runtimeServerConfig', () => {
   });
 
   it.each([
-    ['wrong schema acknowledgement', { ready: true, schemaVersion: 2, stores: { executionReceipts: true, baseChildIntents: true } }],
-    ['missing receipt store', { ready: true, schemaVersion: 1, stores: { baseChildIntents: true } }],
-    ['missing Base-child store', { ready: true, schemaVersion: 1, stores: { executionReceipts: true } }],
+    ['wrong schema acknowledgement', { ready: true, schemaVersion: 2, stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true } }],
+    ['missing receipt store', { ready: true, schemaVersion: 1, stores: { baseChildIntents: true, baseRecoveryEvidence: true } }],
+    ['missing Base-child store', { ready: true, schemaVersion: 1, stores: { executionReceipts: true, baseRecoveryEvidence: true } }],
+    ['missing Base-recovery store', {
+      ready: true, schemaVersion: 1,
+      stores: { executionReceipts: true, baseChildIntents: true },
+    }],
   ])('keeps startup closed for %s', async (_label, remote) => {
     await expect(serverModule.verifyRelayerReadiness({
       sqlite: { probe: async () => ({
         writable: true,
+        baseEvidenceDurable: true,
         legacyMandateTables: [],
         mandateMigrationCleanupPending: false,
       }) },
@@ -98,6 +104,9 @@ describe('runtimeServerConfig', () => {
   });
 
   it.each([
+    ['missing Base evidence durability flag', {
+      writable: true, legacyMandateTables: [], mandateMigrationCleanupPending: false,
+    }],
     ['missing writable flag', { legacyMandateTables: [], mandateMigrationCleanupPending: false }],
     ['false writable flag', {
       writable: false, legacyMandateTables: [], mandateMigrationCleanupPending: false,
@@ -105,19 +114,19 @@ describe('runtimeServerConfig', () => {
     ['non-boolean writable flag', {
       writable: 1, legacyMandateTables: [], mandateMigrationCleanupPending: false,
     }],
-    ['missing legacy-table list', { writable: true, mandateMigrationCleanupPending: false }],
+    ['missing legacy-table list', { writable: true, baseEvidenceDurable: true, mandateMigrationCleanupPending: false }],
     ['null legacy-table list', {
-      writable: true, legacyMandateTables: null, mandateMigrationCleanupPending: false,
+      writable: true, baseEvidenceDurable: true, legacyMandateTables: null, mandateMigrationCleanupPending: false,
     }],
     ['non-array legacy-table list', {
-      writable: true, legacyMandateTables: 'none', mandateMigrationCleanupPending: false,
+      writable: true, baseEvidenceDurable: true, legacyMandateTables: 'none', mandateMigrationCleanupPending: false,
     }],
-    ['missing cleanup flag', { writable: true, legacyMandateTables: [] }],
+    ['missing cleanup flag', { writable: true, baseEvidenceDurable: true, legacyMandateTables: [] }],
     ['null cleanup flag', {
-      writable: true, legacyMandateTables: [], mandateMigrationCleanupPending: null,
+      writable: true, baseEvidenceDurable: true, legacyMandateTables: [], mandateMigrationCleanupPending: null,
     }],
     ['non-boolean cleanup flag', {
-      writable: true, legacyMandateTables: [], mandateMigrationCleanupPending: 'false',
+      writable: true, baseEvidenceDurable: true, legacyMandateTables: [], mandateMigrationCleanupPending: 'false',
     }],
   ])('rejects malformed local readiness: %s before probing the reporter', async (_label, local) => {
     let reporterCalls = 0;
@@ -130,7 +139,7 @@ describe('runtimeServerConfig', () => {
           return {
             ready: true,
             schemaVersion: 1,
-            stores: { executionReceipts: true, baseChildIntents: true },
+            stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
           };
         } },
       });
@@ -139,7 +148,7 @@ describe('runtimeServerConfig', () => {
     }
 
     expect(reporterCalls).toBe(0);
-    expect(rejection?.message).toMatch(/writable|legacy|migration|cleanup|readiness|probe/i);
+    expect(rejection?.message).toMatch(/writable|durable|evidence|legacy|migration|cleanup|readiness|probe/i);
   });
 
   it('keeps readiness closed while either plaintext legacy mandate table exists', async () => {
@@ -147,13 +156,14 @@ describe('runtimeServerConfig', () => {
       await expect(serverModule.verifyRelayerReadiness({
         sqlite: { probe: async () => ({
           writable: true,
+          baseEvidenceDurable: true,
           legacyMandateTables,
           mandateMigrationCleanupPending: false,
         }) },
         reporter: { probe: async () => ({
           ready: true,
           schemaVersion: 1,
-          stores: { executionReceipts: true, baseChildIntents: true },
+          stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
         }) },
       })).rejects.toThrow(/legacy|plaintext|mandate/i);
     }
@@ -210,7 +220,7 @@ describe('runtimeServerConfig', () => {
       return {
         ready: true,
         schemaVersion: 1,
-        stores: { executionReceipts: true, baseChildIntents: true },
+        stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
       };
     } };
     try {
@@ -313,7 +323,7 @@ describe('runtimeServerConfig', () => {
     const reporter = { probe: async () => ({
       ready: true,
       schemaVersion: 1,
-      stores: { executionReceipts: true, baseChildIntents: true },
+      stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
     }) };
     let listenerOpened = false;
     try {

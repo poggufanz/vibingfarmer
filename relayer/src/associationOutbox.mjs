@@ -3,7 +3,9 @@ import { createHash, randomUUID } from 'node:crypto';
 const OUTBOX_STATUSES = new Set(['pending', 'leased', 'delivered', 'dead']);
 const LIFECYCLE_STATUSES = new Set(['planned', 'submitted', 'confirmed', 'failed', 'unknown']);
 const REQUEST_FIELDS = new Set(['identity', 'expectedSequence', 'lifecycle']);
-const IDENTITY_FIELDS = new Set(['networkId', 'owner', 'bindingId', 'allocationId', 'childId']);
+const IDENTITY_FIELDS = new Set([
+  'networkId', 'owner', 'bindingId', 'executionId', 'allocationId', 'childId',
+]);
 const LIFECYCLE_FIELDS = new Set(['sequence', 'status', 'evidence', 'observedAt']);
 
 function exactObject(value, fields, label) {
@@ -105,6 +107,7 @@ export function createAssociationOutbox(db, {
       const idempotencyKey = canonicalJson([
         report.identity.networkId,
         report.identity.bindingId,
+        report.identity.executionId,
         report.identity.allocationId,
         report.identity.childId,
         report.lifecycle.sequence,
@@ -245,12 +248,15 @@ export function createAssociationOutbox(db, {
     });
   }
 
-  function status(childId) {
-    requireText(childId, 'childId');
+  function status(identity) {
+    exactObject(identity, IDENTITY_FIELDS, 'lifecycle identity');
+    for (const field of IDENTITY_FIELDS) requireText(identity[field], `identity.${field}`);
+    const identityKey = canonicalJson(identity);
     return db.prepare(
-      'SELECT sequence, status, attempts, report_json FROM association_outbox WHERE child_id = ? ORDER BY sequence ASC, id ASC'
-    ).all(childId).map((row) => ({
+      'SELECT sequence, status, attempts, report_json FROM association_outbox WHERE identity_key = ? ORDER BY sequence ASC, id ASC'
+    ).all(identityKey).map((row) => ({
       allocationId: JSON.parse(row.report_json).identity.allocationId,
+      executionId: JSON.parse(row.report_json).identity.executionId,
       sequence: row.sequence,
       status: row.status,
       attempts: row.attempts,

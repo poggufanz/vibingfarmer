@@ -34,9 +34,14 @@ const FORWARD_EXPECTATION = {
 
 const BURN_FORWARD = 'aa'.repeat(32);
 
-function buildFlow({ mintResult = { status: 'minted', mintTxHash: '0xmint' }, callOrder = [] } = {}) {
+function buildFlow({
+  mintResult = { status: 'minted', mintTxHash: '0xmint' }, callOrder = [], recoveryEvidence = null,
+} = {}) {
   const watcher = {
     relayMint: vi.fn(async () => { callOrder.push('relayMint'); return mintResult; }),
+    getRecoveryEvidence: recoveryEvidence
+      ? vi.fn(() => recoveryEvidence)
+      : undefined,
   };
   const orchestrator = {
     dispatchDeposits: vi.fn(async () => {
@@ -58,6 +63,48 @@ const farmArgs = (overrides = {}) => ({
 });
 
 describe('farm', () => {
+  it('adds the watcher safe recovery summary only to the awaited mint checkpoint', async () => {
+    const recoveryEvidence = {
+      burnTxHash: BURN_FORWARD, expectationDigest: 'expectation', messageDigest: 'message',
+      attestationDigest: 'attestation', evidenceVersion: '1', mintTxHash: '0xmint',
+    };
+    const { flow, watcher } = buildFlow({ recoveryEvidence });
+    const onMintConfirmed = vi.fn();
+
+    const result = await flow.farm(farmArgs({ onMintConfirmed }));
+
+    expect(watcher.getRecoveryEvidence).toHaveBeenCalledWith('exec-1');
+    expect(onMintConfirmed).toHaveBeenCalledWith({
+      status: 'minted', mintTxHash: '0xmint', evidence: recoveryEvidence,
+    });
+    expect(result.mintResult).toEqual({ status: 'minted', mintTxHash: '0xmint' });
+  });
+
+  it('forwards the exact deposit checkpoint callback and allocation identity after mint persistence', async () => {
+    const callOrder = [];
+    const { flow, orchestrator } = buildFlow({ callOrder });
+    const identity = {
+      networkId: 'stellar-testnet', bindingId: 'binding-42',
+      executionId: 'run-42:exec:run-42:bridge:aave-v3',
+      allocationId: 'run-42:bridge:aave-v3', childId: 'child-42',
+    };
+    const allocations = [{
+      identity, caller: '0x00000000000000000000000000000000000000aa',
+      pool: '0x00000000000000000000000000000000000000b2', amount: 100n, minShares: 90n,
+    }];
+    const onDepositCheckpoint = vi.fn(async () => {});
+
+    await flow.farm(farmArgs({
+      allocations,
+      onMintConfirmed: async () => callOrder.push('mint-persisted'),
+      onDepositCheckpoint,
+    }));
+
+    expect(callOrder).toEqual(['relayMint', 'mint-persisted', 'dispatchDeposits']);
+    expect(orchestrator.dispatchDeposits).toHaveBeenCalledWith(
+      'approval-blob', allocations, { onCheckpoint: onDepositCheckpoint },
+    );
+  });
   it('publishes watcher-confirmed mint progress before dispatching deposits', async () => {
     const callOrder = [];
     const { flow, watcher } = buildFlow({ callOrder });

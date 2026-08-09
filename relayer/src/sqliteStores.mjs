@@ -8,6 +8,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createAssociationOutbox } from './associationOutbox.mjs';
+import { createBaseEvidenceOutbox } from './baseEvidenceOutbox.mjs';
 import {
   RELAY_CLAIMABLE_STATES,
   relayEnqueueDecision,
@@ -610,11 +611,67 @@ export function createSqliteStores(path, {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS base_evidence_heads (
+      network_id TEXT NOT NULL,
+      binding_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      allocation_id TEXT NOT NULL,
+      child_id TEXT NOT NULL,
+      job_id TEXT,
+      next_recovery_version INTEGER NOT NULL CHECK (next_recovery_version >= 0),
+      latest_phase TEXT,
+      latest_state TEXT,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (network_id,binding_id,execution_id,allocation_id,child_id)
+    );
+    CREATE TABLE IF NOT EXISTS base_evidence_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT NOT NULL UNIQUE,
+      network_id TEXT NOT NULL,
+      binding_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      allocation_id TEXT NOT NULL,
+      child_id TEXT NOT NULL,
+      expected_recovery_version INTEGER NOT NULL CHECK (expected_recovery_version >= 0),
+      resulting_recovery_version INTEGER NOT NULL CHECK (resulting_recovery_version = expected_recovery_version + 1),
+      phase TEXT NOT NULL,
+      state TEXT NOT NULL,
+      evidence_digest TEXT NOT NULL,
+      report_json TEXT NOT NULL,
+      delivery_status TEXT NOT NULL CHECK (delivery_status IN ('pending','leased','delivered','dead','conflict')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      available_at INTEGER NOT NULL,
+      lease_token TEXT,
+      lease_expires_at INTEGER,
+      last_error_code TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      delivered_at INTEGER,
+      UNIQUE(network_id,binding_id,execution_id,allocation_id,child_id,expected_recovery_version),
+      FOREIGN KEY (network_id,binding_id,execution_id,allocation_id,child_id)
+        REFERENCES base_evidence_heads(network_id,binding_id,execution_id,allocation_id,child_id)
+    );
     ${CCTP_RELAY_WORK_SCHEMA}
     CREATE INDEX IF NOT EXISTS idx_association_outbox_delivery
       ON association_outbox (status, available_at, lease_expires_at, id);
     CREATE INDEX IF NOT EXISTS idx_association_outbox_child
       ON association_outbox (child_id, sequence);
+    CREATE INDEX IF NOT EXISTS idx_base_evidence_delivery
+      ON base_evidence_outbox (delivery_status,available_at,lease_expires_at,id);
+    CREATE TRIGGER IF NOT EXISTS base_evidence_outbox_immutable_update
+      BEFORE UPDATE OF
+        event_id,network_id,binding_id,execution_id,allocation_id,child_id,
+        expected_recovery_version,resulting_recovery_version,phase,state,
+        evidence_digest,report_json,created_at
+      ON base_evidence_outbox
+      BEGIN
+        SELECT RAISE(ABORT, 'immutable Base evidence');
+      END;
+    CREATE TRIGGER IF NOT EXISTS base_evidence_outbox_immutable_delete
+      BEFORE DELETE ON base_evidence_outbox
+      BEGIN
+        SELECT RAISE(ABORT, 'immutable Base evidence');
+      END;
     ${MANDATE_V3_SCHEMA}
     `);
   } catch (error) {
@@ -623,6 +680,10 @@ export function createSqliteStores(path, {
   }
 
   const associationOutbox = createAssociationOutbox(db, {
+    maxAttempts: outboxMaxAttempts,
+    now,
+  });
+  const baseEvidenceOutbox = createBaseEvidenceOutbox(db, {
     maxAttempts: outboxMaxAttempts,
     now,
   });
@@ -714,10 +775,49 @@ export function createSqliteStores(path, {
   }
 
   const farmExecutions = {
+    prepare({ jobId, job, evidenceHeads }) {
+      return transaction(() => {
+        if (db.prepare('SELECT 1 FROM jobs WHERE job_id=?').get(jobId)) {
+          throw new Error('farm intent job already exists');
+        }
+        for (const head of evidenceHeads) {
+          baseEvidenceOutbox.seed(head.identity, head.recoveryVersion, { jobId });
+        }
+        writeJob(jobId, job);
+        return { jobId, evidenceHeads: evidenceHeads.length };
+      });
+    },
+    blockEvidenceConflict({ identity, now: blockedAt = now() }, { transaction: ownTransaction = true } = {}) {
+      const apply = () => {
+        const row = db.prepare(`
+          SELECT job_id FROM base_evidence_heads
+          WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?
+        `).get(
+          identity.networkId, identity.bindingId, identity.executionId,
+          identity.allocationId, identity.childId,
+        );
+        if (!row?.job_id) throw new Error('Base evidence conflict has no owning farm job');
+        const jobRow = db.prepare('SELECT job FROM jobs WHERE job_id=?').get(row.job_id);
+        if (!jobRow) throw new Error('Base evidence conflict owning job is missing');
+        const job = JSON.parse(jobRow.job);
+        writeJob(row.job_id, {
+          ...job,
+          status: 'blocked',
+          evidenceConflict: true,
+        });
+        db.prepare(`
+          UPDATE farm_execution_work
+          SET status='uncertain',lease_token=NULL,lease_expires_at=NULL,updated_at=?
+          WHERE job_id=? AND status<>'uncertain'
+        `).run(blockedAt, row.job_id);
+        return { jobId: row.job_id, status: 'uncertain' };
+      };
+      return ownTransaction ? transaction(apply) : apply();
+    },
     get(jobId) {
       return workRecord(db.prepare('SELECT * FROM farm_execution_work WHERE job_id = ?').get(jobId));
     },
-    attach({ jobId, burnTxHash, job, reports }) {
+    attach({ jobId, burnTxHash, job, reports, evidenceHeads = [] }) {
       return transaction(() => {
         const existing = db.prepare('SELECT * FROM farm_execution_work WHERE job_id = ?').get(jobId);
         if (existing) {
@@ -734,6 +834,9 @@ export function createSqliteStores(path, {
           throw new Error('farm execution job is missing');
         }
         associationOutbox.enqueue(reports, { transaction: false });
+        for (const head of evidenceHeads) {
+          baseEvidenceOutbox.seed(head.identity, head.recoveryVersion, { jobId });
+        }
         writeJob(jobId, job);
         const timestamp = now();
         db.prepare(`
@@ -785,21 +888,36 @@ export function createSqliteStores(path, {
         ORDER BY created_at ASC, job_id ASC
       `).all(recoveryNow).map(workRecord);
     },
-    checkpoint({ jobId, leaseToken, job, reports = [], now: checkpointNow = now() }) {
+    checkpoint({
+      jobId, leaseToken, job, reports = [], baseEvidenceReports = [],
+      now: checkpointNow = now(),
+    }) {
       return transaction(() => {
         checkedWork(jobId, 'running', leaseToken);
         if (reports.length > 0) associationOutbox.enqueue(reports, { transaction: false });
+        if (baseEvidenceReports.length > 0) {
+          baseEvidenceOutbox.enqueue(baseEvidenceReports[0], { transaction: false });
+          for (const report of baseEvidenceReports.slice(1)) {
+            baseEvidenceOutbox.enqueue(report, { transaction: false });
+          }
+        }
         writeJob(jobId, job);
         db.prepare('UPDATE farm_execution_work SET updated_at = ? WHERE job_id = ?')
           .run(checkpointNow, jobId);
         return this.get(jobId);
       });
     },
-    finish({ jobId, leaseToken, job, reports = [], status = 'done', now: finishNow = now() }) {
+    finish({
+      jobId, leaseToken, job, reports = [], baseEvidenceReports = [],
+      status = 'done', now: finishNow = now(),
+    }) {
       if (!['done', 'uncertain'].includes(status)) throw new Error('invalid farm execution terminal status');
       return transaction(() => {
         checkedWork(jobId, 'running', leaseToken);
         if (reports.length > 0) associationOutbox.enqueue(reports, { transaction: false });
+        for (const report of baseEvidenceReports) {
+          baseEvidenceOutbox.enqueue(report, { transaction: false });
+        }
         writeJob(jobId, job);
         db.prepare(`
           UPDATE farm_execution_work
@@ -1741,11 +1859,14 @@ export function createSqliteStores(path, {
       db.prepare('UPDATE jobs SET job = job WHERE 0').run();
       db.prepare('SELECT id FROM association_outbox WHERE 0').all();
       db.prepare('SELECT job_id FROM farm_execution_work WHERE 0').all();
+      db.prepare('SELECT network_id FROM base_evidence_heads WHERE 0').all();
+      db.prepare('SELECT event_id FROM base_evidence_outbox WHERE 0').all();
       db.prepare('SELECT mandate_id FROM mandates_v3 WHERE 0').all();
       db.prepare('SELECT mandate_id FROM mandate_activation_work WHERE 0').all();
       db.prepare('SELECT exec_id FROM cctp_relay_work WHERE 0').all();
       return {
         writable: true,
+        baseEvidenceDurable: true,
         legacyMandateTables: legacyMandateTables(),
         mandateMigrationCleanupPending: ensemble.cleanupPending,
       };
@@ -1770,6 +1891,7 @@ export function createSqliteStores(path, {
     mandatesV3,
     mandateActivations,
     associationOutbox,
+    baseEvidenceOutbox,
     farmExecutions,
     cctpRelays,
     probe,

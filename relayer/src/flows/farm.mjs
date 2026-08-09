@@ -41,6 +41,7 @@ export function createFarmFlow({ watcher, orchestrator, domains }) {
     bridgeAgent = null,
     grantTxHash = null,
     onMintConfirmed = null,
+    onDepositCheckpoint = null,
   }) {
     if (expectation === undefined || expectation === null) {
       throw farmError('RELAY_VALIDATION', 'farm requires the immutable canonical CCTP burn expectation');
@@ -54,10 +55,16 @@ export function createFarmFlow({ watcher, orchestrator, domains }) {
         `destination mint is not confirmed (watcher status: ${mintResult?.status ?? 'unknown'})`,
       );
     }
-    if (onMintConfirmed) await onMintConfirmed(mintResult);
+    if (onMintConfirmed) {
+      const evidence = typeof watcher.getRecoveryEvidence === 'function'
+        ? watcher.getRecoveryEvidence(execId) : null;
+      await onMintConfirmed(evidence ? { ...mintResult, evidence } : mintResult);
+    }
     // dispatchDeposits preserves allocationId and emits custody separately from executionStatus;
     // the reporter consumes that explicit evidence and never infers custody from fulfilled/rejected.
-    const depositResults = await orchestrator.dispatchDeposits(approval, allocations);
+    const depositResults = await orchestrator.dispatchDeposits(approval, allocations, {
+      onCheckpoint: onDepositCheckpoint,
+    });
     return { mintResult, depositResults, runId, bridgeAgent, grantTxHash };
   }
 

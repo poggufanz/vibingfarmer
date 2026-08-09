@@ -34,6 +34,9 @@ export async function verifyRelayerReadiness({ sqlite, reporter }) {
   if (!sqlite?.probe || !reporter?.probe) throw new Error('relayer durable readiness is not configured');
   const local = await sqlite.probe();
   if (local?.writable !== true) throw new Error('relayer SQLite store is not writable');
+  if (local?.baseEvidenceDurable !== true) {
+    throw new Error('relayer SQLite Base evidence store is not durable');
+  }
   if (!Array.isArray(local.legacyMandateTables)) {
     throw new Error('relayer SQLite legacy mandate metadata is invalid');
   }
@@ -49,6 +52,7 @@ export async function verifyRelayerReadiness({ sqlite, reporter }) {
     || remote?.schemaVersion !== 1
     || remote?.stores?.executionReceipts !== true
     || remote?.stores?.baseChildIntents !== true
+    || remote?.stores?.baseRecoveryEvidence !== true
   ) {
     throw new Error('agent index reporter schema/store is not ready');
   }
@@ -193,6 +197,7 @@ export function createRelayerServer(config, {
       poolTargets: BASE_SEPOLIA_POOL_TARGETS,
       agentIndexReporter,
       associationOutbox,
+      baseEvidenceOutbox: sqlite?.baseEvidenceOutbox ?? null,
       farmExecutions: sqlite?.farmExecutions ?? null,
       publicRuntime: runtimeConfig.publicRuntime,
     });

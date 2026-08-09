@@ -10,6 +10,7 @@ const identity = {
   networkId: 'stellar-testnet',
   owner: `G${'A'.repeat(55)}`,
   bindingId: 'binding-42',
+  executionId: 'run-42:exec:run-42:bridge:aave-v3',
   allocationId: 'run-42:bridge:aave-v3',
   childId: 'job-42',
 };
@@ -90,8 +91,8 @@ describe('SQLite association lifecycle outbox', () => {
       id: second.id, leaseToken: second.leaseToken, error: 'HTTP 503', now: 1003, retryAt: 1004,
     })).toMatchObject({ status: 'dead', attempts: 2 });
     expect(associationOutbox.leaseNext({ now: 9999, leaseMs: 100 })).toBeNull();
-    expect(associationOutbox.status('job-42')).toEqual([
-      { allocationId: identity.allocationId, sequence: 1, status: 'dead', attempts: 2 },
+    expect(associationOutbox.status(identity)).toEqual([
+      { allocationId: identity.allocationId, executionId: identity.executionId, sequence: 1, status: 'dead', attempts: 2 },
     ]);
   });
 
@@ -110,8 +111,9 @@ describe('SQLite association lifecycle outbox', () => {
     expect(associationOutbox.leaseNext({ now: 1002, leaseMs: 10 })).toMatchObject({ attempts: 2 });
 
     expect(associationOutbox.leaseNext({ now: 1012, leaseMs: 10 })).toBeNull();
-    expect(associationOutbox.status('job-42')).toEqual([{
+    expect(associationOutbox.status(identity)).toEqual([{
       allocationId: identity.allocationId,
+      executionId: identity.executionId,
       sequence: 1,
       status: 'dead',
       attempts: 2,
@@ -128,8 +130,8 @@ describe('SQLite association lifecycle outbox', () => {
       intervalMs: 60_000,
       now: () => 1000,
     });
-    await vi.waitFor(() => expect(associationOutbox.status('job-42')).toEqual([
-      { allocationId: identity.allocationId, sequence: 1, status: 'pending', attempts: 1 },
+    await vi.waitFor(() => expect(associationOutbox.status(identity)).toEqual([
+      { allocationId: identity.allocationId, executionId: identity.executionId, sequence: 1, status: 'pending', attempts: 1 },
     ]));
     worker.stop();
   });

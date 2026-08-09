@@ -91,6 +91,17 @@ export function createWatcher(config) {
 
   const isForward = (record) => record.sourceDomain === domains.stellar;
 
+  function recoveryEvidence(record) {
+    return {
+      burnTxHash: record.burnTxHash,
+      expectationDigest: record.expectationDigest,
+      messageDigest: record.messageDigest,
+      attestationDigest: record.attestationDigest,
+      evidenceVersion: String(record.evidenceVersion),
+      mintTxHash: record.mintTxHash,
+    };
+  }
+
   // Terminal records answer from durable truth alone — no poll, no submit, no confirm, and no
   // store write (a terminal record is byte-for-byte stable across duplicate calls and reopen).
   function terminalResult(record) {
@@ -327,5 +338,13 @@ export function createWatcher(config) {
     return sweep;
   }
 
-  return { relayMint, sweepStuck };
+  function getRecoveryEvidence(execId) {
+    const record = store.get(execId);
+    if (!record || record.state !== 'minted') {
+      throw new Error('confirmed CCTP recovery evidence is unavailable');
+    }
+    return recoveryEvidence(record);
+  }
+
+  return { relayMint, sweepStuck, getRecoveryEvidence };
 }

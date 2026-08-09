@@ -163,7 +163,7 @@ export function createRelayerRouter({
   mandateStatusConfig = publicRuntime?.mandateStatusConfig ?? null,
   nowSeconds = () => Math.floor(Date.now() / 1000),
   poolTargets = new Map(), agentIndexReporter = null, associationOutbox = null,
-  farmExecutions = null,
+  baseEvidenceOutbox = null, farmExecutions = null,
 }) {
   const activeFarmJobs = new Set();
   const activeMandateActivations = new Map();
@@ -941,9 +941,15 @@ export function createRelayerRouter({
       networkId: context.networkId,
       owner: context.stellarOwner,
       bindingId: context.bindingId,
+      executionId: `${context.runId}:exec:${allocationId}`,
       allocationId,
       childId: context.jobId,
     };
+  }
+
+  function recoveryIdentity(context, allocationId) {
+    const { owner: _owner, ...identity } = childIdentity(context, allocationId);
+    return identity;
   }
 
   function childIntent({ jobId, record, stellarOwner, bridgeAgent, runId, grantTxHash, kernelAddress, allocation }) {
@@ -953,6 +959,7 @@ export function createRelayerRouter({
       owner: stellarOwner,
       agent: bridgeAgent,
       bindingId: record.bindingId,
+      executionId: `${runId}:exec:${allocation.allocationId}`,
       allocationId: allocation.allocationId,
       childId: jobId,
       intent: {
@@ -961,6 +968,7 @@ export function createRelayerRouter({
         decimals: allocation.reportAmount.decimals,
         poolAddress: allocation.pool,
         proxyTarget: allocation.proxyTarget,
+        minShares: allocation.minShares.toString(),
         runId,
         grantTxHash,
         kernelAddress,
@@ -1002,9 +1010,15 @@ export function createRelayerRouter({
 
   function publicJob(job, jobId) {
     if (!job) return job;
-    const { _attach, associationUncertain = false, ...safe } = job;
-    const delivery = associationOutbox?.status ? associationOutbox.status(jobId) : [];
+    const {
+      _attach, associationUncertain = false, evidenceConflict: _evidenceConflict = false, ...safe
+    } = job;
     const expected = Array.isArray(_attach?.associations) ? _attach.associations : [];
+    const delivery = associationOutbox?.status
+      ? expected.flatMap((association) => {
+          try { return associationOutbox.status(association.identity); } catch { return []; }
+        })
+      : [];
     const contiguous = [];
     let coverageComplete = expected.length > 0;
     coverage: for (const { allocationId, terminalSequence } of expected) {
@@ -1040,12 +1054,28 @@ export function createRelayerRouter({
           ? contiguous
           : [...contiguous, ...delivery.filter((row) => row.status === 'dead' && !contiguous.includes(row))],
       },
+      evidenceDelivery: (() => {
+        const statuses = expected.map((association) => {
+          try { return baseEvidenceOutbox?.status?.(association.recoveryIdentity) ?? null; }
+          catch { return null; }
+        }).filter(Boolean);
+        const blocked = statuses.some((entry) => entry.blocked === true);
+        const evidenceComplete = statuses.length === expected.length && statuses.length > 0
+          && statuses.every((entry) => entry.complete === true);
+        return {
+          complete: evidenceComplete,
+          blocked,
+          uncertain: !evidenceComplete && !blocked
+            && ['done', 'error', 'uncertain'].includes(job.status),
+          children: statuses,
+        };
+      })(),
     };
   }
 
   function associationsWithTerminal(context, terminalSequence) {
     return (context.associations || []).map((association) => ({
-      allocationId: association.allocationId,
+      ...association,
       terminalSequence,
     }));
   }
@@ -1119,19 +1149,25 @@ export function createRelayerRouter({
     return claimed;
   }
 
-  function checkpointWork({ jobId, leaseToken, job, reports }) {
+  function checkpointWork({ jobId, leaseToken, job, reports = [], baseEvidenceReports = [] }) {
     if (farmExecutions?.checkpoint) {
-      return farmExecutions.checkpoint({ jobId, leaseToken, job, reports });
+      return farmExecutions.checkpoint({
+        jobId, leaseToken, job, reports, baseEvidenceReports,
+      });
     }
     associationOutbox.enqueue(reports);
+    for (const report of baseEvidenceReports) baseEvidenceOutbox.enqueue(report);
     jobs.set(jobId, job);
   }
 
-  function finishWork({ jobId, leaseToken, job, reports }) {
+  function finishWork({ jobId, leaseToken, job, reports = [], baseEvidenceReports = [] }) {
     if (farmExecutions?.finish) {
-      return farmExecutions.finish({ jobId, leaseToken, job, reports, status: 'done' });
+      return farmExecutions.finish({
+        jobId, leaseToken, job, reports, baseEvidenceReports, status: 'done',
+      });
     }
     associationOutbox.enqueue(reports);
+    for (const report of baseEvidenceReports) baseEvidenceOutbox.enqueue(report);
     jobs.set(jobId, job);
     const work = memoryFarmWork.get(jobId);
     if (work) memoryFarmWork.set(jobId, { ...work, status: 'done', leaseToken: null });
@@ -1245,6 +1281,54 @@ export function createRelayerRouter({
     let mintCheckpointed = false;
     let observedMintResult = null;
     let observedMintReports = null;
+    const cctpEvidenceReports = (mintResult) => {
+      const evidence = mintResult?.evidence;
+      const required = [
+        'burnTxHash', 'expectationDigest', 'messageDigest',
+        'attestationDigest', 'evidenceVersion', 'mintTxHash',
+      ];
+      if (!evidence || required.some((field) => typeof evidence[field] !== 'string' || !evidence[field])) {
+        throw missingMintEvidenceError();
+      }
+      const burnUnits7 = (farmParams.allocations.reduce((sum, allocation) => (
+        sum + allocation.amount
+      ), 0n) * 10n).toString(10);
+      const observedAt = Date.now();
+      return attachContext.associations.flatMap((association) => {
+        const identity = association.recoveryIdentity;
+        return [
+          {
+            identity, phase: 'cctp_burn', status: 'confirmed', observedAt,
+            evidence: {
+              burnTxHash: evidence.burnTxHash,
+              expectationDigest: evidence.expectationDigest,
+              burnUnits7,
+            },
+          },
+          {
+            identity, phase: 'cctp_attestation', status: 'confirmed', observedAt,
+            evidence: {
+              burnTxHash: evidence.burnTxHash,
+              expectationDigest: evidence.expectationDigest,
+              messageDigest: evidence.messageDigest,
+              attestationDigest: evidence.attestationDigest,
+              evidenceVersion: evidence.evidenceVersion,
+            },
+          },
+          {
+            identity, phase: 'cctp_mint', status: 'confirmed', observedAt,
+            evidence: {
+              burnTxHash: evidence.burnTxHash,
+              expectationDigest: evidence.expectationDigest,
+              messageDigest: evidence.messageDigest,
+              attestationDigest: evidence.attestationDigest,
+              evidenceVersion: evidence.evidenceVersion,
+              mintTxHash: evidence.mintTxHash,
+            },
+          },
+        ];
+      });
+    };
     const onMintConfirmed = async (mintResult) => {
       if (mintCheckpointed) return;
       if (typeof mintResult?.mintTxHash !== 'string' || !mintResult.mintTxHash) {
@@ -1258,6 +1342,7 @@ export function createRelayerRouter({
         attachContext, farmParams.allocations, 2, 'minted', 'agent', mintResult.mintTxHash,
       );
       const current = jobs.get(jobId) || { status: 'pending', steps: [] };
+      const baseEvidenceReports = cctpEvidenceReports(mintResult);
       try {
         checkpointWork({
           jobId,
@@ -1269,6 +1354,7 @@ export function createRelayerRouter({
             steps: [{ step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash }],
             _attach: attachContext,
           },
+          baseEvidenceReports,
         });
       } catch {
         throw heldAfterMintError('mint checkpoint persistence is uncertain');
@@ -1279,9 +1365,36 @@ export function createRelayerRouter({
     };
 
     let result;
+    const onDepositCheckpoint = async (checkpoint) => {
+      const current = jobs.get(jobId) || { status: 'depositing', steps: [] };
+      const existing = current.depositProgress && typeof current.depositProgress === 'object'
+        ? current.depositProgress : {};
+      checkpointWork({
+        jobId,
+        leaseToken,
+        reports: [],
+        baseEvidenceReports: [checkpoint],
+        job: {
+          ...current,
+          status: 'depositing',
+          depositProgress: {
+            ...existing,
+            [checkpoint.identity.allocationId]: {
+              identity: checkpoint.identity,
+              phase: checkpoint.phase,
+              state: checkpoint.status,
+              observedAt: checkpoint.observedAt,
+              userOpHash: checkpoint.evidence.userOpHash ?? null,
+              transactionHash: checkpoint.evidence.transactionHash ?? null,
+              reasonCode: checkpoint.evidence.reasonCode ?? null,
+            },
+          },
+        },
+      });
+    };
     try {
       const { farm } = buildFarm(mandateRecord.sessionPrivateKey);
-      result = await farm({ ...farmParams, onMintConfirmed });
+      result = await farm({ ...farmParams, onMintConfirmed, onDepositCheckpoint });
       await onMintConfirmed(result.mintResult);
     } catch (err) {
       const current = jobs.get(jobId) || { status: 'pending', steps: [] };
@@ -1415,7 +1528,9 @@ export function createRelayerRouter({
       ...attachContext,
       associations: associationsWithTerminal(attachContext, 3),
     };
+    const durableProgress = jobs.get(jobId) || {};
     const doneJob = {
+        ...durableProgress,
         status: 'done',
         runId, bridgeAgent, grantTxHash,
         _attach: terminalContext,
@@ -1579,16 +1694,25 @@ export function createRelayerRouter({
 
     const jobId = genId();
     if (!JOB_ID_PATTERN.test(jobId)) return sendJson(res, 503, { error: 'Base child intent is unavailable' });
-    if (!agentIndexReporter?.commitIntent || !associationOutbox?.enqueue) {
+    if (!agentIndexReporter?.commitIntentBatch || !associationOutbox?.enqueue
+        || !baseEvidenceOutbox?.seed) {
       return sendJson(res, 503, { error: 'Base child intent is unavailable' });
     }
     const intents = parsedAllocations.map((allocation) => childIntent({
       jobId, record, stellarOwner, bridgeAgent, runId, grantTxHash, kernelAddress, allocation,
     }));
-    let acknowledgements;
+    let acknowledgement;
     try {
-      acknowledgements = [];
-      for (const intent of intents) acknowledgements.push(await agentIndexReporter.commitIntent(intent));
+      const burnUnits7 = (parsedAllocations.reduce((sum, allocation) => (
+        sum + allocation.amount
+      ), 0n) * 10n).toString(10);
+      const idempotencyKey = createHash('sha256').update(JSON.stringify([
+        'vf-base-child-intent-batch-v1', networkId, record.bindingId, runId, jobId,
+        parsedAllocations.map(({ allocationId }) => allocationId), burnUnits7,
+      ])).digest('hex');
+      acknowledgement = await agentIndexReporter.commitIntentBatch({
+        idempotencyKey, burnUnits7, children: intents,
+      });
     } catch {
       return sendJson(res, 503, { error: 'Base child intent is unavailable' });
     }
@@ -1605,20 +1729,43 @@ export function createRelayerRouter({
         bindingId: record.bindingId,
         bindingHash: record.bindingHash,
         networkId,
+        runId,
         jobId,
         allocations: storedWireAllocations(parsedAllocations),
         associations: parsedAllocations.map(({ allocationId }) => ({
           allocationId,
+          identity: childIdentity({
+            networkId, stellarOwner, bindingId: record.bindingId, runId, jobId,
+          }, allocationId),
+          recoveryIdentity: recoveryIdentity({
+            networkId, stellarOwner, bindingId: record.bindingId, runId, jobId,
+          }, allocationId),
+          startingRecoveryVersion: 0,
           terminalSequence: null,
         })),
         attachedBurnTxHash: null,
       },
     };
-    jobs.set(jobId, job);
+    const evidenceHeads = job._attach.associations.map((association) => ({
+      identity: association.recoveryIdentity,
+      recoveryVersion: association.startingRecoveryVersion,
+    }));
+    try {
+      if (farmExecutions?.prepare) {
+        farmExecutions.prepare({ jobId, job, evidenceHeads });
+      } else {
+        for (const head of evidenceHeads) {
+          baseEvidenceOutbox.seed(head.identity, head.recoveryVersion, { jobId });
+        }
+        jobs.set(jobId, job);
+      }
+    } catch {
+      return sendJson(res, 503, { error: 'Base child intent is unavailable' });
+    }
     return sendJson(res, 201, {
       jobId,
       acknowledged: true,
-      schemaVersion: acknowledgements[0]?.schemaVersion,
+      schemaVersion: acknowledgement?.schemaVersion,
     });
   }
 

@@ -1,5 +1,10 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { createAgentIndexReporter } from '../src/agentIndexReporter.mjs';
+import {
+  AgentIndexEvidenceConflictError,
+  AgentIndexReporterRetryableError,
+  createAgentIndexReporter,
+} from '../src/agentIndexReporter.mjs';
 
 const SECRET = 'server-to-server-secret';
 
@@ -10,10 +15,11 @@ describe('durable Base child reporter protocol', () => {
     owner: `G${'A'.repeat(55)}`,
     agent: `C${'B'.repeat(55)}`,
     bindingId: 'binding-42',
+    executionId: 'run-42:exec:run-42:bridge:aave-v3',
     allocationId: 'run-42:bridge:aave-v3',
     childId: 'job-42',
     intent: {
-      token: 'USDC', units: '1000000', decimals: 6,
+      token: 'USDC', units: '1000000', decimals: 6, minShares: '900000',
       poolAddress: `0x${'11'.repeat(20)}`, proxyTarget: 'aave-v3',
       runId: 'run-42', grantTxHash: 'grant-hash', kernelAddress: `0x${'22'.repeat(20)}`,
       bindingHash: 'binding-hash-42', baseJobId: 'job-42',
@@ -24,9 +30,91 @@ describe('durable Base child reporter protocol', () => {
     networkId: child.networkId,
     owner: child.owner,
     bindingId: child.bindingId,
+    executionId: child.executionId,
     allocationId: child.allocationId,
     childId: child.childId,
   };
+  const recoveryIdentity = {
+    networkId: child.networkId,
+    bindingId: child.bindingId,
+    executionId: child.executionId,
+    allocationId: child.allocationId,
+    childId: child.childId,
+  };
+
+  const canonicalJson = (value) => {
+    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+    if (value && typeof value === 'object') {
+      return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
+  };
+
+  it('commits one exact ordered Task 9 intent batch and binds the 201 request digest and identities', async () => {
+    const batch = { idempotencyKey: 'burn-intent-42', burnUnits7: '10000000', children: [child] };
+    const requestDigest = createHash('sha256').update(canonicalJson(batch)).digest('hex');
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        acknowledged: true, schemaVersion: 1, idempotencyKey: batch.idempotencyKey,
+        requestDigest, identities: [recoveryIdentity], written: 1, duplicates: 0,
+      }),
+    }));
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET, fetchImpl,
+    });
+
+    await expect(reporter.commitIntentBatch(batch)).resolves.toMatchObject({ requestDigest });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'https://index.example/api/agent-index?action=base-child-intent-batch'
+    );
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual(batch);
+  });
+
+  it('posts allowlisted Base evidence and classifies 409 separately from retryable delivery', async () => {
+    const evidence = {
+      schemaVersion: 1,
+      identity: recoveryIdentity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'a'.repeat(64), phase: 'base_deposit', state: 'submitting',
+        evidence: {
+          chainId: '84532', yieldRouterAddress: `0x${'11'.repeat(20)}`,
+          caller: `0x${'22'.repeat(20)}`, poolAddress: `0x${'33'.repeat(20)}`,
+          assets: '1000000', minShares: '900000',
+        },
+        observedAt: 2_000_000_000_000,
+      },
+    };
+    const success = vi.fn(async () => ({
+      ok: true, status: 201,
+      json: async () => ({
+        acknowledged: true, schemaVersion: 1, identity: recoveryIdentity, eventId: evidence.event.eventId,
+        phase: 'base_deposit', state: 'submitting', recoveryVersion: 1,
+        written: 1, duplicates: 0,
+      }),
+    }));
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET, fetchImpl: success,
+    });
+    await expect(reporter.reportBaseEvidence(evidence)).resolves.toMatchObject({ recoveryVersion: 1 });
+    expect(success.mock.calls[0][0]).toBe(
+      'https://index.example/api/agent-index?action=base-child-evidence'
+    );
+
+    const conflict = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET,
+      fetchImpl: vi.fn(async () => ({ ok: false, status: 409 })),
+    });
+    await expect(conflict.reportBaseEvidence(evidence)).rejects.toBeInstanceOf(AgentIndexEvidenceConflictError);
+    const unavailable = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET,
+      fetchImpl: vi.fn(async () => ({ ok: false, status: 503 })),
+    });
+    await expect(unavailable.reportBaseEvidence(evidence)).rejects.toBeInstanceOf(AgentIndexReporterRetryableError);
+  });
 
   // Defect caught: the old reporter treated every response as optional analytics instead of a custody gate.
   it('accepts only a 201 acknowledgement matching schema and immutable child identity', async () => {
@@ -120,7 +208,7 @@ describe('durable Base child reporter protocol', () => {
       json: async () => ({
         ready: true,
         schemaVersion: 1,
-        stores: { executionReceipts: true, baseChildIntents: true },
+        stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
       }),
     }));
     const reporter = createAgentIndexReporter({
@@ -130,7 +218,7 @@ describe('durable Base child reporter protocol', () => {
     await expect(reporter.probe()).resolves.toEqual({
       ready: true,
       schemaVersion: 1,
-      stores: { executionReceipts: true, baseChildIntents: true },
+      stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
     });
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://index.example/api/agent-index?action=base-child-ready',
@@ -143,10 +231,11 @@ describe('durable Base child reporter protocol', () => {
 
   it.each([
     ['unauthorized', { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) }],
-    ['schema mismatch', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 2, stores: { executionReceipts: true, baseChildIntents: true } }) }],
-    ['store unavailable', { ok: true, status: 200, json: async () => ({ ready: false, schemaVersion: 1, stores: { executionReceipts: true, baseChildIntents: true } }) }],
-    ['receipt store missing', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 1, stores: { baseChildIntents: true } }) }],
-    ['Base-child store missing', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 1, stores: { executionReceipts: true } }) }],
+    ['schema mismatch', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 2, stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true } }) }],
+    ['store unavailable', { ok: true, status: 200, json: async () => ({ ready: false, schemaVersion: 1, stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true } }) }],
+    ['receipt store missing', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 1, stores: { baseChildIntents: true, baseRecoveryEvidence: true } }) }],
+    ['Base-child store missing', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 1, stores: { executionReceipts: true, baseRecoveryEvidence: true } }) }],
+    ['recovery evidence store missing', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 1, stores: { executionReceipts: true, baseChildIntents: true } }) }],
   ])('fails the readiness probe on %s', async (_label, response) => {
     const reporter = createAgentIndexReporter({
       endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1,

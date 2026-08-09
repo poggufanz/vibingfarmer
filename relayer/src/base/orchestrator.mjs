@@ -28,6 +28,194 @@ export const APPROVE_ABI = [{
 }];
 
 const USEROP_TIMEOUT_MS = 120_000;
+export const DEPOSITED_TOPIC0 = '0xf5681f9d0db1b911ac18ee83d515a1cf1051853a9eae418316a2fdf7dea427c5';
+const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
+const HASH_RE = /^0x[0-9a-f]{64}$/;
+const IDENTITY_FIELDS = new Set([
+  'networkId', 'bindingId', 'executionId', 'allocationId', 'childId',
+]);
+
+class DepositObservationError extends Error {
+  constructor(reasonCode, message, { transactionHash = null, definitive = false } = {}) {
+    super(message);
+    this.code = 'BASE_DEPOSIT_OBSERVATION';
+    this.reasonCode = reasonCode;
+    this.transactionHash = transactionHash;
+    this.definitive = definitive;
+  }
+}
+
+function exactObject(value, fields, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const keys = Object.keys(value);
+  const unexpected = keys.find((field) => !fields.has(field));
+  const missing = [...fields].find((field) => !Object.prototype.hasOwnProperty.call(value, field));
+  if (unexpected || missing) throw new Error(`${label} has invalid fields`);
+}
+
+function requireText(value, label) {
+  if (typeof value !== 'string' || !value) throw new Error(`${label} is required`);
+  return value;
+}
+
+function canonicalAddress(value, label) {
+  const normalized = typeof value === 'string' ? value.toLowerCase() : '';
+  if (!ADDRESS_RE.test(normalized)) throw new Error(`${label} must be a canonical EVM address`);
+  return normalized;
+}
+
+function normalizeAllocation(allocation) {
+  if (!allocation || typeof allocation !== 'object' || Array.isArray(allocation)) {
+    throw new Error('allocation must be an object');
+  }
+  exactObject(allocation.identity, IDENTITY_FIELDS, 'allocation identity');
+  const identity = Object.fromEntries([...IDENTITY_FIELDS].map((field) => [
+    field, requireText(allocation.identity[field], `identity.${field}`),
+  ]));
+  const marker = ':exec:';
+  const split = identity.executionId.indexOf(marker);
+  if (split <= 0 || identity.executionId.slice(split + marker.length) !== identity.allocationId) {
+    throw new Error('executionId must match runId and allocationId');
+  }
+  if (typeof allocation.amount !== 'bigint' || allocation.amount <= 0n) {
+    throw new Error('allocation amount must be a positive bigint');
+  }
+  if (typeof allocation.minShares !== 'bigint' || allocation.minShares < 0n) {
+    throw new Error('allocation minShares must be a non-negative bigint');
+  }
+  return {
+    ...allocation,
+    identity,
+    caller: canonicalAddress(allocation.caller, 'allocation caller'),
+    pool: canonicalAddress(allocation.pool, 'allocation pool'),
+  };
+}
+
+function decimalLogIndex(value) {
+  try {
+    const parsed = typeof value === 'bigint' ? value : BigInt(value);
+    if (parsed < 0n) throw new Error();
+    return parsed.toString(10);
+  } catch {
+    throw new DepositObservationError('deposit_event_malformed', 'deposit event log index is malformed');
+  }
+}
+
+function topicAddress(value) {
+  if (typeof value !== 'string' || !/^0x0{24}[0-9a-fA-F]{40}$/.test(value)) {
+    throw new DepositObservationError('deposit_event_malformed', 'deposit event indexed address is malformed');
+  }
+  return `0x${value.slice(-40).toLowerCase()}`;
+}
+
+function parseDepositEvent(log, allocation, routerAddress, receiptMetadata, userOpHash) {
+  const receiptTxHash = receiptMetadata.transactionHash;
+  if (!Array.isArray(log.topics) || log.topics.length !== 3
+      || String(log.topics[0]).toLowerCase() !== DEPOSITED_TOPIC0
+      || typeof log.data !== 'string' || !/^0x[0-9a-fA-F]{128}$/.test(log.data)) {
+    throw new DepositObservationError('deposit_event_malformed', 'deposit event encoding is malformed', {
+      transactionHash: receiptTxHash,
+    });
+  }
+  for (const [field, expected] of [
+    ['transactionHash', receiptTxHash], ['userOpHash', userOpHash],
+  ]) {
+    if (log[field] !== undefined && String(log[field]).toLowerCase() !== expected) {
+      throw new DepositObservationError('receipt_ambiguous', 'deposit event metadata disagrees with receipt', {
+        transactionHash: receiptTxHash,
+      });
+    }
+  }
+  if (log.blockHash !== undefined
+      && (typeof receiptMetadata.blockHash !== 'string'
+        || String(log.blockHash).toLowerCase() !== receiptMetadata.blockHash.toLowerCase())) {
+    throw new DepositObservationError('receipt_ambiguous', 'deposit event block hash disagrees with receipt', {
+      transactionHash: receiptTxHash,
+    });
+  }
+  if (log.blockNumber !== undefined) {
+    try {
+      if (receiptMetadata.blockNumber === undefined
+          || BigInt(log.blockNumber) !== BigInt(receiptMetadata.blockNumber)) throw new Error();
+    } catch {
+      throw new DepositObservationError('receipt_ambiguous', 'deposit event block number disagrees with receipt', {
+        transactionHash: receiptTxHash,
+      });
+    }
+  }
+  const caller = topicAddress(log.topics[1]);
+  const poolAddress = topicAddress(log.topics[2]);
+  const assets = BigInt(`0x${log.data.slice(2, 66)}`);
+  const shares = BigInt(`0x${log.data.slice(66, 130)}`);
+  if (caller !== allocation.caller || poolAddress !== allocation.pool
+      || assets !== allocation.amount || shares <= 0n || shares < allocation.minShares) {
+    throw new DepositObservationError('deposit_event_mismatch', 'deposit event disagrees with immutable intent', {
+      transactionHash: receiptTxHash,
+    });
+  }
+  return {
+    address: routerAddress,
+    topic0: DEPOSITED_TOPIC0,
+    logIndex: decimalLogIndex(log.logIndex),
+    caller,
+    poolAddress,
+    assets: assets.toString(10),
+    shares: shares.toString(10),
+  };
+}
+
+function proveDepositReceipt(receipt, allocation, routerAddress, userOpHash) {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || typeof receipt.userOpHash !== 'string' || !HASH_RE.test(receipt.userOpHash.toLowerCase())
+      || receipt.userOpHash.toLowerCase() !== userOpHash) {
+    throw new DepositObservationError('receipt_ambiguous', 'user operation receipt is ambiguous');
+  }
+    const sender = typeof receipt.sender === 'string' ? receipt.sender.toLowerCase() : '';
+  if (!ADDRESS_RE.test(sender) || sender !== allocation.caller) {
+    throw new DepositObservationError('deposit_event_mismatch', 'receipt sender disagrees with immutable caller');
+  }
+  const txCandidate = receipt.receipt?.transactionHash;
+  const transactionHash = typeof txCandidate === 'string' ? txCandidate.toLowerCase() : null;
+  if (receipt.success !== true || receipt.receipt?.status !== 'success') {
+    throw new DepositObservationError('userop_reverted', 'deposit user operation reverted', {
+      transactionHash: transactionHash && HASH_RE.test(transactionHash) ? transactionHash : null,
+      definitive: true,
+    });
+  }
+  if (!transactionHash || !HASH_RE.test(transactionHash)) {
+    throw new DepositObservationError('receipt_ambiguous', 'receipt transaction hash is ambiguous');
+  }
+  if (!Array.isArray(receipt.logs)) {
+    throw new DepositObservationError('deposit_event_missing', 'user-operation-scoped logs are missing', {
+      transactionHash,
+    });
+  }
+  const candidates = receipt.logs.filter((log) => (
+    typeof log?.address === 'string'
+      && log.address.toLowerCase() === routerAddress
+      && String(log?.topics?.[0] || '').toLowerCase() === DEPOSITED_TOPIC0
+  ));
+  if (candidates.length === 0) {
+    throw new DepositObservationError('deposit_event_missing', 'canonical deposit event is missing', {
+      transactionHash,
+    });
+  }
+  if (candidates.length !== 1) {
+    throw new DepositObservationError('deposit_event_ambiguous', 'canonical deposit event is ambiguous', {
+      transactionHash,
+    });
+  }
+  return {
+    transactionHash,
+    event: parseDepositEvent(candidates[0], allocation, routerAddress, {
+      transactionHash,
+      blockHash: receipt.receipt?.blockHash,
+      blockNumber: receipt.receipt?.blockNumber,
+    }, userOpHash),
+  };
+}
 
 /**
  * @param {Object} config
@@ -43,6 +231,7 @@ export function createOrchestrator(config) {
   const {
     chain, rpcUrl, bundlerRpcUrl, yieldRouterAddress, usdcAddress, sessionPrivateKey,
     reconstructSessionClientFn = reconstructSessionClient,
+    now = () => Date.now(),
   } = config;
 
   /**
@@ -80,14 +269,27 @@ export function createOrchestrator(config) {
    * @param {string} approval - serialized session approval from the SP3 mandate ceremony
    * @param {{pool:string, amount:bigint, minShares:bigint}[]} allocations
    */
-  async function dispatchDeposits(approval, allocations) {
+  async function dispatchDeposits(approval, allocations, { onCheckpoint } = {}) {
+    const durableMode = typeof onCheckpoint === 'function';
+    const normalizedAllocations = durableMode ? allocations.map(normalizeAllocation) : allocations;
+    if (durableMode && normalizedAllocations.length > 1) {
+      const first = normalizedAllocations[0];
+      for (const allocation of normalizedAllocations.slice(1)) {
+        if (allocation.identity.networkId !== first.identity.networkId
+          || allocation.identity.bindingId !== first.identity.bindingId
+          || allocation.identity.childId !== first.identity.childId
+          || allocation.caller !== first.caller) {
+          throw new Error('deposit batch has mixed immutable context');
+        }
+      }
+    }
     // VF Wallet Task 7 (defense in depth): this is the point where sessionPrivateKey actually
     // gets used — reject the whole call, before the session client is even reconstructed, if any
     // allocation is over the per-call cap. httpRouter.mjs's own pre-dispatch validateMandateBinding
     // check is the primary gate; this is the last line of defense should some other caller ever
     // reach this function directly. Per-call, not cumulative — checked against each allocation's
     // own amount, nothing is summed across allocations or across calls.
-    const overCap = allocations.find((a) => a.amount > MAX_CALL_CAP_UNITS);
+    const overCap = normalizedAllocations.find((a) => a.amount > MAX_CALL_CAP_UNITS);
     if (overCap) {
       throw new Error(`allocation for ${overCap.pool} exceeds the ${MAX_CALL_CAP_UNITS} per-call cap`);
     }
@@ -95,9 +297,31 @@ export function createOrchestrator(config) {
     const kernelClient = await reconstructSessionClientFn({
       chain, rpcUrl, bundlerRpcUrl, approval, sessionPrivateKey,
     });
+    if (durableMode && normalizedAllocations.length > 0
+        && canonicalAddress(kernelClient?.account?.address, 'reconstructed Kernel address')
+          !== normalizedAllocations[0].caller) {
+      throw new Error('reconstructed Kernel address disagrees with immutable caller');
+    }
 
     const results = [];
-    for (const allocation of allocations) {
+    let stopAfterUnknown = false;
+    for (const allocation of normalizedAllocations) {
+      if (stopAfterUnknown) {
+        results.push({
+          identity: allocation.identity,
+          allocationId: allocation.identity?.allocationId ?? allocation.allocationId,
+          pool: allocation.pool,
+          status: 'held',
+          reasonCode: 'not_dispatched_after_unknown',
+          executionStatus: 'held',
+          custody: { location: 'agent' },
+          userOpHash: null,
+          transactionHash: null,
+          txHash: null,
+        });
+        continue;
+      }
+      if (!durableMode) {
       try {
         const approveData = encodeFunctionData({
           abi: APPROVE_ABI, functionName: 'approve', args: [yieldRouterAddress, allocation.amount],
@@ -134,6 +358,165 @@ export function createOrchestrator(config) {
           executionStatus: 'held',
           custody: { location: 'agent' },
           txHash: null,
+        });
+      }
+        continue;
+      }
+
+      const commonEvidence = {
+        chainId: String(chain.id),
+        yieldRouterAddress: canonicalAddress(yieldRouterAddress, 'YieldRouter address'),
+        caller: allocation.caller,
+        poolAddress: allocation.pool,
+        assets: allocation.amount.toString(10),
+        minShares: allocation.minShares.toString(10),
+      };
+      const checkpoint = async (status, evidence) => onCheckpoint({
+        identity: allocation.identity,
+        phase: 'base_deposit',
+        status,
+        evidence,
+        observedAt: now(),
+      });
+      let userOpHash = null;
+      let transactionHash = null;
+      try {
+        try {
+          await checkpoint('submitting', commonEvidence);
+        } catch (reason) {
+          results.push({
+            identity: allocation.identity, allocationId: allocation.identity.allocationId,
+            pool: allocation.pool, status: 'rejected', reason,
+            reasonCode: 'pre_submit_validation', executionStatus: 'held',
+            custody: { location: 'agent' }, userOpHash: null, transactionHash: null, txHash: null,
+          });
+          continue;
+        }
+        const approveData = encodeFunctionData({
+          abi: APPROVE_ABI, functionName: 'approve', args: [yieldRouterAddress, allocation.amount],
+        });
+        const depositData = encodeFunctionData({
+          abi: YIELD_ROUTER_ABI, functionName: 'deposit',
+          args: [allocation.pool, allocation.amount, allocation.minShares],
+        });
+        const callData = await kernelClient.account.encodeCalls([
+          { to: usdcAddress, value: 0n, data: approveData },
+          { to: yieldRouterAddress, value: 0n, data: depositData },
+        ]);
+        try {
+          userOpHash = requireCanonicalUserOperationHash(
+            await kernelClient.sendUserOperation({ callData }),
+            { label: `deposit into ${allocation.pool}` },
+          ).toLowerCase();
+        } catch (reason) {
+          await checkpoint('unknown', {
+            ...commonEvidence, userOpHash: null, transactionHash: null,
+            reasonCode: 'send_result_unknown',
+          });
+          stopAfterUnknown = true;
+          results.push({
+            identity: allocation.identity, allocationId: allocation.identity.allocationId,
+            pool: allocation.pool, status: 'uncertain', reason,
+            reasonCode: 'send_result_unknown', executionStatus: 'unknown',
+            custody: { location: 'agent' }, userOpHash: null, transactionHash: null, txHash: null,
+          });
+          continue;
+        }
+        try {
+          await checkpoint('submitted', { ...commonEvidence, userOpHash });
+        } catch (reason) {
+          try {
+            await checkpoint('unknown', {
+              ...commonEvidence, userOpHash, transactionHash: null,
+              reasonCode: 'submitted_checkpoint_failed',
+            });
+          } catch (fallbackError) {
+            fallbackError.code = 'BASE_DEPOSIT_UNCERTAIN';
+            fallbackError.userOpHash = userOpHash;
+            throw fallbackError;
+          }
+          stopAfterUnknown = true;
+          results.push({
+            identity: allocation.identity, allocationId: allocation.identity.allocationId,
+            pool: allocation.pool, status: 'uncertain', reason,
+            reasonCode: 'submitted_checkpoint_failed', executionStatus: 'unknown',
+            custody: { location: 'agent' }, userOpHash, transactionHash: null, txHash: null,
+          });
+          continue;
+        }
+        let receipt;
+        try {
+          receipt = await kernelClient.waitForUserOperationReceipt({
+            hash: userOpHash, timeout: USEROP_TIMEOUT_MS,
+          });
+        } catch (reason) {
+          await checkpoint('unknown', {
+            ...commonEvidence, userOpHash, transactionHash: null,
+            reasonCode: 'receipt_ambiguous',
+          });
+          stopAfterUnknown = true;
+          results.push({
+            identity: allocation.identity, allocationId: allocation.identity.allocationId,
+            pool: allocation.pool, status: 'uncertain', reason,
+            reasonCode: 'receipt_ambiguous', executionStatus: 'unknown',
+            custody: { location: 'agent' }, userOpHash, transactionHash: null, txHash: null,
+          });
+          continue;
+        }
+        const proof = proveDepositReceipt(
+          receipt, allocation, commonEvidence.yieldRouterAddress, userOpHash,
+        );
+        transactionHash = proof.transactionHash;
+        const confirmedEvidence = {
+          ...commonEvidence, userOpHash, transactionHash, event: proof.event,
+        };
+        try {
+          await checkpoint('confirmed', confirmedEvidence);
+        } catch (reason) {
+          await checkpoint('unknown', {
+            ...confirmedEvidence, reasonCode: 'confirmed_checkpoint_failed',
+          });
+          stopAfterUnknown = true;
+          results.push({
+            identity: allocation.identity, allocationId: allocation.identity.allocationId,
+            pool: allocation.pool, status: 'uncertain', reason,
+            reasonCode: 'confirmed_checkpoint_failed', executionStatus: 'unknown',
+            custody: { location: 'agent' }, userOpHash, transactionHash, txHash: transactionHash,
+            event: proof.event,
+          });
+          continue;
+        }
+        results.push({
+          identity: allocation.identity,
+          allocationId: allocation.identity.allocationId,
+          pool: allocation.pool,
+          status: 'fulfilled',
+          value: { pool: allocation.pool, userOpHash, txHash: transactionHash, event: proof.event },
+          userOpHash,
+          transactionHash,
+          event: proof.event,
+          executionStatus: 'deposited',
+          custody: { location: 'base-proxy' },
+          txHash: transactionHash,
+        });
+      } catch (reason) {
+        if (reason?.code === 'BASE_DEPOSIT_UNCERTAIN') throw reason;
+        const reasonCode = reason instanceof DepositObservationError
+          ? reason.reasonCode : 'receipt_ambiguous';
+        transactionHash = reason instanceof DepositObservationError
+          ? reason.transactionHash : transactionHash;
+        const state = reason instanceof DepositObservationError && reason.definitive
+          ? 'failed' : 'unknown';
+        await checkpoint(state, {
+          ...commonEvidence, userOpHash, transactionHash,
+          reasonCode,
+        });
+        if (state === 'unknown') stopAfterUnknown = true;
+        results.push({
+          identity: allocation.identity, allocationId: allocation.identity.allocationId,
+          pool: allocation.pool, status: state === 'failed' ? 'rejected' : 'uncertain', reason, reasonCode,
+          executionStatus: state === 'failed' ? 'held' : 'unknown',
+          custody: { location: 'agent' }, userOpHash, transactionHash, txHash: transactionHash,
         });
       }
     }

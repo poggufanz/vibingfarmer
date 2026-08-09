@@ -225,6 +225,23 @@ function identityOf(body) {
   };
 }
 
+function associationRows(stores, jobId) {
+  const associations = stores.jobs.get(jobId)?._attach?.associations ?? [];
+  return associations.flatMap(({ identity }) => stores.associationOutbox.status(identity));
+}
+
+function mintedResult(mintTxHash) {
+  return {
+    status: 'minted',
+    mintTxHash,
+    evidence: {
+      burnTxHash: 'burn-evidence', expectationDigest: 'expectation-evidence',
+      messageDigest: 'message-evidence', attestationDigest: 'attestation-evidence',
+      evidenceVersion: '1', mintTxHash,
+    },
+  };
+}
+
 function canonicalRecord(body, bindingId = 'binding-1') {
   const bindingHash = sha256(
     `${body.stellarOwner}|${body.kernelAddress}|${body.sessionKeyAddress}|${body.expiresAt}`,
@@ -1325,6 +1342,7 @@ describe("v3 mandate route authorization and execution gates", () => {
   function makeFarmExecutions({
     jobs,
     associationOutbox,
+    baseEvidenceOutbox,
     events,
     claimEnabled = true,
     onClaim,
@@ -1332,6 +1350,13 @@ describe("v3 mandate route authorization and execution gates", () => {
     const rows = new Map();
     const api = {
       rows,
+      prepare: vi.fn(({ jobId, job, evidenceHeads }) => {
+        for (const head of evidenceHeads) {
+          baseEvidenceOutbox.seed(head.identity, head.recoveryVersion, { jobId });
+        }
+        jobs.set(jobId, job);
+        return { jobId, evidenceHeads: evidenceHeads.length };
+      }),
       get: vi.fn((jobId) => rows.get(jobId) ?? null),
       attach: vi.fn(({ jobId, burnTxHash, job, reports }) => {
         events.push("farm-work:attach");
@@ -1381,22 +1406,24 @@ describe("v3 mandate route authorization and execution gates", () => {
         rows.set(jobId, renewed);
         return renewed;
       }),
-      checkpoint: vi.fn(({ jobId, leaseToken, job, reports }) => {
+      checkpoint: vi.fn(({ jobId, leaseToken, job, reports, baseEvidenceReports = [] }) => {
         events.push("farm-work:checkpoint");
         const work = rows.get(jobId);
         if (!work || work.leaseToken !== leaseToken)
           throw new Error("stale farm lease");
         associationOutbox.enqueue(reports);
+        for (const report of baseEvidenceReports) baseEvidenceOutbox.enqueue(report);
         jobs.set(jobId, job);
         return work;
       }),
       finish: vi.fn(
-        ({ jobId, leaseToken, job, reports, status = "done" }) => {
+        ({ jobId, leaseToken, job, reports, baseEvidenceReports = [], status = "done" }) => {
           events.push("farm-work:finish");
           const work = rows.get(jobId);
           if (!work || work.leaseToken !== leaseToken)
             throw new Error("stale farm lease");
           associationOutbox.enqueue(reports);
+          for (const report of baseEvidenceReports) baseEvidenceOutbox.enqueue(report);
           jobs.set(jobId, job);
           const terminal = {
             ...work,
@@ -1440,6 +1467,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     farmImplementation,
     reporterImplementation,
     associationOutbox: providedOutbox = null,
+    baseEvidenceOutbox: providedEvidenceOutbox = null,
     farmExecutions: providedFarmExecutions = null,
     claimEnabled = true,
     onClaim,
@@ -1472,23 +1500,40 @@ describe("v3 mandate route authorization and execution gates", () => {
           report,
         }));
       }),
-      status: vi.fn((jobId) =>
-        delivery.filter((row) => row.childId === jobId),
+      status: vi.fn((identity) =>
+        delivery.filter((row) => row.childId === identity.childId
+          && row.executionId === identity.executionId),
       ),
     };
+    const evidenceRows = [];
+    const baseEvidenceOutbox = providedEvidenceOutbox ?? realStores?.baseEvidenceOutbox ?? {
+      seed: vi.fn(() => ({ duplicate: false, recoveryVersion: 0 })),
+      enqueue: vi.fn((checkpoint) => {
+        evidenceRows.push(checkpoint);
+        return { state: checkpoint.status, expectedRecoveryVersion: evidenceRows.length - 1 };
+      }),
+      status: vi.fn((identity) => ({
+        complete: false,
+        blocked: false,
+        recoveryVersion: evidenceRows.filter((row) => (
+          row.identity.executionId === identity.executionId
+        )).length,
+        events: [],
+      })),
+    };
     const reporter = {
-      commitIntent: vi.fn(async (child) => {
+      commitIntentBatch: vi.fn(async (batch) => {
         events.push("reporter:intent");
-        if (reporterImplementation) return reporterImplementation(child);
+        if (reporterImplementation) return reporterImplementation(batch);
         return {
           acknowledged: true,
-          identity: {
+          identities: batch.children.map((child) => ({
             networkId: child.networkId,
-            owner: child.owner,
             bindingId: child.bindingId,
+            executionId: child.executionId,
             allocationId: child.allocationId,
             childId: child.childId,
-          },
+          })),
           schemaVersion: 1,
         };
       }),
@@ -1526,7 +1571,18 @@ describe("v3 mandate route authorization and execution gates", () => {
     const farmFn = vi.fn(async (params) => {
       events.push("farm:called");
       if (farmImplementation) return farmImplementation(params);
-      const mintResult = { status: "minted", mintTxHash: "0xmint" };
+      const mintResult = {
+        status: "minted",
+        mintTxHash: "0xmint",
+        evidence: {
+          burnTxHash: "burn-default",
+          expectationDigest: "expectation-default",
+          messageDigest: "message-default",
+          attestationDigest: "attestation-default",
+          evidenceVersion: "1",
+          mintTxHash: "0xmint",
+        },
+      };
       await params.onMintConfirmed?.(mintResult);
       return {
         mintResult,
@@ -1551,6 +1607,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       makeFarmExecutions({
         jobs,
         associationOutbox,
+        baseEvidenceOutbox,
         events,
         claimEnabled,
         onClaim,
@@ -1602,6 +1659,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       ]),
       agentIndexReporter: reporter,
       associationOutbox,
+      baseEvidenceOutbox,
       farmExecutions,
       sanitizeErrors,
     });
@@ -1619,6 +1677,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       mandatesV3,
       jobs,
       reports,
+      evidenceRows,
       delivery,
       associationOutbox,
       reporter,
@@ -1950,7 +2009,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         beforeMandate,
       );
       expect(harness.evaluator).not.toHaveBeenCalled();
-      expect(harness.reporter.commitIntent).not.toHaveBeenCalled();
+      expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
       expect(harness.buildFarm).not.toHaveBeenCalled();
       expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
       expect(harness.events).not.toContain("store:revoke");
@@ -2414,7 +2473,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(harness.evaluator.mock.calls[0][0]).not.toHaveProperty(
       "allocation",
     );
-    expect(harness.reporter.commitIntent).toHaveBeenCalledTimes(2);
+    expect(harness.reporter.commitIntentBatch).toHaveBeenCalledTimes(1);
     expect(harness.buildFarm).not.toHaveBeenCalled();
     const freshIndex = harness.events.indexOf("evaluator:fresh");
     const reportIndex = harness.events.indexOf("reporter:intent");
@@ -2448,7 +2507,9 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(harness.requestUrls).toEqual(["/api/vf-cross/farm"]);
     expect(harness.requestUrls[0]).not.toContain("?");
 
-    for (const [intent] of harness.reporter.commitIntent.mock.calls) {
+    const [intentBatch] = harness.reporter.commitIntentBatch.mock.calls[0];
+    expect(intentBatch).toMatchObject({ burnUnits7: '10000' });
+    for (const intent of intentBatch.children) {
       expect(intent).toMatchObject({
         networkId: "stellar-testnet",
         owner: OWNER,
@@ -2497,7 +2558,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     );
 
     await vi.waitFor(() =>
-      expect(harness.reporter.commitIntent).toHaveBeenCalledTimes(1),
+      expect(harness.reporter.commitIntentBatch).toHaveBeenCalledTimes(1),
     );
     expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
     expect(res.body).toBe("");
@@ -2562,7 +2623,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(res.statusCode).toBe(409);
     expect(harness.events).toContain("store:get");
     expect(harness.evaluator).not.toHaveBeenCalled();
-    expect(harness.reporter.commitIntent).not.toHaveBeenCalled();
+    expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
     expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
     expect(harness.buildFarm).not.toHaveBeenCalled();
     expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
@@ -2589,7 +2650,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       expect(harness.evaluator.mock.calls[0][0]).not.toHaveProperty(
         "allocation",
       );
-      expect(harness.reporter.commitIntent).not.toHaveBeenCalled();
+      expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
       expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
       expect(harness.buildFarm).not.toHaveBeenCalled();
       expectPrivateMaterialAbsent(res.body, body);
@@ -2623,7 +2684,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(harness.events.indexOf("store:get", revokeIndex + 1)).toBeGreaterThan(
       revokeIndex,
     );
-    expect(harness.reporter.commitIntent).not.toHaveBeenCalled();
+    expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
     expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
     expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
     expect(harness.buildFarm).not.toHaveBeenCalled();
@@ -2633,15 +2694,9 @@ describe("v3 mandate route authorization and execution gates", () => {
     const allocations = [...routeAllocations()].reverse();
     const harness = makeRouteHarness({
       farmImplementation: async (params) => {
-        await params.onMintConfirmed({
-          status: "minted",
-          mintTxHash: "0xmint-two-allocations",
-        });
+        await params.onMintConfirmed(mintedResult("0xmint-two-allocations"));
         return {
-          mintResult: {
-            status: "minted",
-            mintTxHash: "0xmint-two-allocations",
-          },
+          mintResult: mintedResult("0xmint-two-allocations"),
           depositResults: params.allocations.map((allocation, index) => ({
             allocationId: allocation.allocationId,
             status: "fulfilled",
@@ -2748,19 +2803,61 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(JSON.stringify(harness.reports)).not.toContain(SESSION_KEY);
   });
 
+  it('atomically persists ordered shared CCTP evidence and each Base checkpoint before the next external boundary', async () => {
+    const order = [];
+    let harness;
+    harness = makeRouteHarness({
+      farmImplementation: async ({ allocations, onMintConfirmed, onDepositCheckpoint }) => {
+        const allocation = allocations[0];
+        await onMintConfirmed(mintedResult('0xmint-evidence-order'));
+        order.push('mint-persisted');
+        await onDepositCheckpoint({
+          identity: {
+            networkId: 'stellar-testnet', bindingId: 'active-binding-1',
+            executionId: `run-42:exec:${allocation.allocationId}`,
+            allocationId: allocation.allocationId, childId: FIRST_JOB_ID,
+          },
+          phase: 'base_deposit', status: 'submitting', observedAt: 2_000_000_000_000,
+          evidence: {
+            chainId: '84532', yieldRouterAddress: CANONICAL_ROUTER.toLowerCase(),
+            caller: KERNEL.toLowerCase(), poolAddress: allocation.pool.toLowerCase(),
+            assets: allocation.amount.toString(), minShares: allocation.minShares.toString(),
+          },
+        });
+        expect(harness.evidenceRows.map(({ phase }) => phase)).toEqual([
+          'cctp_burn', 'cctp_attestation', 'cctp_mint', 'base_deposit',
+        ]);
+        order.push('send');
+        return {
+          mintResult: mintedResult('0xmint-evidence-order'),
+          depositResults: [{
+            identity: harness.evidenceRows.at(-1).identity,
+            allocationId: allocation.allocationId,
+            status: 'rejected', executionStatus: 'unknown', custody: { location: 'agent' },
+            userOpHash: null, transactionHash: null, txHash: null,
+          }],
+          runId: 'run-42', bridgeAgent: 'bridge-agent-1', grantTxHash: 'grant-1',
+        };
+      },
+    });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+    const jobId = await queueIntent(harness, body, { allocations: [routeAllocations()[0]] });
+    await postProtected(harness, '/farm/attach', attachBody(jobId, body, 'burn-evidence-order'));
+    await vi.waitFor(() => expect(harness.jobs.get(jobId)?.status).toBe('done'));
+    expect(order).toEqual(['mint-persisted', 'send']);
+    expect(harness.jobs.get(jobId).depositProgress).toMatchObject({
+      'run-42:bridge:aave-v3': { state: 'submitting' },
+    });
+  });
+
   it("emits an explicit unknown terminal sequence for an expected allocation missing from orchestrator results", async () => {
     const allocations = routeAllocations();
     const harness = makeRouteHarness({
       farmImplementation: async (params) => {
-        await params.onMintConfirmed({
-          status: "minted",
-          mintTxHash: "0xmint-missing-result",
-        });
+        await params.onMintConfirmed(mintedResult("0xmint-missing-result"));
         return {
-          mintResult: {
-            status: "minted",
-            mintTxHash: "0xmint-missing-result",
-          },
+          mintResult: mintedResult("0xmint-missing-result"),
           depositResults: [
             {
               allocationId: allocations[0].allocationId,
@@ -2809,7 +2906,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         },
       },
     });
-    expect(harness.jobs.get(jobId)?._attach.associations).toEqual([
+    expect(harness.jobs.get(jobId)?._attach.associations).toMatchObject([
       {
         allocationId: "run-42:bridge:aave-v3",
         terminalSequence: 3,
@@ -3119,7 +3216,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       // that rejects its old field shape before authenticating would otherwise make these
       // tests pass for the wrong reason.
       expect(harness.events).toContain("store:get");
-      expect(harness.reporter.commitIntent).not.toHaveBeenCalled();
+      expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
       expect(harness.jobs.get(FIRST_JOB_ID)).toBeUndefined();
       expect(harness.farmExecutions.attach).not.toHaveBeenCalled();
       expect(harness.buildFarm).not.toHaveBeenCalled();
@@ -3144,7 +3241,7 @@ describe("v3 mandate route authorization and execution gates", () => {
 
     expect(res.statusCode).toBe(201);
     expect(harness.evaluator).toHaveBeenCalledTimes(1);
-    expect(harness.reporter.commitIntent).toHaveBeenCalledTimes(2);
+    expect(harness.reporter.commitIntentBatch).toHaveBeenCalledTimes(1);
     expect(harness.buildFarm).not.toHaveBeenCalled();
   });
 
@@ -3165,7 +3262,7 @@ describe("v3 mandate route authorization and execution gates", () => {
 
     expect(res.statusCode).toBe(201);
     expect(json.jobId).toMatch(JOB_ID_RE);
-    expect(harness.reporter.commitIntent).toHaveBeenCalledTimes(1);
+    expect(harness.reporter.commitIntentBatch).toHaveBeenCalledTimes(1);
     expect(harness.jobs.get(json.jobId)?._attach.allocations).toEqual([
       allocation,
     ]);
@@ -3620,10 +3717,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       farmImplementation: async ({ onMintConfirmed }) => {
         farmEvents.push("farm:mint-confirmed");
         try {
-          await onMintConfirmed({
-            status: "minted",
-            mintTxHash: "0xmint-checkpoint-failure",
-          });
+          await onMintConfirmed(mintedResult("0xmint-checkpoint-failure"));
         } catch (error) {
           farmEvents.push("farm:held-after-checkpoint-failure");
           throw error;
@@ -3799,14 +3893,14 @@ describe("v3 mandate route authorization and execution gates", () => {
       farmImplementation: async ({ onMintConfirmed, allocations }) => {
         farmEvents.push("farm:mint-confirmed");
         try {
-          await onMintConfirmed({ status: "minted", mintTxHash: "0xmint" });
+          await onMintConfirmed(mintedResult("0xmint"));
         } catch (error) {
           farmEvents.push("farm:held-by-gate");
           throw error;
         }
         farmEvents.push("farm:deposit-dispatched");
         return {
-          mintResult: { status: "minted", mintTxHash: "0xmint" },
+          mintResult: mintedResult("0xmint"),
           depositResults: allocations.map(({ allocationId }) => ({
             allocationId,
             executionStatus: "deposited",
@@ -3917,10 +4011,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       farmImplementation: async ({ onMintConfirmed, allocations }) => {
         farmEvents.push("farm:mint-confirmed");
         try {
-          await onMintConfirmed({
-            status: "minted",
-            mintTxHash: "0xmint-local-revoke-race",
-          });
+          await onMintConfirmed(mintedResult("0xmint-local-revoke-race"));
         } catch (error) {
           farmEvents.push("farm:held-by-local-reload");
           throw error;
@@ -4022,10 +4113,20 @@ describe("v3 mandate route authorization and execution gates", () => {
         associations: [
           {
             allocationId: "run-42:bridge:aave-v3",
+            identity: {
+              networkId: 'stellar-testnet', owner: OWNER, bindingId: activeA.bindingId,
+              executionId: 'run-42:exec:run-42:bridge:aave-v3',
+              allocationId: 'run-42:bridge:aave-v3', childId: jobId,
+            },
             terminalSequence: 2,
           },
           {
             allocationId: "run-42:bridge:blend-v2",
+            identity: {
+              networkId: 'stellar-testnet', owner: OWNER, bindingId: activeA.bindingId,
+              executionId: 'run-42:exec:run-42:bridge:blend-v2',
+              allocationId: 'run-42:bridge:blend-v2', childId: jobId,
+            },
             terminalSequence: 3,
           },
         ],
@@ -4050,24 +4151,28 @@ describe("v3 mandate route authorization and execution gates", () => {
     harness.delivery.push(
       {
         childId: jobId,
+        executionId: "run-42:exec:run-42:bridge:aave-v3",
         allocationId: "run-42:bridge:aave-v3",
         sequence: 1,
         status: "delivered",
       },
       {
         childId: jobId,
+        executionId: "run-42:exec:run-42:bridge:aave-v3",
         allocationId: "run-42:bridge:aave-v3",
         sequence: 2,
         status: "delivered",
       },
       {
         childId: jobId,
+        executionId: "run-42:exec:run-42:bridge:blend-v2",
         allocationId: "run-42:bridge:blend-v2",
         sequence: 1,
         status: "delivered",
       },
       {
         childId: jobId,
+        executionId: "run-42:exec:run-42:bridge:blend-v2",
         allocationId: "run-42:bridge:blend-v2",
         sequence: 2,
         status: "delivered",
@@ -4095,6 +4200,7 @@ describe("v3 mandate route authorization and execution gates", () => {
 
     harness.delivery.push({
       childId: jobId,
+      executionId: "run-42:exec:run-42:bridge:blend-v2",
       allocationId: "run-42:bridge:blend-v2",
       sequence: 3,
       status: "delivered",
@@ -4150,6 +4256,59 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(unknown.res.statusCode).toBe(404);
     expect(unknown.json).toEqual({ error: "unknown jobId" });
     expectPrivateMaterialAbsent(unknown.res.body, bodyA);
+  });
+
+  it("keeps association delivery complete while Base evidence delivery remains pending", async () => {
+    const body = routeBody();
+    const associationIdentity = {
+      networkId: 'stellar-testnet', owner: OWNER, bindingId: 'active-binding-1',
+      executionId: 'run-42:exec:run-42:bridge:aave-v3',
+      allocationId: 'run-42:bridge:aave-v3', childId: STATUS_JOB_ID,
+    };
+    const { owner: _owner, ...recoveryIdentity } = associationIdentity;
+    const associationOutbox = {
+      enqueue: vi.fn(),
+      status: vi.fn(() => [{
+        allocationId: associationIdentity.allocationId,
+        executionId: associationIdentity.executionId,
+        sequence: 1, status: 'delivered', attempts: 1,
+      }]),
+    };
+    const baseEvidenceOutbox = {
+      seed: vi.fn(), enqueue: vi.fn(),
+      status: vi.fn(() => ({
+        complete: false, blocked: false, recoveryVersion: 4,
+        latestPhase: 'base_deposit', latestState: 'confirmed',
+        events: [{
+          allocationId: recoveryIdentity.allocationId,
+          executionId: recoveryIdentity.executionId,
+          phase: 'base_deposit', state: 'confirmed', expectedRecoveryVersion: 3,
+          resultingRecoveryVersion: 4, deliveryStatus: 'pending', attempts: 0,
+        }],
+      })),
+    };
+    const harness = makeRouteHarness({ associationOutbox, baseEvidenceOutbox, claimEnabled: false });
+    const active = seedActiveMandate(harness, body);
+    harness.jobs.set(STATUS_JOB_ID, {
+      status: 'done', steps: [],
+      _attach: {
+        mandateId: MANDATE_ID, stellarOwner: OWNER, kernelAddress: KERNEL,
+        bindingId: active.bindingId, bindingHash: active.bindingHash,
+        associations: [{
+          allocationId: associationIdentity.allocationId,
+          identity: associationIdentity, recoveryIdentity, terminalSequence: 1,
+        }],
+      },
+    });
+
+    const status = await postProtected(harness, '/status', {
+      mandateId: MANDATE_ID, jobId: STATUS_JOB_ID,
+    });
+
+    expect(status.json.associationDelivery).toMatchObject({ complete: true, uncertain: false });
+    expect(status.json.evidenceDelivery).toMatchObject({ complete: false, blocked: false, uncertain: true });
+    expect(associationOutbox.status).toHaveBeenCalledWith(associationIdentity);
+    expect(baseEvidenceOutbox.status).toHaveBeenCalledWith(recoveryIdentity);
   });
 
   it.each([
@@ -4324,7 +4483,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         expect(openEnvelope).not.toHaveBeenCalled();
         expect(jobGet).not.toHaveBeenCalled();
         expect(reopened.evaluator).not.toHaveBeenCalled();
-        expect(reopened.reporter.commitIntent).not.toHaveBeenCalled();
+        expect(reopened.reporter.commitIntentBatch).not.toHaveBeenCalled();
         expect(attachWork).not.toHaveBeenCalled();
         expect(stores2.mandatesV3.status(routeIdentity(bodyA)).status).toBe("active");
 
@@ -4603,7 +4762,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       expect(harness.farmFn).toHaveBeenCalledTimes(1);
 
       resolveFarm({
-        mintResult: { status: "minted", mintTxHash: "0xmint-heartbeat" },
+        mintResult: mintedResult("0xmint-heartbeat"),
         depositResults: [
           {
             allocationId: allocation.allocationId,
@@ -4710,10 +4869,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       associationOutbox: stores.associationOutbox,
       farmExecutions: { ...stores.farmExecutions, finish },
       farmImplementation: async ({ onMintConfirmed }) => {
-        await onMintConfirmed({
-          status: "minted",
-          mintTxHash: "0xmint-before-failure",
-        });
+        await onMintConfirmed(mintedResult("0xmint-before-failure"));
         throw new Error("deposit failed after mint");
       },
     });
@@ -4753,18 +4909,14 @@ describe("v3 mandate route authorization and execution gates", () => {
         ]),
       });
       expect(
-        stores.associationOutbox.status(jobId).map(({ sequence }) => sequence),
+        associationRows(stores, jobId).map(({ sequence }) => sequence),
       ).toEqual([1, 2]);
 
       nowMs = stores.farmExecutions.get(jobId).leaseExpiresAt + 1;
       await expect(harness.router.resumeFarmJobs()).resolves.toBeUndefined();
-      const afterFirst = stores.associationOutbox
-        .status(jobId)
-        .map(({ sequence }) => sequence);
+      const afterFirst = associationRows(stores, jobId).map(({ sequence }) => sequence);
       await expect(harness.router.resumeFarmJobs()).resolves.toBeUndefined();
-      const afterSecond = stores.associationOutbox
-        .status(jobId)
-        .map(({ sequence }) => sequence);
+      const afterSecond = associationRows(stores, jobId).map(({ sequence }) => sequence);
 
       expect(stores.farmExecutions.get(jobId)).toMatchObject({
         status: "uncertain",
@@ -4847,8 +4999,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         expect(resumed.buildFarm).toHaveBeenCalledWith(SESSION_KEY);
         expect(resumed.farmFn).toHaveBeenCalledTimes(1);
         expect(
-          stores2.associationOutbox
-            .status(jobId)
+          associationRows(stores2, jobId)
             .map(({ sequence }) => sequence),
         ).toEqual([1, 2, 3]);
         expect(JSON.stringify(stores2.jobs.get(jobId))).not.toContain(
@@ -4936,7 +5087,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         });
         for (const { allocationId } of allocations) {
           expect(
-            stores2.associationOutbox.status(jobId)
+            associationRows(stores2, jobId)
               .filter((row) => row.allocationId === allocationId)
               .map(({ sequence }) => sequence),
           ).toEqual([1, 2]);
@@ -4950,7 +5101,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         expect(recovered.farmFn).not.toHaveBeenCalled();
         for (const { allocationId } of allocations) {
           expect(
-            stores2.associationOutbox.status(jobId)
+            associationRows(stores2, jobId)
               .filter((row) => row.allocationId === allocationId)
               .map(({ sequence }) => sequence),
           ).toEqual([1, 2]);
@@ -5038,8 +5189,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         expect(recovered.buildFarm).not.toHaveBeenCalled();
         expect(recovered.farmFn).not.toHaveBeenCalled();
         expect(
-          stores2.associationOutbox
-            .status(jobId)
+          associationRows(stores2, jobId)
             .map(({ sequence }) => sequence),
         ).toEqual([1, 2]);
       } finally {
@@ -5124,7 +5274,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         });
         for (const { allocationId } of allocations) {
           expect(
-            stores2.associationOutbox.status(jobId)
+            associationRows(stores2, jobId)
               .filter((row) => row.allocationId === allocationId)
               .map(({ sequence }) => sequence),
           ).toEqual([1, 2]);
@@ -5138,7 +5288,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         expect(recovered.farmFn).not.toHaveBeenCalled();
         for (const { allocationId } of allocations) {
           expect(
-            stores2.associationOutbox.status(jobId)
+            associationRows(stores2, jobId)
               .filter((row) => row.allocationId === allocationId)
               .map(({ sequence }) => sequence),
           ).toEqual([1, 2]);

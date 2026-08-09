@@ -18,6 +18,57 @@ const USER_OP_HASH = `0x${'b'.repeat(64)}`;
 const FIRST_USER_OP_HASH = `0x${'1'.repeat(64)}`;
 const SECOND_USER_OP_HASH = `0x${'2'.repeat(64)}`;
 const THIRD_USER_OP_HASH = `0x${'3'.repeat(64)}`;
+const KERNEL_ADDRESS = '0x00000000000000000000000000000000000000aa';
+const DEPOSITED_TOPIC0 = '0xf5681f9d0db1b911ac18ee83d515a1cf1051853a9eae418316a2fdf7dea427c5';
+
+function word(value) {
+  return BigInt(value).toString(16).padStart(64, '0');
+}
+
+function task10Allocation(ordinal = 1, overrides = {}) {
+  const allocationId = `run-42:bridge:pool-${ordinal}`;
+  return {
+    identity: {
+      networkId: 'stellar-testnet',
+      bindingId: '0123456789abcdef0123456789abcdef',
+      executionId: `run-42:exec:${allocationId}`,
+      allocationId,
+      childId: 'abcdef0123456789abcdef0123456789',
+    },
+    caller: KERNEL_ADDRESS,
+    pool: `0x${String(ordinal).padStart(40, '0')}`,
+    amount: 1_000_000n,
+    minShares: 900_000n,
+    ...overrides,
+  };
+}
+
+function depositedLog(allocation, overrides = {}) {
+  const caller = overrides.caller ?? allocation.caller;
+  const pool = overrides.pool ?? allocation.pool;
+  return {
+    address: overrides.address ?? YIELD_ROUTER_ADDRESS,
+    topics: [
+      DEPOSITED_TOPIC0,
+      `0x${caller.slice(2).padStart(64, '0')}`,
+      `0x${pool.slice(2).padStart(64, '0')}`,
+    ],
+    data: `0x${word(overrides.assets ?? allocation.amount)}${word(overrides.shares ?? 912_345n)}`,
+    logIndex: overrides.logIndex ?? 7,
+    transactionHash: overrides.transactionHash ?? TX_HASH,
+  };
+}
+
+function task10Receipt(allocation, overrides = {}) {
+  return {
+    userOpHash: USER_OP_HASH,
+    sender: allocation.caller,
+    success: true,
+    logs: [depositedLog(allocation)],
+    receipt: { status: 'success', transactionHash: TX_HASH, logs: [] },
+    ...overrides,
+  };
+}
 
 function buildMockKernelClient() {
   return {
@@ -34,6 +85,194 @@ function buildMockKernelClient() {
 }
 
 describe('dispatchDeposits', () => {
+  it('awaits durable checkpoints around send/wait and confirms exactly one scoped Deposited event', async () => {
+    const allocation = task10Allocation();
+    const order = [];
+    const checkpoints = [];
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.sendUserOperation.mockImplementation(async () => {
+      expect(order).toEqual(['submitting']);
+      order.push('send');
+      return USER_OP_HASH;
+    });
+    kernelClient.waitForUserOperationReceipt.mockImplementation(async ({ hash }) => {
+      expect(hash).toBe(USER_OP_HASH);
+      expect(order).toEqual(['submitting', 'send', 'submitted']);
+      order.push('wait');
+      return task10Receipt(allocation);
+    });
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+      now: () => 2_000_000_000_000,
+    });
+
+    const [result] = await orchestrator.dispatchDeposits('serialized-approval', [allocation], {
+      onCheckpoint: async (checkpoint) => {
+        checkpoints.push(checkpoint);
+        order.push(checkpoint.status);
+      },
+    });
+
+    expect(order).toEqual(['submitting', 'send', 'submitted', 'wait', 'confirmed']);
+    expect(checkpoints.map(({ status }) => status)).toEqual(['submitting', 'submitted', 'confirmed']);
+    expect(checkpoints[2]).toEqual({
+      identity: allocation.identity,
+      phase: 'base_deposit',
+      status: 'confirmed',
+      observedAt: 2_000_000_000_000,
+      evidence: expect.objectContaining({
+        chainId: '84532', caller: KERNEL_ADDRESS, poolAddress: allocation.pool,
+        assets: '1000000', minShares: '900000', userOpHash: USER_OP_HASH,
+        transactionHash: TX_HASH,
+        event: {
+          address: YIELD_ROUTER_ADDRESS, topic0: DEPOSITED_TOPIC0, logIndex: '7',
+          caller: KERNEL_ADDRESS, poolAddress: allocation.pool, assets: '1000000', shares: '912345',
+        },
+      }),
+    });
+    expect(result).toMatchObject({
+      identity: allocation.identity, status: 'fulfilled', userOpHash: USER_OP_HASH,
+      transactionHash: TX_HASH, executionStatus: 'deposited', custody: { location: 'base-proxy' },
+    });
+  });
+
+  it('marks a successful receipt without top-level scoped proof unknown and holds later sends', async () => {
+    const first = task10Allocation(1);
+    const second = task10Allocation(2);
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(task10Receipt(first, {
+      logs: [],
+      receipt: { status: 'success', transactionHash: TX_HASH, logs: [depositedLog(first)] },
+    }));
+    const checkpoints = [];
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const results = await orchestrator.dispatchDeposits('serialized-approval', [first, second], {
+      onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint),
+    });
+
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1);
+    expect(checkpoints.at(-1)).toMatchObject({
+      identity: first.identity, status: 'unknown',
+      evidence: { userOpHash: USER_OP_HASH, transactionHash: TX_HASH, reasonCode: 'deposit_event_missing' },
+    });
+    expect(results[0]).toMatchObject({ status: 'uncertain', executionStatus: 'unknown', userOpHash: USER_OP_HASH, transactionHash: TX_HASH });
+    expect(results[1]).toMatchObject({ status: 'held', executionStatus: 'held', reasonCode: 'not_dispatched_after_unknown' });
+  });
+
+  it('retains the canonical send hash and never waits or continues when submitted persistence fails', async () => {
+    const first = task10Allocation(1);
+    const second = task10Allocation(2);
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    const checkpoints = [];
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const results = await orchestrator.dispatchDeposits('serialized-approval', [first, second], {
+      onCheckpoint: async (checkpoint) => {
+        checkpoints.push(checkpoint);
+        if (checkpoint.status === 'submitted') throw new Error('sqlite unavailable');
+      },
+    });
+
+    expect(kernelClient.waitForUserOperationReceipt).not.toHaveBeenCalled();
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1);
+    expect(checkpoints.at(-1)).toMatchObject({ status: 'unknown', evidence: { userOpHash: USER_OP_HASH, reasonCode: 'submitted_checkpoint_failed' } });
+    expect(results[0]).toMatchObject({ executionStatus: 'unknown', userOpHash: USER_OP_HASH });
+    expect(results[1]).toMatchObject({ reasonCode: 'not_dispatched_after_unknown' });
+  });
+
+  it('does not wait for a receipt until submitted persistence has resolved', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(task10Receipt(allocation));
+    let releaseSubmitted;
+    const submittedGate = new Promise((resolve) => { releaseSubmitted = resolve; });
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const pending = orchestrator.dispatchDeposits('approval', [allocation], {
+      onCheckpoint: async ({ status }) => {
+        if (status === 'submitted') await submittedGate;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(kernelClient.waitForUserOperationReceipt).not.toHaveBeenCalled();
+    releaseSubmitted();
+    await expect(pending).resolves.toMatchObject([{ status: 'fulfilled' }]);
+  });
+
+  it.each([
+    ['receipt UserOp mismatch', (a) => task10Receipt(a, { userOpHash: `0x${'c'.repeat(64)}` }), 'receipt_ambiguous'],
+    ['receipt sender mismatch', (a) => task10Receipt(a, { sender: `0x${'c'.repeat(40)}` }), 'deposit_event_mismatch'],
+    ['missing scoped logs', (a) => task10Receipt(a, { logs: undefined }), 'deposit_event_missing'],
+    ['spoof router', (a) => task10Receipt(a, { logs: [depositedLog(a, { address: `0x${'d'.repeat(40)}` })] }), 'deposit_event_missing'],
+    ['wrong caller', (a) => task10Receipt(a, { logs: [depositedLog(a, { caller: `0x${'c'.repeat(40)}` })] }), 'deposit_event_mismatch'],
+    ['wrong pool', (a) => task10Receipt(a, { logs: [depositedLog(a, { pool: `0x${'d'.repeat(40)}` })] }), 'deposit_event_mismatch'],
+    ['wrong assets', (a) => task10Receipt(a, { logs: [depositedLog(a, { assets: 999_999n })] }), 'deposit_event_mismatch'],
+    ['shares below minimum', (a) => task10Receipt(a, { logs: [depositedLog(a, { shares: 899_999n })] }), 'deposit_event_mismatch'],
+    ['duplicate event', (a) => task10Receipt(a, { logs: [depositedLog(a), depositedLog(a, { logIndex: 8 })] }), 'deposit_event_ambiguous'],
+    ['log transaction mismatch', (a) => task10Receipt(a, { logs: [depositedLog(a, { transactionHash: `0x${'c'.repeat(64)}` })] }), 'receipt_ambiguous'],
+    ['log block mismatch', (a) => task10Receipt(a, {
+      logs: [{ ...depositedLog(a), blockHash: `0x${'c'.repeat(64)}`, blockNumber: 8n }],
+      receipt: {
+        status: 'success', transactionHash: TX_HASH,
+        blockHash: `0x${'d'.repeat(64)}`, blockNumber: 7n, logs: [],
+      },
+    }), 'receipt_ambiguous'],
+  ])('never confirms %s', async (_label, receiptFor, reasonCode) => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(receiptFor(allocation));
+    const checkpoints = [];
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+    const [result] = await orchestrator.dispatchDeposits('approval', [allocation], {
+      onCheckpoint: async (entry) => checkpoints.push(entry),
+    });
+    expect(result).toMatchObject({ status: 'uncertain', executionStatus: 'unknown', reasonCode, userOpHash: USER_OP_HASH });
+    expect(checkpoints.at(-1)).toMatchObject({ status: 'unknown', evidence: { reasonCode } });
+    expect(checkpoints.some(({ status }) => status === 'confirmed')).toBe(false);
+  });
+
+  it.each([
+    ['missing identity', (a) => ({ ...a, identity: undefined })],
+    ['extra identity field', (a) => ({ ...a, identity: { ...a.identity, owner: 'forbidden' } })],
+    ['noncanonical execution mapping', (a) => ({ ...a, identity: { ...a.identity, executionId: 'run-42:exec:wrong' } })],
+    ['numeric amount', (a) => ({ ...a, amount: 100 })],
+    ['noncanonical pool', (a) => ({ ...a, pool: '0x1' })],
+  ])('rejects %s before reconstructing the signing client', async (_label, mutate) => {
+    const reconstructSessionClientFn = vi.fn();
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn,
+    });
+    await expect(orchestrator.dispatchDeposits('approval', [mutate(task10Allocation())], {
+      onCheckpoint: vi.fn(),
+    })).rejects.toThrow();
+    expect(reconstructSessionClientFn).not.toHaveBeenCalled();
+  });
   it('returns 3 settled results (all fulfilled) for 3 allocations', async () => {
     const kernelClient = buildMockKernelClient();
     const reconstructSessionClientFn = vi.fn().mockResolvedValue(kernelClient);
