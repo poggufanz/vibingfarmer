@@ -2029,6 +2029,91 @@ describe('Task 9 authoritative Base child recovery store', () => {
   })
 
   it.each([
+    ['owner', 'owner_address', 'GOWNER-OTHER'],
+    ['agent', 'agent_address', 'CAGENT-OTHER'],
+  ])(
+    'rejects a same-event-id replay whose existing event has an %s-only subject mutation',
+    async (_label, column, changedValue) => {
+      const input = batch({
+        idempotencyKey: `same-event-subject-${_label}`,
+        children: [child(1)],
+        burnUnits7: '10000000',
+      })
+      await store.reserveBaseChildIntentBatch({
+        batch: input,
+        requestDigest: 'a'.repeat(64),
+        idempotencyKey: input.idempotencyKey,
+      })
+      const request = {
+        identity,
+        expectedRecoveryVersion: 0,
+        event: {
+          eventId: 'b'.repeat(64),
+          phase: 'cctp_burn',
+          state: 'submitting',
+          evidence: { burnUnits7: '10000000' },
+          observedAt: 2100,
+        },
+      }
+      await store.advanceBaseChildPhase(request)
+      const beforeEvent = db._raw
+        .prepare(`SELECT * FROM base_child_phase_events WHERE event_id=?`)
+        .get(request.event.eventId)
+      const beforeProjection = db._raw.prepare(`SELECT * FROM base_child_phase_projection`).get()
+      const beforeIntent = db._raw
+        .prepare(
+          `SELECT recovery_version,updated_at FROM base_child_intents
+           WHERE network_id=? AND binding_id=? AND allocation_id=? AND child_id=?`
+        )
+        .get(identity.networkId, identity.bindingId, identity.allocationId, identity.childId)
+
+      const realPrepare = db.prepare
+      db.prepare = (sql) => {
+        const statement = realPrepare.call(db, sql)
+        if (!sql.includes('SELECT * FROM base_child_phase_events WHERE event_id = ?')) {
+          return statement
+        }
+        return {
+          bind(...args) {
+            const bound = statement.bind(...args)
+            return {
+              ...bound,
+              first() {
+                const row = bound.first()
+                return row ? { ...row, [column]: changedValue } : row
+              },
+            }
+          },
+        }
+      }
+      try {
+        await expect(store.advanceBaseChildPhase(request)).rejects.toBeInstanceOf(
+          AgentIndexConflictError
+        )
+      } finally {
+        db.prepare = realPrepare
+      }
+
+      expect(
+        db._raw
+          .prepare(`SELECT * FROM base_child_phase_events WHERE event_id=?`)
+          .get(request.event.eventId)
+      ).toEqual(beforeEvent)
+      expect(db._raw.prepare(`SELECT * FROM base_child_phase_projection`).get()).toEqual(
+        beforeProjection
+      )
+      expect(
+        db._raw
+          .prepare(
+            `SELECT recovery_version,updated_at FROM base_child_intents
+             WHERE network_id=? AND binding_id=? AND allocation_id=? AND child_id=?`
+          )
+          .get(identity.networkId, identity.bindingId, identity.allocationId, identity.childId)
+      ).toEqual(beforeIntent)
+    }
+  )
+
+  it.each([
     ['owner', 'GOWNER-OTHER', 'CAGENT1'],
     ['agent', 'GOWNER1', 'CAGENT-OTHER'],
   ])('rejects phase-event SQL with a mismatched parent %s fact', async (_label, owner, agent) => {

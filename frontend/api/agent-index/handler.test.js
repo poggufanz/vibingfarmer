@@ -6,6 +6,7 @@ import { createRequire } from 'node:module'
 import { nativeToScVal, Keypair, StrKey } from '@stellar/stellar-sdk'
 import { symbolScVal, addrScVal } from '../../src/stellar/scval.js'
 import { createAgentIndexStore as createProductionAgentIndexStore } from './store.js'
+import { validateBaseChildIntentBatch, MAX_BASE_CHILD_BATCH_SIZE } from './associations.js'
 import { createOwnerReadCursorCodec } from './readCursor.js'
 import {
   handleIngest,
@@ -452,24 +453,26 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
     ...overrides,
   })
 
-  async function readyStoreFixture(membershipOverrides = {}) {
+  async function readyStoreFixture({ membership = {}, omitMembership = false } = {}) {
     const database = fakeD1()
     const store = createAgentIndexStore(database)
-    await store.upsertMembership({
-      networkId: 'stellar-testnet',
-      agentAddress: AGENT_A,
-      ownerAddress: OWNER_A,
-      creatorAddress: liveCreator,
-      schemaVersion: 1,
-      kind: 'bridge',
-      creationLedger: 123,
-      creationTx: 'creation-tx',
-      grantTxHash: 'grant-batch-42',
-      runId: 'run-batch-42',
-      runOrdinal: 0,
-      provenance: { source: 'router-event', generation: 'agent-v3-bridge' },
-      ...membershipOverrides,
-    })
+    if (!omitMembership) {
+      await store.upsertMembership({
+        networkId: 'stellar-testnet',
+        agentAddress: AGENT_A,
+        ownerAddress: OWNER_A,
+        creatorAddress: liveCreator,
+        schemaVersion: 1,
+        kind: 'bridge',
+        creationLedger: 123,
+        creationTx: 'creation-tx',
+        grantTxHash: 'grant-batch-42',
+        runId: 'run-batch-42',
+        runOrdinal: 0,
+        provenance: { source: 'router-event', generation: 'agent-v3-bridge' },
+        ...membership,
+      })
+    }
     return { store, database }
   }
 
@@ -515,105 +518,363 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
     expect(JSON.stringify(accepted.body)).not.toMatch(/scope|secret|owner|authorization/i)
   })
 
-  it.each([
+  const rejectionMatrix = [
+    ['empty batch', (incoming) => (incoming.children = []), {}, /contain 1-/i, 400],
+    ['non-array batch', (incoming) => (incoming.children = {}), {}, /contain 1-/i, 400],
     [
-      'mixed owner',
-      ({ incoming }) => {
-        incoming.children[1].owner = 'GFOREIGNOWNER'
+      'oversized batch',
+      (incoming) => {
+        incoming.children = Array.from({ length: MAX_BASE_CHILD_BATCH_SIZE + 1 }, (_, index) =>
+          child(index + 1)
+        )
       },
       {},
+      /contain 1-/i,
+      400,
+    ],
+    [
+      'mixed owner',
+      (incoming) => (incoming.children[1].owner = 'GFOREIGNOWNER'),
+      {},
+      /mixed immutable context/i,
+      400,
+    ],
+    [
+      'mixed agent',
+      (incoming) => (incoming.children[1].agent = 'CFOREIGNAGENT'),
+      {},
+      /mixed immutable context/i,
       400,
     ],
     [
       'mixed run with canonical execution identity',
-      ({ incoming }) => {
+      (incoming) => {
         incoming.children[1].intent.runId = 'run-other'
         incoming.children[1].executionId = 'run-other:exec:allocation-2'
       },
       {},
+      /mixed immutable context/i,
+      400,
+    ],
+    [
+      'mixed grant',
+      (incoming) => (incoming.children[1].intent.grantTxHash = 'grant-other'),
+      {},
+      /mixed immutable context/i,
+      400,
+    ],
+    [
+      'mixed kernel',
+      (incoming) => (incoming.children[1].intent.kernelAddress = `0x${'33'.repeat(20)}`),
+      {},
+      /mixed immutable context/i,
+      400,
+    ],
+    [
+      'mixed outer binding',
+      (incoming) => (incoming.children[1].bindingId = 'binding-other'),
+      {},
+      /mixed immutable context/i,
+      400,
+    ],
+    [
+      'mixed binding hash',
+      (incoming) => (incoming.children[1].intent.bindingHash = 'binding-hash-other'),
+      {},
+      /mixed immutable context/i,
+      400,
+    ],
+    [
+      'mixed Base job',
+      (incoming) => {
+        incoming.children[1].childId = 'job-other'
+        incoming.children[1].intent.baseJobId = 'job-other'
+      },
+      {},
+      /mixed immutable context/i,
+      400,
+    ],
+    [
+      'noncanonical execution mapping',
+      (incoming) => (incoming.children[1].executionId = 'run-batch-42:exec:allocation-wrong'),
+      {},
+      /executionId/i,
       400,
     ],
     [
       'duplicate allocation',
-      ({ incoming }) => {
-        incoming.children[1] = structuredClone(incoming.children[0])
-      },
+      (incoming) => (incoming.children[1] = structuredClone(incoming.children[0])),
       {},
+      /duplicate Base child allocation/i,
+      400,
+    ],
+    [
+      'duplicate full identity',
+      (incoming) => (incoming.children[1] = structuredClone(incoming.children[0])),
+      {},
+      /duplicate Base child allocation/i,
+      400,
+    ],
+    [
+      'unallowlisted pool',
+      (incoming) => (incoming.children[1].intent.poolAddress = `0x${'99'.repeat(20)}`),
+      {},
+      /pool\/proxy target/i,
       400,
     ],
     [
       'proxy target spoofing',
-      ({ incoming }) => {
-        incoming.children[1].intent.proxyTarget = 'moonwell'
-      },
+      (incoming) => (incoming.children[1].intent.proxyTarget = 'moonwell'),
       {},
+      /pool\/proxy target/i,
+      400,
+    ],
+    ['missing membership', () => {}, { omitMembership: true }, /live reviewed grant/i, 400],
+    [
+      'membership owner mismatch',
+      () => {},
+      { membership: { ownerAddress: 'GFOREIGNOWNER' } },
+      /live reviewed grant/i,
       400,
     ],
     [
-      'wrong durable membership provenance',
+      'wrong membership creator',
+      () => {},
+      { membership: { creatorAddress: `C${'F'.repeat(55)}` } },
+      /live reviewed grant/i,
+      400,
+    ],
+    [
+      'wrong membership provenance source',
       () => {},
       { membership: { provenance: { source: 'registry-event', generation: 'agent-v3-bridge' } } },
+      /live reviewed grant/i,
       400,
     ],
     [
-      'wrong live scope owner',
+      'wrong membership provenance generation',
       () => {},
-      {
-        authority: ({ authority }) => ({
-          ...authority,
-          scope: { ...authority.scope, owner: 'GFOREIGNOWNER' },
-        }),
-      },
+      { membership: { provenance: { source: 'router-event', generation: 'agent-v2' } } },
+      /live reviewed grant/i,
       400,
     ],
     [
-      'one unit above exact live scope headroom',
+      'wrong membership schema',
       () => {},
-      {
-        authority: ({ authority }) => ({
-          ...authority,
-          scope: { ...authority.scope, cap_per_period: '19999999' },
-        }),
-      },
+      { membership: { schemaVersion: 2 } },
+      /live reviewed grant/i,
       400,
     ],
     [
-      'malformed authority snapshot',
+      'wrong membership run',
       () => {},
-      { authority: () => ({ ledgerSequence: 123456, ledgerCloseSeconds: '2000000001' }) },
+      { membership: { runId: 'run-other' } },
+      /live reviewed grant/i,
+      400,
+    ],
+    [
+      'wrong membership grant',
+      () => {},
+      { membership: { grantTxHash: 'grant-other' } },
+      /live reviewed grant/i,
+      400,
+    ],
+    [
+      'wrong scope owner',
+      () => {},
+      { scope: { owner: 'GFOREIGNOWNER' } },
+      /does not authorize/i,
+      400,
+    ],
+    ['wrong scope kind', () => {}, { scope: { kind: 2 } }, /does not authorize/i, 400],
+    [
+      'wrong messenger',
+      () => {},
+      { scope: { target: `C${'F'.repeat(55)}` } },
+      /does not authorize/i,
+      400,
+    ],
+    [
+      'wrong token',
+      () => {},
+      { scope: { token: `C${'F'.repeat(55)}` } },
+      /does not authorize/i,
+      400,
+    ],
+    ['wrong destination domain', () => {}, { scope: { destination_domain: 7 } }, /authorize/i, 400],
+    [
+      'wrong mint recipient',
+      () => {},
+      { scope: { mint_recipient: 'f'.repeat(64) } },
+      /does not authorize/i,
+      400,
+    ],
+    ['expired scope', () => {}, { scope: { expiry: 2_000_000_001 } }, /authorize/i, 400],
+    ['revoked scope', () => {}, { scope: { revoked: true } }, /authorize/i, 400],
+    [
+      'zero period duration',
+      () => {},
+      { scope: { period_duration: 0 } },
+      /duration.*invalid/i,
+      400,
+    ],
+    ['negative spent', () => {}, { scope: { spent_in_period: '-1' } }, /spent.*invalid/i, 400],
+    ['negative cap', () => {}, { scope: { cap_per_period: '-1' } }, /cap.*invalid/i, 400],
+    [
+      'spent above cap',
+      () => {},
+      { scope: { spent_in_period: '30000001' } },
+      /spent exceeds cap/i,
+      400,
+    ],
+    [
+      'missing ledger sequence',
+      () => {},
+      { omitSnapshotField: 'ledgerSequence' },
+      /snapshot/i,
       503,
     ],
-  ])(
-    'rejects %s through the handler backed by real SQLite without partial rows',
-    async (_label, mutate, options, expectedStatus) => {
-      const { store, database } = await readyStoreFixture(options.membership)
-      const incoming = batch()
-      mutate({ incoming })
-      const baseDependencies = deps()
-      const authority = await baseDependencies.authorityReader()
-      const authorityReader = vi.fn(async () =>
-        options.authority ? options.authority({ authority }) : authority
-      )
+    [
+      'missing ledger close time',
+      () => {},
+      { omitSnapshotField: 'ledgerCloseSeconds' },
+      /snapshot/i,
+      503,
+    ],
+    ['missing live scope', () => {}, { omitSnapshotField: 'scope' }, /snapshot/i, 503],
+    [
+      'non-integer ledger close time',
+      () => {},
+      { snapshot: { ledgerSequence: 123456, ledgerCloseSeconds: '2000000001' } },
+      /snapshot/i,
+      503,
+    ],
+    ['zero ledger sequence', () => {}, { snapshot: { ledgerSequence: 0 } }, /snapshot/i, 503],
+    [
+      'negative ledger close time',
+      () => {},
+      { snapshot: { ledgerCloseSeconds: -1 } },
+      /snapshot/i,
+      503,
+    ],
+    [
+      'non-integral reverse conversion',
+      (incoming) => (incoming.burnUnits7 = '20000001'),
+      {},
+      /six decimals/i,
+      400,
+    ],
+    [
+      'child sum mismatch',
+      (incoming) => (incoming.burnUnits7 = '20000010'),
+      {},
+      /sum.*burnUnits7/i,
+      400,
+    ],
+    [
+      'aggregate above remaining headroom',
+      () => {},
+      { scope: { cap_per_period: '19999999' } },
+      /exceeds scope headroom/i,
+      400,
+    ],
+    [
+      'number-based burn precision',
+      (incoming) => (incoming.burnUnits7 = 9_007_199_254_740_992),
+      {},
+      /unsigned integer string/i,
+      400,
+    ],
+    [
+      'number-based child-unit precision',
+      (incoming) => (incoming.children[1].intent.units = 9_007_199_254_740_992),
+      {},
+      /units.*exact integer string/i,
+      400,
+    ],
+    [
+      'number-based minimum-shares precision',
+      (incoming) => (incoming.children[1].intent.minShares = 9_007_199_254_740_992),
+      {},
+      /safe integers.*exact string/i,
+      400,
+    ],
+  ]
 
+  it.each(rejectionMatrix)(
+    'rejects complete matrix case %s through the real SQLite handler at its named guard',
+    async (_label, mutate, options, expectedGuard, expectedStatus) => {
+      const { store, database } = await readyStoreFixture(options)
+      const incoming = batch()
+      mutate(incoming)
+      const baseDependencies = deps()
+      const baseSnapshot = await baseDependencies.authorityReader()
+      const authoritySnapshot = {
+        ...baseSnapshot,
+        ...(options.snapshot ?? {}),
+        scope: { ...baseSnapshot.scope, ...(options.scope ?? {}) },
+      }
+      if (options.omitSnapshotField) delete authoritySnapshot[options.omitSnapshotField]
+      const authorityReader = vi.fn(async () => authoritySnapshot)
+      const validationArgs = {
+        batch: incoming,
+        store,
+        authorityReader,
+        poolTargets: baseDependencies.poolTargets,
+        scopeRequirements: baseDependencies.scopeRequirements,
+        supportedNetworkId: 'stellar-testnet',
+      }
+
+      await expect(validateBaseChildIntentBatch(validationArgs)).rejects.toThrow(expectedGuard)
       const out = await handleBaseChildIntentBatch({
         batch: incoming,
         store,
         ...deps({ authorityReader }),
       })
 
-      expect(out.status).toBe(expectedStatus)
-      expect(
-        database._raw.prepare(`SELECT COUNT(*) count FROM base_child_intent_batches`).get().count
-      ).toBe(0)
-      expect(
-        database._raw.prepare(`SELECT COUNT(*) count FROM base_child_intents`).get().count
-      ).toBe(0)
-      expect(
-        database._raw.prepare(`SELECT COUNT(*) count FROM base_child_intent_batch_items`).get()
-          .count
-      ).toBe(0)
+      expect(out).toEqual(
+        expectedStatus === 503
+          ? { status: 503, body: { error: 'Agent-index dependency unavailable' } }
+          : { status: 400, body: { error: 'Invalid agent-index request' } }
+      )
+      for (const table of [
+        'base_child_intent_batches',
+        'base_child_intent_batch_items',
+        'base_child_intents',
+        'base_child_lifecycle_events',
+        'base_child_phase_events',
+      ]) {
+        expect(database._raw.prepare(`SELECT COUNT(*) count FROM ${table}`).get().count).toBe(0)
+      }
     }
   )
+
+  it('classifies changed content under an existing idempotency key as 409 with zero new rows', async () => {
+    const { store, database } = await readyStoreFixture()
+    const accepted = await handleBaseChildIntentBatch({ batch: batch(), store, ...deps() })
+    expect(accepted.status).toBe(201)
+    const before = Object.fromEntries(
+      [
+        'base_child_intent_batches',
+        'base_child_intent_batch_items',
+        'base_child_intents',
+        'base_child_lifecycle_events',
+        'base_child_phase_events',
+      ].map((table) => [
+        table,
+        database._raw.prepare(`SELECT COUNT(*) count FROM ${table}`).get().count,
+      ])
+    )
+    const changed = batch()
+    changed.children[1].intent.minShares = '1'
+
+    await expect(handleBaseChildIntentBatch({ batch: changed, store, ...deps() })).resolves.toEqual(
+      { status: 409, body: { error: 'Agent-index mutation conflict' } }
+    )
+    for (const [table, count] of Object.entries(before)) {
+      expect(database._raw.prepare(`SELECT COUNT(*) count FROM ${table}`).get().count).toBe(count)
+    }
+  })
 
   it('writes evidence with CAS and publicly returns only allowlisted chain facts', async () => {
     const store = await readyStore()
