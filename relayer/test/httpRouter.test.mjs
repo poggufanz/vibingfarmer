@@ -3339,6 +3339,285 @@ describe("v3 mandate route authorization and execution gates", () => {
     stores.db.close();
   });
 
+  it('refuses a Base submission when the owning v2 farm is blocked after the final authority gate', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-block-before-claim-')), 'relayer.db');
+    const first = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const second = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const deployment = {
+      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+      baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+      stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+      poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+    };
+    const encodeCalls = vi.fn(async () => '0xencoded');
+    const sendUserOperation = vi.fn(async () => USER_OP_HASH);
+    const waitForUserOperationReceipt = vi.fn(async () => { throw new Error('must not poll'); });
+    const reconstructSessionClientFn = vi.fn(async () => ({
+      account: { address: KERNEL, encodeCalls },
+      sendUserOperation,
+      waitForUserOperationReceipt,
+    }));
+    const buildFlow = (sessionPrivateKey) => createFarmFlow({
+      watcher: {}, domains: { stellar: 27 },
+      orchestrator: createOrchestrator({
+        chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org',
+        bundlerRpcUrl: 'https://bundler', yieldRouterAddress: CANONICAL_ROUTER,
+        usdcAddress: CANONICAL_USDC, sessionPrivateKey,
+        now: () => 2_000_000_000_000, reconstructSessionClientFn,
+      }),
+    });
+    let claimReached;
+    const claimSignal = new Promise((resolve) => { claimReached = resolve; });
+    let releaseClaim;
+    const claimGate = new Promise((resolve) => { releaseClaim = resolve; });
+    const claimAuthorizedSubmission = vi.fn(async (args) => {
+      claimReached();
+      await claimGate;
+      return first.farmIntents.claimAuthorizedSubmission(args);
+    });
+    const farmIntents = { ...first.farmIntents, claimAuthorizedSubmission };
+    const harness = makeRouteHarness({
+      realStores: first, jobs: first.jobs, farmIntents,
+      associationOutbox: first.associationOutbox,
+      baseEvidenceOutbox: first.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
+      buildFarmImplementation: buildFlow,
+    });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+    const farm = await postProtected(harness, '/farm', {
+      requestId: '01'.repeat(16), mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+    });
+    expect(farm.res.statusCode).toBe(201);
+    await postProtected(harness, '/farm/attach', {
+      mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash: 'bb'.repeat(32),
+    });
+    await flushMicrotasks();
+    const record = first.farmIntents.getByJob({
+      mandateId: body.mandateId, jobId: farm.json.jobId,
+    });
+    const projectionIdentity = {
+      mandateId: body.mandateId, jobId: record.jobId,
+      bindingId: record.bindingId, intentDigest: record.intentDigest,
+    };
+    first.farmIntents.projectMintEvidenceAtomic({
+      identity: projectionIdentity,
+      relay: {
+        execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
+        expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
+        attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+        mintTxHash: `0x${'ee'.repeat(32)}`,
+      },
+      now: 2_000_000_000_000,
+    });
+    const child = record.batch.children[0];
+    const childIdentity = {
+      networkId: child.networkId, bindingId: child.bindingId,
+      executionId: child.executionId, allocationId: child.allocationId,
+      childId: child.childId,
+    };
+    const eventsBefore = first.db.prepare(
+      'SELECT COUNT(*) AS count FROM base_evidence_outbox',
+    ).get().count;
+
+    const resume = harness.router.resumeFarmJobs();
+    await claimSignal;
+    expect(reconstructSessionClientFn).toHaveBeenCalledOnce();
+    expect(first.farmIntents.getByJob(projectionIdentity)).toMatchObject({
+      state: 'deposit_confirming',
+    });
+    expect(second.farmIntents.blockEvidenceConflict({
+      identity: childIdentity, now: 2_000_000_000_001,
+    })).toEqual({ jobId: record.jobId, status: 'blocked' });
+    releaseClaim();
+
+    expect(await resume).toEqual({
+      resumed: [], held: [record.jobId], blocked: [], uncertain: [],
+    });
+    expect(await claimAuthorizedSubmission.mock.results[0].value).toEqual({
+      claimed: false, ownerToken: null, reasonCode: 'mandate_authority_changed',
+    });
+    expect(encodeCalls).not.toHaveBeenCalled();
+    expect(sendUserOperation).not.toHaveBeenCalled();
+    expect(waitForUserOperationReceipt).not.toHaveBeenCalled();
+    expect(first.baseEvidenceOutbox.recoveryState(childIdentity)).toMatchObject({
+      phase: 'cctp_mint', state: 'confirmed',
+    });
+    expect(first.db.prepare(`SELECT submission_owner_token,latest_phase,latest_state
+      FROM base_evidence_heads WHERE network_id=? AND binding_id=? AND execution_id=?
+        AND allocation_id=? AND child_id=?`).get(
+      childIdentity.networkId, childIdentity.bindingId, childIdentity.executionId,
+      childIdentity.allocationId, childIdentity.childId,
+    )).toEqual({
+      submission_owner_token: null, latest_phase: 'cctp_mint', latest_state: 'confirmed',
+    });
+    expect(first.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count)
+      .toBe(eventsBefore);
+    expect(first.farmIntents.getByJob(projectionIdentity)).toMatchObject({
+      state: 'blocked', reasonCode: 'base_evidence_conflict',
+    });
+    expect(first.jobs.get(record.jobId)).toMatchObject({
+      status: 'blocked', reasonCode: 'base_evidence_conflict',
+    });
+    second.db.close();
+    first.db.close();
+  });
+
+  it('preserves a committed Base submission fence when v2 blocking and revoke linearize afterward', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-claim-before-block-')), 'relayer.db');
+    const first = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const second = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const deployment = {
+      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+      baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+      stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+      poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+    };
+    const encodeCalls = vi.fn(async () => '0xencoded');
+    const sendUserOperation = vi.fn(async () => USER_OP_HASH);
+    const waitForUserOperationReceipt = vi.fn(async () => { throw new Error('bundler timeout'); });
+    const reconstructSessionClientFn = vi.fn(async () => ({
+      account: { address: KERNEL, encodeCalls },
+      sendUserOperation,
+      waitForUserOperationReceipt,
+    }));
+    const buildFlow = (sessionPrivateKey) => createFarmFlow({
+      watcher: {}, domains: { stellar: 27 },
+      orchestrator: createOrchestrator({
+        chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org',
+        bundlerRpcUrl: 'https://bundler', yieldRouterAddress: CANONICAL_ROUTER,
+        usdcAddress: CANONICAL_USDC, sessionPrivateKey,
+        now: () => 2_000_000_000_000, reconstructSessionClientFn,
+      }),
+    });
+    let claimCommitted;
+    const claimSignal = new Promise((resolve) => { claimCommitted = resolve; });
+    let releaseClaim;
+    const claimGate = new Promise((resolve) => { releaseClaim = resolve; });
+    const claimAuthorizedSubmission = vi.fn(async (args) => {
+      const claim = first.farmIntents.claimAuthorizedSubmission(args);
+      claimCommitted(claim);
+      await claimGate;
+      return claim;
+    });
+    const farmIntents = { ...first.farmIntents, claimAuthorizedSubmission };
+    const harness = makeRouteHarness({
+      realStores: first, jobs: first.jobs, farmIntents,
+      associationOutbox: first.associationOutbox,
+      baseEvidenceOutbox: first.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
+      buildFarmImplementation: buildFlow,
+    });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+    const farm = await postProtected(harness, '/farm', {
+      requestId: '01'.repeat(16), mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+    });
+    expect(farm.res.statusCode).toBe(201);
+    await postProtected(harness, '/farm/attach', {
+      mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash: 'bb'.repeat(32),
+    });
+    await flushMicrotasks();
+    const record = first.farmIntents.getByJob({
+      mandateId: body.mandateId, jobId: farm.json.jobId,
+    });
+    const projectionIdentity = {
+      mandateId: body.mandateId, jobId: record.jobId,
+      bindingId: record.bindingId, intentDigest: record.intentDigest,
+    };
+    first.farmIntents.projectMintEvidenceAtomic({
+      identity: projectionIdentity,
+      relay: {
+        execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
+        expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
+        attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+        mintTxHash: `0x${'ee'.repeat(32)}`,
+      },
+      now: 2_000_000_000_000,
+    });
+    const child = record.batch.children[0];
+    const childIdentity = {
+      networkId: child.networkId, bindingId: child.bindingId,
+      executionId: child.executionId, allocationId: child.allocationId,
+      childId: child.childId,
+    };
+    const eventsBefore = first.db.prepare(
+      'SELECT COUNT(*) AS count FROM base_evidence_outbox',
+    ).get().count;
+
+    const resume = harness.router.resumeFarmJobs();
+    const committedClaim = await claimSignal;
+    expect(committedClaim).toMatchObject({ claimed: true });
+    expect(typeof committedClaim.ownerToken).toBe('string');
+    expect(encodeCalls).not.toHaveBeenCalled();
+    expect(sendUserOperation).not.toHaveBeenCalled();
+    const submittingHead = second.db.prepare(`SELECT latest_phase,latest_state,submission_owner_token
+      FROM base_evidence_heads WHERE network_id=? AND binding_id=? AND execution_id=?
+        AND allocation_id=? AND child_id=?`).get(
+      childIdentity.networkId, childIdentity.bindingId, childIdentity.executionId,
+      childIdentity.allocationId, childIdentity.childId,
+    );
+    expect(submittingHead).toEqual({
+      latest_phase: 'base_deposit', latest_state: 'submitting',
+      submission_owner_token: committedClaim.ownerToken,
+    });
+    expect(second.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count)
+      .toBe(eventsBefore + 1);
+
+    expect(second.farmIntents.blockEvidenceConflict({
+      identity: childIdentity, now: 2_000_000_000_001,
+    })).toEqual({ jobId: record.jobId, status: 'blocked' });
+    expect(second.mandatesV3.revoke(routeIdentity(body))).toMatchObject({ status: 'revoked' });
+    expect(second.db.prepare(`SELECT latest_phase,latest_state,submission_owner_token
+      FROM base_evidence_heads WHERE network_id=? AND binding_id=? AND execution_id=?
+        AND allocation_id=? AND child_id=?`).get(
+      childIdentity.networkId, childIdentity.bindingId, childIdentity.executionId,
+      childIdentity.allocationId, childIdentity.childId,
+    )).toEqual(submittingHead);
+    expect(second.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count)
+      .toBe(eventsBefore + 1);
+    expect(second.farmIntents.getByJob(projectionIdentity)).toMatchObject({
+      state: 'blocked', reasonCode: 'base_evidence_conflict',
+    });
+    expect(second.jobs.get(record.jobId)).toMatchObject({
+      status: 'blocked', reasonCode: 'base_evidence_conflict',
+    });
+    expect(JSON.stringify({
+      job: second.jobs.get(record.jobId),
+      status: second.baseEvidenceOutbox.status(childIdentity),
+    })).not.toMatch(new RegExp(`${committedClaim.ownerToken}|${SESSION_KEY.slice(2)}|${CAPABILITY}`, 'i'));
+
+    releaseClaim();
+    expect(await resume).toEqual({
+      resumed: [], held: [record.jobId], blocked: [], uncertain: [],
+    });
+    expect(encodeCalls).toHaveBeenCalledOnce();
+    expect(sendUserOperation).toHaveBeenCalledOnce();
+    expect(waitForUserOperationReceipt).toHaveBeenCalledWith({
+      hash: USER_OP_HASH, timeout: 120_000,
+    });
+    expect(first.baseEvidenceOutbox.recoveryState(childIdentity)).toMatchObject({
+      phase: 'base_deposit', state: 'submitted', evidence: { userOpHash: USER_OP_HASH },
+    });
+    expect(first.farmIntents.getByJob(projectionIdentity)).toMatchObject({
+      state: 'blocked', reasonCode: 'base_evidence_conflict',
+    });
+    expect(await harness.router.resumeFarmJobs()).toEqual({
+      resumed: [], held: [], blocked: [], uncertain: [],
+    });
+    expect(sendUserOperation).toHaveBeenCalledOnce();
+    second.db.close();
+    first.db.close();
+  });
+
   it('lets only the first router own two never-started children and preserves serial send order', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-two-router-send-')), 'relayer.db');
     const first = createSqliteStores(path, { sessionKeyCipher: routeCipher() });

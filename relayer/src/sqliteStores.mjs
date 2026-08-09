@@ -1003,7 +1003,8 @@ export function createSqliteStores(path, {
         const checkpointIdentity = checkpoint?.identity;
         const owner = checkpointIdentity && db.prepare(`
           SELECT farm.mandate_id,farm.stellar_owner,farm.kernel_address,
-                 farm.binding_id,farm.binding_hash,farm.agent_index_batch_json
+                 farm.binding_id,farm.binding_hash,farm.agent_index_batch_json,
+                 farm.state AS farm_state
           FROM base_evidence_heads AS head
           JOIN farm_intent_work_v2 AS farm ON farm.job_id=head.job_id
           WHERE head.network_id=? AND head.binding_id=? AND head.execution_id=?
@@ -1043,6 +1044,7 @@ export function createSqliteStores(path, {
           && owner?.kernel_address === expected.kernelAddress
           && owner?.binding_id === expected.bindingId
           && owner?.binding_hash === expected.bindingHash
+          && owner?.farm_state === 'deposit_confirming'
           && exactPersistedChild
           && checkpoint?.evidence?.caller === expected.kernelAddress;
         if (!authorized) {

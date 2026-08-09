@@ -127,6 +127,34 @@ function finishForwardIntent(stores, normalizedIntent = forwardIntentFixture()) 
   return { normalizedIntent, acknowledgement };
 }
 
+function finishForwardIntentDepositConfirming(stores, normalizedIntent) {
+  const { acknowledgement } = finishForwardIntent(stores, normalizedIntent);
+  const identity = {
+    mandateId: normalizedIntent.intent.mandate.mandateId,
+    jobId: normalizedIntent.intent.jobId,
+    bindingId: normalizedIntent.intent.mandate.bindingId,
+    intentDigest: normalizedIntent.intentDigest,
+  };
+  stores.farmIntents.attachBurnAtomic({
+    identity, burnTxHash: 'bb'.repeat(32), now: 2_000_000_200,
+  });
+  stores.farmIntents.projectMintEvidenceAtomic({
+    identity,
+    relay: {
+      execId: `forward-farm:${normalizedIntent.intent.jobId}`,
+      state: 'minted', burnTxHash: 'bb'.repeat(32),
+      expectationDigest: normalizedIntent.expectationDigest,
+      messageDigest: 'cc'.repeat(32), attestationDigest: 'dd'.repeat(32),
+      evidenceVersion: '1', mintTxHash: `0x${'ee'.repeat(32)}`,
+    },
+    now: 2_000_000_300,
+  });
+  stores.farmIntents.advanceProjection({
+    identity, from: 'deposit_pending', to: 'deposit_confirming', now: 2_000_000_301,
+  });
+  return { identity, recoveryIdentity: acknowledgement.children[0].identity };
+}
+
 describe('Task 11 forward-farm intent canonicalization', () => {
   // Defect caught: a retry could rebuild a semantically different Agent Index/CCTP intent while
   // retaining the same browser request ID, making the idempotency key authorize different work.
@@ -594,13 +622,7 @@ describe('Task 11 forward-farm intent canonicalization', () => {
         relayerOrigin: 'https://relayer.example',
       },
     });
-    first.farmIntents.createOrGetIntent({ normalizedIntent, now: 900 });
-    const child = normalizedIntent.batch.children[0];
-    const recoveryIdentity = {
-      networkId: child.networkId, bindingId: child.bindingId,
-      executionId: child.executionId, allocationId: child.allocationId, childId: child.childId,
-    };
-    first.baseEvidenceOutbox.seed(recoveryIdentity, 0, { jobId: normalizedIntent.intent.jobId });
+    const { recoveryIdentity } = finishForwardIntentDepositConfirming(first, normalizedIntent);
     const authoritySnapshot = {
       mandateId: MANDATE_ID,
       stellarOwner: OWNER,
@@ -656,7 +678,9 @@ describe('Task 11 forward-farm intent canonicalization', () => {
     expect(claim).toEqual({
       claimed: false, ownerToken: null, reasonCode: 'mandate_authority_changed',
     });
-    expect(first.baseEvidenceOutbox.recoveryState(recoveryIdentity)).toBeNull();
+    expect(first.baseEvidenceOutbox.recoveryState(recoveryIdentity)).toMatchObject({
+      phase: 'cctp_mint', state: 'confirmed',
+    });
     expect(JSON.stringify(first.baseEvidenceOutbox.status(recoveryIdentity)))
       .not.toMatch(/must-not-be-issued|capability|session/i);
     second.db.close();
@@ -666,7 +690,9 @@ describe('Task 11 forward-farm intent canonicalization', () => {
   it('holds the mandate write lock through the Base claim and preserves its fence after revoke', () => {
     const path = freshPath();
     let second;
+    let identity;
     let concurrentRevokeBlocked = false;
+    let concurrentConflictBlocked = false;
     const first = createSqliteStores(path, {
       sessionKeyCipher: cipher(), nowSeconds: () => NOW_SECONDS,
       now: () => 1_000, leaseToken: () => 'authorized-owner',
@@ -676,6 +702,10 @@ describe('Task 11 forward-farm intent canonicalization', () => {
         expect(() => second.mandatesV3.revoke(mandateIdentity()))
           .toThrow(/temporarily unavailable|locked/i);
         concurrentRevokeBlocked = true;
+        expect(() => second.farmIntents.blockEvidenceConflict({
+          identity, now: 2_000_000_302,
+        })).toThrow(/temporarily unavailable|locked/i);
+        concurrentConflictBlocked = true;
       },
     });
     second = createSqliteStores(path, {
@@ -694,13 +724,9 @@ describe('Task 11 forward-farm intent canonicalization', () => {
         relayerOrigin: 'https://relayer.example',
       },
     });
-    first.farmIntents.createOrGetIntent({ normalizedIntent, now: 900 });
-    const child = normalizedIntent.batch.children[0];
-    const identity = {
-      networkId: child.networkId, bindingId: child.bindingId,
-      executionId: child.executionId, allocationId: child.allocationId, childId: child.childId,
-    };
-    first.baseEvidenceOutbox.seed(identity, 0, { jobId: normalizedIntent.intent.jobId });
+    ({ recoveryIdentity: identity } = finishForwardIntentDepositConfirming(
+      first, normalizedIntent,
+    ));
     const commonEvidence = {
       chainId: '84532', yieldRouterAddress: `0x${'11'.repeat(20)}`,
       caller: KERNEL.toLowerCase(), poolAddress: normalizedIntent.intent.allocations[0].poolAddress,
@@ -733,8 +759,39 @@ describe('Task 11 forward-farm intent canonicalization', () => {
     });
 
     expect(concurrentRevokeBlocked).toBe(true);
+    expect(concurrentConflictBlocked).toBe(true);
     expect(capabilityReads).toBe(1);
     expect(claim).toMatchObject({ claimed: true, ownerToken: 'authorized-owner' });
+    const claimedHead = second.db.prepare(`SELECT latest_phase,latest_state,submission_owner_token
+      FROM base_evidence_heads WHERE network_id=? AND binding_id=? AND execution_id=?
+        AND allocation_id=? AND child_id=?`).get(
+      identity.networkId, identity.bindingId, identity.executionId,
+      identity.allocationId, identity.childId,
+    );
+    const claimedEvents = second.db.prepare(
+      'SELECT COUNT(*) AS count FROM base_evidence_outbox',
+    ).get().count;
+    expect(claimedHead).toEqual({
+      latest_phase: 'base_deposit', latest_state: 'submitting',
+      submission_owner_token: 'authorized-owner',
+    });
+    expect(second.farmIntents.blockEvidenceConflict({
+      identity, now: 2_000_000_303,
+    })).toEqual({ jobId: normalizedIntent.intent.jobId, status: 'blocked' });
+    expect(second.db.prepare(`SELECT latest_phase,latest_state,submission_owner_token
+      FROM base_evidence_heads WHERE network_id=? AND binding_id=? AND execution_id=?
+        AND allocation_id=? AND child_id=?`).get(
+      identity.networkId, identity.bindingId, identity.executionId,
+      identity.allocationId, identity.childId,
+    )).toEqual(claimedHead);
+    expect(second.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count)
+      .toBe(claimedEvents);
+    expect(second.farmIntents.getByJob({
+      mandateId: MANDATE_ID, jobId: normalizedIntent.intent.jobId,
+    })).toMatchObject({ state: 'blocked', reasonCode: 'base_evidence_conflict' });
+    expect(second.jobs.get(normalizedIntent.intent.jobId)).toMatchObject({
+      status: 'blocked', reasonCode: 'base_evidence_conflict',
+    });
     expect(second.mandatesV3.revoke(mandateIdentity())).toMatchObject({ status: 'revoked' });
     expect(second.baseEvidenceOutbox.recoveryState(identity)).toMatchObject({
       phase: 'base_deposit', state: 'submitting',
