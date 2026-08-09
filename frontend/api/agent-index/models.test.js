@@ -218,7 +218,7 @@ describe('Task 9 Base child recovery models', () => {
     )
   })
 
-  it('rejects unsafe numeric evidence and unsafe lifecycle timestamps', () => {
+  it('rejects non-string exact numeric evidence and unsafe lifecycle timestamps', () => {
     const report = {
       identity: baseChildRecoveryIdentity(baseChild()),
       expectedRecoveryVersion: 0,
@@ -231,7 +231,7 @@ describe('Task 9 Base child recovery models', () => {
       },
     }
     expect(() => toBaseChildPhaseEventRow(report, { owner: 'GOWNER1', agent: 'CAGENT1' })).toThrow(
-      /safe integer/i
+      /string|integer/i
     )
     expect(() =>
       toBaseChildRow(
@@ -246,6 +246,117 @@ describe('Task 9 Base child recovery models', () => {
         'a'.repeat(64)
       )
     ).toThrow(/safe integer/i)
+  })
+
+  it.each([
+    ['cctp_burn', { endpoint: 'https://rpc.invalid' }],
+    ['cctp_attestation', { authorization: 'Bearer secret' }],
+    ['cctp_mint', { apiKey: 'service-key' }],
+    ['base_deposit', { approval: { signature: 'signed' } }],
+    ['base_deposit', { arbitraryDiagnostic: 'internal trace' }],
+  ])('rejects non-allowlisted %s evidence before canonical persistence', (phase, evidence) => {
+    expect(() =>
+      toBaseChildPhaseEventRow(
+        {
+          identity: baseChildRecoveryIdentity(baseChild()),
+          expectedRecoveryVersion: 0,
+          event: {
+            eventId: 'b'.repeat(64),
+            phase,
+            state: 'unknown',
+            evidence,
+            observedAt: 2_000_000_000_001,
+          },
+        },
+        { owner: 'GOWNER1', agent: 'CAGENT1' }
+      )
+    ).toThrow(/evidence|allowlist|sensitive/i)
+  })
+
+  it('bounds evidence depth and canonical UTF-8 payload size', () => {
+    const report = (evidence) => ({
+      identity: baseChildRecoveryIdentity(baseChild()),
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'c'.repeat(64),
+        phase: 'base_deposit',
+        state: 'unknown',
+        evidence,
+        observedAt: 2_000_000_000_001,
+      },
+    })
+    expect(() =>
+      toBaseChildPhaseEventRow(
+        report({
+          chainId: '84532',
+          event: {
+            address: `0x${'11'.repeat(20)}`,
+            event: { nested: { body: 'hidden' } },
+          },
+        }),
+        { owner: 'GOWNER1', agent: 'CAGENT1' }
+      )
+    ).toThrow(/depth/i)
+    expect(() =>
+      toBaseChildPhaseEventRow(report({ reasonCode: 'x'.repeat(4097) }), {
+        owner: 'GOWNER1',
+        agent: 'CAGENT1',
+      })
+    ).toThrow(/size|evidence/i)
+  })
+
+  it('accepts the closed Task 10 base-deposit evidence shape with exact string quantities', () => {
+    const row = toBaseChildPhaseEventRow(
+      {
+        identity: baseChildRecoveryIdentity(baseChild()),
+        expectedRecoveryVersion: 0,
+        event: {
+          eventId: 'd'.repeat(64),
+          phase: 'base_deposit',
+          state: 'confirmed',
+          evidence: {
+            chainId: '84532',
+            yieldRouterAddress: `0x${'11'.repeat(20)}`,
+            caller: `0x${'22'.repeat(20)}`,
+            poolAddress: `0x${'33'.repeat(20)}`,
+            assets: '9007199254740993000000',
+            minShares: '9007199254740993000001',
+            userOpHash: `0x${'44'.repeat(32)}`,
+            transactionHash: `0x${'55'.repeat(32)}`,
+            event: {
+              address: `0x${'11'.repeat(20)}`,
+              topic0: `0x${'66'.repeat(32)}`,
+              logIndex: '0',
+              caller: `0x${'22'.repeat(20)}`,
+              poolAddress: `0x${'33'.repeat(20)}`,
+              assets: '9007199254740993000000',
+              shares: '9007199254740993000002',
+            },
+          },
+          observedAt: 2_000_000_000_001,
+        },
+      },
+      { owner: 'GOWNER1', agent: 'CAGENT1' }
+    )
+    expect(JSON.parse(row.evidence_json)).toEqual({
+      assets: '9007199254740993000000',
+      caller: `0x${'22'.repeat(20)}`,
+      chainId: '84532',
+      event: {
+        address: `0x${'11'.repeat(20)}`,
+        assets: '9007199254740993000000',
+        caller: `0x${'22'.repeat(20)}`,
+        logIndex: '0',
+        poolAddress: `0x${'33'.repeat(20)}`,
+        shares: '9007199254740993000002',
+        topic0: `0x${'66'.repeat(32)}`,
+      },
+      minShares: '9007199254740993000001',
+      poolAddress: `0x${'33'.repeat(20)}`,
+      transactionHash: `0x${'55'.repeat(32)}`,
+      userOpHash: `0x${'44'.repeat(32)}`,
+      yieldRouterAddress: `0x${'11'.repeat(20)}`,
+    })
   })
 })
 

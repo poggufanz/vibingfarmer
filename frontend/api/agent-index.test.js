@@ -4,10 +4,11 @@ import { Keypair, Networks, StrKey, rpc } from '@stellar/stellar-sdk'
 const mocked = vi.hoisted(() => ({
   store: null,
   readContract: vi.fn(),
+  createStore: vi.fn(),
 }))
 
 vi.mock('./agent-index/store.js', () => ({
-  createAgentIndexStore: () => mocked.store,
+  createAgentIndexStore: (...args) => mocked.createStore(...args),
 }))
 vi.mock('../src/stellar/client.js', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -234,6 +235,7 @@ async function call(request) {
 
 beforeEach(() => {
   mocked.store = fakeStore()
+  mocked.createStore.mockReset().mockImplementation(() => mocked.store)
   mocked.readContract.mockReset()
   authorityReads([
     { routerOwner: OWNER, scope: { owner: OWNER, revoked: false }, signer: SESSION.rawPublicKey() },
@@ -1033,6 +1035,84 @@ describe('/api/agent-index operational evidence routes', () => {
     expect(latest).not.toHaveBeenCalled()
     latest.mockRestore()
   })
+
+  it.each(['base-child-intent-batch', 'base-child-evidence'])(
+    'authenticates %s before protected quota and every dependency',
+    async (action) => {
+      const latest = vi.spyOn(rpc.Server.prototype, 'getLatestLedger')
+      const ip = action === 'base-child-intent-batch' ? '203.0.113.251' : '203.0.113.252'
+      const messenger = `C${'D'.repeat(55)}`
+      const token = `C${'E'.repeat(55)}`
+      const evidence = {
+        schemaVersion: 1,
+        identity: {
+          networkId: NETWORK,
+          bindingId: 'binding-route-batch',
+          executionId: 'run-route-1:exec:allocation-route-1',
+          allocationId: 'allocation-route-1',
+          childId: 'job-route-batch',
+        },
+        expectedRecoveryVersion: 0,
+        event: {
+          eventId: 'b'.repeat(64),
+          phase: 'cctp_burn',
+          state: 'submitting',
+          evidence: {},
+          observedAt: 2_000_000_000_200,
+        },
+      }
+      const body = action === 'base-child-intent-batch' ? childBatch() : evidence
+      for (let attempt = 0; attempt < 121; attempt += 1) {
+        const req = mockReq({
+          method: 'POST',
+          url: `/api/agent-index?action=${action}`,
+          body,
+          ip,
+        })
+        req.headers.authorization = 'Bearer wrong-secret'
+        const denied = await call(req)
+        expect(denied.res.statusCode).toBe(401)
+      }
+      expect(mocked.createStore).not.toHaveBeenCalled()
+      expect(mocked.readContract).not.toHaveBeenCalled()
+      expect(latest).not.toHaveBeenCalled()
+      expect(mocked.store.readMembershipsByAgentAddresses).not.toHaveBeenCalled()
+
+      if (action === 'base-child-intent-batch') {
+        const batch = childBatch()
+        const kernel = batch.children[0].intent.kernelAddress
+        latest.mockResolvedValue({ sequence: 123456, closeTime: 2_000_000_001 })
+        mocked.readContract.mockResolvedValue({
+          owner: OWNER,
+          kind: 1,
+          target: messenger,
+          token,
+          destination_domain: 6,
+          mint_recipient: kernel.slice(2).padStart(64, '0'),
+          expiry: 2_100_000_000,
+          revoked: false,
+          cap_per_period: '30000000',
+          spent_in_period: '0',
+          period_start: 2_000_000_000,
+          period_duration: 3600,
+        })
+      }
+      const accepted = await call(
+        mockReq({
+          method: 'POST',
+          url: `/api/agent-index?action=${action}`,
+          body,
+          ip,
+          requestEnv: env({
+            SOROBAN_CCTP_TOKEN_MESSENGER: messenger,
+            SOROBAN_CCTP_USDC_ADDRESS: token,
+          }),
+        })
+      )
+      expect(accepted.res.statusCode).toBe(201)
+      latest.mockRestore()
+    }
+  )
 
   it('accepts idempotency only in the exact batch body, never from a header fallback', async () => {
     const body = childBatch()

@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { createAgentIndexStore } from './store.js'
 import { AgentIndexConflictError, sourceIdFor } from './models.js'
@@ -35,10 +36,7 @@ function applyMigrations(sqlite, through) {
 // prepare/bind/run/first/all + batch surface D1 exposes — store.js never knows the difference.
 // Extends frontend/api/vf/_db.js's "in-memory double" idiom to the one thing that double doesn't
 // need: db.batch() transactions (see task brief note on extending it minimally in the test file).
-function fakeD1() {
-  const sqlite = new DatabaseSync(':memory:')
-  applyMigrations(sqlite, 8)
-
+function sqliteD1(sqlite) {
   function bound(sql, args) {
     return {
       run() {
@@ -74,6 +72,12 @@ function fakeD1() {
     },
     _raw: sqlite, // test-only escape hatch to assert DB-level CHECK/NOT NULL constraints directly
   }
+}
+
+function fakeD1() {
+  const sqlite = new DatabaseSync(':memory:')
+  applyMigrations(sqlite, 8)
+  return sqliteD1(sqlite)
 }
 
 const NETWORK = 'stellar-testnet'
@@ -1580,6 +1584,109 @@ describe('Task 9 authoritative Base child recovery store', () => {
     ).toBe(3)
   })
 
+  it('concurrently resolves exact reservations across two real SQLite connections as one write and one retry', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'vf-task9-exact-'))
+    const databasePath = join(directory, 'agent-index.sqlite')
+    const sqliteA = new DatabaseSync(databasePath)
+    const sqliteB = new DatabaseSync(databasePath)
+    try {
+      sqliteA.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;')
+      applyMigrations(sqliteA, 8)
+      sqliteB.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;')
+      const storeA = createAgentIndexStore(sqliteD1(sqliteA))
+      const storeB = createAgentIndexStore(sqliteD1(sqliteB))
+      const input = batch({ idempotencyKey: 'concurrent-exact' })
+      const reservation = {
+        batch: input,
+        requestDigest: 'd'.repeat(64),
+        idempotencyKey: input.idempotencyKey,
+      }
+
+      const outcomes = await Promise.all([
+        storeA.reserveBaseChildIntentBatch(reservation),
+        storeB.reserveBaseChildIntentBatch(reservation),
+      ])
+
+      expect(outcomes).toEqual(
+        expect.arrayContaining([
+          { written: 3, duplicates: 0 },
+          { written: 0, duplicates: 3 },
+        ])
+      )
+      expect(
+        sqliteA
+          .prepare(`SELECT COUNT(*) count FROM base_child_intent_batches WHERE idempotency_key=?`)
+          .get(input.idempotencyKey).count
+      ).toBe(1)
+      expect(
+        sqliteA
+          .prepare(
+            `SELECT COUNT(*) count FROM base_child_intent_batch_items WHERE idempotency_key=?`
+          )
+          .get(input.idempotencyKey).count
+      ).toBe(3)
+    } finally {
+      sqliteB.close()
+      sqliteA.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('concurrently resolves conflicting reservations across two real SQLite connections all-or-none', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'vf-task9-conflict-'))
+    const databasePath = join(directory, 'agent-index.sqlite')
+    const sqliteA = new DatabaseSync(databasePath)
+    const sqliteB = new DatabaseSync(databasePath)
+    try {
+      sqliteA.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;')
+      applyMigrations(sqliteA, 8)
+      sqliteB.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;')
+      const storeA = createAgentIndexStore(sqliteD1(sqliteA))
+      const storeB = createAgentIndexStore(sqliteD1(sqliteB))
+      const exact = batch({ idempotencyKey: 'concurrent-conflict' })
+      const changed = { ...exact, burnUnits7: '30000010' }
+
+      const outcomes = await Promise.allSettled([
+        storeA.reserveBaseChildIntentBatch({
+          batch: exact,
+          requestDigest: 'e'.repeat(64),
+          idempotencyKey: exact.idempotencyKey,
+        }),
+        storeB.reserveBaseChildIntentBatch({
+          batch: changed,
+          requestDigest: 'f'.repeat(64),
+          idempotencyKey: changed.idempotencyKey,
+        }),
+      ])
+
+      expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+      expect(outcomes.filter(({ status }) => status === 'rejected')).toHaveLength(1)
+      expect(outcomes.find(({ status }) => status === 'fulfilled').value).toEqual({
+        written: 3,
+        duplicates: 0,
+      })
+      expect(outcomes.find(({ status }) => status === 'rejected').reason).toBeInstanceOf(
+        AgentIndexConflictError
+      )
+      expect(
+        sqliteA
+          .prepare(`SELECT COUNT(*) count FROM base_child_intent_batches WHERE idempotency_key=?`)
+          .get(exact.idempotencyKey).count
+      ).toBe(1)
+      expect(
+        sqliteA
+          .prepare(
+            `SELECT COUNT(*) count FROM base_child_intent_batch_items WHERE idempotency_key=?`
+          )
+          .get(exact.idempotencyKey).count
+      ).toBe(3)
+    } finally {
+      sqliteB.close()
+      sqliteA.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects changed content under one key without changing the original batch', async () => {
     const input = batch()
     await store.reserveBaseChildIntentBatch({
@@ -1654,6 +1761,145 @@ describe('Task 9 authoritative Base child recovery store', () => {
     }
   })
 
+  it('makes durable batch receipts and items append-only', async () => {
+    const input = batch({ idempotencyKey: 'immutable-batch' })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: 'a'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    expect(() =>
+      db._raw
+        .prepare(`UPDATE base_child_intent_batches SET burn_units_7='1' WHERE idempotency_key=?`)
+        .run(input.idempotencyKey)
+    ).toThrow(/append-only/i)
+    expect(() =>
+      db._raw
+        .prepare(`DELETE FROM base_child_intent_batches WHERE idempotency_key=?`)
+        .run(input.idempotencyKey)
+    ).toThrow(/append-only/i)
+    expect(() =>
+      db._raw
+        .prepare(
+          `UPDATE base_child_intent_batch_items SET intent_digest=?
+           WHERE idempotency_key=? AND ordinal=0`
+        )
+        .run('changed', input.idempotencyKey)
+    ).toThrow(/append-only/i)
+    expect(() =>
+      db._raw
+        .prepare(`DELETE FROM base_child_intent_batch_items WHERE idempotency_key=? AND ordinal=0`)
+        .run(input.idempotencyKey)
+    ).toThrow(/append-only/i)
+    await expect(
+      store.reserveBaseChildIntentBatch({
+        batch: input,
+        requestDigest: 'a'.repeat(64),
+        idempotencyKey: input.idempotencyKey,
+      })
+    ).resolves.toEqual({ written: 0, duplicates: 3 })
+  })
+
+  it('rejects a batch item whose child facts do not match its parent batch context', async () => {
+    const first = batch({
+      idempotencyKey: 'parent-batch-a',
+      children: [child(1)],
+      burnUnits7: '10000000',
+    })
+    const foreignChild = child(9, {
+      owner: 'GOWNER2',
+      agent: 'CAGENT2',
+      bindingId: 'foreign-binding',
+      executionId: 'foreign-run:exec:foreign-allocation',
+      allocationId: 'foreign-allocation',
+      childId: 'foreign-child',
+      intent: {
+        ...child(9).intent,
+        runId: 'foreign-run',
+        grantTxHash: 'foreign-grant',
+        bindingHash: 'foreign-binding-hash',
+        baseJobId: 'foreign-child',
+      },
+    })
+    const second = {
+      idempotencyKey: 'parent-batch-b',
+      burnUnits7: '10000000',
+      children: [foreignChild],
+    }
+    await store.reserveBaseChildIntentBatch({
+      batch: first,
+      requestDigest: 'b'.repeat(64),
+      idempotencyKey: first.idempotencyKey,
+    })
+    await store.reserveBaseChildIntentBatch({
+      batch: second,
+      requestDigest: 'c'.repeat(64),
+      idempotencyKey: second.idempotencyKey,
+    })
+    const foreignItem = db._raw
+      .prepare(
+        `SELECT network_id,binding_id,execution_id,allocation_id,child_id,
+                owner_address,agent_address,intent_digest
+         FROM base_child_intent_batch_items WHERE idempotency_key=?`
+      )
+      .get(second.idempotencyKey)
+    expect(() =>
+      db._raw
+        .prepare(
+          `INSERT INTO base_child_intent_batch_items
+             (idempotency_key,ordinal,network_id,binding_id,execution_id,allocation_id,
+              child_id,owner_address,agent_address,intent_digest)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(first.idempotencyKey, 1, ...Object.values(foreignItem))
+    ).toThrow(/batch item facts/i)
+    expect(
+      db._raw
+        .prepare(`SELECT COUNT(*) count FROM base_child_intent_batch_items WHERE idempotency_key=?`)
+        .get(first.idempotencyKey).count
+    ).toBe(1)
+  })
+
+  it('rejects a valid common-context child item outside its parent receipt ordinal range', async () => {
+    const first = batch({
+      idempotencyKey: 'ordinal-parent-a',
+      children: [child(1)],
+      burnUnits7: '10000000',
+    })
+    const second = batch({
+      idempotencyKey: 'ordinal-parent-b',
+      children: [child(9)],
+      burnUnits7: '10000000',
+    })
+    await store.reserveBaseChildIntentBatch({
+      batch: first,
+      requestDigest: '1'.repeat(64),
+      idempotencyKey: first.idempotencyKey,
+    })
+    await store.reserveBaseChildIntentBatch({
+      batch: second,
+      requestDigest: '2'.repeat(64),
+      idempotencyKey: second.idempotencyKey,
+    })
+    const siblingItem = db._raw
+      .prepare(
+        `SELECT network_id,binding_id,execution_id,allocation_id,child_id,
+                owner_address,agent_address,intent_digest
+         FROM base_child_intent_batch_items WHERE idempotency_key=?`
+      )
+      .get(second.idempotencyKey)
+    expect(() =>
+      db._raw
+        .prepare(
+          `INSERT INTO base_child_intent_batch_items
+             (idempotency_key,ordinal,network_id,binding_id,execution_id,allocation_id,
+              child_id,owner_address,agent_address,intent_digest)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(first.idempotencyKey, 1, ...Object.values(siblingItem))
+    ).toThrow(/batch item facts/i)
+  })
+
   it('advances evidence with full-identity CAS and exact replay', async () => {
     const input = batch({ children: [child(1)], burnUnits7: '10000000' })
     await store.reserveBaseChildIntentBatch({
@@ -1702,6 +1948,129 @@ describe('Task 9 authoritative Base child recovery store', () => {
         event: { ...request.event, eventId: 'c'.repeat(64) },
       })
     ).rejects.toBeInstanceOf(AgentIndexConflictError)
+  })
+
+  it.each([
+    ['state', (request) => ({ ...request, event: { ...request.event, state: 'submitted' } })],
+    ['observed time', (request) => ({ ...request, event: { ...request.event, observedAt: 2101 } })],
+    [
+      'phase',
+      (request) => ({
+        ...request,
+        event: { ...request.event, phase: 'cctp_attestation', evidence: {} },
+      }),
+    ],
+    [
+      'evidence',
+      (request) => ({
+        ...request,
+        event: { ...request.event, evidence: { burnUnits7: '10000001' } },
+      }),
+    ],
+    [
+      'network identity',
+      (request) => ({ ...request, identity: { ...request.identity, networkId: 'other-network' } }),
+    ],
+    [
+      'binding identity',
+      (request) => ({ ...request, identity: { ...request.identity, bindingId: 'other-binding' } }),
+    ],
+    [
+      'execution identity',
+      (request) => ({
+        ...request,
+        identity: { ...request.identity, executionId: 'run-batch-1:exec:allocation-2' },
+      }),
+    ],
+    [
+      'allocation identity',
+      (request) => ({
+        ...request,
+        identity: { ...request.identity, allocationId: 'allocation-2' },
+      }),
+    ],
+    [
+      'child identity',
+      (request) => ({ ...request, identity: { ...request.identity, childId: 'job-2' } }),
+    ],
+  ])('rejects a same-event-id replay with changed %s', async (_label, mutate) => {
+    const input = batch({
+      idempotencyKey: `same-event-${_label.replaceAll(' ', '-')}`,
+      children: [child(1)],
+      burnUnits7: '10000000',
+    })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '8'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    const request = {
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: '9'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'submitting',
+        evidence: { burnUnits7: '10000000' },
+        observedAt: 2100,
+      },
+    }
+    await store.advanceBaseChildPhase(request)
+
+    await expect(store.advanceBaseChildPhase(mutate(request))).rejects.toBeInstanceOf(
+      AgentIndexConflictError
+    )
+    expect(db._raw.prepare(`SELECT COUNT(*) count FROM base_child_phase_events`).get().count).toBe(
+      1
+    )
+    expect(
+      db._raw.prepare(`SELECT recovery_version FROM base_child_intents`).get().recovery_version
+    ).toBe(1)
+  })
+
+  it.each([
+    ['owner', 'GOWNER-OTHER', 'CAGENT1'],
+    ['agent', 'GOWNER1', 'CAGENT-OTHER'],
+  ])('rejects phase-event SQL with a mismatched parent %s fact', async (_label, owner, agent) => {
+    const input = batch({
+      idempotencyKey: `event-parent-${_label}`,
+      children: [child(1)],
+      burnUnits7: '10000000',
+    })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '0'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    expect(() =>
+      db._raw
+        .prepare(
+          `INSERT INTO base_child_phase_events
+             (event_id,network_id,binding_id,execution_id,allocation_id,child_id,
+              owner_address,agent_address,recovery_version,phase,state,evidence_digest,
+              evidence_json,observed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(
+          _label.repeat(64).slice(0, 64),
+          identity.networkId,
+          identity.bindingId,
+          identity.executionId,
+          identity.allocationId,
+          identity.childId,
+          owner,
+          agent,
+          1,
+          'cctp_burn',
+          'submitting',
+          'a'.repeat(64),
+          '{}',
+          2100
+        )
+    ).toThrow(/CAS conflict/i)
+    expect(db._raw.prepare(`SELECT COUNT(*) count FROM base_child_phase_events`).get().count).toBe(
+      0
+    )
   })
 
   it('enforces explicit phase order and confirmed non-regression', async () => {
@@ -1786,6 +2155,38 @@ describe('Task 9 authoritative Base child recovery store', () => {
         },
       })
     ).rejects.toThrow(/store failed/i)
+    expect(db._raw.prepare(`SELECT COUNT(*) count FROM base_child_phase_events`).get().count).toBe(
+      0
+    )
+    expect(
+      db._raw.prepare(`SELECT recovery_version FROM base_child_intents`).get().recovery_version
+    ).toBe(0)
+  })
+
+  it('rejects non-allowlisted evidence before any phase SQL mutation', async () => {
+    const input = batch({
+      idempotencyKey: 'invalid-evidence-batch',
+      children: [child(1)],
+      burnUnits7: '10000000',
+    })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '6'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    await expect(
+      store.advanceBaseChildPhase({
+        identity,
+        expectedRecoveryVersion: 0,
+        event: {
+          eventId: '7'.repeat(64),
+          phase: 'cctp_burn',
+          state: 'unknown',
+          evidence: { holder: 'other-worker', endpoint: 'https://rpc.invalid' },
+          observedAt: 2300,
+        },
+      })
+    ).rejects.toThrow(/evidence/i)
     expect(db._raw.prepare(`SELECT COUNT(*) count FROM base_child_phase_events`).get().count).toBe(
       0
     )

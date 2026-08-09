@@ -452,8 +452,9 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
     ...overrides,
   })
 
-  async function readyStore() {
-    const store = createAgentIndexStore(fakeD1())
+  async function readyStoreFixture(membershipOverrides = {}) {
+    const database = fakeD1()
+    const store = createAgentIndexStore(database)
     await store.upsertMembership({
       networkId: 'stellar-testnet',
       agentAddress: AGENT_A,
@@ -467,8 +468,13 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
       runId: 'run-batch-42',
       runOrdinal: 0,
       provenance: { source: 'router-event', generation: 'agent-v3-bridge' },
+      ...membershipOverrides,
     })
-    return store
+    return { store, database }
+  }
+
+  async function readyStore() {
+    return (await readyStoreFixture()).store
   }
 
   it('gates the batch before authority/store work and returns the exact ordered 201 ack', async () => {
@@ -508,6 +514,106 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
     })
     expect(JSON.stringify(accepted.body)).not.toMatch(/scope|secret|owner|authorization/i)
   })
+
+  it.each([
+    [
+      'mixed owner',
+      ({ incoming }) => {
+        incoming.children[1].owner = 'GFOREIGNOWNER'
+      },
+      {},
+      400,
+    ],
+    [
+      'mixed run with canonical execution identity',
+      ({ incoming }) => {
+        incoming.children[1].intent.runId = 'run-other'
+        incoming.children[1].executionId = 'run-other:exec:allocation-2'
+      },
+      {},
+      400,
+    ],
+    [
+      'duplicate allocation',
+      ({ incoming }) => {
+        incoming.children[1] = structuredClone(incoming.children[0])
+      },
+      {},
+      400,
+    ],
+    [
+      'proxy target spoofing',
+      ({ incoming }) => {
+        incoming.children[1].intent.proxyTarget = 'moonwell'
+      },
+      {},
+      400,
+    ],
+    [
+      'wrong durable membership provenance',
+      () => {},
+      { membership: { provenance: { source: 'registry-event', generation: 'agent-v3-bridge' } } },
+      400,
+    ],
+    [
+      'wrong live scope owner',
+      () => {},
+      {
+        authority: ({ authority }) => ({
+          ...authority,
+          scope: { ...authority.scope, owner: 'GFOREIGNOWNER' },
+        }),
+      },
+      400,
+    ],
+    [
+      'one unit above exact live scope headroom',
+      () => {},
+      {
+        authority: ({ authority }) => ({
+          ...authority,
+          scope: { ...authority.scope, cap_per_period: '19999999' },
+        }),
+      },
+      400,
+    ],
+    [
+      'malformed authority snapshot',
+      () => {},
+      { authority: () => ({ ledgerSequence: 123456, ledgerCloseSeconds: '2000000001' }) },
+      503,
+    ],
+  ])(
+    'rejects %s through the handler backed by real SQLite without partial rows',
+    async (_label, mutate, options, expectedStatus) => {
+      const { store, database } = await readyStoreFixture(options.membership)
+      const incoming = batch()
+      mutate({ incoming })
+      const baseDependencies = deps()
+      const authority = await baseDependencies.authorityReader()
+      const authorityReader = vi.fn(async () =>
+        options.authority ? options.authority({ authority }) : authority
+      )
+
+      const out = await handleBaseChildIntentBatch({
+        batch: incoming,
+        store,
+        ...deps({ authorityReader }),
+      })
+
+      expect(out.status).toBe(expectedStatus)
+      expect(
+        database._raw.prepare(`SELECT COUNT(*) count FROM base_child_intent_batches`).get().count
+      ).toBe(0)
+      expect(
+        database._raw.prepare(`SELECT COUNT(*) count FROM base_child_intents`).get().count
+      ).toBe(0)
+      expect(
+        database._raw.prepare(`SELECT COUNT(*) count FROM base_child_intent_batch_items`).get()
+          .count
+      ).toBe(0)
+    }
+  )
 
   it('writes evidence with CAS and publicly returns only allowlisted chain facts', async () => {
     const store = await readyStore()
@@ -590,6 +696,26 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
         observedAt: 1,
       },
       serializedApproval: 'private',
+    }
+    await expect(
+      handleBaseChildEvidenceWrite({ request, store, ...deps() })
+    ).resolves.toMatchObject({ status: 400 })
+    expect(store.advanceBaseChildPhase).not.toHaveBeenCalled()
+  })
+
+  it('rejects unknown and sensitive nested evidence before calling the store', async () => {
+    const store = { advanceBaseChildPhase: vi.fn() }
+    const request = {
+      schemaVersion: 1,
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'e'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'unknown',
+        evidence: { endpoint: 'https://rpc.invalid', authorization: 'Bearer secret' },
+        observedAt: 1,
+      },
     }
     await expect(
       handleBaseChildEvidenceWrite({ request, store, ...deps() })

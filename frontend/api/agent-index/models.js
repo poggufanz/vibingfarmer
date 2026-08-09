@@ -58,6 +58,103 @@ export const BASE_CHILD_RECOVERY_STATES = [
   'unknown',
   'blocked',
 ]
+export const MAX_BASE_CHILD_EVIDENCE_BYTES = 4096
+export const MAX_BASE_CHILD_EVIDENCE_DEPTH = 2
+
+const BASE_CHILD_PHASE_EVIDENCE_FIELDS = new Map([
+  [
+    'cctp_burn',
+    new Set([
+      'burnTxHash',
+      'expectationDigest',
+      'burnUnits7',
+      'amount',
+      'token',
+      'units',
+      'decimals',
+      'destinationDomain',
+      'messageHash',
+      'mintRecipient',
+      'reasonCode',
+    ]),
+  ],
+  [
+    'cctp_attestation',
+    new Set([
+      'burnTxHash',
+      'expectationDigest',
+      'messageDigest',
+      'attestationDigest',
+      'evidenceVersion',
+      'nonce',
+      'messageHash',
+      'attestationHash',
+      'reasonCode',
+    ]),
+  ],
+  [
+    'cctp_mint',
+    new Set([
+      'burnTxHash',
+      'expectationDigest',
+      'messageDigest',
+      'attestationDigest',
+      'evidenceVersion',
+      'nonce',
+      'mintTxHash',
+      'transactionHash',
+      'blockNumber',
+      'blockHash',
+      'chainId',
+      'reasonCode',
+    ]),
+  ],
+  [
+    'base_deposit',
+    new Set([
+      'chainId',
+      'yieldRouterAddress',
+      'kernelAddress',
+      'caller',
+      'poolAddress',
+      'assets',
+      'minShares',
+      'shares',
+      'userOpHash',
+      'transactionHash',
+      'blockNumber',
+      'blockHash',
+      'entryPoint',
+      'sender',
+      'reasonCode',
+      'event',
+    ]),
+  ],
+])
+const BASE_DEPOSIT_EVENT_FIELDS = new Set([
+  'address',
+  'topic0',
+  'logIndex',
+  'caller',
+  'poolAddress',
+  'assets',
+  'shares',
+])
+const EXACT_EVIDENCE_INTEGER_FIELDS = new Set([
+  'burnUnits7',
+  'amount',
+  'units',
+  'decimals',
+  'destinationDomain',
+  'evidenceVersion',
+  'nonce',
+  'blockNumber',
+  'chainId',
+  'assets',
+  'minShares',
+  'shares',
+  'logIndex',
+])
 
 export class AgentIndexError extends Error {
   constructor(message, options) {
@@ -135,7 +232,15 @@ function sensitiveKey(key) {
     normalized.includes('capability') ||
     normalized.includes('bearer') ||
     normalized.includes('leasetoken') ||
-    normalized.includes('walletmaterial')
+    normalized.includes('walletmaterial') ||
+    normalized.includes('authorization') ||
+    normalized.includes('apikey') ||
+    normalized.includes('approval') ||
+    normalized.includes('holder') ||
+    normalized.includes('endpoint') ||
+    normalized.includes('diagnostic') ||
+    normalized.includes('passkey') ||
+    normalized.includes('stack')
   )
 }
 
@@ -147,8 +252,7 @@ export function assertNoSensitiveProperties(value, path = '$', seen = new WeakSe
   if (seen.has(value)) throw new Error(`circular data is not serializable at ${path}`)
   seen.add(value)
   for (const [key, entry] of Object.entries(value)) {
-    if (sensitiveKey(key))
-      throw new Error(`secret/private/session-key property rejected at ${path}.${key}`)
+    if (sensitiveKey(key)) throw new Error(`sensitive property rejected at ${path}.${key}`)
     assertNoSensitiveProperties(entry, `${path}.${key}`, seen)
   }
   seen.delete(value)
@@ -191,6 +295,50 @@ export function canonicalJson(value) {
     )
   }
   return JSON.stringify(canonicalize(value))
+}
+
+function exactEvidenceObject(value, allowed, path) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${path} must be an evidence object`)
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (!allowed.has(key)) throw new Error(`${path}.${key} is not allowlisted evidence`)
+    if (EXACT_EVIDENCE_INTEGER_FIELDS.has(key)) {
+      requireUnsignedIntegerString(entry, `${path}.${key}`)
+      continue
+    }
+    if (key === 'event') {
+      exactEvidenceObject(entry, BASE_DEPOSIT_EVENT_FIELDS, `${path}.event`)
+      continue
+    }
+    if (entry !== null && typeof entry !== 'string' && typeof entry !== 'boolean') {
+      throw new Error(`${path}.${key} must be a bounded JSON scalar`)
+    }
+  }
+}
+
+function assertEvidenceDepth(value, depth = 1, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object') return
+  if (depth > MAX_BASE_CHILD_EVIDENCE_DEPTH) {
+    throw new Error('Base child evidence exceeds the depth limit')
+  }
+  if (seen.has(value)) throw new Error('Base child evidence must not contain cycles')
+  seen.add(value)
+  for (const entry of Object.values(value)) assertEvidenceDepth(entry, depth + 1, seen)
+  seen.delete(value)
+}
+
+export function validateBaseChildPhaseEvidence({ phase, evidence }) {
+  const allowed = BASE_CHILD_PHASE_EVIDENCE_FIELDS.get(phase)
+  if (!allowed) throw new Error('Base child evidence phase is unsupported')
+  assertNoSensitiveProperties(evidence)
+  assertEvidenceDepth(evidence)
+  exactEvidenceObject(evidence, allowed, 'event.evidence')
+  const evidenceJson = canonicalJson(evidence)
+  if (new TextEncoder().encode(evidenceJson).byteLength > MAX_BASE_CHILD_EVIDENCE_BYTES) {
+    throw new Error('Base child evidence exceeds the payload size limit')
+  }
+  return evidenceJson
 }
 
 function requireAmount(amount, field) {
@@ -429,7 +577,11 @@ export function toBaseChildPhaseEventRow(report, subjects) {
   const event = report?.event || {}
   const eventId = requireString(event.eventId, 'event.eventId')
   if (!/^[0-9a-f]{64}$/.test(eventId)) throw new Error('event.eventId must be 64 lowercase hex')
-  const evidenceJson = canonicalJson(event.evidence ?? {})
+  const evidenceJson = validateBaseChildPhaseEvidence({
+    phase: event.phase,
+    state: event.state,
+    evidence: event.evidence ?? {},
+  })
   const observedAt = requireInt(event.observedAt, 'event.observedAt')
   if (!Number.isSafeInteger(observedAt) || observedAt < 0) {
     throw new Error('event.observedAt must be a non-negative safe integer')

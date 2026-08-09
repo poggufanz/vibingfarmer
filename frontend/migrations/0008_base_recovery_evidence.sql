@@ -90,6 +90,58 @@ CREATE TABLE base_child_intent_batch_items (
     REFERENCES base_child_intents(network_id, binding_id, allocation_id, child_id)
 );
 
+CREATE TRIGGER base_child_intent_batches_no_update
+BEFORE UPDATE ON base_child_intent_batches
+BEGIN
+  SELECT RAISE(ABORT, 'base child intent batches are append-only');
+END;
+CREATE TRIGGER base_child_intent_batches_no_delete
+BEFORE DELETE ON base_child_intent_batches
+BEGIN
+  SELECT RAISE(ABORT, 'base child intent batches are append-only');
+END;
+
+CREATE TRIGGER base_child_intent_batch_items_parent_facts
+BEFORE INSERT ON base_child_intent_batch_items
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM base_child_intent_batches AS batch
+  JOIN base_child_intents AS child
+    ON child.network_id = NEW.network_id
+   AND child.binding_id = NEW.binding_id
+   AND child.execution_id = NEW.execution_id
+   AND child.allocation_id = NEW.allocation_id
+   AND child.child_id = NEW.child_id
+  WHERE batch.idempotency_key = NEW.idempotency_key
+    AND NEW.ordinal < batch.child_count
+    AND batch.network_id = NEW.network_id
+    AND batch.binding_id = NEW.binding_id
+    AND batch.owner_address = NEW.owner_address
+    AND batch.agent_address = NEW.agent_address
+    AND child.owner_address = NEW.owner_address
+    AND child.agent_address = NEW.agent_address
+    AND child.intent_digest = NEW.intent_digest
+    AND json_extract(child.intent_json, '$.runId') = batch.run_id
+    AND json_extract(child.intent_json, '$.grantTxHash') = batch.grant_tx_hash
+    AND json_extract(child.intent_json, '$.kernelAddress') = batch.kernel_address
+    AND json_extract(child.intent_json, '$.bindingHash') = batch.binding_hash
+    AND json_extract(child.intent_json, '$.baseJobId') = batch.base_job_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'base child batch item facts do not match parent');
+END;
+
+CREATE TRIGGER base_child_intent_batch_items_no_update
+BEFORE UPDATE ON base_child_intent_batch_items
+BEGIN
+  SELECT RAISE(ABORT, 'base child intent batch items are append-only');
+END;
+CREATE TRIGGER base_child_intent_batch_items_no_delete
+BEFORE DELETE ON base_child_intent_batch_items
+BEGIN
+  SELECT RAISE(ABORT, 'base child intent batch items are append-only');
+END;
+
 CREATE TABLE base_child_phase_events (
   event_id TEXT PRIMARY KEY,
   network_id TEXT NOT NULL,

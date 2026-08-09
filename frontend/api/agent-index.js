@@ -13,6 +13,7 @@ import {
   handleBaseChildEvidenceWrite,
   handleBaseChildEvidenceRead,
   handleReporterReadiness,
+  reporterAuthenticationGate,
   handleIngest,
   handleRead,
   handleReceiptChallenge,
@@ -446,6 +447,11 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST' && action === 'base-child-intent-batch') {
+    const gate = await reporterAuthenticationGate({
+      secret: REPORTER_SECRET(req),
+      providedSecret: bearer(req),
+    })
+    if (gate) return json(res, gate.status, gate.body)
     if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-child' })) return
     const { store, network, authorityReader } = await baseChildDependencies(req)
     const out = await handleBaseChildIntentBatch({
@@ -463,6 +469,11 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST' && action === 'base-child-evidence') {
+    const gate = await reporterAuthenticationGate({
+      secret: REPORTER_SECRET(req),
+      providedSecret: bearer(req),
+    })
+    if (gate) return json(res, gate.status, gate.body)
     if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-child' })) return
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
     const out = await handleBaseChildEvidenceWrite({

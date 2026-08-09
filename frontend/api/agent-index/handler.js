@@ -31,7 +31,7 @@ import {
   assertNoSensitiveProperties,
   baseChildBatchDigest,
   baseChildRecoveryIdentity,
-  canonicalJson,
+  validateBaseChildPhaseEvidence,
 } from './models.js'
 import {
   AGENT_CREATORS,
@@ -178,6 +178,10 @@ async function reporterGate({ secret, providedSecret }) {
   }
   return null
 }
+
+// The outer route uses the same constant-time gate before quota and dependency construction.
+// Handlers repeat it so direct/in-process callers keep the identical security boundary.
+export const reporterAuthenticationGate = reporterGate
 
 export async function handleReceiptChallenge({
   request,
@@ -665,15 +669,24 @@ function requireExactObject(value, fields, label) {
 }
 
 function validateEvidenceRequest(request) {
-  requireExactObject(request, EVIDENCE_REQUEST_FIELDS, 'Base child evidence request')
-  requireExactObject(request.identity, RECOVERY_IDENTITY_FIELDS, 'Base child recovery identity')
-  requireExactObject(request.event, EVIDENCE_EVENT_FIELDS, 'Base child evidence event')
-  if (request.schemaVersion !== AGENT_INDEX_SCHEMA_VERSION) {
-    throw new AgentIndexValidationError('Unsupported Base child evidence schema')
+  try {
+    requireExactObject(request, EVIDENCE_REQUEST_FIELDS, 'Base child evidence request')
+    requireExactObject(request.identity, RECOVERY_IDENTITY_FIELDS, 'Base child recovery identity')
+    requireExactObject(request.event, EVIDENCE_EVENT_FIELDS, 'Base child evidence event')
+    if (request.schemaVersion !== AGENT_INDEX_SCHEMA_VERSION) {
+      throw new AgentIndexValidationError('Unsupported Base child evidence schema')
+    }
+    baseChildRecoveryIdentity(request.identity)
+    assertNoSensitiveProperties(request)
+    validateBaseChildPhaseEvidence({
+      phase: request.event.phase,
+      state: request.event.state,
+      evidence: request.event.evidence ?? {},
+    })
+  } catch (error) {
+    if (error instanceof AgentIndexValidationError) throw error
+    throw new AgentIndexValidationError('Invalid Base child phase evidence', { cause: error })
   }
-  baseChildRecoveryIdentity(request.identity)
-  assertNoSensitiveProperties(request)
-  canonicalJson(request.event.evidence ?? {})
 }
 
 export async function handleBaseChildEvidenceWrite({
