@@ -30,6 +30,7 @@ import {
   serializeMandateCapabilityCookie,
 } from './capability.mjs';
 import { evaluateBaseMandateStatus } from './mandateStatus.mjs';
+import { buildForwardFarmIntent } from './farmIntent.mjs';
 
 async function ensureBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return;
@@ -72,6 +73,10 @@ const FARM_FIELDS = new Set([
   'runId',
   'grantTxHash',
 ]);
+const FARM_V2_FIELDS = new Set([
+  'requestId', 'mandateId', 'allocations', 'stellarOwner', 'kernelAddress',
+  'bridgeAgent', 'runId', 'grantTxHash',
+]);
 const FARM_ATTACH_FIELDS = new Set([
   'jobId',
   'burnTxHash',
@@ -79,6 +84,7 @@ const FARM_ATTACH_FIELDS = new Set([
   'stellarOwner',
   'kernelAddress',
 ]);
+const FARM_ATTACH_V2_FIELDS = new Set(['jobId', 'burnTxHash', 'mandateId']);
 const MANDATE_STATUS_FIELDS = new Set(['mandateId', 'stellarOwner', 'kernelAddress']);
 const FARM_STATUS_FIELDS = new Set(['mandateId', 'jobId']);
 const UNWIND_FIELDS = new Set(['unwindTxHash', 'stellarRecipient']);
@@ -163,12 +169,16 @@ export function createRelayerRouter({
   mandateStatusConfig = publicRuntime?.mandateStatusConfig ?? null,
   nowSeconds = () => Math.floor(Date.now() / 1000),
   poolTargets = new Map(), agentIndexReporter = null, associationOutbox = null,
-  baseEvidenceOutbox = null, farmExecutions = null,
+  baseEvidenceOutbox = null, farmExecutions = null, farmIntents = null, cctpRelays = null,
+  relayForwardMint = null, recoveryLimit = 100, recoveryConcurrency = 4,
+  forwardFarmDeployment = null,
 }) {
   const activeFarmJobs = new Set();
   const activeMandateActivations = new Map();
   const activeMandateRegistrations = new Map();
   const memoryFarmWork = new Map();
+  const activeIntentDeliveries = new Map();
+  let activeFarmResumeV2 = null;
   // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
   // error is always available server-side (console.error) for debugging. Never stores the key.
   // `context` (runId/bridgeAgent/grantTxHash for a farm job; omitted for unwind, which has none)
@@ -1723,6 +1733,11 @@ export function createRelayerRouter({
   }
 
   async function resumeFarmJobs() {
+    if (farmIntents) {
+      if (activeFarmResumeV2) return activeFarmResumeV2;
+      activeFarmResumeV2 = resumeFarmIntentsV2().finally(() => { activeFarmResumeV2 = null; });
+      return activeFarmResumeV2;
+    }
     if (farmExecutions?.listRecoverable) {
       for (const work of farmExecutions.listRecoverable()) {
         if (work.status === 'running') {
@@ -1739,10 +1754,216 @@ export function createRelayerRouter({
     }
   }
 
+  async function resumeFarmIntentsV2() {
+    if (!Number.isSafeInteger(recoveryLimit) || recoveryLimit < 1 || recoveryLimit > 1_000
+        || !Number.isSafeInteger(recoveryConcurrency) || recoveryConcurrency < 1 || recoveryConcurrency > 32) {
+      throw new Error('farm recovery bounds are invalid');
+    }
+    const at = Date.now();
+    farmIntents.quarantineLegacyActive?.({ now: at, limit: recoveryLimit });
+    farmIntents.reconcileExpired({ now: at, limit: recoveryLimit });
+    const work = farmIntents.listRecoverable({ now: at, limit: recoveryLimit });
+    const result = { resumed: [], held: [], blocked: [], uncertain: [] };
+    let cursor = 0;
+    async function process(record) {
+      const identity = {
+        mandateId: record.mandateId,
+        stellarOwner: record.stellarOwner,
+        kernelAddress: record.kernelAddress,
+      };
+      const projectionIdentity = {
+        mandateId: record.mandateId,
+        jobId: record.jobId,
+        bindingId: record.bindingId,
+        intentDigest: record.intentDigest,
+      };
+      if (record.state === 'intent_pending') {
+        let mandate;
+        try {
+          const durable = await mandatesV3.status(identity);
+          mandate = durable.status === 'active' ? await mandatesV3.get(identity) : null;
+          if (!mandate || !canonicalStoredBinding(mandate, identity)
+              || (await evaluateStoredMandate(mandate)).status !== 'active') {
+            farmIntents.advanceProjection({
+              identity: projectionIdentity,
+              from: 'intent_pending',
+              to: 'blocked',
+              reasonCode: 'mandate_inactive',
+              now: Date.now(),
+            });
+            result.blocked.push(record.jobId);
+            return;
+          }
+          const claimed = farmIntents.claimIntentDelivery({
+            jobId: record.jobId, now: Date.now(), leaseMs: FARM_LEASE_MS,
+          });
+          if (!claimed) {
+            result.held.push(record.jobId);
+            return;
+          }
+          try {
+            const acknowledgement = await agentIndexReporter.commitIntentBatch(claimed.batch);
+            farmIntents.finishAwaitingBurn({
+              jobId: record.jobId,
+              leaseToken: claimed.leaseToken,
+              acknowledgement,
+              now: Date.now(),
+            });
+            result.resumed.push(record.jobId);
+          } catch {
+            try {
+              farmIntents.releaseIntentDelivery({
+                jobId: record.jobId, leaseToken: claimed.leaseToken, now: Date.now(),
+              });
+            } catch {}
+            result.held.push(record.jobId);
+          }
+        } catch {
+          result.held.push(record.jobId);
+        }
+        return;
+      }
+      if (record.state === 'relay_pending') {
+        const relay = cctpRelays?.get?.(record.relayExecId);
+        if (!relay) {
+          farmIntents.advanceProjection({
+            identity: projectionIdentity, from: 'relay_pending', to: 'blocked',
+            reasonCode: 'cctp_record_missing', now: Date.now(),
+          });
+          result.blocked.push(record.jobId);
+        } else if (relay.state === 'blocked' || relay.state === 'uncertain') {
+          farmIntents.advanceProjection({
+            identity: projectionIdentity,
+            from: 'relay_pending',
+            to: relay.state,
+            reasonCode: relay.reasonCode,
+            now: Date.now(),
+          });
+          result[relay.state].push(record.jobId);
+        } else if (relay.state === 'minted') {
+          record = farmIntents.projectMintEvidenceAtomic({
+            identity: projectionIdentity, relay, now: Date.now(),
+          });
+        } else {
+          // Task 8 reconciliation owns polling/submission/known-hash confirmation and ran first.
+          result.held.push(record.jobId);
+          return;
+        }
+        if (record.state !== 'deposit_pending') return;
+      }
+      if (record.state === 'deposit_pending' || record.state === 'deposit_confirming') {
+        const attachContext = {
+          mandateId: record.mandateId,
+          stellarOwner: record.stellarOwner,
+          kernelAddress: record.kernelAddress,
+          bindingId: record.bindingId,
+          bindingHash: record.bindingHash,
+        };
+        const authority = await revalidateFarmAuthority(attachContext);
+        if (authority.error) {
+          farmIntents.advanceProjection({
+            identity: projectionIdentity, from: record.state, to: 'blocked',
+            reasonCode: 'mandate_inactive', now: Date.now(),
+          });
+          result.blocked.push(record.jobId);
+          return;
+        }
+        const children = record.intent.allocations.map((allocation) => {
+          const identityWithChild = {
+            networkId: record.intent.networkId,
+            bindingId: record.bindingId,
+            executionId: allocation.executionId,
+            allocationId: allocation.allocationId,
+            childId: allocation.childId,
+          };
+          return {
+            allocation: {
+              identity: identityWithChild,
+              caller: record.kernelAddress,
+              pool: allocation.poolAddress,
+              amount: BigInt(allocation.units),
+              minShares: BigInt(allocation.minShares),
+            },
+            recovery: baseEvidenceOutbox?.recoveryState?.(identityWithChild) ?? null,
+          };
+        });
+        if (children.some(({ recovery }) => !recovery)) {
+          farmIntents.advanceProjection({
+            identity: projectionIdentity, from: record.state, to: 'blocked',
+            reasonCode: 'base_checkpoint_missing', now: Date.now(),
+          });
+          result.blocked.push(record.jobId);
+          return;
+        }
+        const submittedMismatch = children.some(({ allocation, recovery }) => {
+          if (recovery.phase !== 'base_deposit' || recovery.state !== 'submitted') return false;
+          const expected = {
+            chainId: String(mandateStatusConfig?.base?.chain?.id),
+            yieldRouterAddress: String(
+              mandateStatusConfig?.base?.mandatePolicy?.yieldRouterAddress,
+            ).toLowerCase(),
+            caller: allocation.caller,
+            poolAddress: allocation.pool,
+            assets: allocation.amount.toString(10),
+            minShares: allocation.minShares.toString(10),
+          };
+          return !/^0x[0-9a-f]{64}$/.test(recovery.evidence?.userOpHash || '')
+            || Object.entries(expected).some(([field, value]) => recovery.evidence?.[field] !== value);
+        });
+        if (submittedMismatch) {
+          farmIntents.advanceProjection({
+            identity: projectionIdentity, from: record.state, to: 'uncertain',
+            reasonCode: 'submitted_evidence_conflict', now: Date.now(),
+          });
+          result.uncertain.push(record.jobId);
+          return;
+        }
+        const flow = buildFarm(authority.record.sessionPrivateKey);
+        if (typeof flow?.recoverDeposits !== 'function') {
+          throw new Error('Base recovery flow is not configured');
+        }
+        const depositResults = await flow.recoverDeposits({
+          approval: authority.record.serializedApproval,
+          children,
+          onCheckpoint: async (checkpoint) => baseEvidenceOutbox.enqueue(checkpoint),
+        });
+        const hasUncertain = depositResults.some((entry) => entry?.status === 'uncertain');
+        const allFulfilled = depositResults.length === children.length
+          && depositResults.every((entry) => entry?.status === 'fulfilled');
+        if (allFulfilled) {
+          farmIntents.advanceProjection({
+            identity: projectionIdentity, from: record.state, to: 'done', now: Date.now(),
+          });
+          result.resumed.push(record.jobId);
+        } else if (hasUncertain) {
+          farmIntents.advanceProjection({
+            identity: projectionIdentity, from: record.state, to: 'uncertain',
+            reasonCode: 'base_recovery_uncertain', now: Date.now(),
+          });
+          result.uncertain.push(record.jobId);
+        } else {
+          result.held.push(record.jobId);
+        }
+        return;
+      }
+      result.held.push(record.jobId);
+    }
+    const workers = Array.from({ length: Math.min(recoveryConcurrency, work.length) }, async () => {
+      while (cursor < work.length) {
+        const index = cursor;
+        cursor += 1;
+        await process(work[index]);
+      }
+    });
+    await Promise.all(workers);
+    return result;
+  }
+
   async function handleFarm(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     const authenticated = await authenticateBodyMandate(req, res, { activeOnly: true });
     if (!authenticated) return;
+    if (farmIntents) return handleFarmV2(req, res, authenticated);
     try {
       requireExactFields(req.body || {}, FARM_FIELDS, 'farm');
     } catch (err) {
@@ -1862,8 +2083,102 @@ export function createRelayerRouter({
     });
   }
 
+  async function handleFarmV2(req, res, authenticated) {
+    try {
+      requireExactFields(req.body || {}, FARM_V2_FIELDS, 'farm');
+    } catch (error) {
+      return sendJson(res, 400, { error: errorMessage(error) });
+    }
+    const gate = await freshActiveMandateGate(authenticated);
+    if (gate.error) return sendJson(res, 409, { error: 'Base mandate evidence is not active' });
+    if (!forwardFarmDeployment || !agentIndexReporter?.commitIntentBatch) {
+      return sendJson(res, 503, { error: 'Base child intent is unavailable' });
+    }
+    let normalizedIntent;
+    try {
+      const jobId = genId();
+      normalizedIntent = buildForwardFarmIntent({
+        jobId,
+        observedAt: nowSeconds(),
+        request: req.body,
+        mandate: gate.record,
+        deployment: forwardFarmDeployment,
+      });
+      const created = farmIntents.createOrGetIntent({ normalizedIntent, now: Date.now() });
+      normalizedIntent = {
+        intent: created.record.intent,
+        expectation: created.record.expectation,
+        batch: created.record.batch,
+        intentDigest: created.record.intentDigest,
+        expectationDigest: created.record.expectationDigest,
+        batchIdempotencyKey: created.record.batchIdempotencyKey,
+        batchDigest: created.record.batchDigest,
+      };
+    } catch (error) {
+      return sendJson(res, error?.code === 'FARM_INTENT_CONFLICT' ? 409 : 400, {
+        error: error?.code === 'FARM_INTENT_CONFLICT'
+          ? 'immutable forward farm intent conflict'
+          : 'invalid forward farm intent',
+      });
+    }
+    const jobId = normalizedIntent.intent.jobId;
+    let record = farmIntents.getByJob({ mandateId: req.body.mandateId, jobId });
+    if (record.state === 'awaiting_burn') {
+      return sendJson(res, 201, {
+        jobId,
+        acknowledged: true,
+        status: 'awaiting_burn',
+        schemaVersion: record.acknowledgement.schemaVersion,
+      });
+    }
+    if (record.state !== 'intent_pending') {
+      return sendJson(res, 409, { error: 'forward farm intent is not burn-ready' });
+    }
+    let delivery = activeIntentDeliveries.get(jobId);
+    if (!delivery) {
+      delivery = (async () => {
+        const claimed = farmIntents.claimIntentDelivery({
+          jobId, now: Date.now(), leaseMs: FARM_LEASE_MS,
+        });
+        if (!claimed) return null;
+        try {
+          const acknowledgement = await agentIndexReporter.commitIntentBatch(claimed.batch);
+          return farmIntents.finishAwaitingBurn({
+            jobId,
+            leaseToken: claimed.leaseToken,
+            acknowledgement,
+            now: Date.now(),
+          });
+        } catch (error) {
+          try {
+            farmIntents.releaseIntentDelivery({
+              jobId, leaseToken: claimed.leaseToken, now: Date.now(),
+            });
+          } catch {
+            // A stale owner or exact acknowledgement retry decides the durable state.
+          }
+          throw error;
+        }
+      })().finally(() => activeIntentDeliveries.delete(jobId));
+      activeIntentDeliveries.set(jobId, delivery);
+    }
+    try {
+      record = await delivery;
+    } catch {
+      return sendJson(res, 503, { error: 'Base child intent is unavailable' });
+    }
+    if (!record) return sendJson(res, 202, { jobId, acknowledged: false, status: 'intent_pending' });
+    return sendJson(res, 201, {
+      jobId,
+      acknowledged: true,
+      status: 'awaiting_burn',
+      schemaVersion: record.acknowledgement.schemaVersion,
+    });
+  }
+
   async function handleFarmAttach(req, res) {
     res.setHeader('Cache-Control', 'no-store');
+    if (farmIntents) return handleFarmAttachV2(req, res);
     const authenticated = await authenticateBodyMandate(req, res, { activeOnly: true });
     if (!authenticated) return;
     try {
@@ -1943,6 +2258,71 @@ export function createRelayerRouter({
       return sendJson(res, 503, { error: 'Base child lifecycle outbox is unavailable' });
     }
     return sendJson(res, 200, { jobId, attached: true, status: 'pending' });
+  }
+
+  async function handleFarmAttachV2(req, res) {
+    const body = req.body || {};
+    const preauthenticated = await authenticateMandateAuthority(req, body.mandateId, { activeOnly: false });
+    if (!preauthenticated) return unauthorized(res);
+    try {
+      requireExactFields(body, FARM_ATTACH_V2_FIELDS, 'farm attach');
+    } catch (error) {
+      return sendJson(res, 400, { error: errorMessage(error) });
+    }
+    if (!JOB_ID_PATTERN.test(body.jobId || '') || !/^[0-9a-f]{64}$/.test(body.burnTxHash || '')) {
+      return sendJson(res, 400, { error: 'invalid farm attachment' });
+    }
+    const intent = farmIntents.getByJob({ mandateId: body.mandateId, jobId: body.jobId });
+    if (!intent) return sendJson(res, 404, { error: 'unknown jobId' });
+    const identity = {
+      mandateId: intent.mandateId,
+      stellarOwner: intent.stellarOwner,
+      kernelAddress: intent.kernelAddress,
+    };
+    const authenticated = await authenticateMandate(req, identity, { activeOnly: true, loadRecord: true });
+    if (!authenticated) return unauthorized(res);
+    const gate = await freshActiveMandateGate(authenticated);
+    if (gate.error) return sendJson(res, 409, { error: 'Base mandate evidence is not active' });
+    if (gate.record.bindingId !== intent.bindingId
+        || gate.record.bindingHash !== intent.bindingHash
+        || gate.record.stellarOwner !== intent.stellarOwner
+        || String(gate.record.kernelAddress).toLowerCase() !== intent.kernelAddress) {
+      return sendJson(res, 409, { error: 'farm attach mandate binding mismatch' });
+    }
+    let attached;
+    try {
+      attached = farmIntents.attachBurnAtomic({
+        identity: {
+          mandateId: intent.mandateId,
+          jobId: intent.jobId,
+          bindingId: intent.bindingId,
+          intentDigest: intent.intentDigest,
+        },
+        burnTxHash: body.burnTxHash,
+        now: Date.now(),
+      });
+    } catch (error) {
+      const conflict = /conflict|different|belongs|burn-ready/i.test(errorMessage(error));
+      return sendJson(res, conflict ? 409 : 503, {
+        error: conflict ? 'farm attachment conflict' : 'farm attachment unavailable',
+      });
+    }
+    if (!attached.duplicate && typeof relayForwardMint === 'function') {
+      const record = attached.record;
+      queueMicrotask(() => {
+        void Promise.resolve(relayForwardMint({
+          execId: record.relayExecId,
+          sourceDomain: record.expectation.sourceDomain,
+          burnTxHash: record.burnTxHash,
+          expectation: record.expectation,
+        })).catch(() => {});
+      });
+    }
+    return sendJson(res, 202, {
+      jobId: intent.jobId,
+      attached: true,
+      status: 'relay_pending',
+    });
   }
 
   async function handleStatus(req, res) {

@@ -85,6 +85,48 @@ function buildMockKernelClient() {
 }
 
 describe('dispatchDeposits', () => {
+  // Defect caught: startup recovery sent a new deposit UserOperation for a child whose exact
+  // canonical submitted hash was already durable instead of confirming that hash only.
+  it('confirms one exact submitted child without encoding or sending another UserOperation', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(task10Receipt(allocation));
+    const checkpoints = [];
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+      now: () => 2_000_000_000_000,
+    });
+
+    const result = await orchestrator.reconcileSubmittedDeposit(
+      'serialized-approval', allocation, USER_OP_HASH,
+      { onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint) },
+    );
+
+    expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+    expect(kernelClient.account.encodeCalls).not.toHaveBeenCalled();
+    expect(kernelClient.waitForUserOperationReceipt).toHaveBeenCalledWith({
+      hash: USER_OP_HASH,
+      timeout: 120_000,
+    });
+    expect(checkpoints).toEqual([
+      expect.objectContaining({
+        identity: allocation.identity,
+        phase: 'base_deposit',
+        status: 'confirmed',
+        evidence: expect.objectContaining({ userOpHash: USER_OP_HASH, transactionHash: TX_HASH }),
+      }),
+    ]);
+    expect(result).toMatchObject({
+      status: 'fulfilled',
+      executionStatus: 'deposited',
+      userOpHash: USER_OP_HASH,
+      transactionHash: TX_HASH,
+    });
+  });
+
   it('awaits durable checkpoints around send/wait and confirms exactly one scoped Deposited event', async () => {
     const allocation = task10Allocation();
     const order = [];

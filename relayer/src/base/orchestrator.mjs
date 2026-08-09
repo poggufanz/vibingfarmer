@@ -550,5 +550,73 @@ export function createOrchestrator(config) {
     return results;
   }
 
-  return { activateMandate, dispatchDeposits };
+  /**
+   * Reconciles a deposit which already crossed the durable `submitted` fence.  Recovery must
+   * only observe the exact stored UserOperation hash; it must never encode or send a replacement.
+   */
+  async function reconcileSubmittedDeposit(
+    approval, allocationInput, userOpHashInput, { onCheckpoint } = {},
+  ) {
+    if (typeof onCheckpoint !== 'function') {
+      throw new Error('submitted deposit reconciliation requires a durable checkpoint callback');
+    }
+    const allocation = normalizeAllocation(allocationInput);
+    const userOpHash = requireCanonicalUserOperationHash(userOpHashInput, {
+      label: `submitted deposit into ${allocation.pool}`,
+    }).toLowerCase();
+    const kernelClient = await reconstructSessionClientFn({
+      chain, rpcUrl, bundlerRpcUrl, approval, sessionPrivateKey,
+    });
+    if (canonicalAddress(kernelClient?.account?.address, 'reconstructed Kernel address')
+        !== allocation.caller) {
+      throw new Error('reconstructed Kernel address disagrees with immutable caller');
+    }
+    const commonEvidence = {
+      chainId: String(chain.id),
+      yieldRouterAddress: canonicalAddress(yieldRouterAddress, 'YieldRouter address'),
+      caller: allocation.caller,
+      poolAddress: allocation.pool,
+      assets: allocation.amount.toString(10),
+      minShares: allocation.minShares.toString(10),
+    };
+    const receipt = await kernelClient.waitForUserOperationReceipt({
+      hash: userOpHash, timeout: USEROP_TIMEOUT_MS,
+    });
+    const proof = proveDepositReceipt(
+      receipt, allocation, commonEvidence.yieldRouterAddress, userOpHash,
+    );
+    const evidence = {
+      ...commonEvidence,
+      userOpHash,
+      transactionHash: proof.transactionHash,
+      event: proof.event,
+    };
+    await onCheckpoint({
+      identity: allocation.identity,
+      phase: 'base_deposit',
+      status: 'confirmed',
+      evidence,
+      observedAt: now(),
+    });
+    return {
+      identity: allocation.identity,
+      allocationId: allocation.identity.allocationId,
+      pool: allocation.pool,
+      status: 'fulfilled',
+      value: {
+        pool: allocation.pool,
+        userOpHash,
+        txHash: proof.transactionHash,
+        event: proof.event,
+      },
+      userOpHash,
+      transactionHash: proof.transactionHash,
+      event: proof.event,
+      executionStatus: 'deposited',
+      custody: { location: 'base-proxy' },
+      txHash: proof.transactionHash,
+    };
+  }
+
+  return { activateMandate, dispatchDeposits, reconcileSubmittedDeposit };
 }

@@ -13,6 +13,7 @@ import { createRelayerRouter } from './httpRouter.mjs';
 import { createMandateStoresV3 } from './mandateStore.mjs';
 import { createSqliteStores } from './sqliteStores.mjs';
 import { startAssociationOutboxWorker } from './associationOutbox.mjs';
+import { startBaseEvidenceOutboxWorker } from './baseEvidenceOutbox.mjs';
 import {
   BASE_SEPOLIA_POOL_TARGETS,
   createAgentIndexReporter,
@@ -36,6 +37,9 @@ export async function verifyRelayerReadiness({ sqlite, reporter }) {
   if (local?.writable !== true) throw new Error('relayer SQLite store is not writable');
   if (local?.baseEvidenceDurable !== true) {
     throw new Error('relayer SQLite Base evidence store is not durable');
+  }
+  if (local?.farmIntentDurable !== true) {
+    throw new Error('relayer SQLite forward-farm intent store is not durable');
   }
   if (!Array.isArray(local.legacyMandateTables)) {
     throw new Error('relayer SQLite legacy mandate metadata is invalid');
@@ -62,16 +66,31 @@ export async function verifyRelayerReadiness({ sqlite, reporter }) {
 export async function startVerifiedRelayer({
   verifyReadiness,
   resumeMandateActivations,
+  reconcileCctpRelays = async () => {},
   resumeFarmJobs,
-  startWorker,
+  startBaseEvidenceWorker = null,
+  startAssociationWorker = null,
+  startWorker = null,
   openListener,
 }) {
   await verifyReadiness();
   await resumeMandateActivations();
+  await reconcileCctpRelays();
   await resumeFarmJobs();
-  const worker = startWorker();
-  const server = openListener();
-  return { worker, server };
+  const workers = [];
+  const stopWorkers = () => {
+    for (const worker of [...workers].reverse()) worker?.stop?.();
+  };
+  try {
+    if (startBaseEvidenceWorker) workers.push(startBaseEvidenceWorker());
+    if (startAssociationWorker) workers.push(startAssociationWorker());
+    else if (startWorker) workers.push(startWorker());
+    const server = openListener();
+    return { worker: workers[workers.length - 1] ?? null, workers, stopWorkers, server };
+  } catch (error) {
+    stopWorkers();
+    throw error;
+  }
 }
 
 /** Shared-secret gate between the Cloudflare proxy and this relayer. Empty key = open (local dev). */
@@ -100,7 +119,15 @@ export function createRelayerServer(config, {
   openSqlite = createSqliteStores,
   createRouter = createRelayerRouter,
   createHttpServer = createServer,
+  recoveryLimit = 100,
+  recoveryConcurrency = 4,
 } = {}) {
+  if (!Number.isSafeInteger(recoveryLimit) || recoveryLimit < 1 || recoveryLimit > 1_000) {
+    throw new Error('recoveryLimit must be between 1 and 1000');
+  }
+  if (!Number.isSafeInteger(recoveryConcurrency) || recoveryConcurrency < 1 || recoveryConcurrency > 32) {
+    throw new Error('recoveryConcurrency must be between 1 and 32');
+  }
   if (process.env.RELAYER_OFFLINE_KEY_MIGRATION === '1') {
     throw new Error('RELAYER_OFFLINE_KEY_MIGRATION cannot run in the HTTP relayer process');
   }
@@ -199,6 +226,21 @@ export function createRelayerServer(config, {
       associationOutbox,
       baseEvidenceOutbox: sqlite?.baseEvidenceOutbox ?? null,
       farmExecutions: sqlite?.farmExecutions ?? null,
+      farmIntents: sqlite?.farmIntents ?? null,
+      cctpRelays: sqlite?.cctpRelays ?? null,
+      relayForwardMint: (relayIntent) => watcher.relayMint(relayIntent),
+      recoveryLimit,
+      recoveryConcurrency,
+      forwardFarmDeployment: config.stellar?.tokenMessengerMinter && config.stellar?.usdcSac
+        && config.base?.tokenMessengerV2Address && config.domains?.stellar ? {
+        networkId: 'stellar-testnet',
+        sourceDomain: config.domains.stellar,
+        destinationDomain: config.domains.base,
+        tokenMessengerMinter: config.stellar.tokenMessengerMinter,
+        baseTokenMessenger: config.base.tokenMessengerV2Address,
+        stellarUsdcSac: config.stellar.usdcSac,
+        poolTargets: BASE_SEPOLIA_POOL_TARGETS,
+      } : null,
       publicRuntime: runtimeConfig.publicRuntime,
     });
   const handler = withProxyKeyAuth(
@@ -213,8 +255,28 @@ export function createRelayerServer(config, {
         ? () => verifyRelayerReadiness({ sqlite, reporter: agentIndexReporter })
         : async () => ({ writable: Boolean(sqlite), reporterSchema: runtimeConfig.reporterSchema }),
       resumeMandateActivations: () => router.resumeMandateActivations(),
+      reconcileCctpRelays: () => (sqlite
+        ? watcher.sweepStuck({ limit: recoveryLimit })
+        : Promise.resolve({ redriven: [], held: [], blocked: [], uncertain: [] })),
       resumeFarmJobs: () => router.resumeFarmJobs(),
-      startWorker: () => (associationOutbox
+      startBaseEvidenceWorker: () => (sqlite?.baseEvidenceOutbox
+        ? startBaseEvidenceOutboxWorker({
+          outbox: sqlite.baseEvidenceOutbox,
+          reporter: agentIndexReporter,
+          onConflict: (leased) => {
+            try {
+              return sqlite.farmIntents.blockEvidenceConflict(
+                { identity: leased.identity }, { transaction: false },
+              );
+            } catch {
+              return sqlite.farmExecutions.blockEvidenceConflict(
+                { identity: leased.identity }, { transaction: false },
+              );
+            }
+          },
+        })
+        : null),
+      startAssociationWorker: () => (associationOutbox
         ? startAssociationOutboxWorker({ outbox: associationOutbox, reporter: agentIndexReporter })
         : null),
       openListener: () => {
@@ -223,7 +285,7 @@ export function createRelayerServer(config, {
         return server;
       },
     });
-    started.server.on('close', () => started.worker?.stop());
+    started.server.on('close', () => started.stopWorkers());
     return started.server;
   }
 

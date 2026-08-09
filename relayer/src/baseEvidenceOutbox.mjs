@@ -392,8 +392,33 @@ export function createBaseEvidenceOutbox(db, {
     };
   }
 
+  // Trusted startup-recovery seam. Public status intentionally omits evidence bodies and hashes;
+  // the recovery worker needs the exact durable submitted hash to perform confirm-only recovery.
+  function recoveryState(identityInput) {
+    const identity = exactIdentity(identityInput);
+    const values = identityValues(identity);
+    const head = db.prepare(`SELECT next_recovery_version,latest_phase,latest_state
+      FROM base_evidence_heads
+      WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?`)
+      .get(...values);
+    if (!head || !head.latest_phase) return null;
+    const latest = db.prepare(`SELECT report_json FROM base_evidence_outbox
+      WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?
+      ORDER BY expected_recovery_version DESC LIMIT 1`).get(...values);
+    if (!latest) throw new Error('Base evidence head has no durable checkpoint');
+    const report = JSON.parse(latest.report_json);
+    return {
+      identity,
+      recoveryVersion: head.next_recovery_version,
+      phase: head.latest_phase,
+      state: head.latest_state,
+      evidence: report.event.evidence,
+    };
+  }
+
   return Object.freeze({
     seed, enqueue, leaseNext, markDelivered, markRetry, markDead, markConflict, status,
+    recoveryState,
   });
 }
 

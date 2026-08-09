@@ -66,6 +66,7 @@ describe('runtimeServerConfig', () => {
     const localProbe = { probe: async () => ({
       writable: true,
       baseEvidenceDurable: true,
+      farmIntentDurable: true,
       legacyMandateTables: [],
       mandateMigrationCleanupPending: false,
     }) };
@@ -96,6 +97,7 @@ describe('runtimeServerConfig', () => {
       sqlite: { probe: async () => ({
         writable: true,
         baseEvidenceDurable: true,
+        farmIntentDurable: true,
         legacyMandateTables: [],
         mandateMigrationCleanupPending: false,
       }) },
@@ -105,7 +107,10 @@ describe('runtimeServerConfig', () => {
 
   it.each([
     ['missing Base evidence durability flag', {
-      writable: true, legacyMandateTables: [], mandateMigrationCleanupPending: false,
+      writable: true, farmIntentDurable: true, legacyMandateTables: [], mandateMigrationCleanupPending: false,
+    }],
+    ['missing farm intent durability flag', {
+      writable: true, baseEvidenceDurable: true, legacyMandateTables: [], mandateMigrationCleanupPending: false,
     }],
     ['missing writable flag', { legacyMandateTables: [], mandateMigrationCleanupPending: false }],
     ['false writable flag', {
@@ -157,6 +162,7 @@ describe('runtimeServerConfig', () => {
         sqlite: { probe: async () => ({
           writable: true,
           baseEvidenceDurable: true,
+          farmIntentDurable: true,
           legacyMandateTables,
           mandateMigrationCleanupPending: false,
         }) },
@@ -496,5 +502,34 @@ describe('runtimeServerConfig', () => {
         started?.close();
       }
     });
+  });
+});
+
+describe('Task 11 production startup ordering', () => {
+  // Defect caught: the listener and association delivery could start before durable CCTP truth
+  // was reconciled or before the separate Base-evidence outbox worker existed.
+  it('awaits readiness, mandate, CCTP, and farm recovery before both workers and listening', async () => {
+    const order = [];
+    const started = await serverModule.startVerifiedRelayer({
+      verifyReadiness: async () => { order.push('readiness'); },
+      resumeMandateActivations: async () => { order.push('mandate'); },
+      reconcileCctpRelays: async () => { order.push('cctp'); },
+      resumeFarmJobs: async () => { order.push('farm'); },
+      startBaseEvidenceWorker: () => {
+        order.push('base-evidence');
+        return { stop: () => order.push('base-evidence-stop') };
+      },
+      startAssociationWorker: () => {
+        order.push('association');
+        return { stop: () => order.push('association-stop') };
+      },
+      openListener: () => { order.push('listen'); return { close() {} }; },
+    });
+    expect(order).toEqual([
+      'readiness', 'mandate', 'cctp', 'farm', 'base-evidence', 'association', 'listen',
+    ]);
+    expect(started.workers).toHaveLength(2);
+    started.stopWorkers();
+    expect(order.slice(-2)).toEqual(['association-stop', 'base-evidence-stop']);
   });
 });

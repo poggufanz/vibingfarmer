@@ -63,6 +63,78 @@ const farmArgs = (overrides = {}) => ({
 });
 
 describe('farm', () => {
+  it('recovers mixed children in order by confirming submitted and dispatching only never-started', async () => {
+    const callOrder = [];
+    const { flow, orchestrator } = buildFlow({ callOrder });
+    orchestrator.reconcileSubmittedDeposit = vi.fn(async (_approval, allocation, hash) => {
+      callOrder.push(`confirm:${allocation.identity.allocationId}:${hash}`);
+      return { identity: allocation.identity, status: 'fulfilled', userOpHash: hash };
+    });
+    orchestrator.dispatchDeposits.mockImplementation(async (_approval, allocations) => {
+      callOrder.push(`dispatch:${allocations[0].identity.allocationId}`);
+      return [{ identity: allocations[0].identity, status: 'fulfilled' }];
+    });
+    const allocation = (id) => ({
+      identity: {
+        networkId: 'stellar-testnet', bindingId: 'binding-42',
+        executionId: `run-42:exec:${id}`, allocationId: id, childId: 'child-42',
+      },
+      caller: '0x00000000000000000000000000000000000000aa',
+      pool: '0x00000000000000000000000000000000000000b2', amount: 100n, minShares: 90n,
+    });
+    const submittedHash = `0x${'ab'.repeat(32)}`;
+    const onCheckpoint = vi.fn(async () => {});
+
+    const result = await flow.recoverDeposits({
+      approval: 'approval-blob',
+      children: [
+        { allocation: allocation('confirmed'), recovery: { phase: 'base_deposit', state: 'confirmed' } },
+        { allocation: allocation('submitted'), recovery: {
+          phase: 'base_deposit', state: 'submitted', evidence: { userOpHash: submittedHash },
+        } },
+        { allocation: allocation('fresh'), recovery: { phase: 'cctp_mint', state: 'confirmed' } },
+      ],
+      onCheckpoint,
+    });
+
+    expect(callOrder).toEqual([
+      `confirm:submitted:${submittedHash}`,
+      'dispatch:fresh',
+    ]);
+    expect(orchestrator.reconcileSubmittedDeposit).toHaveBeenCalledTimes(1);
+    expect(orchestrator.dispatchDeposits).toHaveBeenCalledTimes(1);
+    expect(orchestrator.dispatchDeposits.mock.calls[0][1]).toEqual([allocation('fresh')]);
+    expect(result.map((entry) => entry.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled']);
+  });
+
+  it.each(['submitting', 'unknown'])(
+    'holds %s and every later never-started child without confirming or sending',
+    async (state) => {
+      const { flow, orchestrator } = buildFlow();
+      orchestrator.reconcileSubmittedDeposit = vi.fn();
+      const allocation = (id) => ({
+        identity: {
+          networkId: 'stellar-testnet', bindingId: 'binding-42',
+          executionId: `run-42:exec:${id}`, allocationId: id, childId: 'child-42',
+        },
+        caller: '0x00000000000000000000000000000000000000aa',
+        pool: '0x00000000000000000000000000000000000000b2', amount: 100n, minShares: 90n,
+      });
+      const results = await flow.recoverDeposits({
+        approval: 'approval-blob',
+        children: [
+          { allocation: allocation('ambiguous'), recovery: { phase: 'base_deposit', state } },
+          { allocation: allocation('fresh'), recovery: { phase: 'cctp_mint', state: 'confirmed' } },
+        ],
+        onCheckpoint: vi.fn(),
+      });
+
+      expect(orchestrator.reconcileSubmittedDeposit).not.toHaveBeenCalled();
+      expect(orchestrator.dispatchDeposits).not.toHaveBeenCalled();
+      expect(results.map(({ status }) => status)).toEqual(['uncertain', 'held']);
+    },
+  );
+
   it('adds the watcher safe recovery summary only to the awaited mint checkpoint', async () => {
     const recoveryEvidence = {
       burnTxHash: BURN_FORWARD, expectationDigest: 'expectation', messageDigest: 'message',

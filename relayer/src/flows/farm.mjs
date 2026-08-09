@@ -17,6 +17,84 @@ function farmError(code, message) {
 }
 
 export function createFarmFlow({ watcher, orchestrator, domains }) {
+  async function recoverDeposits({ approval, children, onCheckpoint }) {
+    if (!Array.isArray(children) || typeof onCheckpoint !== 'function') {
+      throw farmError('FARM_RECOVERY_VALIDATION', 'deposit recovery requires children and durable checkpoints');
+    }
+    const results = [];
+    let holdLater = false;
+    for (const child of children) {
+      const { allocation, recovery } = child || {};
+      if (recovery?.phase === 'base_deposit' && recovery.state === 'confirmed') {
+        results.push({
+          identity: allocation.identity,
+          allocationId: allocation.identity.allocationId,
+          pool: allocation.pool,
+          status: 'fulfilled',
+          executionStatus: 'deposited',
+          custody: { location: 'base-proxy' },
+          recovered: true,
+        });
+        continue;
+      }
+      if (holdLater) {
+        results.push({
+          identity: allocation.identity,
+          allocationId: allocation.identity.allocationId,
+          pool: allocation.pool,
+          status: 'held',
+          reasonCode: 'not_dispatched_after_unknown',
+          executionStatus: 'held',
+          custody: { location: 'agent' },
+        });
+        continue;
+      }
+      if (recovery?.phase === 'base_deposit' && recovery.state === 'submitted') {
+        try {
+          const result = await orchestrator.reconcileSubmittedDeposit(
+            approval, allocation, recovery.evidence?.userOpHash, { onCheckpoint },
+          );
+          results.push(result);
+        } catch (reason) {
+          holdLater = true;
+          results.push({
+            identity: allocation.identity,
+            allocationId: allocation.identity.allocationId,
+            pool: allocation.pool,
+            status: 'uncertain',
+            reason,
+            reasonCode: 'submitted_reconciliation_ambiguous',
+            executionStatus: 'unknown',
+            custody: { location: 'agent' },
+          });
+        }
+        continue;
+      }
+      if (recovery?.phase === 'cctp_mint' && recovery.state === 'confirmed') {
+        const [result] = await orchestrator.dispatchDeposits(approval, [allocation], {
+          onCheckpoint,
+        });
+        results.push(result);
+        if (result?.status === 'uncertain') holdLater = true;
+        continue;
+      }
+      holdLater = recovery?.phase === 'base_deposit'
+        && (recovery.state === 'submitting' || recovery.state === 'unknown');
+      results.push({
+        identity: allocation.identity,
+        allocationId: allocation.identity.allocationId,
+        pool: allocation.pool,
+        status: recovery?.state === 'unknown' || recovery?.state === 'submitting'
+          ? 'uncertain' : 'held',
+        reasonCode: `recovery_${recovery?.state || 'missing'}`,
+        executionStatus: recovery?.state === 'unknown' || recovery?.state === 'submitting'
+          ? 'unknown' : 'held',
+        custody: { location: 'agent' },
+      });
+    }
+    return results;
+  }
+
   /**
    * @param {Object} params
    * @param {string} params.burnTxHash - the user's already-submitted Stellar deposit_for_burn tx
@@ -68,5 +146,5 @@ export function createFarmFlow({ watcher, orchestrator, domains }) {
     return { mintResult, depositResults, runId, bridgeAgent, grantTxHash };
   }
 
-  return { farm };
+  return { farm, recoverDeposits };
 }

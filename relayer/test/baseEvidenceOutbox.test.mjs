@@ -171,6 +171,22 @@ describe('SQLite Base evidence outbox', () => {
     });
   });
 
+  it('exposes the exact latest durable checkpoint only through the internal recovery seam', () => {
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
+    baseEvidenceOutbox.seed(identity, 0);
+    baseEvidenceOutbox.enqueue(checkpoint('submitting'));
+    baseEvidenceOutbox.enqueue(checkpoint('submitted', { userOpHash: digests.userOp }));
+
+    expect(baseEvidenceOutbox.recoveryState(identity)).toEqual({
+      identity,
+      recoveryVersion: 2,
+      phase: 'base_deposit',
+      state: 'submitted',
+      evidence: { ...base, userOpHash: digests.userOp },
+    });
+    expect(JSON.stringify(baseEvidenceOutbox.status(identity))).not.toContain(digests.userOp);
+  });
+
   it('makes exact replay a no-op and rejects changed evidence at the same semantic checkpoint', () => {
     const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
     baseEvidenceOutbox.seed(identity, 0);

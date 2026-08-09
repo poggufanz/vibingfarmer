@@ -16,6 +16,7 @@ import {
   MANDATE_V3_SCHEMA,
   mandateSessionAad,
 } from '../src/sqliteStores.mjs';
+import * as sqliteStoresModule from '../src/sqliteStores.mjs';
 
 const freshPath = () => join(mkdtempSync(join(tmpdir(), 'vf-sqlite-')), 'relayer.db');
 
@@ -47,6 +48,427 @@ const TASK4_CONFIG = Object.freeze({
     chain: Object.freeze({ id: 84532 }),
     mandatePolicy: Object.freeze({ parserFixture: true }),
   }),
+});
+
+function forwardIntentFixture(overrides = {}) {
+  const { request: requestOverrides = {}, ...topOverrides } = overrides;
+  const input = {
+    jobId: '02'.repeat(16),
+    observedAt: 2_000_000_123,
+    request: {
+      requestId: '01'.repeat(16),
+      mandateId: '03'.repeat(16),
+      stellarOwner: 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57',
+      kernelAddress: `0x${'11'.repeat(20)}`,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [{
+        allocationId: 'run-42:bridge:aave-v3',
+        poolAddress: '0x389250872044368759d3db5c09b2706a6628d4e0',
+        amount: { token: 'USDC', units: '1000000', decimals: 6 },
+        minShares: '900000',
+      }],
+      ...requestOverrides,
+    },
+    mandate: {
+      bindingId: 'binding-v1',
+      bindingHash: '44'.repeat(32),
+      approvalDigest: '55'.repeat(32),
+      policyDigest: '66'.repeat(32),
+      permissionId: '0x12345678',
+      validUntilSeconds: 2_000_007_200,
+      relayerOrigin: 'https://relayer.example',
+    },
+    deployment: {
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
+      tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+      baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+      stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+      poolTargets: new Map([['0x389250872044368759d3db5c09b2706a6628d4e0', 'aave-v3']]),
+    },
+    ...topOverrides,
+  };
+  return sqliteStoresModule.buildForwardFarmIntent(input);
+}
+
+function finishForwardIntent(stores, normalizedIntent = forwardIntentFixture()) {
+  stores.farmIntents.createOrGetIntent({ normalizedIntent, now: 2_000_000_123 });
+  const claim = stores.farmIntents.claimIntentDelivery({
+    jobId: normalizedIntent.intent.jobId, now: 2_000_000_123, leaseMs: 30_000,
+  });
+  const children = normalizedIntent.batch.children.map((child) => ({
+    identity: {
+      networkId: child.networkId,
+      bindingId: child.bindingId,
+      executionId: child.executionId,
+      allocationId: child.allocationId,
+      childId: child.childId,
+    },
+    recoveryVersion: 7,
+  }));
+  const acknowledgement = {
+    acknowledged: true,
+    schemaVersion: 1,
+    idempotencyKey: normalizedIntent.batchIdempotencyKey,
+    requestDigest: normalizedIntent.batchDigest,
+    children,
+    written: children.length,
+    duplicates: 0,
+  };
+  stores.farmIntents.finishAwaitingBurn({
+    jobId: normalizedIntent.intent.jobId,
+    leaseToken: claim.leaseToken,
+    acknowledgement,
+    now: 2_000_000_125,
+  });
+  return { normalizedIntent, acknowledgement };
+}
+
+describe('Task 11 forward-farm intent canonicalization', () => {
+  // Defect caught: a retry could rebuild a semantically different Agent Index/CCTP intent while
+  // retaining the same browser request ID, making the idempotency key authorize different work.
+  it('derives the independently checked intent, expectation, and batch digests', () => {
+    expect(typeof sqliteStoresModule.buildForwardFarmIntent).toBe('function');
+    const result = forwardIntentFixture();
+
+    expect(result.expectationDigest).toBe('c9ca175da9daf8b6879e7ec6f5f13f860e7fe0b4af266b92326bcd47b07303c6');
+    expect(result.intentDigest).toBe('c6ee8ca0e171911440402ba173f062dac89ff1110a1477839c16b74973e29bf1');
+    expect(result.batchIdempotencyKey).toBe('4f2910192a1ab9f47c21ccfc0ad89b9087a9012d1ce5a3cc7c7d734c49a1a500');
+    expect(result.batch.burnUnits7).toBe('10000000');
+    expect(result.intent.allocations[0]).toMatchObject({
+      ordinal: 0,
+      executionId: 'run-42:exec:run-42:bridge:aave-v3',
+      childId: '02'.repeat(16),
+    });
+  });
+
+  // Defect caught: the old jobs/farm_execution_work pair was written only after the remote call
+  // and could not recover the stable request, batch timestamp, or expectation after a crash.
+  it('persists one immutable intent_pending authority and returns it unchanged after reopen', () => {
+    const path = freshPath();
+    let stores = createSqliteStores(path, { now: () => 2_000_000_123 });
+    expect(stores.farmIntents).toBeTruthy();
+    const normalizedIntent = forwardIntentFixture();
+    const first = stores.farmIntents.createOrGetIntent({ normalizedIntent, now: 2_000_000_123 });
+    expect(first).toMatchObject({
+      created: true,
+      record: {
+        jobId: '02'.repeat(16),
+        mandateId: '03'.repeat(16),
+        requestId: '01'.repeat(16),
+        state: 'intent_pending',
+        intentDigest: 'c6ee8ca0e171911440402ba173f062dac89ff1110a1477839c16b74973e29bf1',
+        expectationDigest: 'c9ca175da9daf8b6879e7ec6f5f13f860e7fe0b4af266b92326bcd47b07303c6',
+        batchIdempotencyKey: '4f2910192a1ab9f47c21ccfc0ad89b9087a9012d1ce5a3cc7c7d734c49a1a500',
+      },
+    });
+    const original = stores.db.prepare('SELECT * FROM farm_intent_work_v2').get();
+    stores.db.close();
+
+    stores = createSqliteStores(path, { now: () => 2_000_000_999 });
+    const recovered = stores.farmIntents.getByJob({
+      mandateId: '03'.repeat(16), jobId: '02'.repeat(16),
+    });
+    expect(recovered.batch.children[0].lifecycle.observedAt).toBe(2_000_000_123);
+    expect(recovered.intent.allocations[0].units).toBe('1000000');
+    const retry = stores.farmIntents.createOrGetIntent({ normalizedIntent, now: 2_000_000_999 });
+    expect(retry).toMatchObject({ created: false, record: { jobId: '02'.repeat(16) } });
+    expect(stores.db.prepare('SELECT * FROM farm_intent_work_v2').get()).toEqual(original);
+    stores.db.close();
+  });
+
+  // Defect caught: concurrent contenders generate different candidate job IDs; comparing the
+  // losing candidate digest directly turns an identical stable request into a false 409.
+  it('rebases an identical losing candidate onto the persisted winner job and timestamp', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path);
+    const second = createSqliteStores(path);
+    const winner = forwardIntentFixture();
+    const loser = forwardIntentFixture({ jobId: '09'.repeat(16), observedAt: 2_000_000_999 });
+    first.farmIntents.createOrGetIntent({ normalizedIntent: winner, now: 2_000_000_123 });
+    const joined = second.farmIntents.createOrGetIntent({ normalizedIntent: loser, now: 2_000_000_999 });
+    expect(joined).toMatchObject({ created: false, record: { jobId: '02'.repeat(16) } });
+    expect(joined.record.batch.children[0].lifecycle.observedAt).toBe(2_000_000_123);
+    expect(second.db.prepare('SELECT COUNT(*) AS n FROM farm_intent_work_v2').get().n).toBe(1);
+    first.db.close();
+    second.db.close();
+  });
+
+  // Defect caught: an HTTP 201 could make a job burn-ready before the ordered Task 9 identity
+  // acknowledgement and every Base recovery head were durably committed together.
+  it('leases exact batch delivery and atomically acknowledges every ordered recovery head', () => {
+    const path = freshPath();
+    const stores = createSqliteStores(path, {
+      now: () => 2_000_000_123,
+      leaseToken: () => 'intent-lease-1',
+    });
+    const normalizedIntent = forwardIntentFixture();
+    stores.farmIntents.createOrGetIntent({ normalizedIntent, now: 2_000_000_123 });
+    const claim = stores.farmIntents.claimIntentDelivery({
+      jobId: '02'.repeat(16), now: 2_000_000_123, leaseMs: 30_000,
+    });
+    expect(claim).toMatchObject({ leaseToken: 'intent-lease-1', state: 'intent_pending' });
+    expect(stores.farmIntents.claimIntentDelivery({
+      jobId: '02'.repeat(16), now: 2_000_000_124, leaseMs: 30_000,
+    })).toBeNull();
+    const child = normalizedIntent.batch.children[0];
+    const acknowledgement = {
+      acknowledged: true,
+      schemaVersion: 1,
+      idempotencyKey: normalizedIntent.batchIdempotencyKey,
+      requestDigest: normalizedIntent.batchDigest,
+      children: [{
+        identity: {
+          networkId: child.networkId,
+          bindingId: child.bindingId,
+          executionId: child.executionId,
+          allocationId: child.allocationId,
+          childId: child.childId,
+        },
+        recoveryVersion: 7,
+      }],
+      written: 1,
+      duplicates: 0,
+    };
+    const finished = stores.farmIntents.finishAwaitingBurn({
+      jobId: '02'.repeat(16), leaseToken: 'intent-lease-1', acknowledgement, now: 2_000_000_125,
+    });
+    expect(finished).toMatchObject({ state: 'awaiting_burn', acknowledgement });
+    expect(stores.baseEvidenceOutbox.status(acknowledgement.children[0].identity)).toMatchObject({
+      recoveryVersion: 7,
+      latestPhase: null,
+    });
+    expect(stores.jobs.get('02'.repeat(16))).toMatchObject({ status: 'awaiting_burn' });
+    expect(stores.farmIntents.finishAwaitingBurn({
+      jobId: '02'.repeat(16), leaseToken: 'stale', acknowledgement, now: 2_000_000_126,
+    })).toMatchObject({ state: 'awaiting_burn' });
+    expect(() => stores.farmIntents.finishAwaitingBurn({
+      jobId: '02'.repeat(16),
+      leaseToken: 'stale',
+      acknowledgement: { ...acknowledgement, written: 0, duplicates: 1 },
+      now: 2_000_000_126,
+    })).toThrow(/conflict/i);
+    stores.db.close();
+  });
+
+  // Defect caught: burn ownership, CCTP work, child evidence, outboxes, and public state were
+  // separate commits, so a crash could leave a canonical burn permanently half-attached.
+  it('attaches one burn atomically to CCTP work and every child evidence projection', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 2_000_000_200 });
+    const { normalizedIntent, acknowledgement } = finishForwardIntent(stores);
+    const identity = {
+      mandateId: normalizedIntent.intent.mandate.mandateId,
+      jobId: normalizedIntent.intent.jobId,
+      bindingId: normalizedIntent.intent.mandate.bindingId,
+      intentDigest: normalizedIntent.intentDigest,
+    };
+    const attached = stores.farmIntents.attachBurnAtomic({
+      identity,
+      burnTxHash: 'bb'.repeat(32),
+      now: 2_000_000_200,
+    });
+    expect(attached).toMatchObject({
+      duplicate: false,
+      record: {
+        state: 'relay_pending',
+        burnTxHash: 'bb'.repeat(32),
+        relayExecId: `forward-farm:${'02'.repeat(16)}`,
+      },
+    });
+    expect(stores.cctpRelays.get(`forward-farm:${'02'.repeat(16)}`)).toMatchObject({
+      state: 'attestation_pending',
+      expectationDigest: normalizedIntent.expectationDigest,
+      burnTxHash: 'bb'.repeat(32),
+    });
+    expect(stores.baseEvidenceOutbox.status(acknowledgement.children[0].identity)).toMatchObject({
+      recoveryVersion: 8,
+      latestPhase: 'cctp_burn',
+      latestState: 'submitted',
+    });
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM base_evidence_outbox').get().n).toBe(1);
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM association_outbox').get().n).toBe(1);
+    expect(stores.jobs.get('02'.repeat(16))).toEqual({
+      jobId: '02'.repeat(16),
+      requestId: '01'.repeat(16),
+      status: 'relay_pending',
+      runId: 'run-42',
+      allocations: [{
+        ordinal: 0,
+        allocationId: 'run-42:bridge:aave-v3',
+        executionId: 'run-42:exec:run-42:bridge:aave-v3',
+        childId: '02'.repeat(16),
+      }],
+    });
+    expect(stores.farmIntents.attachBurnAtomic({
+      identity, burnTxHash: 'bb'.repeat(32), now: 2_000_000_999,
+    })).toMatchObject({ duplicate: true, record: { state: 'relay_pending' } });
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM base_evidence_outbox').get().n).toBe(1);
+    expect(() => stores.farmIntents.attachBurnAtomic({
+      identity, burnTxHash: 'cc'.repeat(32), now: 2_000_001_000,
+    })).toThrow(/conflict|different/i);
+    const second = forwardIntentFixture({
+      jobId: '04'.repeat(16),
+      request: { requestId: '05'.repeat(16) },
+    });
+    finishForwardIntent(stores, second);
+    expect(() => stores.farmIntents.attachBurnAtomic({
+      identity: {
+        mandateId: second.intent.mandate.mandateId,
+        jobId: second.intent.jobId,
+        bindingId: second.intent.mandate.bindingId,
+        intentDigest: second.intentDigest,
+      },
+      burnTxHash: 'bb'.repeat(32),
+      now: 2_000_001_001,
+    })).toThrow(/belongs|burn|conflict/i);
+    stores.db.close();
+  });
+
+  it.each(['relay_insert', 'child_event', 'outbox', 'farm_cas', 'job_projection'])(
+    'rolls back every burn attachment write when %s fails',
+    (fault) => {
+      const stores = createSqliteStores(freshPath(), {
+        now: () => 2_000_000_200,
+        farmIntentFault(point) { if (point === fault) throw new Error(`fault:${point}`); },
+      });
+      const { normalizedIntent } = finishForwardIntent(stores);
+      const identity = {
+        mandateId: normalizedIntent.intent.mandate.mandateId,
+        jobId: normalizedIntent.intent.jobId,
+        bindingId: normalizedIntent.intent.mandate.bindingId,
+        intentDigest: normalizedIntent.intentDigest,
+      };
+
+      expect(() => stores.farmIntents.attachBurnAtomic({
+        identity, burnTxHash: 'bb'.repeat(32), now: 2_000_000_200,
+      })).toThrow(`fault:${fault}`);
+      expect(stores.farmIntents.getByJob({
+        mandateId: identity.mandateId, jobId: identity.jobId,
+      })).toMatchObject({ state: 'awaiting_burn', burnTxHash: null, relayExecId: null });
+      expect(stores.db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n).toBe(0);
+      expect(stores.db.prepare('SELECT COUNT(*) AS n FROM base_evidence_outbox').get().n).toBe(0);
+      expect(stores.db.prepare('SELECT COUNT(*) AS n FROM association_outbox').get().n).toBe(0);
+      expect(stores.jobs.get(identity.jobId)).toMatchObject({ status: 'awaiting_burn' });
+      stores.db.close();
+    },
+  );
+
+  it('projects confirmed CCTP evidence to every child and deposit readiness in one transaction', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 2_000_000_300 });
+    const { normalizedIntent, acknowledgement } = finishForwardIntent(stores);
+    const identity = {
+      mandateId: normalizedIntent.intent.mandate.mandateId,
+      jobId: normalizedIntent.intent.jobId,
+      bindingId: normalizedIntent.intent.mandate.bindingId,
+      intentDigest: normalizedIntent.intentDigest,
+    };
+    stores.farmIntents.attachBurnAtomic({ identity, burnTxHash: 'bb'.repeat(32), now: 2_000_000_200 });
+    const relay = {
+      execId: `forward-farm:${normalizedIntent.intent.jobId}`,
+      state: 'minted', burnTxHash: 'bb'.repeat(32),
+      expectationDigest: normalizedIntent.expectationDigest,
+      messageDigest: 'cc'.repeat(32), attestationDigest: 'dd'.repeat(32),
+      evidenceVersion: '1', mintTxHash: `0x${'ee'.repeat(32)}`,
+    };
+
+    expect(stores.farmIntents.projectMintEvidenceAtomic({ identity, relay, now: 2_000_000_300 }))
+      .toMatchObject({ state: 'deposit_pending' });
+    expect(stores.baseEvidenceOutbox.recoveryState(acknowledgement.children[0].identity)).toEqual({
+      identity: acknowledgement.children[0].identity,
+      recoveryVersion: 11,
+      phase: 'cctp_mint',
+      state: 'confirmed',
+      evidence: {
+        burnTxHash: 'bb'.repeat(32), expectationDigest: normalizedIntent.expectationDigest,
+        messageDigest: 'cc'.repeat(32), attestationDigest: 'dd'.repeat(32),
+        evidenceVersion: '1', mintTxHash: `0x${'ee'.repeat(32)}`,
+      },
+    });
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM base_evidence_outbox').get().n).toBe(4);
+    expect(stores.farmIntents.attachBurnAtomic({
+      identity, burnTxHash: 'bb'.repeat(32), now: 2_000_000_999,
+    })).toMatchObject({ duplicate: true, record: { state: 'deposit_pending' } });
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM base_evidence_outbox').get().n).toBe(4);
+  });
+
+  // Defect caught: startup used legacy farm_execution_work/jobs as runnable truth and replayed
+  // whole farm payloads instead of scanning only bounded v2 evidence states.
+  it('reconciles only expired intent leases and lists bounded v2 recovery work deterministically', () => {
+    const stores = createSqliteStores(freshPath(), {
+      leaseToken: () => 'expired-intent-lease',
+      now: () => 2_000_000_000,
+    });
+    const normalizedIntent = forwardIntentFixture();
+    stores.farmIntents.createOrGetIntent({ normalizedIntent, now: 100 });
+    stores.farmIntents.claimIntentDelivery({ jobId: normalizedIntent.intent.jobId, now: 100, leaseMs: 10 });
+    expect(stores.farmIntents.reconcileExpired({ now: 111, limit: 100 })).toEqual([
+      expect.objectContaining({ jobId: normalizedIntent.intent.jobId, state: 'intent_pending', leaseToken: null }),
+    ]);
+    expect(stores.farmIntents.listRecoverable({ now: 111, limit: 1 })).toEqual([
+      expect.objectContaining({ jobId: normalizedIntent.intent.jobId, state: 'intent_pending' }),
+    ]);
+    expect(() => stores.farmIntents.listRecoverable({ now: 111, limit: 0 })).toThrow(/limit/i);
+    stores.db.close();
+  });
+
+  it('quarantines legacy active farm rows once and leaves done rows as history only', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 200 });
+    for (const [jobId, status] of [['legacy-pending', 'pending'], ['legacy-running', 'running'], ['legacy-done', 'done']]) {
+      stores.jobs.set(jobId, { jobId, status, serializedApproval: 'legacy-secret' });
+      stores.db.prepare(`INSERT INTO farm_execution_work
+        (job_id,burn_tx_hash,status,attempts,lease_token,lease_expires_at,created_at,updated_at)
+        VALUES (?,?,?,0,NULL,NULL,100,100)`).run(jobId, `burn-${jobId}`, status);
+    }
+
+    expect(stores.farmIntents.quarantineLegacyActive({ now: 200, limit: 100 }))
+      .toEqual(['legacy-pending', 'legacy-running']);
+    expect(stores.farmIntents.quarantineLegacyActive({ now: 201, limit: 100 })).toEqual([]);
+    expect(stores.jobs.get('legacy-pending')).toEqual({
+      jobId: 'legacy-pending', status: 'uncertain', reasonCode: 'legacy_record_unrecoverable',
+    });
+    expect(stores.jobs.get('legacy-running')).not.toHaveProperty('serializedApproval');
+    expect(stores.jobs.get('legacy-done')).toMatchObject({ status: 'done' });
+    expect(stores.farmIntents.listRecoverable({ now: 201, limit: 100 })).toEqual([]);
+    stores.db.close();
+  });
+
+  it('blocks the owning v2 farm projection when Task 10 reports an immutable evidence conflict', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 300 });
+    const { normalizedIntent, acknowledgement } = finishForwardIntent(stores);
+    stores.baseEvidenceOutbox.enqueue({
+      identity: acknowledgement.children[0].identity,
+      phase: 'cctp_burn',
+      status: 'submitted',
+      evidence: {
+        burnTxHash: 'bb'.repeat(32),
+        expectationDigest: normalizedIntent.expectationDigest,
+        burnUnits7: normalizedIntent.expectation.burnUnits7,
+      },
+      observedAt: 300,
+    });
+    const leased = stores.baseEvidenceOutbox.leaseNext({ now: 300, leaseMs: 100 });
+    const blocked = stores.baseEvidenceOutbox.markConflict({
+      id: leased.id,
+      leaseToken: leased.leaseToken,
+      now: 300,
+      block: () => stores.farmIntents.blockEvidenceConflict({
+        identity: leased.identity, now: 300,
+      }, { transaction: false }),
+    });
+
+    expect(blocked).toMatchObject({ deliveryStatus: 'conflict' });
+    expect(stores.farmIntents.getByJob({
+      mandateId: normalizedIntent.intent.mandate.mandateId,
+      jobId: normalizedIntent.intent.jobId,
+    })).toMatchObject({ state: 'blocked', reasonCode: 'base_evidence_conflict' });
+    expect(stores.jobs.get(normalizedIntent.intent.jobId)).toMatchObject({
+      status: 'blocked', reasonCode: 'base_evidence_conflict',
+    });
+    stores.db.close();
+  });
 });
 function cipher(entries = [['active', Buffer.alloc(32, 0x31)]]) {
   return createSecretEnvelope(parseSecretKeyring(

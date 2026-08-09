@@ -9,6 +9,7 @@ import { dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createAssociationOutbox } from './associationOutbox.mjs';
 import { createBaseEvidenceOutbox } from './baseEvidenceOutbox.mjs';
+export { buildForwardFarmIntent } from './farmIntent.mjs';
 import {
   RELAY_CLAIMABLE_STATES,
   relayEnqueueDecision,
@@ -571,7 +572,9 @@ export function createSqliteStores(path, {
   leaseToken = randomUUID,
   sessionKeyCipher,
   outboxMaxAttempts = 5,
+  farmIntentFault = () => {},
 } = {}) {
+  if (typeof farmIntentFault !== 'function') throw new Error('farm intent fault seam is invalid');
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   try {
@@ -610,6 +613,38 @@ export function createSqliteStores(path, {
       lease_expires_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS farm_intent_work_v2 (
+      job_id TEXT PRIMARY KEY CHECK (length(job_id) = 32),
+      mandate_id TEXT NOT NULL CHECK (length(mandate_id) = 32),
+      request_id TEXT NOT NULL CHECK (length(request_id) = 32),
+      stellar_owner TEXT NOT NULL,
+      kernel_address TEXT NOT NULL,
+      binding_id TEXT NOT NULL,
+      binding_hash TEXT NOT NULL,
+      intent_digest TEXT NOT NULL CHECK (length(intent_digest) = 64),
+      intent_json TEXT NOT NULL,
+      expectation_digest TEXT NOT NULL CHECK (length(expectation_digest) = 64),
+      expectation_json TEXT NOT NULL,
+      batch_idempotency_key TEXT NOT NULL UNIQUE CHECK (length(batch_idempotency_key) = 64),
+      agent_index_batch_digest TEXT NOT NULL CHECK (length(agent_index_batch_digest) = 64),
+      agent_index_batch_json TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN (
+        'intent_pending','awaiting_burn','relay_pending','deposit_pending',
+        'deposit_confirming','done','blocked','uncertain'
+      )),
+      burn_tx_hash TEXT UNIQUE,
+      relay_exec_id TEXT UNIQUE,
+      ack_digest TEXT,
+      ack_json TEXT,
+      reason_code TEXT,
+      intent_attempts INTEGER NOT NULL DEFAULT 0 CHECK (intent_attempts >= 0),
+      lease_kind TEXT,
+      lease_token TEXT,
+      lease_expires_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(mandate_id, request_id)
     );
     CREATE TABLE IF NOT EXISTS base_evidence_heads (
       network_id TEXT NOT NULL,
@@ -658,6 +693,17 @@ export function createSqliteStores(path, {
       ON association_outbox (child_id, sequence);
     CREATE INDEX IF NOT EXISTS idx_base_evidence_delivery
       ON base_evidence_outbox (delivery_status,available_at,lease_expires_at,id);
+    CREATE INDEX IF NOT EXISTS idx_farm_intent_recovery_v2
+      ON farm_intent_work_v2 (state,created_at,job_id);
+    CREATE TRIGGER IF NOT EXISTS farm_intent_work_v2_immutable
+      BEFORE UPDATE OF
+        job_id,mandate_id,request_id,stellar_owner,kernel_address,binding_id,binding_hash,
+        intent_digest,intent_json,expectation_digest,expectation_json,batch_idempotency_key,
+        agent_index_batch_digest,agent_index_batch_json,created_at
+      ON farm_intent_work_v2
+      BEGIN
+        SELECT RAISE(ABORT, 'immutable forward farm intent');
+      END;
     CREATE TRIGGER IF NOT EXISTS base_evidence_outbox_immutable_update
       BEFORE UPDATE OF
         event_id,network_id,binding_id,execution_id,allocation_id,child_id,
@@ -777,6 +823,480 @@ export function createSqliteStores(path, {
     }
     return row;
   }
+
+  function farmIntentRecord(row) {
+    if (!row) return null;
+    return {
+      jobId: row.job_id,
+      mandateId: row.mandate_id,
+      requestId: row.request_id,
+      stellarOwner: row.stellar_owner,
+      kernelAddress: row.kernel_address,
+      bindingId: row.binding_id,
+      bindingHash: row.binding_hash,
+      intentDigest: row.intent_digest,
+      intent: JSON.parse(row.intent_json),
+      expectationDigest: row.expectation_digest,
+      expectation: JSON.parse(row.expectation_json),
+      batchIdempotencyKey: row.batch_idempotency_key,
+      batchDigest: row.agent_index_batch_digest,
+      batch: JSON.parse(row.agent_index_batch_json),
+      state: row.state,
+      burnTxHash: row.burn_tx_hash ?? null,
+      relayExecId: row.relay_exec_id ?? null,
+      acknowledgement: row.ack_json ? JSON.parse(row.ack_json) : null,
+      reasonCode: row.reason_code ?? null,
+      intentAttempts: row.intent_attempts,
+      leaseKind: row.lease_kind ?? null,
+      leaseToken: row.lease_token ?? null,
+      leaseExpiresAt: row.lease_expires_at ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  const farmIntents = {
+    createOrGetIntent({ normalizedIntent, now: atValue = now() }) {
+      return transaction(() => {
+        const intent = normalizedIntent?.intent;
+        const existing = db.prepare(
+          'SELECT * FROM farm_intent_work_v2 WHERE mandate_id = ? AND request_id = ?',
+        ).get(intent?.mandate?.mandateId, intent?.requestId);
+        if (existing) {
+          const storedBatch = JSON.parse(existing.agent_index_batch_json);
+          const compared = (existing.job_id !== intent.jobId
+              || storedBatch.children[0]?.lifecycle?.observedAt !== normalizedIntent.batch.children[0]?.lifecycle?.observedAt)
+            && typeof normalizedIntent.rebuild === 'function'
+            ? normalizedIntent.rebuild({
+              jobId: existing.job_id,
+              observedAt: storedBatch.children[0]?.lifecycle?.observedAt,
+            })
+            : normalizedIntent;
+          const exact = existing.job_id === compared.intent.jobId
+            && existing.intent_digest === compared.intentDigest
+            && existing.expectation_digest === compared.expectationDigest
+            && existing.batch_idempotency_key === compared.batchIdempotencyKey
+            && existing.agent_index_batch_digest === compared.batchDigest
+            && existing.intent_json === JSON.stringify(compared.intent)
+            && existing.expectation_json === JSON.stringify(compared.expectation)
+            && existing.agent_index_batch_json === JSON.stringify(compared.batch);
+          if (!exact) {
+            const error = new Error('immutable forward farm intent conflict');
+            error.code = 'FARM_INTENT_CONFLICT';
+            throw error;
+          }
+          return { created: false, record: farmIntentRecord(existing) };
+        }
+        db.prepare(`
+          INSERT INTO farm_intent_work_v2 (
+            job_id,mandate_id,request_id,stellar_owner,kernel_address,binding_id,binding_hash,
+            intent_digest,intent_json,expectation_digest,expectation_json,batch_idempotency_key,
+            agent_index_batch_digest,agent_index_batch_json,state,created_at,updated_at
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'intent_pending',?,?)
+        `).run(
+          intent.jobId, intent.mandate.mandateId, intent.requestId,
+          intent.mandate.stellarOwner, intent.mandate.kernelAddress,
+          intent.mandate.bindingId, intent.mandate.bindingHash,
+          normalizedIntent.intentDigest, JSON.stringify(intent),
+          normalizedIntent.expectationDigest, JSON.stringify(normalizedIntent.expectation),
+          normalizedIntent.batchIdempotencyKey, normalizedIntent.batchDigest,
+          JSON.stringify(normalizedIntent.batch), atValue, atValue,
+        );
+        writeJob(intent.jobId, {
+          jobId: intent.jobId,
+          requestId: intent.requestId,
+          status: 'intent_pending',
+          runId: intent.run.runId,
+          allocations: intent.allocations.map(({ ordinal, allocationId, executionId, childId }) => ({
+            ordinal, allocationId, executionId, childId,
+          })),
+        });
+        return {
+          created: true,
+          record: farmIntentRecord(db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id = ?').get(intent.jobId)),
+        };
+      });
+    },
+    getByJob({ mandateId, jobId }) {
+      return farmIntentRecord(db.prepare(
+        'SELECT * FROM farm_intent_work_v2 WHERE mandate_id = ? AND job_id = ?',
+      ).get(mandateId, jobId));
+    },
+    getByRequest({ mandateId, requestId }) {
+      return farmIntentRecord(db.prepare(
+        'SELECT * FROM farm_intent_work_v2 WHERE mandate_id = ? AND request_id = ?',
+      ).get(mandateId, requestId));
+    },
+    claimIntentDelivery({ jobId, now: atValue = now(), leaseMs = 30_000 }) {
+      if (!Number.isSafeInteger(leaseMs) || leaseMs <= 0) throw new Error('farm intent lease is invalid');
+      return transaction(() => {
+        const token = leaseToken();
+        const row = db.prepare(`
+          UPDATE farm_intent_work_v2
+          SET lease_kind='intent_delivery',lease_token=?,lease_expires_at=?,
+              intent_attempts=intent_attempts+1,updated_at=?
+          WHERE job_id=? AND state='intent_pending'
+            AND (lease_token IS NULL OR lease_expires_at<=?)
+          RETURNING *
+        `).get(token, atValue + leaseMs, atValue, jobId, atValue);
+        return farmIntentRecord(row);
+      });
+    },
+    renewIntentDelivery({ jobId, leaseToken: token, now: atValue = now(), leaseMs = 30_000 }) {
+      const changed = db.prepare(`
+        UPDATE farm_intent_work_v2 SET lease_expires_at=?,updated_at=?
+        WHERE job_id=? AND state='intent_pending' AND lease_kind='intent_delivery'
+          AND lease_token=? AND lease_expires_at>?
+      `).run(atValue + leaseMs, atValue, jobId, token, atValue);
+      if (changed.changes !== 1) throw new Error('farm intent delivery lease is stale');
+      return farmIntentRecord(db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(jobId));
+    },
+    releaseIntentDelivery({ jobId, leaseToken: token, now: atValue = now() }) {
+      const changed = db.prepare(`
+        UPDATE farm_intent_work_v2 SET lease_kind=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=?
+        WHERE job_id=? AND state='intent_pending' AND lease_kind='intent_delivery' AND lease_token=?
+      `).run(atValue, jobId, token);
+      if (changed.changes !== 1) throw new Error('farm intent delivery lease is stale');
+      return farmIntentRecord(db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(jobId));
+    },
+    finishAwaitingBurn({ jobId, leaseToken: token, acknowledgement, now: atValue = now() }) {
+      return transaction(() => {
+        const row = db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(jobId);
+        if (!row) throw new Error('forward farm intent is missing');
+        const ackJson = JSON.stringify(acknowledgement);
+        const ackDigest = createHash('sha256').update(ackJson).digest('hex');
+        if (row.state === 'awaiting_burn') {
+          if (row.ack_digest !== ackDigest || row.ack_json !== ackJson) {
+            throw new Error('immutable Agent Index acknowledgement conflict');
+          }
+          return farmIntentRecord(row);
+        }
+        if (row.state !== 'intent_pending' || row.lease_kind !== 'intent_delivery'
+            || row.lease_token !== token || row.lease_expires_at <= atValue) {
+          throw new Error('farm intent delivery lease is stale');
+        }
+        const batch = JSON.parse(row.agent_index_batch_json);
+        const expectedIdentities = batch.children.map((child) => ({
+          networkId: child.networkId,
+          bindingId: child.bindingId,
+          executionId: child.executionId,
+          allocationId: child.allocationId,
+          childId: child.childId,
+        }));
+        const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
+          && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+        const ackKeys = ['acknowledged', 'schemaVersion', 'idempotencyKey', 'requestDigest', 'children', 'written', 'duplicates'];
+        const childKeys = ['identity', 'recoveryVersion'];
+        const identityKeys = ['networkId', 'bindingId', 'executionId', 'allocationId', 'childId'];
+        const valid = exactKeys(acknowledgement, ackKeys)
+          && acknowledgement.acknowledged === true
+          && acknowledgement.schemaVersion === 1
+          && acknowledgement.idempotencyKey === row.batch_idempotency_key
+          && acknowledgement.requestDigest === row.agent_index_batch_digest
+          && Number.isSafeInteger(acknowledgement.written)
+          && Number.isSafeInteger(acknowledgement.duplicates)
+          && Array.isArray(acknowledgement.children)
+          && acknowledgement.children.length === expectedIdentities.length
+          && acknowledgement.children.every((child, index) => exactKeys(child, childKeys)
+            && exactKeys(child.identity, identityKeys)
+            && identityKeys.every((key) => child.identity[key] === expectedIdentities[index][key])
+            && Number.isSafeInteger(child.recoveryVersion) && child.recoveryVersion >= 0);
+        if (!valid) throw new Error('Agent Index batch acknowledgement is malformed');
+        acknowledgement.children.forEach((child) => {
+          baseEvidenceOutbox.seed(child.identity, child.recoveryVersion, { jobId });
+        });
+        const changed = db.prepare(`
+          UPDATE farm_intent_work_v2
+          SET state='awaiting_burn',ack_digest=?,ack_json=?,lease_kind=NULL,lease_token=NULL,
+              lease_expires_at=NULL,updated_at=?
+          WHERE job_id=? AND state='intent_pending' AND lease_token=? AND lease_expires_at>?
+        `).run(ackDigest, ackJson, atValue, jobId, token, atValue);
+        if (changed.changes !== 1) throw new Error('farm intent acknowledgement CAS conflict');
+        const job = jobs.get(jobId) ?? { jobId };
+        writeJob(jobId, { ...job, status: 'awaiting_burn' });
+        return farmIntentRecord(db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(jobId));
+      });
+    },
+    attachBurnAtomic({ identity, burnTxHash, now: atValue = now() }) {
+      if (!/^[0-9a-f]{64}$/.test(burnTxHash || '')) {
+        throw new Error('burn transaction hash must be 64 lowercase hex');
+      }
+      return transaction(() => {
+        const row = db.prepare(`
+          SELECT * FROM farm_intent_work_v2
+          WHERE mandate_id=? AND job_id=? AND binding_id=? AND intent_digest=?
+        `).get(identity?.mandateId, identity?.jobId, identity?.bindingId, identity?.intentDigest);
+        if (!row) throw new Error('forward farm attachment identity conflict');
+        if (row.burn_tx_hash !== null || row.relay_exec_id !== null) {
+          if (row.burn_tx_hash !== burnTxHash) throw new Error('forward farm already has a different burn hash');
+          if (!row.relay_exec_id || !cctpGet(row.relay_exec_id)) {
+            throw new Error('forward farm burn attachment is incomplete');
+          }
+          return { duplicate: true, record: farmIntentRecord(row) };
+        }
+        if (row.state !== 'awaiting_burn' || !row.ack_digest || !row.ack_json) {
+          throw new Error('forward farm is not burn-ready');
+        }
+        const owner = db.prepare(
+          'SELECT job_id FROM farm_intent_work_v2 WHERE burn_tx_hash=? AND job_id<>?',
+        ).get(burnTxHash, row.job_id);
+        if (owner) throw new Error('burn hash belongs to a different forward farm');
+        const intent = JSON.parse(row.intent_json);
+        const expectation = JSON.parse(row.expectation_json);
+        const batch = JSON.parse(row.agent_index_batch_json);
+        const relayExecId = `forward-farm:${row.job_id}`;
+        const decision = relayEnqueueDecision({
+          existing: cctpGet(relayExecId),
+          hasBurnOwner: (hash) => Boolean(db.prepare(
+            'SELECT 1 FROM cctp_relay_work WHERE burn_tx_hash=? AND exec_id<>?',
+          ).get(hash, relayExecId)),
+          execId: relayExecId,
+          sourceDomain: expectation.sourceDomain,
+          burnTxHash,
+          expectation,
+          now: atValue,
+        });
+        if (!decision.changed) throw new Error('unexpected preexisting CCTP relay work');
+        db.prepare(`
+          INSERT INTO cctp_relay_work (
+            exec_id,source_domain,burn_tx_hash,expectation_json,expectation_digest,state,
+            message_hex,nonce_hex,message_digest,attestation_hex,attestation_digest,
+            evidence_version,mint_tx_hash,reason_code,attempts,lease_token,lease_expires_at,
+            created_at,updated_at
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(decision.record.execId, ...cctpBind(decision.record));
+        farmIntentFault('relay_insert');
+
+        const evidence = {
+          burnTxHash,
+          expectationDigest: row.expectation_digest,
+          burnUnits7: expectation.burnUnits7,
+        };
+        batch.children.forEach((child) => {
+          const identityWithOwner = {
+            networkId: child.networkId,
+            owner: child.owner,
+            bindingId: child.bindingId,
+            executionId: child.executionId,
+            allocationId: child.allocationId,
+            childId: child.childId,
+          };
+          enqueueAssociationInTransaction({
+            identity: identityWithOwner,
+            expectedSequence: 0,
+            lifecycle: { sequence: 1, status: 'submitted', evidence, observedAt: atValue },
+          });
+          enqueueBaseEvidenceInTransaction({
+            identity: {
+              networkId: child.networkId,
+              bindingId: child.bindingId,
+              executionId: child.executionId,
+              allocationId: child.allocationId,
+              childId: child.childId,
+            },
+            phase: 'cctp_burn',
+            status: 'submitted',
+            evidence,
+            observedAt: atValue,
+          });
+          farmIntentFault('child_event');
+        });
+        farmIntentFault('outbox');
+        const changed = db.prepare(`
+          UPDATE farm_intent_work_v2
+          SET state='relay_pending',burn_tx_hash=?,relay_exec_id=?,updated_at=?
+          WHERE job_id=? AND mandate_id=? AND binding_id=? AND intent_digest=?
+            AND state='awaiting_burn' AND burn_tx_hash IS NULL AND relay_exec_id IS NULL
+        `).run(
+          burnTxHash, relayExecId, atValue, row.job_id, row.mandate_id,
+          row.binding_id, row.intent_digest,
+        );
+        if (changed.changes !== 1) throw new Error('forward farm attachment CAS conflict');
+        farmIntentFault('farm_cas');
+        const publicJob = jobs.get(row.job_id) ?? { jobId: row.job_id };
+        writeJob(row.job_id, { ...publicJob, status: 'relay_pending' });
+        farmIntentFault('job_projection');
+        return {
+          duplicate: false,
+          record: farmIntentRecord(db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(row.job_id)),
+        };
+      });
+    },
+    projectMintEvidenceAtomic({ identity, relay, now: atValue = now() }) {
+      return transaction(() => {
+        const row = db.prepare(`
+          SELECT * FROM farm_intent_work_v2
+          WHERE mandate_id=? AND job_id=? AND binding_id=? AND intent_digest=?
+        `).get(identity?.mandateId, identity?.jobId, identity?.bindingId, identity?.intentDigest);
+        if (!row || !['relay_pending', 'deposit_pending'].includes(row.state)) {
+          throw new Error('forward farm is not relay-recoverable');
+        }
+        if (!relay || relay.state !== 'minted' || relay.execId !== row.relay_exec_id
+            || relay.burnTxHash !== row.burn_tx_hash
+            || relay.expectationDigest !== row.expectation_digest) {
+          throw new Error('confirmed CCTP evidence conflicts with forward farm intent');
+        }
+        const expectation = JSON.parse(row.expectation_json);
+        const batch = JSON.parse(row.agent_index_batch_json);
+        const burnEvidence = {
+          burnTxHash: relay.burnTxHash,
+          expectationDigest: relay.expectationDigest,
+          burnUnits7: expectation.burnUnits7,
+        };
+        const attestationEvidence = {
+          burnTxHash: relay.burnTxHash,
+          expectationDigest: relay.expectationDigest,
+          messageDigest: relay.messageDigest,
+          attestationDigest: relay.attestationDigest,
+          evidenceVersion: relay.evidenceVersion,
+        };
+        const mintEvidence = { ...attestationEvidence, mintTxHash: relay.mintTxHash };
+        for (const child of batch.children) {
+          const childIdentity = {
+            networkId: child.networkId,
+            bindingId: child.bindingId,
+            executionId: child.executionId,
+            allocationId: child.allocationId,
+            childId: child.childId,
+          };
+          enqueueBaseEvidenceInTransaction({
+            identity: childIdentity, phase: 'cctp_burn', status: 'confirmed',
+            evidence: burnEvidence, observedAt: atValue,
+          });
+          enqueueBaseEvidenceInTransaction({
+            identity: childIdentity, phase: 'cctp_attestation', status: 'confirmed',
+            evidence: attestationEvidence, observedAt: atValue,
+          });
+          enqueueBaseEvidenceInTransaction({
+            identity: childIdentity, phase: 'cctp_mint', status: 'confirmed',
+            evidence: mintEvidence, observedAt: atValue,
+          });
+        }
+        if (row.state === 'relay_pending') {
+          const changed = db.prepare(`
+            UPDATE farm_intent_work_v2 SET state='deposit_pending',updated_at=?
+            WHERE job_id=? AND state='relay_pending' AND relay_exec_id=?
+          `).run(atValue, row.job_id, row.relay_exec_id);
+          if (changed.changes !== 1) throw new Error('forward farm mint projection CAS conflict');
+          const publicJob = jobs.get(row.job_id) ?? { jobId: row.job_id };
+          writeJob(row.job_id, { ...publicJob, status: 'deposit_pending' });
+        }
+        return farmIntentRecord(db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(row.job_id));
+      });
+    },
+    quarantineLegacyActive({ now: atValue = now(), limit = 100 } = {}) {
+      if (!Number.isSafeInteger(atValue) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+        throw new Error('legacy farm quarantine limit is invalid');
+      }
+      return transaction(() => {
+        const rows = db.prepare(`SELECT job_id,status FROM farm_execution_work
+          WHERE status IN ('pending','running','done') ORDER BY created_at,job_id LIMIT ?`).all(limit);
+        const quarantined = [];
+        for (const row of rows) {
+          if (row.status === 'done') {
+            writeJob(row.job_id, { jobId: row.job_id, status: 'done' });
+            continue;
+          }
+          const changed = db.prepare(`UPDATE farm_execution_work
+            SET status='uncertain',lease_token=NULL,lease_expires_at=NULL,updated_at=?
+            WHERE job_id=? AND status IN ('pending','running')`).run(atValue, row.job_id);
+          if (changed.changes === 1) {
+            writeJob(row.job_id, {
+              jobId: row.job_id,
+              status: 'uncertain',
+              reasonCode: 'legacy_record_unrecoverable',
+            });
+            quarantined.push(row.job_id);
+          }
+        }
+        return quarantined;
+      });
+    },
+    blockEvidenceConflict(
+      { identity, now: blockedAt = now() },
+      { transaction: ownTransaction = true } = {},
+    ) {
+      const apply = () => {
+        const head = db.prepare(`SELECT job_id FROM base_evidence_heads
+          WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?`)
+          .get(
+            identity.networkId, identity.bindingId, identity.executionId,
+            identity.allocationId, identity.childId,
+          );
+        if (!head?.job_id) throw new Error('Base evidence conflict has no owning farm job');
+        const row = db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(head.job_id);
+        if (!row) throw new Error('Base evidence conflict has no owning v2 farm intent');
+        if (row.state !== 'blocked') {
+          const changed = db.prepare(`UPDATE farm_intent_work_v2
+            SET state='blocked',reason_code='base_evidence_conflict',lease_kind=NULL,
+              lease_token=NULL,lease_expires_at=NULL,updated_at=?
+            WHERE job_id=? AND state NOT IN ('done','blocked','uncertain')`)
+            .run(blockedAt, row.job_id);
+          if (changed.changes !== 1) throw new Error('Base evidence conflict owning farm is terminal');
+          const publicJob = jobs.get(row.job_id) ?? { jobId: row.job_id };
+          writeJob(row.job_id, {
+            ...publicJob, status: 'blocked', reasonCode: 'base_evidence_conflict',
+          });
+        }
+        return { jobId: row.job_id, status: 'blocked' };
+      };
+      return ownTransaction ? transaction(apply) : apply();
+    },
+    reconcileExpired({ now: atValue = now(), limit = 100 } = {}) {
+      if (!Number.isSafeInteger(atValue) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+        throw new Error('farm intent recovery limit is invalid');
+      }
+      return transaction(() => {
+        const rows = db.prepare(`
+          SELECT job_id FROM farm_intent_work_v2
+          WHERE state='intent_pending' AND lease_kind='intent_delivery' AND lease_expires_at<=?
+          ORDER BY created_at,job_id LIMIT ?
+        `).all(atValue, limit);
+        for (const row of rows) {
+          db.prepare(`
+            UPDATE farm_intent_work_v2
+            SET lease_kind=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=?
+            WHERE job_id=? AND state='intent_pending' AND lease_expires_at<=?
+          `).run(atValue, row.job_id, atValue);
+        }
+        return rows.map(({ job_id: jobId }) => farmIntentRecord(
+          db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(jobId),
+        ));
+      });
+    },
+    listRecoverable({ now: atValue = now(), limit = 100 } = {}) {
+      if (!Number.isSafeInteger(atValue) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+        throw new Error('farm intent recovery limit is invalid');
+      }
+      return db.prepare(`
+        SELECT * FROM farm_intent_work_v2
+        WHERE state IN ('intent_pending','relay_pending','deposit_pending','deposit_confirming')
+          AND (state<>'intent_pending' OR lease_token IS NULL OR lease_expires_at<=?)
+        ORDER BY created_at,job_id LIMIT ?
+      `).all(atValue, limit).map(farmIntentRecord);
+    },
+    advanceProjection({ identity, from, to, reasonCode = null, now: atValue = now() }) {
+      const allowed = new Set([
+        'intent_pending', 'awaiting_burn', 'relay_pending', 'deposit_pending',
+        'deposit_confirming', 'done', 'blocked', 'uncertain',
+      ]);
+      if (!allowed.has(from) || !allowed.has(to)) throw new Error('farm projection state is invalid');
+      return transaction(() => {
+        const changed = db.prepare(`
+          UPDATE farm_intent_work_v2 SET state=?,reason_code=?,lease_kind=NULL,lease_token=NULL,
+            lease_expires_at=NULL,updated_at=?
+          WHERE job_id=? AND mandate_id=? AND binding_id=? AND intent_digest=? AND state=?
+        `).run(
+          to, reasonCode, atValue, identity.jobId, identity.mandateId,
+          identity.bindingId, identity.intentDigest, from,
+        );
+        if (changed.changes !== 1) throw new Error('farm projection CAS conflict');
+        const publicJob = jobs.get(identity.jobId) ?? { jobId: identity.jobId };
+        writeJob(identity.jobId, { ...publicJob, status: to, ...(reasonCode ? { reasonCode } : {}) });
+        return farmIntentRecord(db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(identity.jobId));
+      });
+    },
+  };
 
   const farmExecutions = {
     prepare({ jobId, job, evidenceHeads }) {
@@ -1863,6 +2383,7 @@ export function createSqliteStores(path, {
       db.prepare('UPDATE jobs SET job = job WHERE 0').run();
       db.prepare('SELECT id FROM association_outbox WHERE 0').all();
       db.prepare('SELECT job_id FROM farm_execution_work WHERE 0').all();
+      db.prepare('SELECT job_id FROM farm_intent_work_v2 WHERE 0').all();
       db.prepare('SELECT network_id FROM base_evidence_heads WHERE 0').all();
       db.prepare('SELECT event_id FROM base_evidence_outbox WHERE 0').all();
       db.prepare('SELECT mandate_id FROM mandates_v3 WHERE 0').all();
@@ -1871,6 +2392,7 @@ export function createSqliteStores(path, {
       return {
         writable: true,
         baseEvidenceDurable: true,
+        farmIntentDurable: true,
         legacyMandateTables: legacyMandateTables(),
         mandateMigrationCleanupPending: ensemble.cleanupPending,
       };
@@ -1897,6 +2419,7 @@ export function createSqliteStores(path, {
     associationOutbox,
     baseEvidenceOutbox,
     farmExecutions,
+    farmIntents,
     cctpRelays,
     probe,
   };

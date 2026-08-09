@@ -15,6 +15,7 @@ const BASE_COMMON_FIELDS = [
   'chainId', 'yieldRouterAddress', 'caller', 'poolAddress', 'assets', 'minShares',
 ];
 const BASE_EVIDENCE_SCHEMAS = new Map([
+  ['cctp_burn:submitted', new Set(['burnTxHash', 'expectationDigest', 'burnUnits7'])],
   ['cctp_burn:confirmed', new Set(['burnTxHash', 'expectationDigest', 'burnUnits7'])],
   ['cctp_burn:unknown', new Set([
     'burnTxHash', 'expectationDigest', 'burnUnits7', 'reasonCode',
