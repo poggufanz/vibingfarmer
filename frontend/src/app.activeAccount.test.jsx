@@ -21,6 +21,10 @@ const mountedHarness = vi.hoisted(() => ({
   movement: null,
 }))
 
+const cctpRecovery = vi.hoisted(() => ({
+  resume: vi.fn(),
+}))
+
 vi.mock('./components.jsx', async (importOriginal) => {
   const actual = await importOriginal()
   const { createElement } = await import('react')
@@ -43,6 +47,10 @@ vi.mock('./stellar/index.js', () => ({
   }),
   revokeAgentOnChain: vi.fn(),
   subscribeAgentRevoked: vi.fn(() => () => {}),
+}))
+
+vi.mock('./cctp/resumeTransfers.js', () => ({
+  resumePendingCctpTransfers: (...args) => cctpRecovery.resume(...args),
 }))
 
 vi.mock('./components/strategy/StrategyRoute.jsx', async () => {
@@ -275,6 +283,7 @@ import { grantMandate } from './stellar/lifeboat.js'
 import { loadDeviceBasePositions, loadIndexedBasePositions } from './base/dashboardPositions.js'
 import { readIdleUsdc } from './base/readPositions.js'
 import { ensureBaseOwner } from './wallet/passkeyBridge.js'
+import { connectActiveAccount } from './stellar/index.js'
 
 const G = Object.freeze({
   version: 1,
@@ -534,11 +543,75 @@ beforeEach(() => {
   ensureBaseOwner.mockReset()
   readBaseMandate.mockClear()
   buildBaseLegContext.mockClear()
+  cctpRecovery.resume.mockReset().mockResolvedValue({
+    owner: G.address,
+    resumed: [],
+    held: [],
+    terminal: [],
+    uncertain: [],
+    blocked: [],
+  })
 })
 
 afterEach(() => cleanup())
 
 describe('active account application state', () => {
+  it('starts CCTP recovery only after installing the restored owner, with read-only narrow dependencies', async () => {
+    const restore = deferred()
+    connectActiveAccount.mockReturnValueOnce(restore.promise)
+
+    renderMoneyApp()
+    expect(cctpRecovery.resume).not.toHaveBeenCalled()
+
+    await act(async () => {
+      restore.resolve(G)
+      await restore.promise
+    })
+    await waitFor(() => expect(mountedHarness.moneyRouteProps?.account?.address).toBe(G.address))
+    await waitFor(() => expect(cctpRecovery.resume).toHaveBeenCalledTimes(1))
+
+    const [owner, options] = cctpRecovery.resume.mock.calls[0]
+    expect(owner).toBe(G.address)
+    expect(options.signal).toBeInstanceOf(AbortSignal)
+    expect(options.reconcileUnwindUserOp).toBeTypeOf('function')
+    expect(Object.keys(options).sort()).toEqual([
+      'pollForwardStatus',
+      'pollUnwindStatus',
+      'postFarmAttach',
+      'postFarmIntent',
+      'postUnwindAttach',
+      'reconcileUnwindUserOp',
+      'signal',
+    ])
+    for (const forbidden of [
+      'account',
+      'sign',
+      'wallet',
+      'passkey',
+      'kernel',
+      'capability',
+      'sendUserOperation',
+    ]) {
+      expect(options).not.toHaveProperty(forbidden)
+    }
+  })
+
+  it('aborts recovery for a replaced owner and App teardown while giving the new owner its own scan', async () => {
+    const view = renderMoneyApp()
+    await waitFor(() => expect(cctpRecovery.resume).toHaveBeenCalledTimes(1))
+    const firstSignal = cctpRecovery.resume.mock.calls[0][1].signal
+
+    await act(async () => mountedHarness.accountListener(C))
+    await waitFor(() => expect(cctpRecovery.resume).toHaveBeenCalledTimes(2))
+    const secondCall = cctpRecovery.resume.mock.calls[1]
+    expect(firstSignal.aborted).toBe(true)
+    expect(secondCall[0]).toBe(C.address)
+    expect(secondCall[1].signal.aborted).toBe(false)
+
+    view.unmount()
+    expect(secondCall[1].signal.aborted).toBe(true)
+  })
+
   it('keeps real /home Base history visible but every unavailable withdraw/recovery entry inert', async () => {
     mountedHarness.renderRealMoneyRoute = true
     const amount = { token: 'USDC', units: '50000000', decimals: 7 }

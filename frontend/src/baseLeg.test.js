@@ -26,7 +26,7 @@ const activeEvidence = (overrides = {}) => ({
   validUntilSeconds: 9_999_999_999,
   status: 'active',
   bindingId: 'binding-1',
-  bindingHash: 'binding-hash-1',
+  bindingHash: '66'.repeat(32),
   reasonCodes: [],
   expected: {
     chainId: 84532,
@@ -79,7 +79,26 @@ const okDeps = () => ({
   readStoredMandate: vi.fn(() => storedMandate()),
   getMandateStatus: vi.fn().mockResolvedValue(activeEvidence()),
   makePublicClient: vi.fn(() => ({})),
-  runFarmFlow: vi.fn().mockResolvedValue({ burnHash: 'BURN', jobId: 'job-1', finalStatus: 'done' }),
+  runFarmFlow: vi.fn(async ({ allocations, bindingId, runId }) => ({
+    burnHash: 'BURN',
+    jobId: 'job-1',
+    finalStatus: 'done',
+    associationDelivery: { complete: true, blocked: false },
+    evidenceDelivery: { complete: true, blocked: false },
+    allocations: allocations.map((allocation) => ({
+      allocationId: allocation.allocationId,
+      bindingId,
+      executionId: `${runId}:exec:${allocation.allocationId}`,
+      childId: 'job-1',
+      userOpHash: `0x${'11'.repeat(32)}`,
+      mintTxHash: `0x${'22'.repeat(32)}`,
+      depositTxHash: `0x${'33'.repeat(32)}`,
+      recoveryVersion: 1,
+      success: true,
+      finalStatus: 'done',
+      custody: { location: 'base', confirmed: true, checkedAt: 1 },
+    })),
+  })),
   estimateMinShares: vi.fn(async () => 98505000n),
   runAgentPull: vi.fn().mockResolvedValue({ hash: 'HPULL', status: 'SUCCESS' }),
   runAgentBurn: vi.fn().mockResolvedValue({ burnHash: 'HBURNAGENT' }),
@@ -220,7 +239,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
           burnHash: 'BURN',
           jobId: 'job-1',
           finalStatus: 'done',
-          custody: { location: 'unknown', confirmed: false, checkedAt: null },
+          custody: { location: 'base', confirmed: true, checkedAt: 1 },
         }),
       ],
     })
@@ -234,7 +253,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     deps.runFarmFlow.mockResolvedValue({
       success: false,
       stage: 'attestation',
-      error: 'attestation rejected',
+      error: 'base_farm_unavailable',
       burnHash: 'BURN-F',
       jobId: 'JOB-F',
       finalStatus: 'error',
@@ -304,7 +323,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     expect(out.success).toBe(false)
     expect(failed).toMatchObject({
       executionStatus: 'failed',
-      error: 'attestation rejected',
+      error: 'base_farm_unavailable',
       custody: { location: 'in-transit', confirmed: true, checkedAt: 606 },
       evidence: {
         bridgeAgentAddress: BRIDGE_AGENT,
@@ -391,6 +410,53 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     )
   })
 
+  // Production mutation caught: resolved/rejected farm dependencies used to copy their message
+  // verbatim into Base-leg results, child errors, and UI events.
+  it('[Task 13] uses a fixed local code when a farm dependency returns a poisoned error', async () => {
+    const sentinel = 'capability-bearer-cookie-privatekey-sentinel'
+    const deps = okDeps()
+    deps.runFarmFlow.mockResolvedValue({
+      success: false,
+      stage: 'farm',
+      error: sentinel,
+      burnHash: 'BURN',
+      jobId: 'job-failed',
+      finalStatus: 'error',
+      allocations: [],
+    })
+    const events = []
+    const out = await run({ deps, onEvent: (name, data) => events.push({ name, data }) })
+
+    expect(out.error).toBe('base_farm_unavailable')
+    expect(out.allocations.every((child) => child.error !== sentinel)).toBe(true)
+    expect(JSON.stringify({ out, events })).not.toContain(sentinel)
+  })
+
+  it('[Task 13] never lets association delivery stand in for missing child evidence delivery', async () => {
+    const deps = okDeps()
+    const allocationId = 'run-evidence:bridge:aave-v3'
+    const completed = await deps.runFarmFlow({
+      allocations: [{ allocationId }],
+      bindingId: 'binding-1',
+      runId: 'run-evidence',
+    })
+    deps.runFarmFlow.mockClear()
+    deps.runFarmFlow.mockResolvedValue({
+      ...completed,
+      associationDelivery: { complete: true, blocked: false },
+      evidenceDelivery: { complete: false, blocked: false },
+    })
+
+    const out = await run({
+      deps,
+      runId: 'run-evidence',
+      baseVaults: [{ ...baseVaults[0], allocationId, amountBaseUnits: 100_000_000n }],
+    })
+
+    expect(out.success).toBe(false)
+    expect(out.allocations.every((child) => child.success === false)).toBe(true)
+  })
+
   it('uses reviewed child bigint units directly for a permissioned bridge, never totalAmount float math', async () => {
     const deps = okDeps()
     const out = await run({
@@ -428,13 +494,13 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
   it('no bridgeAgentAddress -> settled failure at stage "mandate", never throws', async () => {
     const out = await run({ bridgeAgentAddress: null })
     expect(out).toMatchObject({ success: false, stage: 'mandate' })
-    expect(out.error).toMatch(/bridge agent/i)
+    expect(out.error).toBe('base_mandate_unavailable')
   })
 
   it('no kernelAddress -> settled failure at stage "mandate", never throws', async () => {
     const out = await run({ kernelAddress: null })
     expect(out).toMatchObject({ success: false, stage: 'mandate' })
-    expect(out.error).toMatch(/kernel address/i)
+    expect(out.error).toBe('base_mandate_unavailable')
   })
 
   it('no stored mandate -> settled failure (mandate setup is its own ceremony, not run here)', async () => {
@@ -442,7 +508,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     deps.readStoredMandate.mockReturnValue(null)
     const out = await run({ deps })
     expect(out).toMatchObject({ success: false, stage: 'mandate' })
-    expect(out.error).toMatch(/no durable base mandate/i)
+    expect(out.error).toBe('base_mandate_unavailable')
     expect(deps.getMandateStatus).not.toHaveBeenCalled()
     expect(deps.runFarmFlow).not.toHaveBeenCalled()
   })
@@ -452,7 +518,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     deps.getMandateStatus.mockResolvedValue({ ...activeEvidence(), status: 'revoked' })
     const out = await run({ deps })
     expect(out).toMatchObject({ success: false, stage: 'mandate' })
-    expect(out.error).toMatch(/no longer valid/i)
+    expect(out.error).toBe('base_mandate_unavailable')
     expect(deps.estimateMinShares).toHaveBeenCalledTimes(1)
     expect(deps.runAgentPull).not.toHaveBeenCalled()
     expect(deps.runAgentBurn).not.toHaveBeenCalled()
@@ -465,7 +531,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     deps.readStoredMandate = vi.fn(() => ({ ...storedMandate(), kernelAddress: staleKernel }))
     const out = await run({ deps, kernelAddress: KERNEL })
     expect(out).toMatchObject({ success: false, stage: 'mandate' })
-    expect(out.error).toMatch(/mismatched/i)
+    expect(out.error).toBe('base_mandate_unavailable')
     expect(deps.getMandateStatus).not.toHaveBeenCalled()
     expect(deps.runFarmFlow).not.toHaveBeenCalled()
   })
@@ -475,7 +541,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     deps.readStoredMandate = vi.fn(() => ({ ...storedMandate(), stellarOwner: 'GDIFFERENTOWNER' }))
     const out = await run({ deps, connectedAddress: STELLAR_OWNER })
     expect(out).toMatchObject({ success: false, stage: 'mandate' })
-    expect(out.error).toMatch(/mismatched/i)
+    expect(out.error).toBe('base_mandate_unavailable')
     expect(deps.runFarmFlow).not.toHaveBeenCalled()
   })
 
@@ -566,7 +632,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     deps.runAgentPull.mockResolvedValue(null) // relay unavailable
     const out = await run({ deps })
     expect(out).toMatchObject({ success: false, stage: 'farm' })
-    expect(out.error).toMatch(/relay is unavailable/)
+    expect(out.error).toBe('base_farm_unavailable')
     expect(deps.runAgentBurn).not.toHaveBeenCalled()
     expect(out.pulled).toBeUndefined()
     expect(out.bridgeAgentAddress).toBeUndefined()
@@ -591,7 +657,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     expect(out).toMatchObject({
       success: false,
       stage: 'burn',
-      error: 'burn tx rejected',
+      error: 'base_burn_unavailable',
       pulled: true,
       bridgeAgentAddress: BRIDGE_AGENT,
       custody: { location: 'agent', confirmed: true, checkedAt: null },
@@ -632,7 +698,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
       recovery: {
         action: 'reconcile-cctp-burn',
         phase: 'cctp_burn',
-        reason: 'burn response lost after dispatch',
+        reasonCode: 'submission_unknown',
         evidence: {
           submission: 'unknown',
           stage: 'cctp_burn',
@@ -670,7 +736,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
       recovery: {
         action: 'reconcile-pull',
         phase: 'pull',
-        reason: 'pull response lost after dispatch',
+        reasonCode: 'submission_unknown',
         evidence: {
           submission: 'unknown',
           stage: 'pull',
@@ -699,7 +765,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
       phase: 'unknown',
       evidence: {
         stage: 'unknown',
-        reportedStage: 'unexpected-phase',
+        reportedStage: 'farm',
         result: { hash: 'HUNKNOWN', status: 'PENDING' },
       },
     })
@@ -720,7 +786,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     await expect(run({ deps })).resolves.toMatchObject({
       success: false,
       stage: 'farm',
-      error: 'relayer declined',
+      error: 'base_farm_unavailable',
     })
   })
 })
@@ -749,7 +815,26 @@ describe('amount-free live mandate gate', () => {
       trace.push('farm')
       expect(params.mandateId).toBe(MANDATE_ID)
       expect(params).not.toHaveProperty('serializedApproval')
-      return { burnHash: 'BURN', jobId: 'job-order', finalStatus: 'done' }
+      return {
+        burnHash: 'BURN',
+        jobId: 'job-order',
+        finalStatus: 'done',
+        associationDelivery: { complete: true, blocked: false },
+        evidenceDelivery: { complete: true, blocked: false },
+        allocations: params.allocations.map((allocation) => ({
+          allocationId: allocation.allocationId,
+          bindingId: params.bindingId,
+          executionId: `${params.runId}:exec:${allocation.allocationId}`,
+          childId: 'job-order',
+          userOpHash: `0x${'11'.repeat(32)}`,
+          mintTxHash: `0x${'22'.repeat(32)}`,
+          depositTxHash: `0x${'33'.repeat(32)}`,
+          recoveryVersion: 1,
+          success: true,
+          finalStatus: 'done',
+          custody: { location: 'base', confirmed: true, checkedAt: 1 },
+        })),
+      }
     })
     const vaults = [
       {

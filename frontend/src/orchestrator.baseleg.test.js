@@ -174,6 +174,9 @@ import { BASE_POOL_CATALOG } from './config.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'
 const CANONICAL_JOB_ID = '55'.repeat(16)
+const CCTP_OWNER = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
+const CCTP_BRIDGE_AGENT = 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ'
+const CCTP_GRANT_HASH = 'bb'.repeat(32)
 
 // grantAddresses walks agentInits in order; the LAST entry is the bridge agent iff its kind===1 —
 // mirrors grant.js's own additive bridgeAgentAddress logic exactly, so the mock stays honest.
@@ -295,12 +298,12 @@ function permissionedStellarOnlyFixture(runId, agentCount = 1) {
   }
 }
 
-function permissionedOrchestrator(onEvent = vi.fn()) {
+function permissionedOrchestrator(onEvent = vi.fn(), connectedAddress = 'GUSER') {
   return new OrchestratorAgent({
     user: 'GUSER',
     sessionId: 'permissioned-regression',
     onEvent,
-    baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+    baseLegContext: { connectedAddress, signTx: vi.fn() },
   })
 }
 
@@ -1430,6 +1433,16 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
   it('[Custody] real Orchestrator/Base/farm dispatch keeps a possibly-dispatched burn unknown', async () => {
     const fixture = permissionedMixedFixture('run-uncertain-burn')
     const onEvent = vi.fn()
+    const journalEntries = new Map()
+    const journalStorage = {
+      get length() {
+        return journalEntries.size
+      },
+      key: (index) => [...journalEntries.keys()][index] ?? null,
+      getItem: (key) => journalEntries.get(key) ?? null,
+      setItem: (key, value) => journalEntries.set(key, value),
+      removeItem: (key) => journalEntries.delete(key),
+    }
     fixture.plan.agents[1].children[0].allocationId = 'run-uncertain-burn:bridge:aave-v3'
     fixture.plan.agents[1].children[0].address = BASE_POOL_CATALOG.find(
       (pool) => pool.proxyTarget === 'aave-v3'
@@ -1445,14 +1458,14 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
           readStoredMandate: () => ({
             version: 3,
             mandateId: '11'.repeat(16),
-            stellarOwner: 'GUSER',
+            stellarOwner: CCTP_OWNER,
             sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
             kernelAddress: KERNEL,
             relayerOrigin: 'https://relayer.example',
             validUntilSeconds: 9999999999,
             status: 'active',
             bindingId: 'binding-1',
-            bindingHash: 'binding-hash-1',
+            bindingHash: 'aa'.repeat(32),
             reasonCodes: [],
             expected: {},
             checks: {
@@ -1493,14 +1506,14 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
           getMandateStatus: async () => ({
             version: 3,
             mandateId: '11'.repeat(16),
-            stellarOwner: 'GUSER',
+            stellarOwner: CCTP_OWNER,
             kernelAddress: KERNEL,
             sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
             relayerOrigin: 'https://relayer.example',
             validUntilSeconds: 9999999999,
             status: 'active',
             bindingId: 'binding-1',
-            bindingHash: 'binding-hash-1',
+            bindingHash: 'aa'.repeat(32),
             reasonCodes: [],
             checks: {
               chain: true,
@@ -1554,11 +1567,19 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
         schemaVersion: 1,
       }),
     }))
+    submitGrantMock.mockResolvedValue({
+      hash: CCTP_GRANT_HASH,
+      status: 'SUCCESS',
+      agentAddresses: ['CFRESH1', CCTP_BRIDGE_AGENT],
+      bridgeAgentAddress: CCTP_BRIDGE_AGENT,
+      expiryLedger: 9999,
+    })
+    vi.stubGlobal('localStorage', journalStorage)
     vi.stubGlobal('fetch', fetchMock)
 
     let summary
     try {
-      summary = await permissionedOrchestrator(onEvent).dispatch(fixture.plan, {
+      summary = await permissionedOrchestrator(onEvent, CCTP_OWNER).dispatch(fixture.plan, {
         permissionDecision: fixture.permissionDecision,
       })
     } finally {
@@ -1568,24 +1589,25 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
 
     expect(summary.baseLeg).toMatchObject({
       success: false,
-      error: 'burn response lost after dispatch',
+      error: 'base_submission_unknown',
       custody: { location: 'unknown', confirmed: false },
       recovery: {
         action: 'reconcile-cctp-burn',
         phase: 'cctp_burn',
+        reasonCode: 'submission_unknown',
         evidence: { result: { hash: 'HBURN-MAYBE', status: 'PENDING' } },
       },
     })
     expect(base).toMatchObject({
       executionStatus: 'failed',
       custody: { location: 'unknown', confirmed: false },
-      error: 'burn response lost after dispatch',
+      error: 'base_submission_unknown',
       evidence: {
         stage: 'burn',
         recovery: {
           action: 'reconcile-cctp-burn',
           phase: 'cctp_burn',
-          reason: 'burn response lost after dispatch',
+          reasonCode: 'submission_unknown',
           evidence: {
             submission: 'unknown',
             stage: 'cctp_burn',

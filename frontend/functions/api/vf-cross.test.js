@@ -13,6 +13,17 @@ const OTHER_COOKIE = `__Host-vf-mandate-${OTHER_ID}`
 const UNWIND_COOKIE = `__Host-vf-unwind-${JOB_ID}`
 const VALID_SET_COOKIE = `${MANDATE_COOKIE}=${CAPABILITY}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`
 let requestSequence = 1
+const farmBody = () => ({
+  requestId: JOB_ID,
+  sourceDomain: 27,
+  mandateId: MANDATE_ID,
+  stellarOwner: 'GUSER',
+  kernelAddress: '0x0000000000000000000000000000000000000aa1',
+  bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+  runId: 'run-42',
+  grantTxHash: 'aa'.repeat(32),
+  allocations: [],
+})
 
 function registrationBody(overrides = {}) {
   return {
@@ -31,7 +42,7 @@ function registrationBody(overrides = {}) {
 function fakeReq({
   method = 'POST',
   url = '/api/vf-cross/farm',
-  body = { mandateId: MANDATE_ID },
+  body = farmBody(),
   origin = 'http://localhost:5173',
   cookie,
   authorization,
@@ -310,10 +321,10 @@ describe('capability-cookie proxy', () => {
   })
 
   it.each([
-    ['/api/vf-cross/farm', { mandateId: MANDATE_ID, sourceDomain: 27 }, MANDATE_COOKIE, CAPABILITY],
+    ['/api/vf-cross/farm', farmBody(), MANDATE_COOKIE, CAPABILITY],
     [
       '/api/vf-cross/farm/attach',
-      { mandateId: MANDATE_ID, jobId: JOB_ID, messageHash: `0x${'66'.repeat(32)}` },
+      { mandateId: MANDATE_ID, jobId: JOB_ID, burnTxHash: '66'.repeat(32) },
       MANDATE_COOKIE,
       CAPABILITY,
     ],

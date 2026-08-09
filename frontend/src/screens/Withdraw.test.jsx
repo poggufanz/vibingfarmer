@@ -66,6 +66,7 @@ const baseProps = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  window.localStorage.clear()
   // burned/exited/skipped come only from strict per-UserOperation Swept evidence.
   signAndSubmitUnwind.mockImplementation(async ({ onSubmitted }) => {
     await onSubmitted(USER_OP_HASH)
@@ -311,6 +312,56 @@ describe('Withdraw (Base full exit)', () => {
     expect(reserveUnwind).toHaveBeenCalledTimes(1)
     expect(signAndSubmitUnwind).toHaveBeenCalledTimes(1)
     expect(postUnwindAttach).not.toHaveBeenCalled()
+  })
+
+  it('turns a real awaited localStorage checkpoint failure into submitted-but-checkpoint-failed and stays close-only', async () => {
+    const nativeSetItem = Storage.prototype.setItem
+    const checkpointFailure = new DOMException('quota exhausted', 'QuotaExceededError')
+    const submitted = []
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+      if (
+        String(key).startsWith('vf.cctpTransfer.v1:') &&
+        String(value).includes('"state":"userop_submitted"')
+      ) {
+        throw checkpointFailure
+      }
+      return nativeSetItem.call(this, key, value)
+    })
+    signAndSubmitUnwind.mockImplementation(async ({ onSubmitted }) => {
+      try {
+        await onSubmitted(USER_OP_HASH)
+      } catch {
+        const typed = Object.assign(new Error('unwind was submitted but its checkpoint failed'), {
+          code: 'submitted-but-checkpoint-failed',
+          userOpHash: USER_OP_HASH,
+        })
+        submitted.push(typed)
+        throw typed
+      }
+      throw new Error('receipt wait must not start after a failed checkpoint')
+    })
+
+    try {
+      render(<_Withdraw {...baseProps} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+      await waitFor(() => expect(screen.getByTestId('base-withdraw-reconcile')).toBeTruthy())
+
+      expect(submitted).toEqual([
+        expect.objectContaining({ code: 'submitted-but-checkpoint-failed', userOpHash: USER_OP_HASH }),
+      ])
+      const journalKey = Object.keys(window.localStorage).find((key) =>
+        key.startsWith('vf.cctpTransfer.v1:')
+      )
+      expect(JSON.parse(window.localStorage.getItem(journalKey)).state).toBe('userop_submitting')
+      expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
+      expect(postUnwindAttach).not.toHaveBeenCalled()
+      expect(pollUnwindStatus).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+      expect(reserveUnwind).toHaveBeenCalledTimes(1)
+      expect(signAndSubmitUnwind).toHaveBeenCalledTimes(1)
+    } finally {
+      setItem.mockRestore()
+    }
   })
 
   it('an unknown submission result is close-only and never reserves or signs again', async () => {

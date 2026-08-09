@@ -9,7 +9,6 @@ vi.mock('./deploymentFacts.js', async () => {
 import * as relayerClient from './relayerClient.js'
 
 const {
-  postFarm,
   postFarmAttach,
   pollFarmStatus,
   reserveUnwind,
@@ -19,6 +18,11 @@ const {
   getMandateStatus,
   postMandateRevoke,
 } = relayerClient
+
+// Task 13 requires callers to own a stable request ID. Legacy unit scenarios exercise unrelated
+// allocation/transport behavior, so supply one fixed caller-owned identity without weakening the
+// production guard; request-ID-specific tests call relayerClient.postFarm directly.
+const postFarm = (args) => relayerClient.postFarm({ requestId: JOB_ID, ...args })
 
 const MANDATE_ID = '11'.repeat(16)
 const CAPABILITY = '22'.repeat(32)
@@ -52,6 +56,19 @@ function unwindProjection(status) {
     }
   }
   return { jobId: JOB_ID, status, unwindTxHash: UNWIND_TX_HASH }
+}
+
+function farmProjection(status, overrides = {}) {
+  if (status !== 'done') return { status, ...overrides }
+  return {
+    status,
+    jobId: JOB_ID,
+    mandateId: MANDATE_ID,
+    associationDelivery: { complete: true, blocked: false },
+    evidenceDelivery: { complete: true, blocked: false },
+    allocations: [],
+    ...overrides,
+  }
 }
 
 const verifiedActive = (overrides = {}) => ({
@@ -190,6 +207,20 @@ describe('quantizeAllocations', () => {
 })
 
 describe('postFarm', () => {
+  test('CCTP journal status transport sends the stable request ID only in the POST body', async () => {
+    const fetchImpl = vi.fn(async () => intentAck())
+    await postFarm({
+      requestId: '11'.repeat(16),
+      sourceDomain: 27,
+      mandateId: MANDATE_ID,
+      allocations: [],
+      deps: { fetchImpl },
+    })
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/vf-cross/farm')
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
+      requestId: '11'.repeat(16),
+    })
+  })
   test('uses the same-origin proxy by default even when local development configured a direct relayer', async () => {
     const fetchMock = vi.fn(async () => intentAck())
     await postFarm({
@@ -625,7 +656,7 @@ describe('pollFarmStatus', () => {
     const fetchMock = vi.fn(async () => {
       call += 1
       const status = call < 3 ? 'depositing' : 'done'
-      return { ok: true, json: async () => ({ status, steps: { call } }) }
+      return { ok: true, json: async () => farmProjection(status) }
     })
     const result = await pollFarmStatus({
       mandateId: MANDATE_ID,
@@ -637,7 +668,11 @@ describe('pollFarmStatus', () => {
     expect(call).toBe(3)
     for (const [url, options] of fetchMock.mock.calls) {
       expect(url).toBe(`${BASE_URL}/status`)
-      expect(options).toMatchObject({ method: 'POST', credentials: 'same-origin' })
+      expect(options).toMatchObject({
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+      })
       expect(JSON.parse(options.body)).toEqual({ mandateId: MANDATE_ID, jobId: JOB_ID })
     }
   })
@@ -653,6 +688,69 @@ describe('pollFarmStatus', () => {
     })
     expect(result.status).toBe('pending')
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  // Production mutation caught: returning the upstream object directly let a nested capability
+  // escape even though the top-level status envelope was allowlisted.
+  test('rejects poisoned nested farm delivery data rather than returning the upstream object', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        status: 'done',
+        jobId: JOB_ID,
+        mandateId: MANDATE_ID,
+        associationDelivery: { complete: true, capability: 'capability-sentinel' },
+        evidenceDelivery: { complete: true },
+        allocations: [],
+      }),
+    }))
+
+    await expect(
+      pollFarmStatus({
+        mandateId: MANDATE_ID,
+        jobId: JOB_ID,
+        baseUrl: BASE_URL,
+        maxTries: 1,
+        deps: { fetchImpl: fetchMock },
+      })
+    ).rejects.toThrow(/farm status response is malformed/i)
+  })
+
+  test('rejects poisoned nested child custody data rather than returning raw child evidence', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () =>
+        farmProjection('done', {
+          allocations: [
+            {
+              bindingId: 'binding-1',
+              executionId: 'run-1:exec:allocation-1',
+              allocationId: 'allocation-1',
+              childId: JOB_ID,
+              userOpHash: USER_OP_HASH,
+              mintTxHash: UNWIND_TX_HASH,
+              depositTxHash: ACTIVATION_TX_HASH,
+              custody: {
+                location: 'base',
+                confirmed: true,
+                checkedAt: 1,
+                approval: 'approval-sentinel',
+              },
+              recoveryVersion: 1,
+            },
+          ],
+        }),
+    }))
+
+    await expect(
+      pollFarmStatus({
+        mandateId: MANDATE_ID,
+        jobId: JOB_ID,
+        baseUrl: BASE_URL,
+        maxTries: 1,
+        deps: { fetchImpl: fetchMock },
+      })
+    ).rejects.toThrow(/farm status response is malformed/i)
   })
 
   test('rejects job-only use of the farm poller before fetch; unwind uses its strict poller', async () => {
@@ -705,8 +803,6 @@ describe('postFarmAttach', () => {
       mandateId: MANDATE_ID,
       jobId: JOB_ID,
       burnTxHash: 'burn-observed',
-      stellarOwner: STELLAR_OWNER,
-      kernelAddress: KERNEL,
     })
     expect(options.body).not.toMatch(
       /sessionPrivateKey|serializedApproval|capability|authorization/i
@@ -1723,6 +1819,7 @@ describe('same-origin capability transport', () => {
       const freshClient = await import('./relayerClient.js')
       const fetchImpl = vi.fn(async () => intentAck())
       await freshClient.postFarm({
+        requestId: JOB_ID,
         sourceDomain: 27,
         mandateId: MANDATE_ID,
         allocations: [],

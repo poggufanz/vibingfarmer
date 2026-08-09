@@ -45,6 +45,17 @@ const UNWIND_REASON_CODES = new Set([
   'submission_unknown',
   'submitted_checkpoint_failed',
 ])
+const FARM_STATUSES = new Set([
+  'pending',
+  'depositing',
+  'settling',
+  'done',
+  'error',
+  'uncertain',
+  'blocked',
+])
+const FARM_SECRET_NAME =
+  /secret|private|capability|bearer|authorization|cookie|wallet|passkey|signedxdr|approval|session/i
 
 // Capability authority only ever travels through this exact same-origin proxy pathname. Do not
 // accept merely slash-prefixed input: WHATWG URL parsing treats backslashes and stripped controls
@@ -75,6 +86,123 @@ function hasExactKeys(value, expected) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const keys = Object.keys(value)
   return keys.length === expected.length && keys.every((key) => expected.includes(key))
+}
+
+function requireFarmProjection(value, { mandateId, jobId }) {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !FARM_STATUSES.has(value.status)
+  ) {
+    throw new Error('farm status response is malformed')
+  }
+  const allowed = [
+    'status',
+    'jobId',
+    'mandateId',
+    'associationDelivery',
+    'evidenceDelivery',
+    'allocations',
+  ]
+  if (Object.keys(value).some((key) => !allowed.includes(key) || FARM_SECRET_NAME.test(key))) {
+    throw new Error('farm status response is malformed')
+  }
+  if (value.jobId !== undefined && value.jobId !== jobId)
+    throw new Error('farm status response is malformed')
+  if (value.mandateId !== undefined && value.mandateId !== mandateId)
+    throw new Error('farm status response is malformed')
+
+  const projectDelivery = (delivery) => {
+    if (delivery === undefined) return undefined
+    if (
+      !delivery ||
+      typeof delivery !== 'object' ||
+      Array.isArray(delivery) ||
+      !hasExactKeys(
+        delivery,
+        delivery.blocked === undefined ? ['complete'] : ['complete', 'blocked']
+      ) ||
+      typeof delivery.complete !== 'boolean' ||
+      (delivery.blocked !== undefined && typeof delivery.blocked !== 'boolean')
+    ) {
+      throw new Error('farm status response is malformed')
+    }
+    return delivery.blocked === undefined
+      ? { complete: delivery.complete }
+      : { complete: delivery.complete, blocked: delivery.blocked }
+  }
+  const projectAllocation = (allocation) => {
+    const fields = [
+      'bindingId',
+      'executionId',
+      'allocationId',
+      'childId',
+      'userOpHash',
+      'mintTxHash',
+      'depositTxHash',
+      'custody',
+      'recoveryVersion',
+    ]
+    if (
+      !hasExactKeys(allocation, fields) ||
+      !['bindingId', 'executionId', 'allocationId', 'childId'].every(
+        (field) => typeof allocation[field] === 'string' && allocation[field]
+      ) ||
+      !CANONICAL_EVM_HASH.test(allocation.userOpHash) ||
+      !CANONICAL_EVM_HASH.test(allocation.mintTxHash) ||
+      !CANONICAL_EVM_HASH.test(allocation.depositTxHash) ||
+      !Number.isSafeInteger(allocation.recoveryVersion) ||
+      allocation.recoveryVersion < 0
+    ) {
+      throw new Error('farm status response is malformed')
+    }
+    const custody = allocation.custody
+    if (
+      !hasExactKeys(custody, ['location', 'confirmed', 'checkedAt']) ||
+      typeof custody.location !== 'string' ||
+      !custody.location ||
+      typeof custody.confirmed !== 'boolean' ||
+      !(custody.checkedAt === null || Number.isSafeInteger(custody.checkedAt))
+    ) {
+      throw new Error('farm status response is malformed')
+    }
+    return {
+      bindingId: allocation.bindingId,
+      executionId: allocation.executionId,
+      allocationId: allocation.allocationId,
+      childId: allocation.childId,
+      userOpHash: allocation.userOpHash,
+      mintTxHash: allocation.mintTxHash,
+      depositTxHash: allocation.depositTxHash,
+      custody: {
+        location: custody.location,
+        confirmed: custody.confirmed,
+        checkedAt: custody.checkedAt,
+      },
+      recoveryVersion: allocation.recoveryVersion,
+    }
+  }
+
+  if (value.allocations !== undefined && !Array.isArray(value.allocations)) {
+    throw new Error('farm status response is malformed')
+  }
+  const associationDelivery = projectDelivery(value.associationDelivery)
+  const evidenceDelivery = projectDelivery(value.evidenceDelivery)
+  const allocations = value.allocations?.map(projectAllocation)
+  if (
+    value.status === 'done' &&
+    (associationDelivery === undefined ||
+      evidenceDelivery === undefined ||
+      allocations === undefined)
+  ) {
+    throw new Error('farm status response is malformed')
+  }
+  const projection = { status: value.status, jobId }
+  if (associationDelivery !== undefined) projection.associationDelivery = associationDelivery
+  if (evidenceDelivery !== undefined) projection.evidenceDelivery = evidenceDelivery
+  if (allocations !== undefined) projection.allocations = allocations
+  return projection
 }
 
 function bytesToLowerHex(bytes) {
@@ -295,6 +423,7 @@ function toWireAllocations(allocations, runId) {
  * @returns {Promise<{ jobId: string, acknowledged: true, schemaVersion: 1 }>}
  */
 export async function postFarm({
+  requestId,
   sourceDomain,
   mandateId,
   allocations,
@@ -306,16 +435,30 @@ export async function postFarm({
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
-  assertBaseCrossChainAvailable()
-
+  const persistedWire =
+    Array.isArray(allocations) &&
+    allocations.every(
+      (allocation) =>
+        allocation &&
+        typeof allocation.poolAddress === 'string' &&
+        allocation.amount &&
+        typeof allocation.amount === 'object' &&
+        typeof allocation.amount.units === 'string'
+    )
+  // A reload may safely repeat only an already-durable intent, even if local deployment facts
+  // are unavailable; it never creates a new chain action. Live intent construction remains
+  // behind the availability fence.
+  if (!persistedWire) assertBaseCrossChainAvailable()
   const base = requireSameOriginBaseUrl(baseUrl)
   requireMandateIdentity(mandateId)
+  requireJobIdentity(requestId)
   const { fetchImpl = fetch } = deps
   const res = await fetchImpl(`${base}/farm`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      requestId,
       sourceDomain,
       mandateId,
       stellarOwner,
@@ -323,7 +466,7 @@ export async function postFarm({
       bridgeAgent,
       runId,
       grantTxHash,
-      allocations: toWireAllocations(allocations, runId),
+      allocations: persistedWire ? allocations : toWireAllocations(allocations, runId),
     }),
   })
   if (!res.ok) throw new Error(`farm dispatch failed (${res.status})`)
@@ -344,6 +487,58 @@ export async function postFarm({
   return acknowledgement
 }
 
+// Reload uses the immutable, already-normalized journal wire snapshot.  It must not pass that
+// snapshot through the live allocation converter (which expects bigint/display allocation input).
+export async function postFarmPersistedIntent(
+  body,
+  { baseUrl = DEFAULT_BASE_URL, deps = {} } = {}
+) {
+  assertBaseCrossChainAvailable()
+  const base = requireSameOriginBaseUrl(baseUrl)
+  const fields = [
+    'requestId',
+    'sourceDomain',
+    'mandateId',
+    'stellarOwner',
+    'kernelAddress',
+    'bridgeAgent',
+    'runId',
+    'grantTxHash',
+    'allocations',
+  ]
+  if (!hasExactKeys(body, fields)) throw new Error('farm intent is malformed')
+  requireJobIdentity(body.requestId)
+  requireMandateIdentity(body.mandateId)
+  if (!Array.isArray(body.allocations)) throw new Error('farm intent is malformed')
+  const { fetchImpl = fetch } = deps
+  let res
+  try {
+    res = await fetchImpl(`${base}/farm`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new Error('farm intent unavailable')
+  }
+  if (!res.ok || res.status !== 201) throw new Error('farm intent unavailable')
+  let acknowledgement
+  try {
+    acknowledgement = await res.json()
+  } catch {
+    throw new Error('farm intent acknowledgement is malformed')
+  }
+  if (
+    acknowledgement?.acknowledged !== true ||
+    acknowledgement?.schemaVersion !== 1 ||
+    !CANONICAL_MANDATE_ID.test(acknowledgement?.jobId)
+  )
+    throw new Error('farm intent acknowledgement is malformed')
+  return acknowledgement
+}
+
 /**
  * Attach the observed Stellar burn to a previously queued farm job. The relayer revalidates the
  * exact mandate identity/owner/kernel/binding (via the proxy's capability cookie) before it
@@ -353,8 +548,6 @@ export async function postFarmAttach({
   mandateId,
   jobId,
   burnTxHash,
-  stellarOwner,
-  kernelAddress,
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
@@ -372,8 +565,6 @@ export async function postFarmAttach({
       mandateId,
       jobId,
       burnTxHash,
-      stellarOwner,
-      kernelAddress,
     }),
   })
   if (!res.ok) throw new Error(`farm burn attach failed (${res.status})`)
@@ -408,12 +599,23 @@ export async function pollFarmStatus({
     const res = await fetchImpl(`${base}/status`, {
       method: 'POST',
       credentials: 'same-origin',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(identity),
     })
     if (!res.ok) throw new Error(`farm status check failed (${res.status})`)
-    last = await res.json()
-    if (last.status === 'done' || last.status === 'error') return last
+    try {
+      last = requireFarmProjection(await res.json(), { mandateId, jobId })
+    } catch {
+      throw new Error('farm status response is malformed')
+    }
+    if (
+      last.status === 'done' ||
+      last.status === 'error' ||
+      last.status === 'uncertain' ||
+      last.status === 'blocked'
+    )
+      return last
     if (i < maxTries - 1) await sleep(intervalMs)
   }
   return last

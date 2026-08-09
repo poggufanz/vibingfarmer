@@ -12,6 +12,18 @@ import React, {
 import { lazy, Suspense } from 'react'
 import { isDevMode } from './devFlag.js'
 import { assignCrewPersona } from './crew/personas.js'
+import { resumePendingCctpTransfers } from './cctp/resumeTransfers.js'
+import {
+  postFarmPersistedIntent,
+  postFarmAttach,
+  pollFarmStatus,
+  postUnwindAttach,
+  pollUnwindStatus,
+} from './base/relayerClient.js'
+import {
+  reconcileUnwindUserOperation,
+  readKnownUnwindUserOperation,
+} from './base/unwindEvidence.js'
 
 import { Icon, Sidebar, TopBar, STEPS } from './components.jsx'
 // Strategy Task 13 (Pocket Crew redesign, Wave 5) — the production `/strategy` route.
@@ -2694,6 +2706,30 @@ const App = () => {
   }
 
   useE(() => onActiveAccountChange(installActiveWalletAccount), [])
+
+  // Recovery deliberately receives only the public owner and abort signal.  It cannot acquire a
+  // signer from App, so a reload can reconcile evidence but can never repeat a burn or UserOp.
+  useE(() => {
+    if (!activeAccount?.address) return undefined
+    const controller = new AbortController()
+    const resumeOptions = {
+      signal: controller.signal,
+      postFarmIntent: postFarmPersistedIntent,
+      postFarmAttach,
+      pollForwardStatus: pollFarmStatus,
+      postUnwindAttach,
+      pollUnwindStatus,
+      reconcileUnwindUserOp: (params) =>
+        reconcileUnwindUserOperation({
+          ...params,
+          readReceipt: () => readKnownUnwindUserOperation(params),
+        }),
+    }
+    // Resume dependencies are executable seams, never serializable recovery data.
+    Object.defineProperty(resumeOptions, 'toJSON', { enumerable: false, value: () => ({}) })
+    resumePendingCctpTransfers(activeAccount.address, resumeOptions).catch(() => {})
+    return () => controller.abort()
+  }, [activeAccount?.address])
 
   const assertActiveAccount = (captured) =>
     assertCurrentActiveAccount({ captured, current: activeAccountRef.current })

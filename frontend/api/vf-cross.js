@@ -25,6 +25,18 @@ const CANONICAL_EVM_HASH = /^0x[0-9a-f]{64}$/
 const UNWIND_RESERVE_FIELDS = ['jobId', 'capability', 'kernelAddress', 'recipientHint']
 const UNWIND_ATTACH_FIELDS = ['jobId', 'userOpHash', 'unwindTxHash']
 const UNWIND_STATUS_FIELDS = ['jobId']
+const FARM_ATTACH_FIELDS = ['mandateId', 'jobId', 'burnTxHash']
+const FARM_FIELDS = [
+  'requestId',
+  'sourceDomain',
+  'mandateId',
+  'stellarOwner',
+  'kernelAddress',
+  'bridgeAgent',
+  'runId',
+  'grantTxHash',
+  'allocations',
+]
 
 // The only method+path pairs this proxy will ever open the relayer tunnel for. Everything else
 // (legacy GET status paths, health probes, admin routes, wrong methods) is refused locally.
@@ -46,8 +58,8 @@ const ROUTES = {
   },
   'POST /mandate/status': { auth: 'mandate' },
   'POST /mandate/revoke': { auth: 'mandate', cookieIssue: 'revoke' },
-  'POST /farm': { auth: 'mandate' },
-  'POST /farm/attach': { auth: 'mandate', needsJob: true },
+  'POST /farm': { auth: 'mandate', exactFields: FARM_FIELDS },
+  'POST /farm/attach': { auth: 'mandate', needsJob: true, exactFields: FARM_ATTACH_FIELDS },
   'POST /status': { auth: 'mandateOrJob', unwindFields: UNWIND_STATUS_FIELDS, noStore: true },
 }
 
@@ -94,6 +106,20 @@ function hasExactFields(body, fields) {
 }
 
 function isValidUnwindBody(path, body) {
+  if (path === '/farm')
+    return (
+      hasExactFields(body, FARM_FIELDS) &&
+      CANONICAL_ID.test(body.requestId) &&
+      CANONICAL_ID.test(body.mandateId) &&
+      Array.isArray(body.allocations)
+    )
+  if (path === '/farm/attach')
+    return (
+      hasExactFields(body, FARM_ATTACH_FIELDS) &&
+      CANONICAL_ID.test(body.mandateId) &&
+      CANONICAL_ID.test(body.jobId) &&
+      /^[0-9a-f]{64}$/.test(body.burnTxHash)
+    )
   if (path === '/unwind') {
     return (
       hasExactFields(body, UNWIND_RESERVE_FIELDS) &&

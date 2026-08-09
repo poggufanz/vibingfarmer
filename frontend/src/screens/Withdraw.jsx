@@ -5,6 +5,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { signAndSubmitUnwind } from '../base/withdrawBatch.js'
 import { reserveUnwind, postUnwindAttach, pollUnwindStatus } from '../base/relayerClient.js'
+import { createCctpTransfer, checkpointCctpTransfer } from '../cctp/transferJournal.js'
 import { BASE_CROSS_CHAIN_AVAILABLE, BASE_CROSS_CHAIN_UNAVAILABLE_REASON } from '../base/config.js'
 
 const STAGES = [
@@ -45,10 +46,6 @@ const friendlyError = (err) => {
   if (raw.includes('timeout') || raw.includes('timed out')) {
     return 'The relayer timed out. Retry in a moment.'
   }
-  if (raw.includes('strkey') || raw.includes('hookdata')) {
-    return err.message
-  }
-  if (err?.message && err.message.length < 160) return err.message
   return 'Withdraw failed. Please try again.'
 }
 
@@ -130,6 +127,18 @@ export default function Withdraw({
       setFailedAt(null)
       try {
         if (!attempt.attached) {
+          if (attempt.journalState === 'unwind_confirmed') {
+            checkpointCctpTransfer(
+              {
+                owner: attempt.owner,
+                requestId: attempt.jobId,
+                from: 'unwind_confirmed',
+                to: 'relay_pending',
+              },
+              attempt.journalOptions
+            )
+            attempt.journalState = 'relay_pending'
+          }
           setStatus('relaying')
           const attached = await postUnwindAttach({
             jobId: attempt.jobId,
@@ -137,11 +146,46 @@ export default function Withdraw({
             unwindTxHash: attempt.evidence.unwindTxHash,
           })
           attempt.attached = true
+          if (attempt.journalState === 'relay_pending') {
+            checkpointCctpTransfer(
+              {
+                owner: attempt.owner,
+                requestId: attempt.jobId,
+                from: 'relay_pending',
+                to: 'settling',
+              },
+              attempt.journalOptions
+            )
+            attempt.journalState = 'settling'
+          }
           if (applyProjection(attached, attempt.jobId)) return
         }
         stage = 'bridge'
         setStatus('polling')
         const final = await pollUnwindStatus({ jobId: attempt.jobId })
+        if (
+          ['done', 'error', 'uncertain', 'blocked', 'expired'].includes(final?.status) &&
+          attempt.journalState === 'settling'
+        ) {
+          checkpointCctpTransfer(
+            {
+              owner: attempt.owner,
+              requestId: attempt.jobId,
+              from: 'settling',
+              to: final.status === 'expired' ? 'blocked' : final.status,
+              patch: {
+                reasonCode:
+                  final.status === 'expired'
+                    ? 'authorization_unavailable'
+                    : final.status === 'done'
+                      ? 'job_error'
+                      : `job_${final.status}`,
+              },
+            },
+            attempt.journalOptions
+          )
+          attempt.journalState = final.status
+        }
         if (!applyProjection(final, attempt.jobId)) setStatus('pending')
       } catch (error) {
         setFailedAt(stage)
@@ -169,10 +213,36 @@ export default function Withdraw({
       })
       const attempt = {
         jobId: reservation.jobId,
+        owner: stellarRecipient,
         userOpHash: null,
         evidence: null,
         attached: false,
+        journalState: 'userop_submitting',
+        journalOptions: { storage: window.localStorage },
       }
+      // The reserve response may contain a one-time capability. It is deliberately not copied
+      // into attempt, React state, the journal, or any later request.
+      createCctpTransfer(
+        {
+          version: 1,
+          direction: 'reverse',
+          owner: stellarRecipient,
+          requestId: reservation.jobId,
+          state: 'userop_submitting',
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+          reasonCode: null,
+          terminalFrom: null,
+          transfer: {
+            jobId: reservation.jobId,
+            kernelAddress: ownerKernelAccount.address.toLowerCase(),
+            recipientHint: stellarRecipient,
+            userOpHash: null,
+            unwindTxHash: null,
+          },
+        },
+        attempt.journalOptions
+      )
       attemptRef.current = attempt
       setJobId(reservation.jobId)
 
@@ -189,7 +259,21 @@ export default function Withdraw({
         deadline,
         nowSeconds,
         onSubmitted: async (userOpHash) => {
+          // Capture the canonical returned identity before the durable checkpoint. If storage
+          // rejects, withdrawBatch converts that into submitted-but-checkpoint-failed; the UI
+          // must treat it as potentially sent and never offer a second signing attempt.
           attempt.userOpHash = userOpHash
+          checkpointCctpTransfer(
+            {
+              owner: attempt.owner,
+              requestId: attempt.jobId,
+              from: 'userop_submitting',
+              to: 'userop_submitted',
+              patch: { userOpHash },
+            },
+            attempt.journalOptions
+          )
+          attempt.journalState = 'userop_submitted'
         },
       })
       if (!attempt.userOpHash || evidence.userOpHash !== attempt.userOpHash) {
@@ -206,9 +290,23 @@ export default function Withdraw({
         setStatus('reconcile')
         return
       }
+      checkpointCctpTransfer(
+        {
+          owner: attempt.owner,
+          requestId: attempt.jobId,
+          from: 'userop_submitted',
+          to: 'unwind_confirmed',
+          patch: { unwindTxHash: evidence.unwindTxHash },
+        },
+        attempt.journalOptions
+      )
+      attempt.journalState = 'unwind_confirmed'
       await continueAfterSend(attempt)
     } catch (error) {
-      if (error?.code === 'submission_unknown') {
+      if (
+        error?.code === 'submission_unknown' ||
+        error?.code === 'submitted-but-checkpoint-failed'
+      ) {
         setFailedAt(null)
         setStatus('submission_unknown')
         setErrorMessage(null)
