@@ -10,6 +10,7 @@ import {
   ingestAssociationReport,
   joinBaseAssociations,
 } from './associations.js'
+import { AgentIndexValidationError } from './models.js'
 
 const OWNER_A = `G${'A'.repeat(55)}`
 const OWNER_B = `G${'B'.repeat(55)}`
@@ -357,9 +358,9 @@ describe('Task 9 authoritative Base child batches', () => {
       /mixed immutable context/i,
     ],
     [
-      'duplicate allocation',
+      'duplicate allocation/full identity',
       () => batch({ children: [child(1), child(1)] }),
-      /duplicate Base child allocation/i,
+      /duplicate Base child allocation\/full identity/i,
     ],
     [
       'noncanonical execution',
@@ -398,9 +399,11 @@ describe('Task 9 authoritative Base child batches', () => {
     ['sum mismatch', () => batch({ burnUnits7: '20000010' }), /sum.*burnUnits7/i],
   ])('rejects %s at its named guard before persistence', async (_label, mutate, expected) => {
     const deps = dependencies()
-    await expect(validateBaseChildIntentBatch({ batch: mutate(), ...deps })).rejects.toThrow(
-      expected
+    const error = await validateBaseChildIntentBatch({ batch: mutate(), ...deps }).catch(
+      (reason) => reason
     )
+    expect(error).toBeInstanceOf(AgentIndexValidationError)
+    expect(error.message).toMatch(expected)
     expect(deps.store.reserveBaseChildIntentBatch).not.toHaveBeenCalled()
   })
 

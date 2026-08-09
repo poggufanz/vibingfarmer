@@ -602,17 +602,10 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
       400,
     ],
     [
-      'duplicate allocation',
+      'duplicate allocation/full identity',
       (incoming) => (incoming.children[1] = structuredClone(incoming.children[0])),
       {},
-      /duplicate Base child allocation/i,
-      400,
-    ],
-    [
-      'duplicate full identity',
-      (incoming) => (incoming.children[1] = structuredClone(incoming.children[0])),
-      {},
-      /duplicate Base child allocation/i,
+      /duplicate Base child allocation\/full identity/i,
       400,
     ],
     [

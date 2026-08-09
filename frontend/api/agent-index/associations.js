@@ -293,7 +293,6 @@ export async function validateBaseChildIntentBatch({
     if (common.networkId !== supportedNetworkId)
       throw new Error('Base child batch network mismatch')
     const allocations = new Set()
-    const identities = new Set()
     let sum6 = 0n
     for (const entry of normalized) {
       const child = entry.child
@@ -322,17 +321,13 @@ export async function validateBaseChildIntentBatch({
       if (candidate.some((value, index) => value !== expected[index])) {
         throw new Error('Base child batch has mixed immutable context')
       }
-      if (allocations.has(child.allocationId)) throw new Error('duplicate Base child allocation')
+      // Canonical execution IDs bind run + allocation, while network, binding, and Base job are
+      // common across the batch. A repeated full identity therefore necessarily repeats its
+      // allocation; these are one invariant, not two independently reachable guards.
+      if (allocations.has(child.allocationId)) {
+        throw new Error('duplicate Base child allocation/full identity')
+      }
       allocations.add(child.allocationId)
-      const identityKey = canonicalJson([
-        child.networkId,
-        child.bindingId,
-        child.executionId,
-        child.allocationId,
-        child.childId,
-      ])
-      if (identities.has(identityKey)) throw new Error('duplicate Base child identity')
-      identities.add(identityKey)
       sum6 += entry.units
     }
     if (sum6 * 10n !== burnUnits7) throw new Error('Base child sum does not match burnUnits7')
