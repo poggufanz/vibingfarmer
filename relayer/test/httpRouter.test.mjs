@@ -238,13 +238,17 @@ function associationRows(stores, jobId) {
 }
 
 function mintedResult(mintTxHash) {
+  const canonicalMintTxHash = /^0x[0-9a-f]{64}$/.test(mintTxHash)
+    ? mintTxHash
+    : `0x${sha256(mintTxHash)}`;
   return {
     status: 'minted',
     mintTxHash,
     evidence: {
-      burnTxHash: 'burn-evidence', expectationDigest: 'expectation-evidence',
-      messageDigest: 'message-evidence', attestationDigest: 'attestation-evidence',
-      evidenceVersion: '1', mintTxHash,
+      burnTxHash: sha256('burn-evidence'), expectationDigest: sha256('expectation-evidence'),
+      messageDigest: sha256('message-evidence'),
+      attestationDigest: sha256('attestation-evidence'),
+      evidenceVersion: '1', mintTxHash: canonicalMintTxHash,
     },
   };
 }

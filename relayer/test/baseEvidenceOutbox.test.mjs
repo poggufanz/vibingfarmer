@@ -21,8 +21,133 @@ const base = {
 const checkpoint = (status, extra = {}, observedAt = 2_000_000_000_000) => ({
   identity, phase: 'base_deposit', status, evidence: { ...base, ...extra }, observedAt,
 });
+const digests = {
+  burn: 'a'.repeat(64), expectation: 'b'.repeat(64), message: 'c'.repeat(64),
+  attestation: 'd'.repeat(64), mint: `0x${'e'.repeat(64)}`,
+  userOp: `0x${'f'.repeat(64)}`, transaction: `0x${'1'.repeat(64)}`,
+};
+const confirmedEvent = {
+  address: base.yieldRouterAddress, topic0: `0x${'2'.repeat(64)}`, logIndex: '1',
+  caller: base.caller, poolAddress: base.poolAddress, assets: base.assets, shares: '912345',
+};
+const supportedEvidence = [
+  ['cctp_burn:confirmed', 'cctp_burn', 'confirmed', {
+    burnTxHash: digests.burn, expectationDigest: digests.expectation, burnUnits7: '10000000',
+  }],
+  ['cctp_burn:unknown', 'cctp_burn', 'unknown', {
+    burnTxHash: digests.burn, expectationDigest: digests.expectation,
+    burnUnits7: '10000000', reasonCode: 'burn_unresolved',
+  }],
+  ['cctp_attestation:confirmed', 'cctp_attestation', 'confirmed', {
+    burnTxHash: digests.burn, expectationDigest: digests.expectation,
+    messageDigest: digests.message, attestationDigest: digests.attestation, evidenceVersion: '1',
+  }],
+  ['cctp_mint:submitted', 'cctp_mint', 'submitted', {
+    burnTxHash: digests.burn, expectationDigest: digests.expectation,
+    messageDigest: digests.message, attestationDigest: digests.attestation,
+    evidenceVersion: '1', mintTxHash: digests.mint,
+  }],
+  ['cctp_mint:confirmed', 'cctp_mint', 'confirmed', {
+    burnTxHash: digests.burn, expectationDigest: digests.expectation,
+    messageDigest: digests.message, attestationDigest: digests.attestation,
+    evidenceVersion: '1', mintTxHash: digests.mint,
+  }],
+  ['base_deposit:submitting', 'base_deposit', 'submitting', { ...base }],
+  ['base_deposit:submitted', 'base_deposit', 'submitted', {
+    ...base, userOpHash: digests.userOp,
+  }],
+  ['base_deposit:confirmed', 'base_deposit', 'confirmed', {
+    ...base, userOpHash: digests.userOp, transactionHash: digests.transaction,
+    event: confirmedEvent,
+  }],
+  ...['failed', 'unknown', 'blocked'].map((state) => [
+    `base_deposit:${state}`, 'base_deposit', state,
+    {
+      ...base, userOpHash: null, transactionHash: null,
+      reasonCode: state === 'blocked' ? 'mandate_held_after_mint' : 'pre_submit_validation',
+    },
+  ]),
+];
+const directCheckpoint = (phase, status, evidence) => ({
+  identity, phase, status, evidence: structuredClone(evidence), observedAt: 2_000_000_000_000,
+});
+const durableSnapshot = ({ db }) => ({
+  heads: db.prepare('SELECT * FROM base_evidence_heads ORDER BY network_id,binding_id,execution_id,allocation_id,child_id').all(),
+  events: db.prepare('SELECT * FROM base_evidence_outbox ORDER BY id').all(),
+});
 
 describe('SQLite Base evidence outbox', () => {
+  it.each(supportedEvidence)(
+    'accepts the exact local %s evidence contract before durable insertion',
+    (_label, phase, status, evidence) => {
+      const stores = createSqliteStores(freshPath(), { now: () => 1000 });
+      stores.baseEvidenceOutbox.seed(identity, 0);
+      expect(stores.baseEvidenceOutbox.enqueue(directCheckpoint(phase, status, evidence)))
+        .toMatchObject({ phase, state: status, expectedRecoveryVersion: 0 });
+      expect(stores.baseEvidenceOutbox.status(identity)).toMatchObject({ recoveryVersion: 1 });
+    },
+  );
+
+  it.each([
+    ['missing mandatory field', 'cctp_burn', 'confirmed', supportedEvidence[0][3], (evidence) => {
+      delete evidence.expectationDigest;
+    }],
+    ['arbitrary field', 'cctp_burn', 'confirmed', supportedEvidence[0][3], (evidence) => {
+      evidence.internal = 'not-allowlisted';
+    }],
+    ['cross-state field', 'base_deposit', 'submitting', supportedEvidence[5][3], (evidence) => {
+      evidence.transactionHash = digests.transaction;
+    }],
+    ['uppercase address', 'base_deposit', 'submitting', supportedEvidence[5][3], (evidence) => {
+      evidence.caller = `0x${'AA'.repeat(20)}`;
+    }],
+    ['short address', 'base_deposit', 'submitting', supportedEvidence[5][3], (evidence) => {
+      evidence.poolAddress = '0x1234';
+    }],
+    ['noncanonical EVM hash', 'base_deposit', 'submitted', supportedEvidence[6][3], (evidence) => {
+      evidence.userOpHash = 'f'.repeat(64);
+    }],
+    ['uppercase EVM hash', 'base_deposit', 'submitted', supportedEvidence[6][3], (evidence) => {
+      evidence.userOpHash = `0x${'AA'.repeat(32)}`;
+    }],
+    ['prefixed CCTP digest', 'cctp_burn', 'confirmed', supportedEvidence[0][3], (evidence) => {
+      evidence.burnTxHash = `0x${digests.burn}`;
+    }],
+    ['uppercase CCTP digest', 'cctp_burn', 'confirmed', supportedEvidence[0][3], (evidence) => {
+      evidence.expectationDigest = 'A'.repeat(64);
+    }],
+    ['numeric quantity', 'cctp_burn', 'confirmed', supportedEvidence[0][3], (evidence) => {
+      evidence.burnUnits7 = 10000000;
+    }],
+    ['leading-zero quantity', 'base_deposit', 'submitting', supportedEvidence[5][3], (evidence) => {
+      evidence.assets = '01000000';
+    }],
+    ['negative quantity', 'base_deposit', 'submitting', supportedEvidence[5][3], (evidence) => {
+      evidence.minShares = '-1';
+    }],
+    ['missing deposit event field', 'base_deposit', 'confirmed', supportedEvidence[7][3], (evidence) => {
+      delete evidence.event.shares;
+    }],
+    ['extra deposit event field', 'base_deposit', 'confirmed', supportedEvidence[7][3], (evidence) => {
+      evidence.event.raw = 'not-allowlisted';
+    }],
+    ['noncanonical event hash', 'base_deposit', 'confirmed', supportedEvidence[7][3], (evidence) => {
+      evidence.event.topic0 = '2'.repeat(64);
+    }],
+  ])(
+    'rejects %s before any local head or event mutation',
+    (_label, phase, status, fixture, mutate) => {
+      const stores = createSqliteStores(freshPath(), { now: () => 1000 });
+      stores.baseEvidenceOutbox.seed(identity, 7);
+      const before = durableSnapshot(stores);
+      const evidence = structuredClone(fixture);
+      mutate(evidence);
+      expect(() => stores.baseEvidenceOutbox.enqueue(directCheckpoint(phase, status, evidence)))
+        .toThrow(/evidence|field|required|address|hash|digest|decimal|canonical|allowlist/i);
+      expect(durableSnapshot(stores)).toEqual(before);
+    },
+  );
+
   it('persists full-identity recovery versions and deterministic event IDs across reopen', () => {
     const path = freshPath();
     const first = createSqliteStores(path, { now: () => 1000 });
@@ -162,12 +287,19 @@ describe('SQLite Base evidence outbox', () => {
     };
     baseEvidenceOutbox.seed(unresolvedIdentity, 0);
     baseEvidenceOutbox.enqueue({
-      ...checkpoint('unknown', { burnTxHash: 'burn', reasonCode: 'burn_unresolved' }, 2004),
-      identity: unresolvedIdentity, phase: 'cctp_burn',
+      identity: unresolvedIdentity, phase: 'cctp_burn', status: 'unknown', observedAt: 2004,
+      evidence: {
+        burnTxHash: digests.burn, expectationDigest: digests.expectation,
+        burnUnits7: '10000000', reasonCode: 'burn_unresolved',
+      },
     });
     expect(() => baseEvidenceOutbox.enqueue({
-      ...checkpoint('confirmed', { messageDigest: 'message' }, 2005),
-      identity: unresolvedIdentity, phase: 'cctp_attestation',
+      identity: unresolvedIdentity, phase: 'cctp_attestation', status: 'confirmed', observedAt: 2005,
+      evidence: {
+        burnTxHash: digests.burn, expectationDigest: digests.expectation,
+        messageDigest: digests.message, attestationDigest: digests.attestation,
+        evidenceVersion: '1',
+      },
     })).toThrow(/transition|order/i);
   });
 

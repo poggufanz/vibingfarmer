@@ -3,10 +3,13 @@ import {
   AgentIndexEvidenceConflictError,
   AgentIndexReporterRetryableError,
 } from './agentIndexReporter.mjs';
+import {
+  BASE_EVIDENCE_PHASES,
+  BASE_EVIDENCE_STATES,
+  validateBaseEvidence,
+} from './baseEvidenceValidation.mjs';
 
 const IDENTITY_FIELDS = ['networkId', 'bindingId', 'executionId', 'allocationId', 'childId'];
-const PHASES = new Set(['cctp_burn', 'cctp_attestation', 'cctp_mint', 'base_deposit']);
-const STATES = new Set(['submitting', 'submitted', 'confirmed', 'failed', 'unknown', 'blocked']);
 const DELIVERY_STATES = new Set(['pending', 'leased', 'delivered', 'dead', 'conflict']);
 
 function canonicalJson(value) {
@@ -74,12 +77,13 @@ function validateCheckpoint(input) {
     throw new Error('Base evidence checkpoint contains an unexpected field');
   }
   const identity = exactIdentity(input.identity);
-  if (!PHASES.has(input.phase) || !STATES.has(input.status)) {
+  if (!BASE_EVIDENCE_PHASES.has(input.phase) || !BASE_EVIDENCE_STATES.has(input.status)) {
     throw new Error('Base evidence phase/state is invalid');
   }
   if (!input.evidence || typeof input.evidence !== 'object' || Array.isArray(input.evidence)) {
     throw new Error('Base evidence payload must be an object');
   }
+  validateBaseEvidence(input.phase, input.status, input.evidence);
   if (!Number.isSafeInteger(input.observedAt) || input.observedAt < 0) {
     throw new Error('Base evidence observedAt must be a non-negative safe integer');
   }
