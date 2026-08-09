@@ -51,10 +51,13 @@ function normalizeAllocation(value, ordinal, { runId, jobId, poolTargets }) {
   const allocationId = requireText(value.allocationId, 'allocationId');
   const poolAddress = requireText(value.poolAddress, 'poolAddress').toLowerCase();
   if (!EVM_ADDRESS.test(poolAddress) || !poolTargets?.has(poolAddress)) throw new Error('poolAddress is not tracked');
-  if (amount.token !== 'USDC' || amount.decimals !== 6 || !POSITIVE_UINT.test(amount.units || '')) {
+  if (amount.token !== 'USDC' || amount.decimals !== 6
+      || typeof amount.units !== 'string' || !POSITIVE_UINT.test(amount.units)) {
     throw new Error('allocation amount is not canonical USDC');
   }
-  if (!UINT.test(value.minShares || '')) throw new Error('minShares is not canonical');
+  if (typeof value.minShares !== 'string' || !UINT.test(value.minShares)) {
+    throw new Error('minShares is not canonical');
+  }
   return {
     ordinal,
     allocationId,

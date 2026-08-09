@@ -270,7 +270,7 @@ export function createOrchestrator(config) {
    * @param {{pool:string, amount:bigint, minShares:bigint}[]} allocations
    */
   async function dispatchDeposits(
-    approval, allocations, { onCheckpoint, onClaimSubmitting } = {},
+    approval, allocations, { onCheckpoint, onClaimSubmitting, onBeforeClaimSubmitting } = {},
   ) {
     const durableMode = typeof onCheckpoint === 'function';
     const normalizedAllocations = durableMode ? allocations.map(normalizeAllocation) : allocations;
@@ -386,6 +386,25 @@ export function createOrchestrator(config) {
       try {
         try {
           if (typeof onClaimSubmitting === 'function') {
+            if (typeof onBeforeClaimSubmitting === 'function') {
+              let authorityFresh = false;
+              try {
+                authorityFresh = await onBeforeClaimSubmitting({ identity: allocation.identity });
+              } catch {
+                authorityFresh = false;
+              }
+              if (authorityFresh !== true) {
+                stopAfterUnknown = true;
+                results.push({
+                  identity: allocation.identity, allocationId: allocation.identity.allocationId,
+                  pool: allocation.pool, status: 'held',
+                  reasonCode: 'authority_changed_before_submission', executionStatus: 'held',
+                  custody: { location: 'agent' }, userOpHash: null,
+                  transactionHash: null, txHash: null,
+                });
+                continue;
+              }
+            }
             const claim = await onClaimSubmitting({
               identity: allocation.identity,
               phase: 'base_deposit',
@@ -395,6 +414,7 @@ export function createOrchestrator(config) {
             });
             if (claim?.claimed !== true || typeof claim.ownerToken !== 'string'
                 || claim.ownerToken.length === 0) {
+              stopAfterUnknown = true;
               results.push({
                 identity: allocation.identity, allocationId: allocation.identity.allocationId,
                 pool: allocation.pool, status: 'held', reasonCode: 'submission_claim_held',
@@ -502,15 +522,11 @@ export function createOrchestrator(config) {
             hash: userOpHash, timeout: USEROP_TIMEOUT_MS,
           });
         } catch (reason) {
-          await checkpoint('unknown', {
-            ...commonEvidence, userOpHash, transactionHash: null,
-            reasonCode: 'receipt_ambiguous',
-          });
           stopAfterUnknown = true;
           results.push({
             identity: allocation.identity, allocationId: allocation.identity.allocationId,
-            pool: allocation.pool, status: 'uncertain', reason,
-            reasonCode: 'receipt_ambiguous', executionStatus: 'unknown',
+            pool: allocation.pool, status: 'held', reason,
+            reasonCode: 'submitted_receipt_pending', executionStatus: 'confirming',
             custody: { location: 'agent' }, userOpHash, transactionHash: null, txHash: null,
           });
           continue;

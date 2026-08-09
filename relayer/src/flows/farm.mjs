@@ -17,7 +17,9 @@ function farmError(code, message) {
 }
 
 export function createFarmFlow({ watcher, orchestrator, domains }) {
-  async function recoverDeposits({ approval, children, onCheckpoint, onClaimSubmitting }) {
+  async function recoverDeposits({
+    approval, children, onCheckpoint, onClaimSubmitting, onBeforeClaimSubmitting,
+  }) {
     if (!Array.isArray(children) || typeof onCheckpoint !== 'function') {
       throw farmError('FARM_RECOVERY_VALIDATION', 'deposit recovery requires children and durable checkpoints');
     }
@@ -73,10 +75,10 @@ export function createFarmFlow({ watcher, orchestrator, domains }) {
       }
       if (recovery?.phase === 'cctp_mint' && recovery.state === 'confirmed') {
         const [result] = await orchestrator.dispatchDeposits(approval, [allocation], {
-          onCheckpoint, onClaimSubmitting,
+          onCheckpoint, onClaimSubmitting, onBeforeClaimSubmitting,
         });
         results.push(result);
-        if (result?.status === 'uncertain') holdLater = true;
+        if (result?.status !== 'fulfilled') holdLater = true;
         continue;
       }
       holdLater = recovery?.phase === 'base_deposit'

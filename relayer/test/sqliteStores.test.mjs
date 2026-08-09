@@ -414,6 +414,41 @@ describe('Task 11 forward-farm intent canonicalization', () => {
     stores.db.close();
   });
 
+  it('converges an exact terminal projection CAS across two connections without masking conflict', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path, { now: () => 1000 });
+    const second = createSqliteStores(path, { now: () => 2000 });
+    const normalizedIntent = forwardIntentFixture();
+    first.farmIntents.createOrGetIntent({ normalizedIntent, now: 900 });
+    first.db.prepare(`UPDATE farm_intent_work_v2 SET state='deposit_confirming',updated_at=950
+      WHERE job_id=?`).run(normalizedIntent.intent.jobId);
+    first.jobs.set(normalizedIntent.intent.jobId, {
+      jobId: normalizedIntent.intent.jobId, status: 'deposit_confirming',
+    });
+    const identity = {
+      mandateId: normalizedIntent.intent.mandate.mandateId,
+      jobId: normalizedIntent.intent.jobId,
+      bindingId: normalizedIntent.intent.mandate.bindingId,
+      intentDigest: normalizedIntent.intentDigest,
+    };
+
+    expect(first.farmIntents.advanceProjection({
+      identity, from: 'deposit_confirming', to: 'done', now: 1000,
+    })).toMatchObject({ state: 'done', reasonCode: null });
+    expect(second.farmIntents.advanceProjection({
+      identity, from: 'deposit_confirming', to: 'done', now: 2000,
+    })).toMatchObject({ state: 'done', reasonCode: null });
+    expect(second.db.prepare('SELECT updated_at FROM farm_intent_work_v2 WHERE job_id=?')
+      .get(identity.jobId).updated_at).toBe(1000);
+    expect(() => second.farmIntents.advanceProjection({
+      identity, from: 'deposit_confirming', to: 'blocked',
+      reasonCode: 'base_recovery_uncertain', now: 2001,
+    })).toThrow(/conflict/i);
+    expect(second.jobs.get(identity.jobId)).toMatchObject({ status: 'done' });
+    second.db.close();
+    first.db.close();
+  });
+
   it('quarantines legacy active farm rows once and leaves done rows as history only', () => {
     const stores = createSqliteStores(freshPath(), { now: () => 200 });
     for (const [jobId, status] of [['legacy-pending', 'pending'], ['legacy-running', 'running'], ['legacy-done', 'done']]) {
@@ -456,6 +491,30 @@ describe('Task 11 forward-farm intent canonicalization', () => {
     expect(stores.jobs.get('legacy-active-last')).toEqual({
       jobId: 'legacy-active-last', status: 'uncertain', reasonCode: 'legacy_record_unrecoverable',
     });
+    stores.db.close();
+  });
+
+  it('scrubs bounded later pages of secret-bearing done history exactly once', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 500 });
+    for (let index = 0; index < 3; index += 1) {
+      const jobId = `legacy-secret-done-${index}`;
+      stores.jobs.set(jobId, { jobId, status: 'done', serializedApproval: `secret-${index}` });
+      stores.db.prepare(`INSERT INTO farm_execution_work
+        (job_id,burn_tx_hash,status,attempts,lease_token,lease_expires_at,created_at,updated_at)
+        VALUES (?,?,'done',0,NULL,NULL,?,?)`).run(jobId, `burn-${index}`, index, index);
+    }
+
+    stores.farmIntents.quarantineLegacyActive({ now: 500, limit: 1 });
+    stores.farmIntents.quarantineLegacyActive({ now: 501, limit: 1 });
+    stores.farmIntents.quarantineLegacyActive({ now: 502, limit: 1 });
+
+    expect(stores.db.prepare(`SELECT COUNT(*) AS n FROM farm_execution_work WHERE status='done'`)
+      .get().n).toBe(0);
+    for (let index = 0; index < 3; index += 1) {
+      expect(stores.jobs.get(`legacy-secret-done-${index}`)).toEqual({
+        jobId: `legacy-secret-done-${index}`, status: 'done',
+      });
+    }
     stores.db.close();
   });
 

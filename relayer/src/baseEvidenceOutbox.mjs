@@ -190,9 +190,13 @@ export function createBaseEvidenceOutbox(db, {
           phase: original.phase,
           status: original.state,
           evidence: original.report.event.evidence,
-          observedAt: original.report.event.observedAt,
         };
-        if (canonicalJson(originalCheckpoint) !== canonicalJson(checkpoint)) {
+        if (canonicalJson(originalCheckpoint) !== canonicalJson({
+          identity: checkpoint.identity,
+          phase: checkpoint.phase,
+          status: checkpoint.status,
+          evidence: checkpoint.evidence,
+        })) {
           throw new Error('immutable Base evidence checkpoint conflict');
         }
         if (transaction) db.exec('COMMIT');
@@ -296,8 +300,12 @@ export function createBaseEvidenceOutbox(db, {
           phase: original.phase,
           status: original.state,
           evidence: original.evidence,
-          observedAt: original.observedAt,
-        }) !== canonicalJson(checkpoint)) {
+        }) !== canonicalJson({
+          identity: checkpoint.identity,
+          phase: checkpoint.phase,
+          status: checkpoint.status,
+          evidence: checkpoint.evidence,
+        })) {
           throw new Error('immutable Base evidence checkpoint conflict');
         }
         db.exec('COMMIT');

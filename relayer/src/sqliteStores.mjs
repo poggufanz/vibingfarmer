@@ -862,6 +862,26 @@ export function createSqliteStores(path, {
     };
   }
 
+  function farmIntentRecoveryRecord(row) {
+    if (!row) return null;
+    try {
+      return farmIntentRecord(row);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return {
+        corrupt: true,
+        jobId: row.job_id,
+        mandateId: row.mandate_id,
+        stellarOwner: row.stellar_owner,
+        kernelAddress: row.kernel_address,
+        bindingId: row.binding_id,
+        bindingHash: row.binding_hash,
+        intentDigest: row.intent_digest,
+        state: row.state,
+      };
+    }
+  }
+
   const farmIntents = {
     createOrGetIntent({ normalizedIntent, now: atValue = now() }) {
       return transaction(() => {
@@ -1208,6 +1228,9 @@ export function createSqliteStores(path, {
         for (const row of rows) {
           if (row.status === 'done') {
             writeJob(row.job_id, { jobId: row.job_id, status: 'done' });
+            const removed = db.prepare(`DELETE FROM farm_execution_work
+              WHERE job_id=? AND status='done'`).run(row.job_id);
+            if (removed.changes !== 1) throw new Error('legacy done farm quarantine conflict');
             continue;
           }
           const changed = db.prepare(`UPDATE farm_execution_work
@@ -1302,7 +1325,7 @@ export function createSqliteStores(path, {
         WHERE state IN ('intent_pending','relay_pending','deposit_pending','deposit_confirming')
           AND (state<>'intent_pending' OR lease_token IS NULL OR lease_expires_at<=?)
         ORDER BY created_at,job_id LIMIT ?
-      `).all(atValue, limit).map(farmIntentRecord);
+      `).all(atValue, limit).map(farmIntentRecoveryRecord);
     },
     advanceProjection({ identity, from, to, reasonCode = null, now: atValue = now() }) {
       const allowed = new Set([
@@ -1319,10 +1342,24 @@ export function createSqliteStores(path, {
           to, reasonCode, atValue, identity.jobId, identity.mandateId,
           identity.bindingId, identity.intentDigest, from,
         );
-        if (changed.changes !== 1) throw new Error('farm projection CAS conflict');
+        if (changed.changes !== 1) {
+          const converged = db.prepare(`SELECT * FROM farm_intent_work_v2
+            WHERE job_id=? AND mandate_id=? AND binding_id=? AND intent_digest=?`)
+            .get(identity.jobId, identity.mandateId, identity.bindingId, identity.intentDigest);
+          const publicJob = jobs.get(identity.jobId);
+          const exactTerminal = ['done', 'blocked', 'uncertain'].includes(to)
+            && converged?.state === to
+            && (converged.reason_code ?? null) === reasonCode
+            && publicJob?.status === to
+            && (publicJob.reasonCode ?? null) === reasonCode;
+          if (!exactTerminal) throw new Error('farm projection CAS conflict');
+          return farmIntentRecord(converged);
+        }
         const publicJob = jobs.get(identity.jobId) ?? { jobId: identity.jobId };
         writeJob(identity.jobId, { ...publicJob, status: to, ...(reasonCode ? { reasonCode } : {}) });
-        return farmIntentRecord(db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(identity.jobId));
+        return farmIntentRecoveryRecord(
+          db.prepare('SELECT * FROM farm_intent_work_v2 WHERE job_id=?').get(identity.jobId),
+        );
       });
     },
   };

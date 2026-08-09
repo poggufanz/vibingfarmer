@@ -209,6 +209,39 @@ describe('SQLite Base evidence outbox', () => {
     first.db.close();
   });
 
+  it('holds a staggered duplicate submitting claim without changing the winner timestamp or token', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path, {
+      now: () => 1000, leaseToken: () => 'owner-first',
+    });
+    const second = createSqliteStores(path, {
+      now: () => 2000, leaseToken: () => 'owner-second',
+    });
+    first.baseEvidenceOutbox.seed(identity, 0);
+    first.baseEvidenceOutbox.enqueue(directCheckpoint('cctp_mint', 'confirmed', supportedEvidence[4][3]));
+
+    const winnerCheckpoint = { ...checkpoint('submitting'), observedAt: 1000 };
+    const winner = first.baseEvidenceOutbox.claimSubmission(winnerCheckpoint);
+    const contender = second.baseEvidenceOutbox.claimSubmission({
+      ...checkpoint('submitting'), observedAt: 2000,
+    });
+
+    expect(winner).toMatchObject({ claimed: true, ownerToken: 'owner-first' });
+    expect(contender).toEqual({ claimed: false, ownerToken: null });
+    expect(second.baseEvidenceOutbox.recoveryState(identity)).toMatchObject({
+      phase: 'base_deposit', state: 'submitting',
+    });
+    const durable = second.db.prepare(`SELECT report_json FROM base_evidence_outbox
+      WHERE phase='base_deposit' AND state='submitting'`).get();
+    expect(JSON.parse(durable.report_json).event.observedAt).toBe(winnerCheckpoint.observedAt);
+    expect(() => second.baseEvidenceOutbox.enqueueOwned(
+      checkpoint('submitted', { userOpHash: digests.userOp }),
+      { ownerToken: 'owner-second' },
+    )).toThrow(/stale|owner|claim/i);
+    second.db.close();
+    first.db.close();
+  });
+
   it('exposes the exact latest durable checkpoint only through the internal recovery seam', () => {
     const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
     baseEvidenceOutbox.seed(identity, 0);
@@ -225,16 +258,45 @@ describe('SQLite Base evidence outbox', () => {
     expect(JSON.stringify(baseEvidenceOutbox.status(identity))).not.toContain(digests.userOp);
   });
 
-  it('makes exact replay a no-op and rejects changed evidence at the same semantic checkpoint', () => {
+  it('makes exact replay a no-op across observation time and rejects changed immutable evidence', () => {
     const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
     baseEvidenceOutbox.seed(identity, 0);
     const first = baseEvidenceOutbox.enqueue(checkpoint('submitting'));
     expect(baseEvidenceOutbox.enqueue(checkpoint('submitting'))).toEqual({ ...first, duplicate: true });
-    expect(() => baseEvidenceOutbox.enqueue(checkpoint('submitting', {}, 2_000_000_000_001)))
-      .toThrow(/conflict|immutable/i);
+    expect(baseEvidenceOutbox.enqueue(checkpoint('submitting', {}, 2_000_000_000_001)))
+      .toEqual({ ...first, duplicate: true });
     expect(() => baseEvidenceOutbox.enqueue(checkpoint('submitting', { assets: '1000001' })))
       .toThrow(/conflict|immutable/i);
     expect(baseEvidenceOutbox.status(identity).recoveryVersion).toBe(1);
+  });
+
+  it('converges staggered exact confirmation replay while preserving the first observation time', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path, { now: () => 1000 });
+    const second = createSqliteStores(path, { now: () => 2000 });
+    first.baseEvidenceOutbox.seed(identity, 0);
+    first.baseEvidenceOutbox.enqueue(directCheckpoint('cctp_mint', 'confirmed', supportedEvidence[4][3]));
+    first.baseEvidenceOutbox.enqueue({ ...checkpoint('submitting'), observedAt: 1000 });
+    first.baseEvidenceOutbox.enqueue({
+      ...checkpoint('submitted', { userOpHash: digests.userOp }), observedAt: 1001,
+    });
+    const confirmed = checkpoint('confirmed', {
+      userOpHash: digests.userOp,
+      transactionHash: digests.transaction,
+      event: confirmedEvent,
+    });
+
+    const winner = first.baseEvidenceOutbox.enqueue({ ...confirmed, observedAt: 1002 });
+    const replay = second.baseEvidenceOutbox.enqueue({ ...confirmed, observedAt: 2002 });
+
+    expect(winner.duplicate).toBe(false);
+    expect(replay).toMatchObject({ duplicate: true, state: 'confirmed' });
+    const rows = second.db.prepare(`SELECT report_json FROM base_evidence_outbox
+      WHERE phase='base_deposit' AND state='confirmed'`).all();
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0].report_json).event.observedAt).toBe(1002);
+    second.db.close();
+    first.db.close();
   });
 
   it('leases strictly in version order per full identity while another identity proceeds', () => {

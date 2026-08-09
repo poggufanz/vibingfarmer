@@ -151,6 +151,44 @@ describe('dispatchDeposits', () => {
     expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
   });
 
+  it('keeps an initial send timeout submitted and confirms only the stored hash after restart', async () => {
+    const allocation = task10Allocation();
+    const firstClient = buildMockKernelClient();
+    firstClient.account.address = KERNEL_ADDRESS;
+    firstClient.waitForUserOperationReceipt.mockRejectedValue(new Error('receipt pending'));
+    const checkpoints = [];
+    const first = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn(async () => firstClient),
+    });
+
+    const [pending] = await first.dispatchDeposits('approval', [allocation], {
+      onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint),
+    });
+
+    expect(pending).toMatchObject({
+      status: 'held', executionStatus: 'confirming', reasonCode: 'submitted_receipt_pending',
+      userOpHash: USER_OP_HASH,
+    });
+    expect(checkpoints.map(({ status }) => status)).toEqual(['submitting', 'submitted']);
+
+    const restartedClient = buildMockKernelClient();
+    restartedClient.account.address = KERNEL_ADDRESS;
+    restartedClient.waitForUserOperationReceipt.mockResolvedValue(task10Receipt(allocation));
+    const restarted = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn(async () => restartedClient),
+    });
+    const confirmed = await restarted.reconcileSubmittedDeposit(
+      'approval', allocation, USER_OP_HASH, { onCheckpoint: vi.fn() },
+    );
+
+    expect(confirmed).toMatchObject({ status: 'fulfilled', userOpHash: USER_OP_HASH });
+    expect(restartedClient.sendUserOperation).not.toHaveBeenCalled();
+  });
+
   it('awaits durable checkpoints around send/wait and confirms exactly one scoped Deposited event', async () => {
     const allocation = task10Allocation();
     const order = [];
@@ -225,6 +263,62 @@ describe('dispatchDeposits', () => {
     }]);
     expect(kernelClient.account.encodeCalls).not.toHaveBeenCalled();
     expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it('fresh-gates after deferred client reconstruction and before claiming or sending', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    let releaseReconstruction;
+    const reconstructSessionClientFn = vi.fn(() => new Promise((resolve) => {
+      releaseReconstruction = () => resolve(kernelClient);
+    }));
+    const onBeforeClaimSubmitting = vi.fn(async () => false);
+    const onClaimSubmitting = vi.fn(async () => ({ claimed: true, ownerToken: 'must-not-claim' }));
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn,
+    });
+
+    const pending = orchestrator.dispatchDeposits('approval', [allocation], {
+      onBeforeClaimSubmitting, onClaimSubmitting, onCheckpoint: vi.fn(),
+    });
+    await vi.waitFor(() => expect(reconstructSessionClientFn).toHaveBeenCalledOnce());
+    expect(onBeforeClaimSubmitting).not.toHaveBeenCalled();
+    releaseReconstruction();
+    const results = await pending;
+
+    expect(onBeforeClaimSubmitting).toHaveBeenCalledOnce();
+    expect(onClaimSubmitting).not.toHaveBeenCalled();
+    expect(kernelClient.account.encodeCalls).not.toHaveBeenCalled();
+    expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+    expect(results[0]).toMatchObject({
+      status: 'held', reasonCode: 'authority_changed_before_submission',
+    });
+  });
+
+  it('stops every later sibling when the first durable submission claim is held', async () => {
+    const allocations = [task10Allocation(1), task10Allocation(2)];
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    const onClaimSubmitting = vi.fn(async () => ({ claimed: false, ownerToken: null }));
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn(async () => kernelClient),
+    });
+
+    const results = await orchestrator.dispatchDeposits('approval', allocations, {
+      onClaimSubmitting, onCheckpoint: vi.fn(),
+    });
+
+    expect(onClaimSubmitting).toHaveBeenCalledOnce();
+    expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+    expect(results).toMatchObject([
+      { status: 'held', reasonCode: 'submission_claim_held' },
+      { status: 'held', reasonCode: 'not_dispatched_after_unknown' },
+    ]);
   });
 
   it('carries the private submission owner only to later durable callbacks', async () => {

@@ -1115,6 +1115,14 @@ export function createRelayerRouter({
         bindingId: record.bindingId,
         intentDigest: record.intentDigest,
       };
+      if (record.corrupt === true) {
+        farmIntents.advanceProjection({
+          identity: projectionIdentity, from: record.state, to: 'blocked',
+          reasonCode: 'malformed_recovery_record', now: Date.now(),
+        });
+        result.blocked.push(record.jobId);
+        return;
+      }
       if (record.state === 'intent_pending') {
         let mandate;
         try {
@@ -1322,6 +1330,12 @@ export function createRelayerRouter({
           const [entry] = await flow.recoverDeposits({
             approval: authority.record.serializedApproval,
             children: [child],
+            onBeforeClaimSubmitting: async () => {
+              const refreshed = await revalidateFarmAuthority(attachContext, { loadRecord: false });
+              return !refreshed.error && activeAuthorityMatches(
+                refreshed.authority, authority.record, refreshed.identity,
+              );
+            },
             onClaimSubmitting: async (checkpoint) => (
               baseEvidenceOutbox.claimSubmission(checkpoint)
             ),
@@ -1330,7 +1344,7 @@ export function createRelayerRouter({
               : baseEvidenceOutbox.enqueue(checkpoint)),
           });
           depositResults.push(entry);
-          if (entry?.status === 'uncertain' || entry?.executionStatus === 'confirming') {
+          if (entry?.status !== 'fulfilled') {
             holdLater = true;
           }
         }
@@ -1423,7 +1437,12 @@ export function createRelayerRouter({
       });
     }
     const jobId = normalizedIntent.intent.jobId;
-    let record = farmIntents.getByJob({ mandateId: req.body.mandateId, jobId });
+    let record;
+    try {
+      record = farmIntents.getByJob({ mandateId: req.body.mandateId, jobId });
+    } catch {
+      return sendJson(res, 503, { error: 'forward farm intent store is unavailable' });
+    }
     if (record.state === 'awaiting_burn') {
       return sendJson(res, 201, {
         jobId,
@@ -1498,7 +1517,12 @@ export function createRelayerRouter({
     if (!JOB_ID_PATTERN.test(body.jobId || '') || !/^[0-9a-f]{64}$/.test(body.burnTxHash || '')) {
       return sendJson(res, 400, { error: 'invalid farm attachment' });
     }
-    const intent = farmIntents.getByJob({ mandateId: body.mandateId, jobId: body.jobId });
+    let intent;
+    try {
+      intent = farmIntents.getByJob({ mandateId: body.mandateId, jobId: body.jobId });
+    } catch {
+      return sendJson(res, 503, { error: 'forward farm intent store is unavailable' });
+    }
     if (!intent) return sendJson(res, 404, { error: 'unknown jobId' });
     const identity = {
       mandateId: intent.mandateId,
