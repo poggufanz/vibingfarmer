@@ -14,6 +14,7 @@ import {
   normalizeBaseMandateStatus,
   publicBaseMandateEvidence,
 } from './mandateStatus.js'
+import { assertStellarStrKey } from './hookData.js'
 
 const DEFAULT_BASE_URL = '/api/vf-cross'
 const DEFAULT_POLL_INTERVAL_MS = 3000
@@ -21,15 +22,38 @@ const DEFAULT_MAX_TRIES = 40 // ~2 minutes at the default interval
 
 const CANONICAL_MANDATE_ID = /^[0-9a-f]{32}$/ // 128-bit lowercase hex
 const CANONICAL_CAPABILITY = /^[0-9a-f]{64}$/ // 256-bit lowercase hex
+const CANONICAL_EVM_ADDRESS = /^0x[0-9a-f]{40}$/i
+const CANONICAL_EVM_HASH = /^0x[0-9a-f]{64}$/
+const CANONICAL_STELLAR_TX_HASH = /^[0-9a-f]{64}$/
+const UNWIND_STATUSES = Object.freeze([
+  'awaiting_burn',
+  'relay_pending',
+  'relay_running',
+  'done',
+  'blocked',
+  'uncertain',
+  'expired',
+])
+const UNWIND_TERMINAL_STATUSES = new Set(['done', 'blocked', 'uncertain', 'expired'])
+const UNWIND_REASON_CODES = new Set([
+  'attested_evidence_changed',
+  'destination_reverted',
+  'legacy_record_unrecoverable',
+  'message_ambiguous',
+  'message_mismatch',
+  'submission_lease_expired',
+  'submission_unknown',
+  'submitted_checkpoint_failed',
+])
 
-// Capability authority only ever travels same-origin: a caller-supplied absolute/cross-origin
-// base URL is rejected before any fetch so a stale local override can never route a protected
-// call around the proxy.
+// Capability authority only ever travels through this exact same-origin proxy pathname. Do not
+// accept merely slash-prefixed input: WHATWG URL parsing treats backslashes and stripped controls
+// as authority delimiters, so strings that look relative here can resolve cross-origin in fetch.
 function requireSameOriginBaseUrl(baseUrl) {
-  if (typeof baseUrl !== 'string' || !baseUrl.startsWith('/') || baseUrl.startsWith('//')) {
+  if (baseUrl !== DEFAULT_BASE_URL) {
     throw new Error('relayer calls must go through the same-origin proxy')
   }
-  return baseUrl
+  return DEFAULT_BASE_URL
 }
 
 function requireMandateIdentity(mandateId, message = 'invalid mandate identity') {
@@ -40,6 +64,62 @@ function requireMandateIdentity(mandateId, message = 'invalid mandate identity')
 function requireJobIdentity(jobId) {
   if (!CANONICAL_MANDATE_ID.test(jobId)) throw new Error('invalid job identity')
   return jobId
+}
+
+function requireCanonicalEvmHash(hash, label) {
+  if (!CANONICAL_EVM_HASH.test(hash)) throw new Error(`invalid ${label}`)
+  return hash
+}
+
+function hasExactKeys(value, expected) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const keys = Object.keys(value)
+  return keys.length === expected.length && keys.every((key) => expected.includes(key))
+}
+
+function bytesToLowerHex(bytes) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function requireUnwindProjection(value, { jobId, allowedStatuses, unwindTxHash } = {}) {
+  const status = value?.status
+  const expectedKeys =
+    status === 'awaiting_burn' || status === 'expired'
+      ? ['jobId', 'status']
+      : status === 'relay_pending'
+        ? ['jobId', 'status', 'unwindTxHash']
+        : status === 'relay_running'
+          ? [
+              'jobId',
+              'status',
+              'unwindTxHash',
+              ...(value?.mintTxHash !== undefined ? ['mintTxHash'] : []),
+            ]
+          : status === 'done'
+            ? ['jobId', 'status', 'unwindTxHash', 'mintTxHash']
+            : status === 'blocked' || status === 'uncertain'
+              ? [
+                  'jobId',
+                  'status',
+                  ...(value?.unwindTxHash !== undefined ? ['unwindTxHash'] : []),
+                  ...(value?.mintTxHash !== undefined ? ['mintTxHash'] : []),
+                  'reasonCode',
+                ]
+              : null
+  if (
+    !expectedKeys ||
+    !hasExactKeys(value, expectedKeys) ||
+    value.jobId !== jobId ||
+    !UNWIND_STATUSES.includes(value.status) ||
+    (allowedStatuses !== undefined && !allowedStatuses.includes(value.status)) ||
+    (value.unwindTxHash !== undefined && !CANONICAL_EVM_HASH.test(value.unwindTxHash)) ||
+    (unwindTxHash !== undefined && value.unwindTxHash !== unwindTxHash) ||
+    (value.mintTxHash !== undefined && !CANONICAL_STELLAR_TX_HASH.test(value.mintTxHash)) ||
+    (value.reasonCode !== undefined && !UNWIND_REASON_CODES.has(value.reasonCode))
+  ) {
+    throw new Error('unwind public projection is malformed')
+  }
+  return value
 }
 
 // Fix loop 2, Fix 2b: the set of proxy targets a canonical `${runId}:bridge:${proxyTarget}`
@@ -304,10 +384,9 @@ export async function postFarmAttach({
  * Poll job status until terminal (`done`/`error`) or `maxTries` is exhausted — never hangs
  * forever. Returns whatever the last poll saw either way; the caller decides what "still
  * pending after maxTries" means for the UI (§7: funds stay recoverable, this never blocks them).
- * Fixed-path `POST /status` with a JSON identity: `{mandateId, jobId}` for a farm job (mandate
- * cookie authority) or `{jobId}` alone for an unwind job (Task 12's unwind cookie namespace —
- * a mandate cookie is never reused for it, so job-only polling fails closed until then).
- * @param {{ mandateId?: string, jobId: string, baseUrl?: string, intervalMs?: number, maxTries?: number, deps?: { fetchImpl?: Function, sleep?: Function } }} p
+ * Fixed-path `POST /status` with a farm-only `{mandateId, jobId}` identity. Reverse unwind uses
+ * pollUnwindStatus so its lifecycle and strict public projection cannot be confused with farm.
+ * @param {{ mandateId: string, jobId: string, baseUrl?: string, intervalMs?: number, maxTries?: number, deps?: { fetchImpl?: Function, sleep?: Function } }} p
  * @returns {Promise<{ status: string, steps?: object }>}
  */
 export async function pollFarmStatus({
@@ -319,10 +398,11 @@ export async function pollFarmStatus({
   deps = {},
 }) {
   const base = requireSameOriginBaseUrl(baseUrl)
-  if (mandateId !== undefined) requireMandateIdentity(mandateId)
+  if (mandateId === undefined) throw new Error('farm status polling requires a mandate identity')
+  requireMandateIdentity(mandateId)
   requireJobIdentity(jobId)
   const { fetchImpl = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = deps
-  const identity = mandateId === undefined ? { jobId } : { mandateId, jobId }
+  const identity = { mandateId, jobId }
   let last = { status: 'pending' }
   for (let i = 0; i < maxTries; i++) {
     const res = await fetchImpl(`${base}/status`, {
@@ -555,28 +635,159 @@ export async function postMandateRevoke({
   return res.json()
 }
 
-/**
- * Hand the (already owner-signed) unwind batch tx hash to the relayer, which watches for the
- * withdraw receipts and relays the reverse CCTP mint back to Stellar.
- * @param {{ unwindTxHash: string, stellarRecipient: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
- * @returns {Promise<{ jobId: string }>}
- */
-export async function postUnwind({
-  unwindTxHash,
-  stellarRecipient,
+/** Reserve a durable capability-bound unwind job before any passkey ceremony or Base send. */
+export async function reserveUnwind({
+  kernelAddress,
+  recipientHint,
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
   assertBaseCrossChainAvailable()
-
   const base = requireSameOriginBaseUrl(baseUrl)
+  if (!CANONICAL_EVM_ADDRESS.test(kernelAddress)) {
+    throw new Error('unwind reservation requires a canonical Kernel address')
+  }
+  const canonicalKernelAddress = kernelAddress.toLowerCase()
+  assertStellarStrKey(recipientHint)
+
+  const { fetchImpl = fetch, cryptoImpl = globalThis.crypto } = deps
+  if (!cryptoImpl || typeof cryptoImpl.getRandomValues !== 'function') {
+    throw new Error('unwind reservation requires a cryptographic random source')
+  }
+
+  const jobBytes = new Uint8Array(16)
+  let capabilityBytes = null
+  try {
+    cryptoImpl.getRandomValues(jobBytes)
+    capabilityBytes = new Uint8Array(32)
+    cryptoImpl.getRandomValues(capabilityBytes)
+    const jobId = bytesToLowerHex(jobBytes)
+    let res
+    try {
+      res = await fetchImpl(`${base}/unwind`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId,
+          capability: bytesToLowerHex(capabilityBytes),
+          kernelAddress: canonicalKernelAddress,
+          recipientHint,
+        }),
+      })
+    } catch {
+      throw new Error('unwind reservation failed (transport error)')
+    }
+    if (!res.ok) throw new Error(`unwind reservation failed (${res.status})`)
+    if (res.status !== 202) {
+      throw new Error(`unwind reservation expected 202, got ${res.status}`)
+    }
+    let acknowledgement
+    try {
+      acknowledgement = await res.json()
+    } catch {
+      throw new Error('unwind reservation acknowledgement is malformed')
+    }
+    if (
+      !hasExactKeys(acknowledgement, ['jobId', 'status']) ||
+      acknowledgement.jobId !== jobId ||
+      acknowledgement.status !== 'awaiting_burn'
+    ) {
+      throw new Error('unwind reservation acknowledgement is malformed')
+    }
+    return acknowledgement
+  } finally {
+    capabilityBytes?.fill(0)
+  }
+}
+
+/** Attach only canonical receipt identities; the proxy supplies HttpOnly cookie authority. */
+export async function postUnwindAttach({
+  jobId,
+  userOpHash,
+  unwindTxHash,
+  baseUrl = DEFAULT_BASE_URL,
+  deps = {},
+}) {
+  assertBaseCrossChainAvailable()
+  const base = requireSameOriginBaseUrl(baseUrl)
+  requireJobIdentity(jobId)
+  requireCanonicalEvmHash(userOpHash, 'unwind UserOperation hash')
+  requireCanonicalEvmHash(unwindTxHash, 'unwind transaction hash')
   const { fetchImpl = fetch } = deps
-  const res = await fetchImpl(`${base}/unwind`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ unwindTxHash, stellarRecipient }),
-  })
-  if (!res.ok) throw new Error(`unwind dispatch failed (${res.status})`)
-  return res.json()
+  let res
+  try {
+    res = await fetchImpl(`${base}/unwind/attach`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId, userOpHash, unwindTxHash }),
+    })
+  } catch {
+    throw new Error('unwind attach failed (transport error)')
+  }
+  if (!res.ok) throw new Error(`unwind attach failed (${res.status})`)
+  if (res.status !== 202) throw new Error(`unwind attach expected 202, got ${res.status}`)
+  let projection
+  try {
+    projection = await res.json()
+  } catch {
+    throw new Error('unwind attach acknowledgement is malformed')
+  }
+  try {
+    return requireUnwindProjection(projection, {
+      jobId,
+      allowedStatuses: ['relay_pending', 'relay_running', 'done', 'blocked', 'uncertain'],
+      unwindTxHash,
+    })
+  } catch {
+    throw new Error('unwind attach acknowledgement is malformed')
+  }
+}
+
+/** Poll the authenticated unwind projection; read-only status remains available after closure. */
+export async function pollUnwindStatus({
+  jobId,
+  baseUrl = DEFAULT_BASE_URL,
+  intervalMs = DEFAULT_POLL_INTERVAL_MS,
+  maxTries = DEFAULT_MAX_TRIES,
+  deps = {},
+}) {
+  const base = requireSameOriginBaseUrl(baseUrl)
+  requireJobIdentity(jobId)
+  if (!Number.isInteger(maxTries) || maxTries <= 0) {
+    throw new Error('unwind status polling requires a positive integer maxTries')
+  }
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    throw new Error('unwind status polling requires a positive intervalMs')
+  }
+  const { fetchImpl = fetch, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } =
+    deps
+  let last = { jobId, status: 'awaiting_burn' }
+  for (let attempt = 0; attempt < maxTries; attempt += 1) {
+    let res
+    try {
+      res = await fetchImpl(`${base}/status`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId }),
+      })
+    } catch {
+      throw new Error('unwind status check failed (transport error)')
+    }
+    if (!res.ok) throw new Error(`unwind status check failed (${res.status})`)
+    if (res.status !== 200) throw new Error(`unwind status expected 200, got ${res.status}`)
+    try {
+      last = requireUnwindProjection(await res.json(), { jobId })
+    } catch {
+      throw new Error('unwind status response is malformed')
+    }
+    if (UNWIND_TERMINAL_STATUSES.has(last.status)) return last
+    if (attempt + 1 < maxTries) await sleep(intervalMs)
+  }
+  return last
 }

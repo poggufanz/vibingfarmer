@@ -19,9 +19,15 @@ import {
 } from './config.js'
 import { buildForwarderHookData, assertHookData } from './hookData.js'
 import { createGaslessKernelClient } from './paymaster.js'
+import {
+  requireCanonicalUserOperationHash,
+  requireSuccessfulUserOperation,
+} from './userOpReceipt.js'
+import { unwindJobCommitment } from './unwindCommitment.js'
 
 const MAX_FEE_BPS = 100n // 1% cap; the actual charged fee is the corridor rate
 const MAX_UINT256 = (1n << 256n) - 1n
+const SWEPT_EVENT_TOPIC = '0x4f2d11fb664b5f2f436d0d6acfed89a492c2f8fde20a4811da677150003332eb'
 
 const approveCall = (token, spender, amount) => ({
   to: token,
@@ -41,15 +47,13 @@ const approveCall = (token, spender, amount) => ({
  * }} p
  * @returns {Array<{to:string, data:string}>}
  */
-export function buildUnwindCalls({
+function buildUnwindPlan({
   positions,
   stellarRecipient,
   idleUsdc = 0n,
   deadline,
   nowSeconds = BigInt(Math.floor(Date.now() / 1000)),
 }) {
-  assertBaseCrossChainAvailable()
-
   if (typeof deadline !== 'bigint' || deadline <= 0n) {
     throw new TypeError('buildUnwindCalls: deadline must be a positive bigint')
   }
@@ -80,34 +84,39 @@ export function buildUnwindCalls({
   const feeBasis = floors.reduce((a, f) => a + f, 0n) + idleUsdc
   const maxFee = (feeBasis * MAX_FEE_BPS) / 10000n
 
+  const hookDataHex = `0x${Buffer.from(hookData).toString('hex')}`
   const sweeperCall = {
     to: BASE_EXIT_SWEEPER_ADDRESS,
     data: encodeFunctionData({
       abi: BASE_EXIT_SWEEPER_ABI,
       functionName: 'exitAllAndBurn',
-      args: [
-        pos.map((p) => p.pool),
-        floors,
-        maxFee,
-        deadline,
-        `0x${Buffer.from(hookData).toString('hex')}`,
-      ],
+      args: [pos.map((p) => p.pool), floors, maxFee, deadline, hookDataHex],
     }),
   }
 
-  return [
-    ...pos.map((p) => approveCall(p.pool, BASE_EXIT_SWEEPER_ADDRESS, MAX_UINT256)),
-    approveCall(BASE_USDC_ADDRESS, BASE_EXIT_SWEEPER_ADDRESS, MAX_UINT256),
-    sweeperCall,
-    ...pos.map((p) => approveCall(p.pool, BASE_EXIT_SWEEPER_ADDRESS, 0n)),
-    approveCall(BASE_USDC_ADDRESS, BASE_EXIT_SWEEPER_ADDRESS, 0n),
-  ]
+  return {
+    maxFee,
+    hookData: hookDataHex,
+    calls: [
+      ...pos.map((p) => approveCall(p.pool, BASE_EXIT_SWEEPER_ADDRESS, MAX_UINT256)),
+      approveCall(BASE_USDC_ADDRESS, BASE_EXIT_SWEEPER_ADDRESS, MAX_UINT256),
+      sweeperCall,
+      ...pos.map((p) => approveCall(p.pool, BASE_EXIT_SWEEPER_ADDRESS, 0n)),
+      approveCall(BASE_USDC_ADDRESS, BASE_EXIT_SWEEPER_ADDRESS, 0n),
+    ],
+  }
+}
+
+export function buildUnwindCalls(params) {
+  assertBaseCrossChainAvailable()
+  return buildUnwindPlan(params).calls
 }
 
 /**
  * Owner-signed (passkey), single userOp: build, encode, sign, submit, wait for a REAL success —
  * never reports success on a merely-mined-but-reverted userOp.
  * @param {{
+ *   jobId: string,
  *   ownerKernelAccount: object,
  *   publicClient: object,
  *   positions: Array<object>,
@@ -115,11 +124,13 @@ export function buildUnwindCalls({
  *   idleUsdc?: bigint,
  *   deadline: bigint,
  *   nowSeconds?: bigint,
+ *   onSubmitted: (userOpHash: string) => Promise<void>,
  *   deps?: { makeGaslessClient?: Function },
  * }} p
  * @returns {Promise<{ unwindTxHash: string, burned: bigint|null, exited: bigint|null, skipped: bigint|null }>}
  */
 export async function signAndSubmitUnwind({
+  jobId,
   ownerKernelAccount,
   publicClient,
   positions,
@@ -127,12 +138,17 @@ export async function signAndSubmitUnwind({
   idleUsdc = 0n,
   deadline,
   nowSeconds = BigInt(Math.floor(Date.now() / 1000)),
+  onSubmitted,
   deps = {},
 }) {
   assertBaseCrossChainAvailable()
+  if (typeof onSubmitted !== 'function') {
+    throw new TypeError('signAndSubmitUnwind: onSubmitted checkpoint callback is required')
+  }
+  const dataSuffix = unwindJobCommitment(jobId)
 
   const { makeGaslessClient = createGaslessKernelClient } = deps
-  const calls = buildUnwindCalls({
+  const { calls, maxFee, hookData } = buildUnwindPlan({
     positions,
     stellarRecipient,
     idleUsdc,
@@ -144,33 +160,87 @@ export async function signAndSubmitUnwind({
   const callData = await kernelClient.account.encodeCalls(
     calls.map((c) => ({ to: c.to, value: 0n, data: c.data }))
   )
-  const userOpHash = await kernelClient.sendUserOperation({ callData })
-  const receipt = await kernelClient.waitForUserOperationReceipt({ hash: userOpHash })
-  const succeeded = receipt?.success === true || receipt?.receipt?.status === 'success'
-  if (!succeeded) throw new Error(`unwind userOp did not succeed (userOpHash ${userOpHash})`)
+  let rawUserOpHash
+  try {
+    rawUserOpHash = await kernelClient.sendUserOperation({ callData, dataSuffix })
+  } catch {
+    // Once this submission seam is invoked, a rejected promise cannot prove that the bundler
+    // did not accept the operation. Task 13 may reconcile it later; this flow must never resend.
+    const error = new Error('unwind submission status is unknown')
+    error.code = 'submission_unknown'
+    throw error
+  }
 
-  const unwindTxHash = receipt.receipt.transactionHash
+  let userOpHash
+  try {
+    userOpHash = requireCanonicalUserOperationHash(rawUserOpHash, {
+      label: 'unwind user operation',
+    })
+  } catch {
+    // A malformed response is also post-submission ambiguity: there is no canonical identity to
+    // checkpoint, but the operation may already exist. Do not expose or retry the malformed value.
+    const error = new Error(
+      'unwind user operation hash is unavailable; submission status is unknown'
+    )
+    error.code = 'submission_unknown'
+    throw error
+  }
+  try {
+    await onSubmitted(userOpHash)
+  } catch {
+    const error = new Error('unwind was submitted but its checkpoint failed')
+    error.code = 'submitted-but-checkpoint-failed'
+    error.userOpHash = userOpHash
+    throw error
+  }
+
+  const receipt = await kernelClient.waitForUserOperationReceipt({ hash: userOpHash })
+  const unwindTxHash = requireSuccessfulUserOperation(receipt, {
+    label: 'unwind user operation',
+  })
   // The final amount is not knowable before execution (interest accrues right up to the burn,
   // see the file header), so it must come from the `Swept` event, never the pre-sign estimate.
   // A decode miss must NOT turn a landed burn into a reported failure: the money already moved.
   let burned = null
   let exited = null
   let skipped = null
+  let evidenceStatus = 'needs_reconcile'
   try {
+    const topLevelLogs = Array.isArray(receipt.logs) ? receipt.logs : []
+    const sweptCandidates = topLevelLogs.filter(
+      (log) =>
+        log.address?.toLowerCase() === BASE_EXIT_SWEEPER_ADDRESS.toLowerCase() &&
+        log.topics?.[0]?.toLowerCase() === SWEPT_EVENT_TOPIC
+    )
+    if (sweptCandidates.length !== 1) throw new Error('ambiguous Swept evidence')
     const sweptLogs = parseEventLogs({
       abi: BASE_EXIT_SWEEPER_ABI,
-      logs: receipt.receipt.logs || [],
+      logs: sweptCandidates,
       eventName: 'Swept',
+      strict: true,
     })
-    const sweptLog =
-      sweptLogs.find((l) => l.address?.toLowerCase() === BASE_EXIT_SWEEPER_ADDRESS.toLowerCase()) ??
-      sweptLogs[0]
-    if (sweptLog) {
+    const [sweptLog] = sweptLogs
+    if (
+      sweptLogs.length === 1 &&
+      sweptLog.args?.owner?.toLowerCase() === ownerKernelAccount.address?.toLowerCase() &&
+      typeof sweptLog.args?.burned === 'bigint' &&
+      sweptLog.args.burned > 0n
+    ) {
       ;({ burned, exited, skipped } = sweptLog.args)
+      evidenceStatus = 'verified'
     }
   } catch {
     // fall through with nulls - reporting failure, not execution failure
   }
 
-  return { unwindTxHash, burned, exited, skipped }
+  return {
+    userOpHash,
+    unwindTxHash,
+    burned,
+    exited,
+    skipped,
+    maxFee,
+    hookData,
+    evidenceStatus,
+  }
 }

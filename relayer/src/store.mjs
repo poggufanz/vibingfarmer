@@ -245,10 +245,22 @@ function requireLeaseArgs({ now, leaseMs }) {
   }
 }
 
+export function relayIdentityConflicts(record, {
+  sourceDomain, burnTxHash, expectationDigest: digest,
+}) {
+  if (!record || record.sourceDomain !== sourceDomain) return false;
+  if (sourceDomain === 27) return record.burnTxHash === burnTxHash;
+  return record.burnTxHash === burnTxHash && record.expectationDigest === digest;
+}
+
 /**
  * One enqueue decision against the current durable state (shared by every backend).
- * `existing` is the row under this execId (or null); `hasBurnOwner(burn)` reports whether a
- * DIFFERENT execution id already owns the canonical burn hash (invariant 5).
+ * `existing` is the row under this execId (or null); `hasIdentityConflict(identity)` reports
+ * whether a DIFFERENT execution id already owns the canonical source identity. Stellar burns
+ * remain unique by transaction hash. Base reverse work is unique by the immutable
+ * (source-domain, outer transaction, expectation digest) tuple, permitting distinct immutable
+ * expectations in one ERC-4337 bundle transaction. UserOperation uniqueness belongs to the
+ * dedicated unwind authority, not this generic CCTP state machine.
  *
  * Ordering matters: under an existing execution id, an immutable-identity difference is always
  * RELAY_ENQUEUE_CONFLICT — even when the changed value is itself malformed (a conflicting retry
@@ -259,7 +271,7 @@ function requireLeaseArgs({ now, leaseMs }) {
  * a new attestation_pending row; throws RELAY_VALIDATION / RELAY_ENQUEUE_CONFLICT otherwise.
  */
 export function relayEnqueueDecision({
-  existing, hasBurnOwner, execId, sourceDomain, burnTxHash, expectation, now,
+  existing, hasIdentityConflict, execId, sourceDomain, burnTxHash, expectation, now,
 }) {
   if (typeof execId !== 'string' || execId.length === 0) {
     throw validationError('execId must be a non-empty string');
@@ -289,10 +301,15 @@ export function relayEnqueueDecision({
     throw validationError('expectation sourceDomain must match the intent sourceDomain');
   }
   const burn = normalizeBurnTxHash(sourceDomain, burnTxHash);
-  if (hasBurnOwner(burn)) {
+  const identity = {
+    sourceDomain,
+    burnTxHash: burn,
+    expectationDigest: digest,
+  };
+  if (hasIdentityConflict(identity)) {
     throw relayError(
       'RELAY_ENQUEUE_CONFLICT',
-      'burn hash already belongs to a different execution id',
+      'relay source identity already belongs to a different execution id',
     );
   }
   const record = relayNewPendingRecord({
@@ -483,8 +500,115 @@ export function relayReconcileExpired(current, now) {
   return { ...current, leaseToken: null, leaseExpiresAt: null, updatedAt: now };
 }
 
+/**
+ * Validates one persisted Task8 record before it can become runtime authority. This is kept
+ * backend-neutral so the file reopen path, SQLite lazy reads, and one-time migrations cannot
+ * drift on what "current" means. Historical legacy tombstones are deliberately readable as
+ * terminal audit records, but are never claimable or used as expectation truth.
+ */
+export function assertCanonicalRelayRecord(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)
+      || typeof record.execId !== 'string' || record.execId.length === 0
+      || !RELAY_ALL_STATES.includes(record.state)
+      || !Number.isSafeInteger(record.attempts) || record.attempts < 0
+      || !Number.isSafeInteger(record.createdAt) || record.createdAt < 0
+      || !Number.isSafeInteger(record.updatedAt) || record.updatedAt < record.createdAt) {
+    throw validationError('persisted relay record shape is not canonical');
+  }
+  const leaseAbsent = record.leaseToken === null && record.leaseExpiresAt === null;
+  const leasePresent = typeof record.leaseToken === 'string' && record.leaseToken.length > 0
+    && Number.isSafeInteger(record.leaseExpiresAt) && record.leaseExpiresAt >= 0;
+  if (!leaseAbsent && !leasePresent) {
+    throw validationError('persisted relay lease pair is not canonical');
+  }
+  if (RELAY_TERMINAL_STATES.includes(record.state) && !leaseAbsent) {
+    throw validationError('persisted terminal relay record retains a lease');
+  }
+  if (record.reasonCode === 'legacy_record_unrecoverable') {
+    if (record.state !== 'blocked' || !leaseAbsent || record.mintTxHash !== null) {
+      throw validationError('persisted legacy relay tombstone is not terminal');
+    }
+    return record;
+  }
+
+  const sourceDomain = normalizeSourceDomain(record.sourceDomain);
+  if (normalizeBurnTxHash(sourceDomain, record.burnTxHash) !== record.burnTxHash) {
+    throw validationError('persisted burn hash is not canonical');
+  }
+  const expectation = canonicalizeExpectation(record.expectation);
+  if (expectation.sourceDomain !== sourceDomain
+      || JSON.stringify(expectation) !== JSON.stringify(record.expectation)
+      || expectationDigest(expectation) !== record.expectationDigest) {
+    throw validationError('persisted expectation binding is not canonical');
+  }
+
+  const evidenceValues = [
+    record.messageHex, record.nonceHex, record.messageDigest,
+    record.attestationHex, record.attestationDigest,
+  ];
+  const hasEvidence = evidenceValues.every((value) => value !== null);
+  if (!hasEvidence && !evidenceValues.every((value) => value === null)) {
+    throw validationError('persisted evidence tuple is incomplete');
+  }
+  if (hasEvidence) {
+    const evidence = normalizeEvidence(record);
+    if (evidence.messageHex !== record.messageHex || evidence.nonceHex !== record.nonceHex
+        || evidence.messageDigest !== record.messageDigest
+        || evidence.attestationHex !== record.attestationHex
+        || evidence.attestationDigest !== record.attestationDigest
+        || !Number.isSafeInteger(record.evidenceVersion) || record.evidenceVersion <= 0) {
+      throw validationError('persisted evidence binding is not canonical');
+    }
+  } else if (record.evidenceVersion !== 0) {
+    throw validationError('persisted empty evidence has a nonzero version');
+  }
+  const evidenceRequired = ['attested', 'mint_submitting', 'mint_submitted', 'minted', 'uncertain']
+    .includes(record.state);
+  if (evidenceRequired !== hasEvidence && record.state !== 'blocked') {
+    throw validationError('persisted evidence disagrees with relay state');
+  }
+  if (record.state === 'attestation_pending' && hasEvidence) {
+    throw validationError('pending relay record carries evidence');
+  }
+  if (record.state === 'mint_submitting' && !leasePresent) {
+    throw validationError('submit fence lacks its live lease identity');
+  }
+
+  const needsMintHash = ['mint_submitted', 'minted'].includes(record.state)
+    || (record.state === 'blocked' && record.reasonCode === 'destination_reverted');
+  if (record.mintTxHash !== null) {
+    if (normalizeMintTxHash(sourceDomain, record.mintTxHash) !== record.mintTxHash) {
+      throw validationError('persisted mint hash is not canonical');
+    }
+  } else if (needsMintHash) {
+    throw validationError('persisted relay state lacks its mint hash');
+  }
+  if (!needsMintHash && record.state !== 'uncertain' && record.mintTxHash !== null) {
+    throw validationError('persisted relay state carries an unexpected mint hash');
+  }
+
+  if (record.state === 'blocked') {
+    if (!RELAY_BLOCKED_REASONS.includes(record.reasonCode)) {
+      throw validationError('persisted blocked reason is not canonical');
+    }
+  } else if (record.state === 'uncertain') {
+    if (!RELAY_UNCERTAIN_REASONS.includes(record.reasonCode)) {
+      throw validationError('persisted uncertain reason is not canonical');
+    }
+  } else if (record.reasonCode !== null) {
+    throw validationError('persisted nonterminal/minted record carries a reason');
+  }
+  return record;
+}
+
 export const relayByCreated = (a, b) => (
   a.createdAt - b.createdAt || (a.execId < b.execId ? -1 : a.execId > b.execId ? 1 : 0)
+);
+
+export const relayByActionableAge = (a, b) => (
+  a.updatedAt - b.updatedAt
+  || a.createdAt - b.createdAt
+  || (a.execId < b.execId ? -1 : a.execId > b.execId ? 1 : 0)
 );
 
 /** Outward redacted status (invariant 8): state, canonical hashes, stable reason codes only —
@@ -525,7 +649,8 @@ function createRelayStore({ load, save, newToken = randomUUID }) {
       return transact((rows) => {
         const decision = relayEnqueueDecision({
           existing: rows[execId] ?? null,
-          hasBurnOwner: (burn) => Object.values(rows).some((row) => row.burnTxHash === burn),
+          hasIdentityConflict: (identity) => Object.values(rows)
+            .some((row) => relayIdentityConflicts(row, identity)),
           execId,
           sourceDomain,
           burnTxHash,
@@ -624,10 +749,21 @@ function createRelayStore({ load, save, newToken = randomUUID }) {
       const rows = Object.values(load())
         .filter((record) => (includeTerminal
           ? record.state !== 'minted'
-          : !RELAY_TERMINAL_STATES.includes(record.state)))
-        .sort(relayByCreated)
+          : RELAY_CLAIMABLE_STATES.includes(record.state) && record.leaseToken === null))
+        .sort(includeTerminal ? relayByCreated : relayByActionableAge)
         .slice(0, limit);
       return rows.map(clone);
+    },
+
+    listSweepSummary({ now, limit }) {
+      requireNow(now);
+      if (!Number.isSafeInteger(limit) || limit <= 0) throw validationError('limit must be a positive safe integer');
+      return Object.values(load())
+        .filter((record) => ['blocked', 'uncertain'].includes(record.state)
+          || record.leaseToken !== null)
+        .sort(relayByCreated)
+        .slice(0, limit)
+        .map(clone);
     },
 
     reconcileExpired({ now, limit }) {
@@ -638,8 +774,10 @@ function createRelayStore({ load, save, newToken = randomUUID }) {
           .filter((record) => record.leaseToken !== null
             && Number.isSafeInteger(record.leaseExpiresAt)
             && record.leaseExpiresAt <= now
-            && !RELAY_TERMINAL_STATES.includes(record.state))
-          .sort(relayByCreated)
+            && ['attestation_pending', 'attested', 'mint_submitting', 'mint_submitted']
+              .includes(record.state))
+          .sort((left, right) => left.leaseExpiresAt - right.leaseExpiresAt
+            || relayByCreated(left, right))
           .slice(0, limit);
         const reconciled = [];
         for (const record of expired) {
@@ -648,6 +786,20 @@ function createRelayStore({ load, save, newToken = randomUUID }) {
           reconciled.push(clone(next));
         }
         return { result: reconciled, changed: reconciled.length > 0 };
+      });
+    },
+
+    reconcileOne({ execId, now }) {
+      requireNow(now);
+      return transact((rows) => {
+        const current = rows[execId];
+        if (!current || RELAY_TERMINAL_STATES.includes(current.state)
+            || current.leaseToken === null || current.leaseExpiresAt > now) {
+          return { result: current ? clone(current) : null, changed: false };
+        }
+        const next = relayReconcileExpired(current, now);
+        rows[execId] = next;
+        return { result: clone(next), changed: true };
       });
     },
 
@@ -685,10 +837,12 @@ function writeAllAtomic(path, data) {
 }
 
 function isCurrentRelayRecord(row) {
-  return Boolean(row) && typeof row === 'object'
-    && RELAY_ALL_STATES.includes(row.state)
-    && (typeof row.expectationDigest === 'string'
-      || row.reasonCode === 'legacy_record_unrecoverable');
+  try {
+    assertCanonicalRelayRecord(row);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Legacy pre-Task-8 rows have no immutable expectation and no strict confirmation evidence, so
@@ -722,11 +876,16 @@ function legacyConversion(execId, legacy, now) {
 
 export function createFileStore(path) {
   // One-time legacy conversion at open, persisted atomically so a reopened store still fails
-  // closed and the on-disk file no longer carries legacy truth.
+  // closed and the on-disk file no longer carries legacy truth. Reverse rows in this generic
+  // file backend predate the dedicated Task12 unwind authority, so no current-looking shape can
+  // prove which UserOperation/evidence record authorized it: only SQLite may resume Base work.
   const initial = readAll(path);
   let converted = false;
   for (const [execId, row] of Object.entries(initial)) {
-    if (!isCurrentRelayRecord(row)) {
+    const unsupportedReverse = isCurrentRelayRecord(row)
+      && row.sourceDomain === BASE_DOMAIN
+      && !RELAY_TERMINAL_STATES.includes(row.state);
+    if (!isCurrentRelayRecord(row) || unsupportedReverse) {
       initial[execId] = legacyConversion(execId, row, Date.now());
       converted = true;
     }

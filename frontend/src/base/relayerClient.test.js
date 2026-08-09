@@ -12,7 +12,9 @@ const {
   postFarm,
   postFarmAttach,
   pollFarmStatus,
-  postUnwind,
+  reserveUnwind,
+  postUnwindAttach,
+  pollUnwindStatus,
   postMandate,
   getMandateStatus,
   postMandateRevoke,
@@ -25,10 +27,32 @@ const JOB_ID = '55'.repeat(16)
 const BASE_URL = '/api/vf-cross'
 const STELLAR_OWNER = 'GUSER'
 const KERNEL = '0x0000000000000000000000000000000000000aa1'
+const CHECKSUMMED_KERNEL = '0x1234567890AbcdEF1234567890aBcdef12345678'
 const SESSION = '0x0000000000000000000000000000000000000bb2'
 const USER_OP_HASH = `0x${'33'.repeat(32)}`
 const ACTIVATION_TX_HASH = `0x${'44'.repeat(32)}`
 const BINDING_HASH = '66'.repeat(32)
+const STELLAR_RECIPIENT = 'GCXMZCDVYTAANBRASUGWS5GDKRGSQWNM5XHVB4JI7PXECZYKBG5OTTRK'
+const UNWIND_TX_HASH = `0x${'77'.repeat(32)}`
+const MINT_TX_HASH = '88'.repeat(32)
+const BLOCKED_REASON = 'message_mismatch'
+const UNCERTAIN_REASON = 'submission_unknown'
+
+function unwindProjection(status) {
+  if (status === 'awaiting_burn' || status === 'expired') return { jobId: JOB_ID, status }
+  if (status === 'done') {
+    return { jobId: JOB_ID, status, unwindTxHash: UNWIND_TX_HASH, mintTxHash: MINT_TX_HASH }
+  }
+  if (status === 'blocked' || status === 'uncertain') {
+    return {
+      jobId: JOB_ID,
+      status,
+      unwindTxHash: UNWIND_TX_HASH,
+      reasonCode: status === 'blocked' ? BLOCKED_REASON : UNCERTAIN_REASON,
+    }
+  }
+  return { jobId: JOB_ID, status, unwindTxHash: UNWIND_TX_HASH }
+}
 
 const verifiedActive = (overrides = {}) => ({
   version: 3,
@@ -631,8 +655,8 @@ describe('pollFarmStatus', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
-  test('keeps job-only unwind polling on the canonical POST shape and fails closed without its Task 12 cookie', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) }))
+  test('rejects job-only use of the farm poller before fetch; unwind uses its strict poller', async () => {
+    const fetchMock = vi.fn()
     await expect(
       pollFarmStatus({
         jobId: JOB_ID,
@@ -640,11 +664,8 @@ describe('pollFarmStatus', () => {
         maxTries: 1,
         deps: { fetchImpl: fetchMock, sleep: vi.fn() },
       })
-    ).rejects.toThrow(/farm status/i)
-    const [url, options] = fetchMock.mock.calls[0]
-    expect(url).toBe(`${BASE_URL}/status`)
-    expect(options).toMatchObject({ method: 'POST', credentials: 'same-origin' })
-    expect(JSON.parse(options.body)).toEqual({ jobId: JOB_ID })
+    ).rejects.toThrow(/mandate|farm/i)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   test('rejects a noncanonical status job identity before fetch', async () => {
@@ -1283,24 +1304,417 @@ describe('v3 mandate activation client', () => {
   })
 })
 
-describe('postUnwind', () => {
-  test('POSTs the withdrawal batch tx hash + destination for the relayer to pick up', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: OTHER_ID }) }))
-    const result = await postUnwind({
-      unwindTxHash: '0xdead',
-      stellarRecipient: 'GRECIPIENT',
-      baseUrl: BASE_URL,
-      deps: { fetchImpl: fetchMock },
+describe('durable unwind client', () => {
+  function deterministicCrypto() {
+    const buffers = []
+    let call = 0
+    return {
+      buffers,
+      getRandomValues: vi.fn((bytes) => {
+        buffers.push(bytes)
+        bytes.fill(call++ === 0 ? 0x55 : 0x22)
+        return bytes
+      }),
+    }
+  }
+
+  test('CSPRNG-reserves before signing with exact one-shot capability body and returns no authority', async () => {
+    const cryptoImpl = deterministicCrypto()
+    const fetchImpl = vi.fn(async (_url, options) => {
+      const body = JSON.parse(options.body)
+      expect(body).toEqual({
+        jobId: JOB_ID,
+        capability: CAPABILITY,
+        kernelAddress: KERNEL,
+        recipientHint: STELLAR_RECIPIENT,
+      })
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({ jobId: JOB_ID, status: 'awaiting_burn' }),
+      }
     })
-    expect(result).toEqual({ jobId: OTHER_ID })
-    const [url, options] = fetchMock.mock.calls[0]
+
+    const result = await reserveUnwind({
+      kernelAddress: KERNEL,
+      recipientHint: STELLAR_RECIPIENT,
+      baseUrl: BASE_URL,
+      deps: { fetchImpl, cryptoImpl },
+    })
+
+    expect(result).toEqual({ jobId: JOB_ID, status: 'awaiting_burn' })
+    expect(JSON.stringify(result)).not.toContain(CAPABILITY)
+    const [url, options] = fetchImpl.mock.calls[0]
     expect(url).toBe(`${BASE_URL}/unwind`)
-    expect(options.credentials).toBe('same-origin')
+    expect(options).toMatchObject({ method: 'POST', credentials: 'same-origin' })
+    expect(cryptoImpl.getRandomValues).toHaveBeenCalledTimes(2)
+    expect([...cryptoImpl.buffers[1]]).toEqual(Array(32).fill(0))
+  })
+
+  test('accepts a checksummed ZeroDev Kernel address and binds its canonical lowercase form', async () => {
+    const cryptoImpl = deterministicCrypto()
+    const fetchImpl = vi.fn(async (_url, options) => {
+      expect(JSON.parse(options.body).kernelAddress).toBe(CHECKSUMMED_KERNEL.toLowerCase())
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({ jobId: JOB_ID, status: 'awaiting_burn' }),
+      }
+    })
+
+    await reserveUnwind({
+      kernelAddress: CHECKSUMMED_KERNEL,
+      recipientHint: STELLAR_RECIPIENT,
+      deps: { fetchImpl, cryptoImpl },
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  test.each([
+    [
+      'non-202',
+      { ok: true, status: 200, json: async () => ({ jobId: JOB_ID, status: 'awaiting_burn' }) },
+    ],
+    [
+      'wrong job',
+      { ok: true, status: 202, json: async () => ({ jobId: OTHER_ID, status: 'awaiting_burn' }) },
+    ],
+    [
+      'wrong lifecycle',
+      { ok: true, status: 202, json: async () => ({ jobId: JOB_ID, status: 'relay_pending' }) },
+    ],
+    [
+      'echoed capability',
+      {
+        ok: true,
+        status: 202,
+        json: async () => ({ jobId: JOB_ID, status: 'awaiting_burn', capability: CAPABILITY }),
+      },
+    ],
+  ])(
+    'rejects a malformed reserve acknowledgement (%s) and erases capability bytes',
+    async (_label, response) => {
+      const cryptoImpl = deterministicCrypto()
+      await expect(
+        reserveUnwind({
+          kernelAddress: KERNEL,
+          recipientHint: STELLAR_RECIPIENT,
+          deps: { fetchImpl: vi.fn(async () => response), cryptoImpl },
+        })
+      ).rejects.toThrow(/unwind reservation/i)
+      expect([...cryptoImpl.buffers[1]]).toEqual(Array(32).fill(0))
+    }
+  )
+
+  test('scrubs a transport failure that contains raw capability authority', async () => {
+    const cryptoImpl = deterministicCrypto()
+    let error
+    try {
+      await reserveUnwind({
+        kernelAddress: KERNEL,
+        recipientHint: STELLAR_RECIPIENT,
+        deps: {
+          cryptoImpl,
+          fetchImpl: vi.fn(async () => {
+            throw new Error(`poison ${CAPABILITY}`)
+          }),
+        },
+      })
+    } catch (caught) {
+      error = caught
+    }
+    expect(error?.message).toMatch(/unwind reservation/i)
+    expect(error?.message).not.toContain(CAPABILITY)
+    expect([...cryptoImpl.buffers[1]]).toEqual(Array(32).fill(0))
+  })
+
+  test('attaches only the reserved identity and canonical receipt hashes with same-origin credentials', async () => {
+    const projection = { jobId: JOB_ID, status: 'relay_pending', unwindTxHash: UNWIND_TX_HASH }
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 202, json: async () => projection }))
+    const result = await postUnwindAttach({
+      jobId: JOB_ID,
+      userOpHash: USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      deps: { fetchImpl },
+    })
+    expect(result).toEqual(projection)
+    const [url, options] = fetchImpl.mock.calls[0]
+    expect(url).toBe(`${BASE_URL}/unwind/attach`)
+    expect(options).toMatchObject({ method: 'POST', credentials: 'same-origin' })
+    expect(JSON.parse(options.body)).toEqual({
+      jobId: JOB_ID,
+      userOpHash: USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+    })
+    expect(options.body).not.toMatch(/owner|burned|recipient|hook|message|capability/i)
+  })
+
+  test.each([
+    [
+      'extra response field',
+      { jobId: JOB_ID, status: 'relay_pending', unwindTxHash: UNWIND_TX_HASH, internal: 'secret' },
+    ],
+    ['wrong hash', { jobId: JOB_ID, status: 'relay_pending', unwindTxHash: USER_OP_HASH }],
+    ['wrong status', { jobId: JOB_ID, status: 'done', unwindTxHash: UNWIND_TX_HASH }],
+  ])('rejects a non-strict attach acknowledgement: %s', async (_label, body) => {
+    await expect(
+      postUnwindAttach({
+        jobId: JOB_ID,
+        userOpHash: USER_OP_HASH,
+        unwindTxHash: UNWIND_TX_HASH,
+        deps: { fetchImpl: vi.fn(async () => ({ ok: true, status: 202, json: async () => body })) },
+      })
+    ).rejects.toThrow(/unwind attach/i)
+  })
+
+  test.each(['relay_running', 'done', 'blocked', 'uncertain'])(
+    'accepts an idempotent attach retry that returns the current strict %s projection',
+    async (status) => {
+      const projection = unwindProjection(status)
+      await expect(
+        postUnwindAttach({
+          jobId: JOB_ID,
+          userOpHash: USER_OP_HASH,
+          unwindTxHash: UNWIND_TX_HASH,
+          deps: {
+            fetchImpl: vi.fn(async () => ({
+              ok: true,
+              status: 202,
+              json: async () => projection,
+            })),
+          },
+        })
+      ).resolves.toEqual(projection)
+    }
+  )
+
+  test.each(['done', 'blocked', 'uncertain', 'expired'])(
+    'polls job-only status to terminal unwind status %s using a strict public DTO',
+    async (terminal) => {
+      let call = 0
+      const fetchImpl = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () =>
+          call++ === 0 ? unwindProjection('relay_running') : unwindProjection(terminal),
+      }))
+      const result = await pollUnwindStatus({
+        jobId: JOB_ID,
+        intervalMs: 1,
+        maxTries: 2,
+        deps: { fetchImpl, sleep: vi.fn(async () => {}) },
+      })
+      expect(result.status).toBe(terminal)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      for (const [url, options] of fetchImpl.mock.calls) {
+        expect(url).toBe(`${BASE_URL}/status`)
+        expect(options).toMatchObject({
+          method: 'POST',
+          credentials: 'same-origin',
+          cache: 'no-store',
+        })
+        expect(JSON.parse(options.body)).toEqual({ jobId: JOB_ID })
+      }
+    }
+  )
+
+  test.each([
+    ['blocked before proof', { jobId: JOB_ID, status: 'blocked', reasonCode: BLOCKED_REASON }],
+    [
+      'uncertain before proof',
+      { jobId: JOB_ID, status: 'uncertain', reasonCode: UNCERTAIN_REASON },
+    ],
+    [
+      'blocked after proof',
+      {
+        jobId: JOB_ID,
+        status: 'blocked',
+        unwindTxHash: UNWIND_TX_HASH,
+        reasonCode: BLOCKED_REASON,
+      },
+    ],
+    [
+      'blocked with a retained mint submission hash',
+      {
+        jobId: JOB_ID,
+        status: 'blocked',
+        mintTxHash: MINT_TX_HASH,
+        reasonCode: BLOCKED_REASON,
+      },
+    ],
+    [
+      'blocked with retained unwind and mint hashes',
+      {
+        jobId: JOB_ID,
+        status: 'blocked',
+        unwindTxHash: UNWIND_TX_HASH,
+        mintTxHash: MINT_TX_HASH,
+        reasonCode: BLOCKED_REASON,
+      },
+    ],
+    [
+      'uncertain after proof',
+      {
+        jobId: JOB_ID,
+        status: 'uncertain',
+        unwindTxHash: UNWIND_TX_HASH,
+        reasonCode: UNCERTAIN_REASON,
+      },
+    ],
+    [
+      'uncertain with a retained mint submission hash before proof projection',
+      {
+        jobId: JOB_ID,
+        status: 'uncertain',
+        mintTxHash: MINT_TX_HASH,
+        reasonCode: UNCERTAIN_REASON,
+      },
+    ],
+    [
+      'uncertain with retained unwind and mint hashes',
+      {
+        jobId: JOB_ID,
+        status: 'uncertain',
+        unwindTxHash: UNWIND_TX_HASH,
+        mintTxHash: MINT_TX_HASH,
+        reasonCode: UNCERTAIN_REASON,
+      },
+    ],
+  ])('accepts the exact terminal projection variant: %s', async (_label, projection) => {
+    await expect(
+      pollUnwindStatus({
+        jobId: JOB_ID,
+        maxTries: 1,
+        deps: {
+          fetchImpl: vi.fn(async () => ({ ok: true, status: 200, json: async () => projection })),
+        },
+      })
+    ).resolves.toEqual(projection)
+  })
+
+  test('accepts a running projection with its canonical mint-submission checkpoint', async () => {
+    const running = { ...unwindProjection('relay_running'), mintTxHash: MINT_TX_HASH }
+    const done = unwindProjection('done')
+    let call = 0
+
+    await expect(
+      pollUnwindStatus({
+        jobId: JOB_ID,
+        intervalMs: 1,
+        maxTries: 2,
+        deps: {
+          fetchImpl: vi.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => (call++ === 0 ? running : done),
+          })),
+          sleep: vi.fn(async () => {}),
+        },
+      })
+    ).resolves.toEqual(done)
+  })
+
+  test.each([
+    ['unknown reason', { ...unwindProjection('blocked'), reasonCode: 'made_up_reason' }],
+    ['reason on running', { ...unwindProjection('relay_running'), reasonCode: BLOCKED_REASON }],
+    ['missing done mint', { jobId: JOB_ID, status: 'done', unwindTxHash: UNWIND_TX_HASH }],
+    ['hash on expired', { jobId: JOB_ID, status: 'expired', unwindTxHash: UNWIND_TX_HASH }],
+    [
+      'null unwind hash',
+      { jobId: JOB_ID, status: 'blocked', unwindTxHash: null, reasonCode: BLOCKED_REASON },
+    ],
+    [
+      'null uncertain mint hash',
+      { jobId: JOB_ID, status: 'uncertain', mintTxHash: null, reasonCode: UNCERTAIN_REASON },
+    ],
+    [
+      'malformed uncertain mint hash',
+      {
+        jobId: JOB_ID,
+        status: 'uncertain',
+        mintTxHash: `0x${MINT_TX_HASH}`,
+        reasonCode: UNCERTAIN_REASON,
+      },
+    ],
+    ['mint hash on pending', { ...unwindProjection('relay_pending'), mintTxHash: MINT_TX_HASH }],
+    ['null running mint hash', { ...unwindProjection('relay_running'), mintTxHash: null }],
+  ])('rejects malformed state-bound status projection: %s', async (_label, projection) => {
+    await expect(
+      pollUnwindStatus({
+        jobId: JOB_ID,
+        maxTries: 1,
+        deps: {
+          fetchImpl: vi.fn(async () => ({ ok: true, status: 200, json: async () => projection })),
+        },
+      })
+    ).rejects.toThrow(/unwind status/i)
+  })
+
+  test('requires exact HTTP 200 for status instead of accepting another successful lifecycle', async () => {
+    await expect(
+      pollUnwindStatus({
+        jobId: JOB_ID,
+        maxTries: 1,
+        deps: {
+          fetchImpl: vi.fn(async () => ({
+            ok: true,
+            status: 202,
+            json: async () => unwindProjection('relay_pending'),
+          })),
+        },
+      })
+    ).rejects.toThrow(/unwind status/i)
+  })
+
+  test('scrubs status transport diagnostics before returning them to UI code', async () => {
+    const poison = `private-cookie ${CAPABILITY}`
+    let error
+    try {
+      await pollUnwindStatus({
+        jobId: JOB_ID,
+        maxTries: 1,
+        deps: {
+          fetchImpl: vi.fn(async () => {
+            throw new Error(poison)
+          }),
+        },
+      })
+    } catch (caught) {
+      error = caught
+    }
+    expect(error?.message).toMatch(/unwind status/i)
+    expect(error?.message).not.toContain(poison)
+    expect(error?.message).not.toContain(CAPABILITY)
   })
 })
 
 describe('same-origin capability transport', () => {
   const crossOrigin = 'https://direct-relayer.example/api/vf-cross'
+  const deterministicCrossOriginCrypto = { getRandomValues: vi.fn() }
+
+  test.each([
+    ['backslash authority', '/\\evil.example'],
+    ['scheme-relative authority', '//evil.example/api/vf-cross'],
+    ['tab-normalized authority', '/\tevil.example'],
+    ['newline-normalized authority', '/\nevil.example'],
+    ['wrong proxy pathname', '/api/vf-cross/../other'],
+    ['query-bearing proxy pathname', '/api/vf-cross?capability=poison'],
+  ])('rejects %s before unwind capability generation or fetch', async (_label, baseUrl) => {
+    const fetchImpl = vi.fn()
+    const cryptoImpl = { getRandomValues: vi.fn() }
+
+    await expect(
+      reserveUnwind({
+        kernelAddress: KERNEL,
+        recipientHint: STELLAR_RECIPIENT,
+        baseUrl,
+        deps: { fetchImpl, cryptoImpl },
+      })
+    ).rejects.toThrow(/same-origin|proxy/i)
+
+    expect(cryptoImpl.getRandomValues).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
 
   test('ignores a cross-origin VITE relayer override for the default protected client', async () => {
     vi.stubEnv('VITE_CROSS_RELAYER_BASE', crossOrigin)
@@ -1394,13 +1808,13 @@ describe('same-origin capability transport', () => {
         }),
     ],
     [
-      'unwind handoff',
+      'unwind reserve',
       (fetchImpl) =>
-        postUnwind({
-          unwindTxHash: '0xdead',
-          stellarRecipient: 'GRECIPIENT',
+        reserveUnwind({
+          kernelAddress: KERNEL,
+          recipientHint: STELLAR_RECIPIENT,
           baseUrl: crossOrigin,
-          deps: { fetchImpl },
+          deps: { fetchImpl, cryptoImpl: deterministicCrossOriginCrypto },
         }),
     ],
   ])('rejects a direct cross-origin base URL before %s fetch', async (_label, call) => {

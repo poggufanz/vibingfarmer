@@ -136,6 +136,15 @@ const forwardIntent = (execId, overrides = {}) => ({
   ...overrides,
 });
 
+const reverseIntent = (execId, overrides = {}) => ({
+  execId,
+  sourceDomain: 6,
+  burnTxHash: BURN_REVERSE,
+  expectation: REVERSE_EXPECTATION,
+  now: T0,
+  ...overrides,
+});
+
 function enqueuePending(store, execId = 'exec-1', overrides = {}) {
   return store.enqueue(forwardIntent(execId, overrides));
 }
@@ -264,6 +273,29 @@ function defineRelayStoreContract(label, makeHandle) {
       throwsCode(() => h.store.enqueue(forwardIntent('exec-2')), 'RELAY_ENQUEUE_CONFLICT');
       expect(h.store.get('exec-2')).toBeNull();
       expect(h.reopen().get('exec-1')).toEqual(pendingRecord('exec-1'));
+    });
+
+    // Task 12: an ERC-4337 bundle transaction may contain independent successful UserOps.
+    // Catches treating the outer transaction hash alone as reverse relay authority/uniqueness.
+    it('allows one reverse bundle transaction to own two distinct immutable expectations', () => {
+      const h = makeHandle();
+      const first = h.store.enqueue(reverseIntent('reverse-1'));
+      const secondExpectation = { ...REVERSE_EXPECTATION, amount: '7654321' };
+      const second = h.store.enqueue(reverseIntent('reverse-2', {
+        expectation: secondExpectation,
+      }));
+
+      expect(first).toMatchObject({ burnTxHash: BURN_REVERSE });
+      expect(second).toMatchObject({ burnTxHash: BURN_REVERSE });
+      expect(h.store.get('reverse-2').expectation.amount).toBe('7654321');
+    });
+
+    // Catches silently assigning indistinguishable source evidence to an arbitrary execution.
+    it('blocks the same reverse transaction and immutable expectation under another execId', () => {
+      const h = makeHandle();
+      h.store.enqueue(reverseIntent('reverse-1'));
+      throwsCode(() => h.store.enqueue(reverseIntent('reverse-2')), 'RELAY_ENQUEUE_CONFLICT');
+      expect(h.store.get('reverse-2')).toBeNull();
     });
 
     // Regression caught: malformed identity entered the durable queue and was later
@@ -833,5 +865,93 @@ describe('legacy file records fail closed (legacy_record_unrecoverable)', () => 
     const reopened = createFileStore(path);
     expect(reopened.get('legacy-minted').state).toBe('blocked');
     expect(reopened.statusOf('legacy-minted').mintTxHash).toBeNull();
+  });
+
+  it('quarantines a current-looking legacy Base relay row with no Task12 unwind authority', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vf-relay-legacy-base-'));
+    const path = join(dir, 'store.json');
+    const execId = 'legacy-base-valid-looking';
+    writeFileSync(path, JSON.stringify({
+      [execId]: {
+        execId,
+        sourceDomain: 6,
+        burnTxHash: BURN_REVERSE,
+        expectation: REVERSE_EXPECTATION,
+        expectationDigest: REVERSE_EXPECTATION_DIGEST,
+        state: 'mint_submitted',
+        messageHex: MESSAGE_HEX,
+        nonceHex: NONCE_HEX,
+        messageDigest: MESSAGE_DIGEST,
+        attestationHex: ATTESTATION_HEX,
+        attestationDigest: ATTESTATION_DIGEST,
+        evidenceVersion: 1,
+        mintTxHash: MINT_STELLAR,
+        reasonCode: null,
+        attempts: 3,
+        leaseToken: 'legacy-base-lease',
+        leaseExpiresAt: T0 + 60_000,
+        createdAt: T0,
+        updatedAt: T0,
+      },
+    }, null, 2));
+
+    const store = createFileStore(path);
+    expect(store.get(execId)).toMatchObject({
+      execId,
+      sourceDomain: 6,
+      state: 'blocked',
+      reasonCode: 'legacy_record_unrecoverable',
+      leaseToken: null,
+      leaseExpiresAt: null,
+      mintTxHash: null,
+    });
+    expect(store.listForSweep({ now: T0, limit: 100 })).toEqual([]);
+    expect(store.claim({ execId, now: T0, leaseMs: 60_000 })).toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(store, 'attachAndEnqueue')).toBe(false);
+
+    const reopened = createFileStore(path);
+    expect(reopened.statusOf(execId)).toMatchObject({
+      state: 'blocked', reasonCode: 'legacy_record_unrecoverable', mintTxHash: null,
+    });
+  });
+
+  it.each([
+    ['domain', (record) => { record.sourceDomain = 999; }],
+    ['burn hash', (record) => { record.burnTxHash = 'not-a-hash'; }],
+    ['expectation', (record) => { record.expectation = {}; }],
+    ['expectation digest', (record) => { record.expectationDigest = 'zz'; }],
+  ])('quarantines a current-looking forward file row with malformed %s', (_label, corrupt) => {
+    const dir = mkdtempSync(join(tmpdir(), 'vf-relay-invalid-current-'));
+    const path = join(dir, 'store.json');
+    const execId = 'invalid-current-forward';
+    const record = {
+      execId,
+      sourceDomain: 27,
+      burnTxHash: BURN_FORWARD,
+      expectation: structuredClone(FORWARD_EXPECTATION),
+      expectationDigest: FORWARD_EXPECTATION_DIGEST,
+      state: 'attestation_pending',
+      messageHex: null,
+      nonceHex: null,
+      messageDigest: null,
+      attestationHex: null,
+      attestationDigest: null,
+      evidenceVersion: 0,
+      mintTxHash: null,
+      reasonCode: null,
+      attempts: 0,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      createdAt: T0,
+      updatedAt: T0,
+    };
+    corrupt(record);
+    writeFileSync(path, JSON.stringify({ [execId]: record }));
+
+    const store = createFileStore(path);
+    expect(store.get(execId)).toMatchObject({
+      state: 'blocked', reasonCode: 'legacy_record_unrecoverable', mintTxHash: null,
+    });
+    expect(store.listForSweep({ now: T0, limit: 1 })).toEqual([]);
   });
 });

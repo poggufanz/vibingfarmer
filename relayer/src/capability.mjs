@@ -1,11 +1,16 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 const MANDATE_ID_PATTERN = /^[0-9a-f]{32}$/;
+const UNWIND_JOB_ID_PATTERN = /^[0-9a-f]{32}$/;
 const CAPABILITY_PATTERN = /^[0-9a-f]{64}$/;
 const CAPABILITY_HASH_PATTERN = /^[0-9a-f]{64}$/;
 
 function invalidCapabilityError() {
   return new Error('invalid mandate capability');
+}
+
+function invalidUnwindCapabilityError() {
+  return new Error('invalid unwind capability');
 }
 
 function isMandateId(value) {
@@ -53,6 +58,17 @@ export function mandateCookieName(mandateId) {
   return `__Host-vf-mandate-${requireMandateId(mandateId)}`;
 }
 
+export function requireUnwindJobId(value) {
+  if (typeof value !== 'string' || !UNWIND_JOB_ID_PATTERN.test(value)) {
+    throw invalidUnwindCapabilityError();
+  }
+  return value;
+}
+
+export function unwindCookieName(jobId) {
+  return `__Host-vf-unwind-${requireUnwindJobId(jobId)}`;
+}
+
 function requireCookieMaxAgeSeconds(value) {
   if (!Number.isSafeInteger(value) || value <= 0) throw invalidCapabilityError();
   return value;
@@ -70,6 +86,11 @@ export function serializeMandateCapabilityCookie(input) {
     capability: requireCapability(capability),
     maxAgeSeconds: requireCookieMaxAgeSeconds(maxAgeSeconds),
   });
+}
+
+export function serializeUnwindCapabilityCookie(input) {
+  const { jobId, capability, maxAgeSeconds } = input ?? {};
+  return `${unwindCookieName(jobId)}=${requireCapability(capability)}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=${requireCookieMaxAgeSeconds(maxAgeSeconds)}`;
 }
 
 export function clearMandateCapabilityCookie(input) {

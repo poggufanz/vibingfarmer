@@ -18,6 +18,34 @@ const APPROVED_POOL_TARGETS = new Map([
   ['0x5e843a639f0555e2a6669601621befc887bdb479', 'morpho-blue'],
   ['0xadd3c1a75c7cef2516b51750959bd829a4ad4761', 'moonwell'],
 ]);
+const UNWIND_ENTRY_POINT = '0x0000000071727De22E5E9d8BAf0edAc6f37da032';
+const UNWIND_SWEEPER = `0x${'44'.repeat(20)}`;
+const BASE_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+const BASE_TOKEN_MESSENGER = '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA';
+const BASE_MESSAGE_TRANSMITTER = '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275';
+const STELLAR_TOKEN_MESSENGER = 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP';
+const STELLAR_TOKEN_MESSENGER_BYTES32 =
+  '0xda6f9ee0786c812344d82817ef19b648b4af120f8bd10bf658e6b99eacff24b8';
+const STELLAR_FORWARDER = 'CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ';
+const STELLAR_FORWARDER_BYTES32 =
+  '0x3de86ac50b47eaf2840fe23e48179551660fd1072fba6f445d4a6bd7af4ab93e';
+
+function activeHardenedDeployment() {
+  return {
+    generation: 'hardened-v2',
+    chainId: 84532,
+    baseExitSweeper: { address: UNWIND_SWEEPER },
+    route: {
+      usdcAddress: BASE_USDC,
+      tokenMessengerAddress: BASE_TOKEN_MESSENGER,
+      stellarDomain: 27,
+      mintRecipient: STELLAR_FORWARDER_BYTES32,
+      destinationCaller: STELLAR_FORWARDER_BYTES32,
+      finalityThreshold: 1000,
+    },
+    pools: { enabled: [...APPROVED_POOLS] },
+  };
+}
 
 function sha256Json(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -52,8 +80,27 @@ function productionListenHarness({ baseCrossChainAvailable, local, remote }) {
   config.base.baseCrossChainAvailable = baseCrossChainAvailable;
   config.base.allowedPools = baseCrossChainAvailable ? [...APPROVED_POOLS] : [];
   config.base.hardenedDeployment = baseCrossChainAvailable
-    ? { pools: { enabled: [...APPROVED_POOLS] } }
+    ? activeHardenedDeployment()
     : null;
+  if (baseCrossChainAvailable) {
+    config.base.chain = { id: 84532 };
+    config.base.usdcAddress = BASE_USDC;
+    config.base.baseExitSweeperAddress = UNWIND_SWEEPER;
+    config.base.tokenMessengerV2Address = BASE_TOKEN_MESSENGER;
+    config.base.messageTransmitterAddress = BASE_MESSAGE_TRANSMITTER;
+    config.base.mandatePolicy = {
+      entryPointVersion: '0.7', entryPointAddress: UNWIND_ENTRY_POINT,
+    };
+    config.base.bundlerRpcUrl = 'https://bundler.invalid';
+    Object.defineProperty(config.base, 'publicClient', {
+      value: { getChainId() {}, getTransactionReceipt() {} },
+    });
+    config.stellar = {
+      tokenMessengerMinter: STELLAR_TOKEN_MESSENGER,
+      forwarderAddress: STELLAR_FORWARDER,
+    };
+    config.domains = { base: 6, stellar: 27 };
+  }
   config.publicRuntime.baseCrossChainAvailable = baseCrossChainAvailable;
   config.publicRuntime.unavailableReason = baseCrossChainAvailable
     ? null : 'Hardened Base deployment is not active.';
@@ -61,20 +108,34 @@ function productionListenHarness({ baseCrossChainAvailable, local, remote }) {
     value: Object.freeze({ seal() {}, open() {} }),
     enumerable: false,
   });
-  const state = { listenerCalls: 0, reporterOptions: null };
+  const state = {
+    listenerCalls: 0, reporterOptions: null, workerOptions: null,
+    workerStops: 0, sweepCalls: [], unwindResumeCalls: [], reverseResumeCalls: [],
+    closeCallbacks: [], order: [], routerDeps: null,
+  };
   const sqlite = {
     probe: async () => local,
     jobs: new Map(),
     mandatesV3: {},
     mandateActivations: {},
+    cctpRelays: {},
+    unwindJobs: {},
   };
   const router = async () => {};
   router.resumeMandateActivations = async () => ({ resumed: [], held: [] });
+  router.resumeUnwindJobs = async (options) => {
+    state.order.push('unwind');
+    state.unwindResumeCalls.push(options);
+    return { resumed: [], held: [], blocked: [], uncertain: [], expired: [] };
+  };
   router.resumeFarmJobs = async () => ({ resumed: [], held: [], blocked: [], uncertain: [] });
   const httpServer = {
-    listen() { state.listenerCalls += 1; },
-    on() { return this; },
-    close() {},
+    listen() { state.listenerCalls += 1; state.order.push('listen'); },
+    on(event, callback) {
+      if (event === 'close') state.closeCallbacks.push(callback);
+      return this;
+    },
+    close() { for (const callback of state.closeCallbacks) callback(); },
   };
   const relayer = serverModule.createRelayerServer(config, {
     openSqlite: () => sqlite,
@@ -84,13 +145,52 @@ function productionListenHarness({ baseCrossChainAvailable, local, remote }) {
         return remote;
       },
     }),
-    createRouter: () => router,
+    createUnwindBundlerClient: () => ({ getUserOperation() {}, getUserOperationReceipt() {} }),
+    createWatcherFn: () => ({
+      relayMint() {},
+      async resumeExisting(execId) {
+        state.reverseResumeCalls.push(execId);
+        return { status: 'in-progress' };
+      },
+      async sweepStuck(options) {
+        state.order.push('cctp');
+        state.sweepCalls.push(options);
+        return { redriven: [], held: [], blocked: [], uncertain: [] };
+      },
+    }),
+    startUnwindRecoveryWorkerFn(options) {
+      state.order.push('worker');
+      state.workerOptions = options;
+      return { stop() { state.workerStops += 1; } };
+    },
+    createRouter: (deps) => { state.routerDeps = deps; return router; },
     createHttpServer: () => httpServer,
   });
   return { relayer, state, httpServer };
 }
 
 describe('runtimeServerConfig', () => {
+  it.each(['/unwind', '/unwind/attach', '/status'])(
+    'marks protected tunnel-auth 401 no-store before routing %s',
+    async (path) => {
+      let routed = false;
+      const headers = {};
+      const response = {
+        statusCode: 0,
+        setHeader(name, value) { headers[name] = value; },
+        end(body) { this.body = body; },
+      };
+      const handler = serverModule.withProxyKeyAuth(() => { routed = true; }, 'proxy-secret');
+      await handler({
+        method: 'POST', url: `/api/vf-cross${path}`, headers: { 'x-vf-relayer-key': 'wrong' },
+      }, response);
+      expect(response.statusCode).toBe(401);
+      expect(headers['Cache-Control']).toBe('no-store');
+      expect(headers['Access-Control-Allow-Origin']).toBeUndefined();
+      expect(routed).toBe(false);
+    },
+  );
+
   it('uses the validated config object and never ambient process.env values', () => {
     const config = {
       publicOrigin: 'https://canonical-relay.example',
@@ -126,6 +226,7 @@ describe('runtimeServerConfig', () => {
       writable: true,
       baseEvidenceDurable: true,
       farmIntentDurable: true,
+      unwindDurable: true,
       legacyMandateTables: [],
       mandateMigrationCleanupPending: false,
     }) };
@@ -180,6 +281,29 @@ describe('runtimeServerConfig', () => {
     expect(reporterCalls).toBe(0);
   });
 
+  it('requires the dedicated durable unwind authority before active-Base startup', async () => {
+    let reporterCalls = 0;
+    await expect(serverModule.verifyRelayerReadiness({
+      sqlite: { probe: async () => ({
+        writable: true,
+        baseEvidenceDurable: true,
+        farmIntentDurable: true,
+        unwindDurable: false,
+        legacyMandateTables: [],
+        mandateMigrationCleanupPending: false,
+      }) },
+      reporter: { probe: async () => {
+        reporterCalls += 1;
+        return {
+          ready: true, schemaVersion: 1,
+          stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
+        };
+      } },
+      baseCrossChainAvailable: true,
+    })).rejects.toThrow(/unwind.*durable|durable.*unwind/i);
+    expect(reporterCalls).toBe(0);
+  });
+
   it.each([
     ['wrong schema acknowledgement', { ready: true, schemaVersion: 2, stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true } }],
     ['missing receipt store', { ready: true, schemaVersion: 1, stores: { baseChildIntents: true, baseRecoveryEvidence: true } }],
@@ -194,6 +318,7 @@ describe('runtimeServerConfig', () => {
         writable: true,
         baseEvidenceDurable: true,
         farmIntentDurable: true,
+        unwindDurable: true,
         legacyMandateTables: [],
         mandateMigrationCleanupPending: false,
       }) },
@@ -203,10 +328,12 @@ describe('runtimeServerConfig', () => {
 
   it.each([
     ['missing Base evidence durability flag', {
-      writable: true, farmIntentDurable: true, legacyMandateTables: [], mandateMigrationCleanupPending: false,
+      writable: true, farmIntentDurable: true, unwindDurable: true,
+      legacyMandateTables: [], mandateMigrationCleanupPending: false,
     }],
     ['missing farm intent durability flag', {
-      writable: true, baseEvidenceDurable: true, legacyMandateTables: [], mandateMigrationCleanupPending: false,
+      writable: true, baseEvidenceDurable: true, unwindDurable: true,
+      legacyMandateTables: [], mandateMigrationCleanupPending: false,
     }],
     ['missing writable flag', { legacyMandateTables: [], mandateMigrationCleanupPending: false }],
     ['false writable flag', {
@@ -259,6 +386,7 @@ describe('runtimeServerConfig', () => {
           writable: true,
           baseEvidenceDurable: true,
           farmIntentDurable: true,
+          unwindDurable: true,
           legacyMandateTables,
           mandateMigrationCleanupPending: false,
         }) },
@@ -527,6 +655,124 @@ describe('runtimeServerConfig', () => {
     expect(routerDeps.forwardFarmDeployment.poolTargets).toBe(routerDeps.poolTargets);
   });
 
+  it('composes active production unwind with the dedicated SQLite authority and two read-only clients', () => {
+    const config = serverConfig({ mode: 'production' });
+    config.base.baseCrossChainAvailable = true;
+    config.publicRuntime.baseCrossChainAvailable = true;
+    config.publicRuntime.unavailableReason = null;
+    config.base.allowedPools = [...APPROVED_POOLS];
+    config.base.chain = { id: 84532 };
+    config.base.hardenedDeployment = activeHardenedDeployment();
+    config.base.usdcAddress = BASE_USDC;
+    config.base.baseExitSweeperAddress = UNWIND_SWEEPER;
+    config.base.tokenMessengerV2Address = BASE_TOKEN_MESSENGER;
+    config.base.messageTransmitterAddress = BASE_MESSAGE_TRANSMITTER;
+    config.base.mandatePolicy = {
+      entryPointVersion: '0.7', entryPointAddress: UNWIND_ENTRY_POINT,
+    };
+    config.base.bundlerRpcUrl = 'https://bundler.invalid';
+    const publicClient = Object.freeze({
+      getChainId() {}, getTransactionReceipt() {},
+    });
+    Object.defineProperty(config.base, 'publicClient', { value: publicClient });
+    config.stellar = {
+      tokenMessengerMinter: STELLAR_TOKEN_MESSENGER,
+      forwarderAddress: STELLAR_FORWARDER,
+      usdcSac: 'stellar-usdc',
+    };
+    config.domains = { base: 6, stellar: 27 };
+    Object.defineProperty(config, 'sessionKeyCipher', {
+      value: Object.freeze({ seal() {}, open() {} }), enumerable: false,
+    });
+    const unwindJobs = Object.freeze({ reserve() {} });
+    const sqlite = {
+      jobs: new Map(), mandatesV3: {}, mandateActivations: {},
+      cctpRelays: {}, unwindJobs,
+    };
+    const bundlerClient = Object.freeze({ getUserOperation() {}, getUserOperationReceipt() {} });
+    let bundlerInput;
+    let routerDeps;
+
+    serverModule.createRelayerServer(config, {
+      openSqlite: () => sqlite,
+      createUnwindBundlerClient(input) {
+        bundlerInput = input;
+        return bundlerClient;
+      },
+      createRouter(deps) { routerDeps = deps; return async () => {}; },
+    });
+
+    expect(bundlerInput).toEqual({ chain: config.base.chain, rpcUrl: config.base.bundlerRpcUrl });
+    expect(routerDeps).toMatchObject({
+      unwindJobs,
+      unwindPublicClient: publicClient,
+      unwindBundlerClient: bundlerClient,
+      readUnwindEvidence: expect.any(Function),
+      relayReverseMint: expect.any(Function),
+      unwindEvidenceFacts: {
+        generation: 'hardened-v2',
+        chainId: 84532,
+        entryPointAddress: UNWIND_ENTRY_POINT.toLowerCase(),
+        baseExitSweeperAddress: UNWIND_SWEEPER.toLowerCase(),
+        usdcAddress: BASE_USDC.toLowerCase(),
+        tokenMessengerV2Address: BASE_TOKEN_MESSENGER.toLowerCase(),
+        messageTransmitterV2Address: BASE_MESSAGE_TRANSMITTER.toLowerCase(),
+        stellarDomain: 27,
+        stellarTokenMessenger: STELLAR_TOKEN_MESSENGER_BYTES32,
+        cctpForwarder: STELLAR_FORWARDER_BYTES32,
+        finalityThreshold: 1000,
+      },
+    });
+    expect(routerDeps.unwindJobs).not.toBe(routerDeps.jobs);
+  });
+
+  it('composes the same complete unwind authority in active non-production mode', () => {
+    const config = serverConfig({ mode: 'development' });
+    config.base.baseCrossChainAvailable = true;
+    config.publicRuntime.baseCrossChainAvailable = true;
+    config.publicRuntime.unavailableReason = null;
+    config.base.allowedPools = [...APPROVED_POOLS];
+    config.base.chain = { id: 84532 };
+    config.base.hardenedDeployment = activeHardenedDeployment();
+    Object.assign(config.base, {
+      usdcAddress: BASE_USDC,
+      baseExitSweeperAddress: UNWIND_SWEEPER,
+      tokenMessengerV2Address: BASE_TOKEN_MESSENGER,
+      messageTransmitterAddress: BASE_MESSAGE_TRANSMITTER,
+      mandatePolicy: { entryPointVersion: '0.7', entryPointAddress: UNWIND_ENTRY_POINT },
+      bundlerRpcUrl: 'https://bundler.invalid',
+    });
+    const publicClient = { getChainId() {}, getTransactionReceipt() {} };
+    Object.defineProperty(config.base, 'publicClient', { value: publicClient });
+    config.stellar = {
+      tokenMessengerMinter: STELLAR_TOKEN_MESSENGER,
+      forwarderAddress: STELLAR_FORWARDER,
+    };
+    config.domains = { base: 6, stellar: 27 };
+    Object.defineProperty(config, 'sessionKeyCipher', {
+      value: Object.freeze({ seal() {}, open() {} }), enumerable: false,
+    });
+    const unwindJobs = {};
+    const sqlite = {
+      jobs: new Map(), mandatesV3: {}, mandateActivations: {}, cctpRelays: {}, unwindJobs,
+    };
+    const bundlerClient = { getUserOperation() {}, getUserOperationReceipt() {} };
+    let routerDeps;
+
+    serverModule.createRelayerServer(config, {
+      openSqlite: () => sqlite,
+      createUnwindBundlerClient: () => bundlerClient,
+      createRouter(deps) { routerDeps = deps; return async () => {}; },
+    });
+
+    expect(routerDeps).toMatchObject({
+      unwindJobs,
+      unwindPublicClient: publicClient,
+      unwindBundlerClient: bundlerClient,
+      unwindEvidenceFacts: { generation: 'hardened-v2', chainId: 84532 },
+    });
+  });
+
   it.each([
     ['missing pool', APPROVED_POOLS.slice(0, 2)],
     ['unknown pool', [...APPROVED_POOLS.slice(0, 2), '0xABcdEFABcdEFabcdEfAbCdefabcdeFABcDEFabCD']],
@@ -602,6 +848,13 @@ describe('runtimeServerConfig', () => {
     await expect(relayer.listen(8788)).resolves.toBe(httpServer);
     expect(state.listenerCalls).toBe(1);
     expect(state.reporterOptions).toEqual({ baseCrossChainAvailable: false });
+    expect(state.workerOptions).toMatchObject({ recoveryLimit: 100, intervalMs: 5_000 });
+    expect(state.workerOptions.reconcileCctpRelays).toEqual(expect.any(Function));
+    expect(state.workerOptions.resumeUnwindJobs).toEqual(expect.any(Function));
+    expect(state.routerDeps.resumeExistingReverse).toEqual(expect.any(Function));
+    await state.routerDeps.resumeExistingReverse('unwind:proof-backed');
+    expect(state.reverseResumeCalls).toEqual(['unwind:proof-backed']);
+    expect(state.sweepCalls).toEqual([]);
   });
 
   it('keeps the actual production listener closed when active Base durability is absent', async () => {
@@ -617,6 +870,42 @@ describe('runtimeServerConfig', () => {
 
     await expect(relayer.listen(8788)).rejects.toThrow(/Base evidence|farm intent|durable/i);
     expect(state.listenerCalls).toBe(0);
+  });
+
+  it('composes, bounds, and stops the recurring active unwind recovery worker around the listener', async () => {
+    const { relayer, state, httpServer } = productionListenHarness({
+      baseCrossChainAvailable: true,
+      local: {
+        writable: true,
+        baseEvidenceDurable: true,
+        farmIntentDurable: true,
+        unwindDurable: true,
+        legacyMandateTables: [],
+        mandateMigrationCleanupPending: false,
+      },
+      remote: {
+        ready: true,
+        schemaVersion: 1,
+        stores: {
+          executionReceipts: true,
+          baseChildIntents: true,
+          baseRecoveryEvidence: true,
+        },
+      },
+    });
+
+    await expect(relayer.listen(8788)).resolves.toBe(httpServer);
+    expect(state.order).toEqual(['cctp', 'unwind', 'worker', 'listen']);
+    expect(state.workerOptions).toMatchObject({ recoveryLimit: 100, intervalMs: 5_000 });
+    expect(state.workerOptions.reconcileCctpRelays).toEqual(expect.any(Function));
+    expect(state.workerOptions.resumeUnwindJobs).toEqual(expect.any(Function));
+
+    await state.workerOptions.reconcileCctpRelays({ limit: 7 });
+    await state.workerOptions.resumeUnwindJobs({ limit: 7 });
+    expect(state.sweepCalls.at(-1)).toEqual({ limit: 7 });
+    expect(state.unwindResumeCalls.at(-1)).toEqual({ limit: 7 });
+    httpServer.close();
+    expect(state.workerStops).toBe(1);
   });
 
   it('rejects the offline plaintext-key migration flag before constructing an HTTP server', () => {
@@ -717,6 +1006,11 @@ describe('runtimeServerConfig', () => {
         await Promise.resolve();
         order.push('activation-done');
       };
+      router.resumeUnwindJobs = async () => {
+        order.push('unwind-start');
+        await Promise.resolve();
+        order.push('unwind-done');
+      };
       router.resumeFarmJobs = async () => {
         order.push('farm-start');
         await Promise.resolve();
@@ -754,6 +1048,8 @@ describe('runtimeServerConfig', () => {
         expect(order).toEqual([
           'activation-start',
           'activation-done',
+          'unwind-start',
+          'unwind-done',
           'farm-start',
           'farm-done',
           'socket-create',
@@ -774,16 +1070,97 @@ describe('runtimeServerConfig', () => {
   });
 });
 
+describe('Task 12 recurring unwind recovery worker', () => {
+  it('redrives Task8 before unwind projection on bounded non-overlapping ticks and stops cleanly', async () => {
+    const calls = [];
+    const errors = [];
+    let scheduled;
+    let cancelled = null;
+    let releaseFirst;
+    const first = new Promise((resolve) => { releaseFirst = resolve; });
+    let cctpTicks = 0;
+    const worker = serverModule.startUnwindRecoveryWorker({
+      recoveryLimit: 7,
+      intervalMs: 1_000,
+      reconcileCctpRelays: async ({ limit }) => {
+        calls.push(`cctp:${limit}`);
+        cctpTicks += 1;
+        if (cctpTicks === 1) await first;
+      },
+      resumeUnwindJobs: async ({ limit }) => { calls.push(`unwind:${limit}`); },
+      schedule(callback, intervalMs) {
+        expect(intervalMs).toBe(1_000);
+        scheduled = callback;
+        return { unref() { calls.push('unref'); } };
+      },
+      cancel(timer) { cancelled = timer; },
+      onError(error) { errors.push(error); },
+    });
+
+    const inFlight = worker.tick();
+    expect(await worker.tick()).toBe(false);
+    expect(calls).toEqual(['unref', 'cctp:7']);
+    releaseFirst();
+    expect(await inFlight).toBe(true);
+    expect(calls).toEqual(['unref', 'cctp:7', 'unwind:7']);
+
+    await scheduled();
+    expect(calls.slice(-2)).toEqual(['cctp:7', 'unwind:7']);
+    worker.stop();
+    expect(cancelled).not.toBeNull();
+    expect(await worker.tick()).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  it('retries a transient Task8 hold on a later tick without restart or duplicate completion', async () => {
+    let relayState = 'attestation_pending';
+    let attempts = 0;
+    let completions = 0;
+    const projections = [];
+    const worker = serverModule.startUnwindRecoveryWorker({
+      recoveryLimit: 2,
+      intervalMs: 1_000,
+      schedule: () => ({ unref() {} }),
+      cancel() {},
+      onError() {},
+      reconcileCctpRelays: async () => {
+        if (relayState === 'minted') return;
+        attempts += 1;
+        if (attempts === 1) throw Object.assign(new Error('iris transient'), {
+          code: 'RELAY_RETRYABLE',
+        });
+        relayState = 'minted';
+        completions += 1;
+      },
+      resumeUnwindJobs: async () => { projections.push(relayState); },
+    });
+
+    expect(await worker.tick()).toBe(false);
+    expect(relayState).toBe('attestation_pending');
+    expect(await worker.tick()).toBe(true);
+    expect(await worker.tick()).toBe(true);
+    expect({ attempts, completions, projections }).toEqual({
+      attempts: 2, completions: 1, projections: ['minted', 'minted'],
+    });
+    worker.stop();
+  });
+});
+
 describe('Task 11 production startup ordering', () => {
   // Defect caught: the listener and association delivery could start before durable CCTP truth
   // was reconciled or before the separate Base-evidence outbox worker existed.
-  it('awaits readiness, mandate, CCTP, and farm recovery before both workers and listening', async () => {
+  it('awaits readiness, mandate, CCTP, unwind, and farm recovery before both workers and listening', async () => {
     const order = [];
     const started = await serverModule.startVerifiedRelayer({
       verifyReadiness: async () => { order.push('readiness'); },
       resumeMandateActivations: async () => { order.push('mandate'); },
       reconcileCctpRelays: async () => { order.push('cctp'); },
+      resumeUnwindJobs: async () => { order.push('unwind'); },
       resumeFarmJobs: async () => { order.push('farm'); },
+      startUnwindRecoveryWorker: () => {
+        order.push('unwind-worker');
+        return { stop: () => order.push('unwind-worker-stop') };
+      },
       startBaseEvidenceWorker: () => {
         order.push('base-evidence');
         return { stop: () => order.push('base-evidence-stop') };
@@ -795,11 +1172,31 @@ describe('Task 11 production startup ordering', () => {
       openListener: () => { order.push('listen'); return { close() {} }; },
     });
     expect(order).toEqual([
-      'readiness', 'mandate', 'cctp', 'farm', 'base-evidence', 'association', 'listen',
+      'readiness', 'mandate', 'cctp', 'unwind', 'farm',
+      'unwind-worker', 'base-evidence', 'association', 'listen',
     ]);
-    expect(started.workers).toHaveLength(2);
+    expect(started.workers).toHaveLength(3);
     started.stopWorkers();
-    expect(order.slice(-2)).toEqual(['association-stop', 'base-evidence-stop']);
+    expect(order.slice(-3)).toEqual([
+      'association-stop', 'base-evidence-stop', 'unwind-worker-stop',
+    ]);
+  });
+
+  it('does not recover farms, start workers, or listen when unwind recovery fails', async () => {
+    const order = [];
+    await expect(serverModule.startVerifiedRelayer({
+      verifyReadiness: async () => { order.push('readiness'); },
+      resumeMandateActivations: async () => { order.push('mandate'); },
+      reconcileCctpRelays: async () => { order.push('cctp'); },
+      resumeUnwindJobs: async () => {
+        order.push('unwind');
+        throw new Error('unwind recovery unavailable');
+      },
+      resumeFarmJobs: async () => { order.push('farm'); },
+      startBaseEvidenceWorker: () => { order.push('worker'); return { stop() {} }; },
+      openListener: () => { order.push('listen'); return { close() {} }; },
+    })).rejects.toThrow(/unwind recovery unavailable/);
+    expect(order).toEqual(['readiness', 'mandate', 'cctp', 'unwind']);
   });
 
   it('stops both workers when the listener rejects asynchronously', async () => {

@@ -80,6 +80,28 @@ const APPROVE_ABI = [{
   inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }],
 }];
 
+const EVM_TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+
+function requireCanonicalBaseTxHash(value, step) {
+  if (typeof value !== 'string' || !EVM_TX_HASH_RE.test(value)) {
+    throw new Error(`burnBaseWithHook: ${step} hash was not canonical`);
+  }
+  return value;
+}
+
+function requireSuccessfulBaseReceipt(receipt, expectedHash, step) {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || receipt.status !== 'success'
+      || typeof receipt.transactionHash !== 'string'
+      || !EVM_TX_HASH_RE.test(receipt.transactionHash)
+      || typeof expectedHash !== 'string'
+      || !EVM_TX_HASH_RE.test(expectedHash)
+      || receipt.transactionHash.toLowerCase() !== expectedHash.toLowerCase()) {
+    throw new Error(`burnBaseWithHook: ${step} receipt was not successful`);
+  }
+  return receipt;
+}
+
 /**
  * Approves + burns Base USDC to the Stellar forwarder, with the recipient's G-address baked
  * into hookData. Validates hookData BEFORE broadcasting (assertHookData) — this is the one
@@ -91,18 +113,25 @@ export async function burnBaseWithHook({
 }) {
   assertHookData(hookData);
 
-  const approveHash = await walletClient.writeContract({
+  const approveHash = requireCanonicalBaseTxHash(await walletClient.writeContract({
     address: usdcAddress, abi: APPROVE_ABI, functionName: 'approve',
     args: [tokenMessengerV2Address, approveAmount6dp],
-  });
-  await publicClient.waitForTransactionReceipt({ hash: approveHash });
+  }), 'approval');
+  requireSuccessfulBaseReceipt(
+    await publicClient.waitForTransactionReceipt({ hash: approveHash }),
+    approveHash,
+    'approval',
+  );
 
-  const burnHash = await walletClient.writeContract({
+  const burnHash = requireCanonicalBaseTxHash(await walletClient.writeContract({
     address: tokenMessengerV2Address, abi: BURN_WITH_HOOK_ABI, functionName: 'depositForBurnWithHook',
     args: [amount6dp, destDomain, forwarder32, usdcAddress, forwarder32, maxFee, minFinality, hookData],
-  });
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: burnHash });
-  if (receipt.status !== 'success') throw new Error('burnBaseWithHook: burn reverted');
+  }), 'burn');
+  const receipt = requireSuccessfulBaseReceipt(
+    await publicClient.waitForTransactionReceipt({ hash: burnHash }),
+    burnHash,
+    'burn',
+  );
   return { hash: burnHash, status: receipt.status };
 }
 

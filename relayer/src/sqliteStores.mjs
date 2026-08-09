@@ -9,10 +9,16 @@ import { dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createAssociationOutbox } from './associationOutbox.mjs';
 import { createBaseEvidenceOutbox } from './baseEvidenceOutbox.mjs';
+import {
+  classifyUnwindSchema,
+  createUnwindStore,
+  prepareUnwindSchema,
+} from './unwindStore.mjs';
 export { buildForwardFarmIntent } from './farmIntent.mjs';
 import {
   RELAY_CLAIMABLE_STATES,
   relayEnqueueDecision,
+  relayIdentityConflicts,
   relayClaim,
   relayRenew,
   relayRecordAttested,
@@ -25,6 +31,7 @@ import {
   relayReconcileExpired,
   relayStatusOf,
   relayError,
+  assertCanonicalRelayRecord,
 } from './store.mjs';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -444,7 +451,145 @@ function prepareMandateSchema(db) {
 // (verified empirically against node:sqlite — a leading low-cardinality state column with a
 // NOT IN constraint yields SCAN + temp b-tree, never the index). The pinned name is kept;
 // leading (created_at, exec_id) is what makes the recovery listing index-backed.
-const CCTP_RELAY_WORK_SCHEMA = `
+const CCTP_RELAY_COLUMNS = Object.freeze([
+  'exec_id', 'source_domain', 'burn_tx_hash', 'expectation_json', 'expectation_digest',
+  'state', 'message_hex', 'nonce_hex', 'message_digest', 'attestation_hex',
+  'attestation_digest', 'evidence_version', 'mint_tx_hash', 'reason_code', 'attempts',
+  'lease_token', 'lease_expires_at', 'created_at', 'updated_at',
+]);
+
+// Literal deployed Task8/early-Task12 table definition. Keep this frozen: deriving it from the
+// hardened target would make a later CHECK addition silently change which real databases are
+// recognized for migration.
+const CCTP_V1_RELAY_TABLE_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS cctp_relay_work (
+    exec_id TEXT PRIMARY KEY,
+    source_domain INTEGER NOT NULL,
+    burn_tx_hash TEXT NOT NULL,
+    expectation_json TEXT NOT NULL,
+    expectation_digest TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN (
+      'attestation_pending','attested','mint_submitting','mint_submitted',
+      'minted','blocked','uncertain'
+    )),
+    message_hex TEXT,
+    nonce_hex TEXT,
+    message_digest TEXT,
+    attestation_hex TEXT,
+    attestation_digest TEXT,
+    evidence_version INTEGER NOT NULL DEFAULT 0,
+    mint_tx_hash TEXT,
+    reason_code TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
+    lease_expires_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    CHECK (state <> 'attested' OR (
+      message_hex IS NOT NULL AND nonce_hex IS NOT NULL AND message_digest IS NOT NULL
+      AND attestation_hex IS NOT NULL AND attestation_digest IS NOT NULL
+    )),
+    CHECK (state <> 'mint_submitted' OR mint_tx_hash IS NOT NULL),
+    CHECK (state <> 'minted' OR mint_tx_hash IS NOT NULL)
+  );`;
+
+const CCTP_RELAY_TABLE_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS cctp_relay_work (
+    exec_id TEXT PRIMARY KEY CHECK (length(exec_id) > 0),
+    source_domain INTEGER NOT NULL,
+    burn_tx_hash TEXT NOT NULL,
+    expectation_json TEXT NOT NULL,
+    expectation_digest TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN (
+      'attestation_pending','attested','mint_submitting','mint_submitted',
+      'minted','blocked','uncertain'
+    )),
+    message_hex TEXT,
+    nonce_hex TEXT,
+    message_digest TEXT,
+    attestation_hex TEXT,
+    attestation_digest TEXT,
+    evidence_version INTEGER NOT NULL DEFAULT 0 CHECK (evidence_version >= 0),
+    mint_tx_hash TEXT,
+    reason_code TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    lease_token TEXT,
+    lease_expires_at INTEGER,
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+    CHECK (
+      (reason_code IS 'legacy_record_unrecoverable'
+        AND state='blocked' AND mint_tx_hash IS NULL
+        AND lease_token IS NULL AND lease_expires_at IS NULL)
+      OR (reason_code IS NOT 'legacy_record_unrecoverable'
+        AND source_domain IN (6,27)
+        AND json_valid(expectation_json)
+        AND length(expectation_digest)=64
+        AND expectation_digest NOT GLOB '*[^0-9a-f]*'
+        AND ((source_domain=27 AND length(burn_tx_hash)=64
+              AND burn_tx_hash NOT GLOB '*[^0-9a-f]*')
+          OR (source_domain=6 AND length(burn_tx_hash)=66
+              AND substr(burn_tx_hash,1,2)='0x'
+              AND substr(burn_tx_hash,3) NOT GLOB '*[^0-9a-f]*')))
+    ),
+    CHECK ((lease_token IS NULL AND lease_expires_at IS NULL)
+      OR (typeof(lease_token)='text' AND length(lease_token)>0
+        AND typeof(lease_expires_at)='integer' AND lease_expires_at>=0)),
+    CHECK (state NOT IN ('minted','blocked','uncertain')
+      OR (lease_token IS NULL AND lease_expires_at IS NULL)),
+    CHECK (reason_code IS 'legacy_record_unrecoverable' OR (
+      (state='blocked' AND reason_code IN (
+        'message_mismatch','message_ambiguous','attested_evidence_changed',
+        'destination_reverted'
+      ))
+      OR (state='uncertain' AND reason_code IN (
+        'submission_unknown','submitted_checkpoint_failed','submission_lease_expired'
+      ))
+      OR (state NOT IN ('blocked','uncertain') AND reason_code IS NULL)
+    )),
+    CHECK (reason_code IS 'legacy_record_unrecoverable' OR (
+      (message_hex IS NULL AND nonce_hex IS NULL AND message_digest IS NULL
+        AND attestation_hex IS NULL AND attestation_digest IS NULL AND evidence_version=0)
+      OR (message_hex IS NOT NULL AND nonce_hex IS NOT NULL AND message_digest IS NOT NULL
+        AND attestation_hex IS NOT NULL AND attestation_digest IS NOT NULL
+        AND evidence_version>0)
+    )),
+    CHECK (reason_code IS 'legacy_record_unrecoverable' OR state='blocked' OR (
+      (state='attestation_pending' AND message_hex IS NULL)
+      OR (state IN ('attested','mint_submitting','mint_submitted','minted','uncertain')
+        AND message_hex IS NOT NULL)
+    )),
+    CHECK (reason_code IS 'legacy_record_unrecoverable'
+      OR state<>'mint_submitting' OR lease_token IS NOT NULL),
+    CHECK (reason_code IS 'legacy_record_unrecoverable'
+      OR state NOT IN ('mint_submitted','minted') OR mint_tx_hash IS NOT NULL)
+  );`;
+
+const CCTP_RELAY_INDEX_SCHEMA = `
+  CREATE INDEX IF NOT EXISTS idx_cctp_relay_recovery
+    ON cctp_relay_work(updated_at, created_at, exec_id, state, lease_token);
+  CREATE INDEX IF NOT EXISTS idx_cctp_relay_actionable
+    ON cctp_relay_work(updated_at, created_at, exec_id)
+    WHERE state IN ('attestation_pending','attested','mint_submitted')
+      AND lease_token IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_cctp_relay_expiry
+    ON cctp_relay_work(lease_expires_at, created_at, exec_id)
+    WHERE state IN ('attestation_pending','attested','mint_submitting','mint_submitted')
+      AND lease_token IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_cctp_relay_summary
+    ON cctp_relay_work(created_at, exec_id)
+    WHERE state IN ('blocked','uncertain') OR lease_token IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_cctp_relay_burn
+    ON cctp_relay_work(burn_tx_hash);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_cctp_relay_identity
+    ON cctp_relay_work(source_domain, burn_tx_hash, expectation_digest);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_cctp_relay_forward_burn
+    ON cctp_relay_work(source_domain, burn_tx_hash) WHERE source_domain = 27;
+`;
+
+const CCTP_RELAY_WORK_SCHEMA = `${CCTP_RELAY_TABLE_SCHEMA}\n${CCTP_RELAY_INDEX_SCHEMA}`;
+
+const CCTP_LEGACY_RELAY_TABLE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS cctp_relay_work (
     exec_id TEXT PRIMARY KEY,
     source_domain INTEGER NOT NULL,
@@ -474,10 +619,295 @@ const CCTP_RELAY_WORK_SCHEMA = `
     )),
     CHECK (state <> 'mint_submitted' OR mint_tx_hash IS NOT NULL),
     CHECK (state <> 'minted' OR mint_tx_hash IS NOT NULL)
-  );
-  CREATE INDEX IF NOT EXISTS idx_cctp_relay_recovery
-    ON cctp_relay_work(created_at, exec_id, state, lease_expires_at);
-`;
+  );`;
+
+function cctpTableSqlFingerprint(sql) {
+  return normalizedSchemaSql(sql)?.toLowerCase()
+    .replace('create table if not exists ', 'create table ');
+}
+
+let cctpTableReferences;
+
+function canonicalCctpTableReferences() {
+  if (cctpTableReferences) return cctpTableReferences;
+  const capture = (schema) => {
+    const reference = new DatabaseSync(':memory:');
+    try {
+      reference.exec(schema);
+      return cctpTableSqlFingerprint(reference.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='cctp_relay_work'",
+      ).get()?.sql);
+    } finally {
+      reference.close();
+    }
+  };
+  cctpTableReferences = Object.freeze({
+    legacy: capture(CCTP_LEGACY_RELAY_TABLE_SCHEMA),
+    v1: capture(CCTP_V1_RELAY_TABLE_SCHEMA),
+    current: capture(CCTP_RELAY_TABLE_SCHEMA),
+  });
+  return cctpTableReferences;
+}
+
+function cctpIndexes(db) {
+  return db.prepare('PRAGMA index_list(cctp_relay_work)').all().map((row) => ({
+    ...row,
+    columns: db.prepare(`PRAGMA index_info(${quoteSchemaIdentifier(row.name)})`).all()
+      .map(({ name }) => name),
+    sql: normalizedSchemaSql(db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+    ).get(row.name)?.sql)?.toLowerCase().replace(/\s*=\s*/g, '=') ?? null,
+  }));
+}
+
+const EXPECTED_CCTP_INDEXES = Object.freeze({
+  idx_cctp_relay_recovery: Object.freeze({
+    unique: 0, partial: 0,
+    columns: Object.freeze(['updated_at', 'created_at', 'exec_id', 'state', 'lease_token']),
+  }),
+  idx_cctp_relay_actionable: Object.freeze({
+    unique: 0, partial: 1,
+    columns: Object.freeze(['updated_at', 'created_at', 'exec_id']),
+    where: "where state in('attestation_pending','attested','mint_submitted')and lease_token is null",
+  }),
+  idx_cctp_relay_expiry: Object.freeze({
+    unique: 0, partial: 1,
+    columns: Object.freeze(['lease_expires_at', 'created_at', 'exec_id']),
+    where: "where state in('attestation_pending','attested','mint_submitting','mint_submitted')and lease_token is not null",
+  }),
+  idx_cctp_relay_summary: Object.freeze({
+    unique: 0, partial: 1,
+    columns: Object.freeze(['created_at', 'exec_id']),
+    where: "where state in('blocked','uncertain')or lease_token is not null",
+  }),
+  idx_cctp_relay_burn: Object.freeze({
+    unique: 0, partial: 0, columns: Object.freeze(['burn_tx_hash']),
+  }),
+  idx_cctp_relay_identity: Object.freeze({
+    unique: 1, partial: 0,
+    columns: Object.freeze(['source_domain', 'burn_tx_hash', 'expectation_digest']),
+  }),
+  idx_cctp_relay_forward_burn: Object.freeze({
+    unique: 1, partial: 1,
+    columns: Object.freeze(['source_domain', 'burn_tx_hash']),
+    where: 'where source_domain=27',
+  }),
+});
+
+const V1_EXPECTED_CCTP_INDEXES = Object.freeze({
+  idx_cctp_relay_recovery: Object.freeze({
+    unique: 0, partial: 0,
+    columns: Object.freeze(['created_at', 'exec_id', 'state', 'lease_expires_at']),
+  }),
+  idx_cctp_relay_burn: EXPECTED_CCTP_INDEXES.idx_cctp_relay_burn,
+  idx_cctp_relay_identity: EXPECTED_CCTP_INDEXES.idx_cctp_relay_identity,
+  idx_cctp_relay_forward_burn: EXPECTED_CCTP_INDEXES.idx_cctp_relay_forward_burn,
+});
+
+export function classifyCctpRelaySchema(db) {
+  const table = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='cctp_relay_work'",
+  ).get();
+  const expectedNames = new Set(['cctp_relay_work', ...Object.keys(EXPECTED_CCTP_INDEXES)]);
+  const targetReference = /(?:^|[^a-z0-9_])cctp_relay_work(?:$|[^a-z0-9_])/i;
+  const related = db.prepare(`
+    SELECT type,name,tbl_name,sql FROM sqlite_master
+    WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
+  `).all().filter(({ name, tbl_name: tableName, sql }) => (
+    name === 'cctp_relay_work' || tableName === 'cctp_relay_work'
+      || targetReference.test(String(sql))
+  ));
+  if (!table) {
+    if (related.length !== 0) throw new Error('CCTP relay-work schema has orphaned dependencies');
+    return { kind: 'absent' };
+  }
+  const unexpectedRelated = related.find(({ name }) => !expectedNames.has(name));
+  if (unexpectedRelated) throw new Error('CCTP relay-work schema has an unexpected dependency');
+  const columns = db.prepare('PRAGMA table_xinfo(cctp_relay_work)').all()
+    .map(({ name }) => name);
+  if (JSON.stringify(columns) !== JSON.stringify(CCTP_RELAY_COLUMNS)) {
+    throw new Error('CCTP relay-work schema is incompatible');
+  }
+  if (db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='trigger' AND tbl_name='cctp_relay_work' LIMIT 1",
+  ).get()) {
+    throw new Error('CCTP relay-work schema has an unexpected trigger');
+  }
+  const fingerprint = cctpTableSqlFingerprint(table.sql);
+  const references = canonicalCctpTableReferences();
+  const indexes = cctpIndexes(db);
+  const expectedNamed = new Set(Object.keys(EXPECTED_CCTP_INDEXES));
+  const unexpected = indexes.find(({ name }) => !name.startsWith('sqlite_autoindex_')
+    && !expectedNamed.has(name));
+  if (unexpected) throw new Error('CCTP relay-work schema has an unexpected index');
+  if (fingerprint === references.legacy) {
+    const burnUnique = indexes.some(({ unique, columns: indexColumns }) => unique === 1
+      && indexColumns.length === 1 && indexColumns[0] === 'burn_tx_hash');
+    if (!burnUnique) throw new Error('legacy CCTP relay-work uniqueness is incompatible');
+    if (indexes.some(({ name }) => !name.startsWith('sqlite_autoindex_')
+      && name !== 'idx_cctp_relay_recovery')) {
+      throw new Error('legacy CCTP relay-work index ensemble is incompatible');
+    }
+    return { kind: 'legacy-unique-burn' };
+  }
+  if (fingerprint === references.v1) {
+    const oneColumnBurnUnique = indexes.some(({ unique, columns: indexColumns }) => unique === 1
+      && indexColumns.length === 1 && indexColumns[0] === 'burn_tx_hash');
+    if (oneColumnBurnUnique) throw new Error('CCTP relay-work v1 retained legacy burn uniqueness');
+    for (const [name, expected] of Object.entries(V1_EXPECTED_CCTP_INDEXES)) {
+      const actual = indexes.find((index) => index.name === name);
+      if (!actual || actual.unique !== expected.unique || actual.partial !== expected.partial
+          || actual.origin !== 'c'
+          || JSON.stringify(actual.columns) !== JSON.stringify(expected.columns)
+          || (expected.where
+            ? !actual.sql?.endsWith(expected.where)
+            : actual.sql?.includes(' where '))) {
+        throw new Error(`CCTP relay-work v1 index ${name} is incompatible`);
+      }
+    }
+    return { kind: 'current-v1' };
+  }
+  if (fingerprint !== references.current) {
+    throw new Error('CCTP relay-work table definition is incompatible');
+  }
+  const oneColumnBurnUnique = indexes.some(({ unique, columns: indexColumns }) => unique === 1
+    && indexColumns.length === 1 && indexColumns[0] === 'burn_tx_hash');
+  if (oneColumnBurnUnique) throw new Error('CCTP relay-work retained legacy burn uniqueness');
+  const missing = [];
+  for (const [name, expected] of Object.entries(EXPECTED_CCTP_INDEXES)) {
+    const actual = indexes.find((index) => index.name === name);
+    if (!actual) {
+      missing.push(name);
+      continue;
+    }
+    const wrongShape = actual.unique !== expected.unique
+      || actual.partial !== expected.partial
+      || actual.origin !== 'c'
+      || JSON.stringify(actual.columns) !== JSON.stringify(expected.columns)
+      || (expected.where
+        ? !actual.sql?.endsWith(expected.where)
+        : actual.sql?.includes(' where '));
+    if (wrongShape) throw new Error(`CCTP relay-work schema index ${name} is incompatible`);
+  }
+  return missing.length === 0 ? { kind: 'current' } : { kind: 'current-incomplete', missing };
+}
+
+function cctpRecordFromRawRow(row) {
+  let expectation = null;
+  if (row.reason_code !== 'legacy_record_unrecoverable') {
+    expectation = JSON.parse(row.expectation_json);
+  } else {
+    try { expectation = JSON.parse(row.expectation_json); } catch { expectation = null; }
+  }
+  return {
+    execId: row.exec_id,
+    sourceDomain: row.source_domain,
+    burnTxHash: row.burn_tx_hash,
+    expectation,
+    expectationDigest: row.expectation_digest,
+    state: row.state,
+    messageHex: row.message_hex,
+    nonceHex: row.nonce_hex,
+    messageDigest: row.message_digest,
+    attestationHex: row.attestation_hex,
+    attestationDigest: row.attestation_digest,
+    evidenceVersion: row.evidence_version,
+    mintTxHash: row.mint_tx_hash,
+    reasonCode: row.reason_code,
+    attempts: row.attempts,
+    leaseToken: row.lease_token,
+    leaseExpiresAt: row.lease_expires_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function canonicalCctpRawRow(row) {
+  try {
+    assertCanonicalRelayRecord(cctpRecordFromRawRow(row));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function migratedCctpValues(row, { now, quarantine }) {
+  if (!quarantine) return CCTP_RELAY_COLUMNS.map((column) => row[column]);
+  const createdAt = Number.isSafeInteger(row.created_at) && row.created_at >= 0
+    ? row.created_at : Math.max(0, now);
+  const oldUpdatedAt = Number.isSafeInteger(row.updated_at) && row.updated_at >= createdAt
+    ? row.updated_at : createdAt;
+  const updatedAt = Math.max(createdAt, oldUpdatedAt, now);
+  return [
+    row.exec_id, row.source_domain, row.burn_tx_hash, row.expectation_json,
+    row.expectation_digest, 'blocked', row.message_hex, row.nonce_hex,
+    row.message_digest, row.attestation_hex, row.attestation_digest,
+    Number.isSafeInteger(row.evidence_version) && row.evidence_version >= 0
+      ? row.evidence_version : 0,
+    null, 'legacy_record_unrecoverable',
+    Number.isSafeInteger(row.attempts) && row.attempts >= 0 ? row.attempts : 0,
+    null, null, createdAt, updatedAt,
+  ];
+}
+
+function prepareCctpRelaySchema(db, { now, fault = () => {} }) {
+  const initial = classifyCctpRelaySchema(db);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const locked = classifyCctpRelaySchema(db);
+    if (JSON.stringify(locked) !== JSON.stringify(initial)) {
+      throw new Error('CCTP relay-work schema changed during initialization');
+    }
+    if (locked.kind === 'absent') {
+      db.exec(CCTP_RELAY_WORK_SCHEMA);
+    } else if (locked.kind === 'legacy-unique-burn' || locked.kind === 'current-v1') {
+      const legacyCount = db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n;
+      for (const name of Object.keys(EXPECTED_CCTP_INDEXES)) {
+        db.exec(`DROP INDEX IF EXISTS ${quoteSchemaIdentifier(name)}`);
+      }
+      db.exec('ALTER TABLE cctp_relay_work RENAME TO cctp_relay_work_task8_legacy');
+      fault('legacy_renamed');
+      db.exec(CCTP_RELAY_WORK_SCHEMA);
+      const insert = db.prepare(`
+        INSERT INTO cctp_relay_work (${CCTP_RELAY_COLUMNS.join(',')})
+        VALUES (${CCTP_RELAY_COLUMNS.map(() => '?').join(',')})
+      `);
+      for (const row of db.prepare(
+        'SELECT * FROM cctp_relay_work_task8_legacy ORDER BY exec_id',
+      ).all()) {
+        const invalid = !canonicalCctpRawRow(row);
+        // Both recognized source schemas predate Task12's cryptographic job commitment and
+        // dedicated proof authority. A matching wrapper row cannot upgrade their provenance:
+        // every still-actionable Base row is therefore an audit-only tombstone.
+        const unauthorisedBase = row.source_domain === 6
+          && !['minted', 'blocked', 'uncertain'].includes(row.state);
+        insert.run(...migratedCctpValues(row, {
+          now,
+          quarantine: invalid || unauthorisedBase,
+        }));
+      }
+      fault('rows_copied');
+      const copiedCount = db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n;
+      const activeBase = db.prepare(`
+        SELECT 1 FROM cctp_relay_work
+        WHERE source_domain=6 AND state NOT IN ('minted','blocked','uncertain') LIMIT 1
+      `).get();
+      if (copiedCount !== legacyCount || activeBase) {
+        throw new Error('CCTP relay-work migration copy verification failed');
+      }
+      db.exec('DROP TABLE cctp_relay_work_task8_legacy');
+    } else {
+      db.exec(CCTP_RELAY_INDEX_SCHEMA);
+    }
+    if (classifyCctpRelaySchema(db).kind !== 'current') {
+      throw new Error('CCTP relay-work schema initialization failed');
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 export const MANDATE_V3_SCHEMA = `
   CREATE TABLE IF NOT EXISTS mandates_v3 (
@@ -573,13 +1003,21 @@ export function createSqliteStores(path, {
   sessionKeyCipher,
   outboxMaxAttempts = 5,
   farmIntentFault = () => {},
+  cctpMigrationFault = () => {},
+  unwindFault = () => {},
 } = {}) {
   if (typeof farmIntentFault !== 'function') throw new Error('farm intent fault seam is invalid');
+  if (typeof cctpMigrationFault !== 'function') throw new Error('CCTP migration fault seam is invalid');
+  if (typeof unwindFault !== 'function') throw new Error('unwind fault seam is invalid');
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   try {
     db.exec('PRAGMA busy_timeout=5000');
     prepareMandateSchema(db);
+    const migrationNow = now();
+    if (!Number.isSafeInteger(migrationNow)) throw new Error('CCTP migration time is invalid');
+    prepareCctpRelaySchema(db, { now: migrationNow, fault: cctpMigrationFault });
+    prepareUnwindSchema(db);
     db.exec(`
     PRAGMA foreign_keys=ON;
     PRAGMA secure_delete=ON;
@@ -687,7 +1125,6 @@ export function createSqliteStores(path, {
       FOREIGN KEY (network_id,binding_id,execution_id,allocation_id,child_id)
         REFERENCES base_evidence_heads(network_id,binding_id,execution_id,allocation_id,child_id)
     );
-    ${CCTP_RELAY_WORK_SCHEMA}
     CREATE INDEX IF NOT EXISTS idx_association_outbox_delivery
       ON association_outbox (status, available_at, lease_expires_at, id);
     CREATE INDEX IF NOT EXISTS idx_association_outbox_child
@@ -745,6 +1182,10 @@ export function createSqliteStores(path, {
     leaseToken,
     registerTransactionEnqueue: (enqueue) => { enqueueBaseEvidenceInTransaction = enqueue; },
     registerTransactionClaim: (claim) => { claimBaseSubmissionInTransaction = claim; },
+  });
+  const unwindJobs = createUnwindStore(db, {
+    newToken: leaseToken,
+    attachFault: unwindFault,
   });
 
   const store = {
@@ -1179,9 +1620,12 @@ export function createSqliteStores(path, {
         const relayExecId = `forward-farm:${row.job_id}`;
         const decision = relayEnqueueDecision({
           existing: cctpGet(relayExecId),
-          hasBurnOwner: (hash) => Boolean(db.prepare(
-            'SELECT 1 FROM cctp_relay_work WHERE burn_tx_hash=? AND exec_id<>?',
-          ).get(hash, relayExecId)),
+          hasIdentityConflict: (candidate) => db.prepare(`
+            SELECT * FROM cctp_relay_work
+            WHERE source_domain=? AND burn_tx_hash=? AND exec_id<>?
+          `).all(candidate.sourceDomain, candidate.burnTxHash, relayExecId)
+            .map(cctpRowToRecord)
+            .some((record) => relayIdentityConflicts(record, candidate)),
           execId: relayExecId,
           sourceDomain: expectation.sourceDomain,
           burnTxHash,
@@ -2399,27 +2843,12 @@ export function createSqliteStores(path, {
 
   function cctpRowToRecord(row) {
     if (!row) return null;
-    return {
-      execId: row.exec_id,
-      sourceDomain: row.source_domain,
-      burnTxHash: row.burn_tx_hash,
-      expectation: JSON.parse(row.expectation_json),
-      expectationDigest: row.expectation_digest,
-      state: row.state,
-      messageHex: row.message_hex,
-      nonceHex: row.nonce_hex,
-      messageDigest: row.message_digest,
-      attestationHex: row.attestation_hex,
-      attestationDigest: row.attestation_digest,
-      evidenceVersion: row.evidence_version,
-      mintTxHash: row.mint_tx_hash,
-      reasonCode: row.reason_code,
-      attempts: row.attempts,
-      leaseToken: row.lease_token,
-      leaseExpiresAt: row.lease_expires_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
+    try {
+      return assertCanonicalRelayRecord(cctpRecordFromRawRow(row));
+    } catch (error) {
+      if (error?.code === 'RELAY_VALIDATION') throw error;
+      throw relayError('RELAY_VALIDATION', 'persisted relay expectation encoding is invalid');
+    }
   }
 
   const cctpSelect = () => db.prepare('SELECT * FROM cctp_relay_work WHERE exec_id = ?');
@@ -2477,9 +2906,12 @@ export function createSqliteStores(path, {
       return relayTransaction(() => {
         const decision = relayEnqueueDecision({
           existing: cctpGet(execId),
-          hasBurnOwner: (burn) => Boolean(db.prepare(
-            'SELECT 1 FROM cctp_relay_work WHERE burn_tx_hash = ? AND exec_id <> ?',
-          ).get(burn, execId)),
+          hasIdentityConflict: (candidate) => db.prepare(`
+            SELECT * FROM cctp_relay_work
+            WHERE source_domain=? AND burn_tx_hash=? AND exec_id<>?
+          `).all(candidate.sourceDomain, candidate.burnTxHash, execId)
+            .map(cctpRowToRecord)
+            .some((record) => relayIdentityConflicts(record, candidate)),
           execId,
           sourceDomain,
           burnTxHash,
@@ -2510,14 +2942,22 @@ export function createSqliteStores(path, {
       if (!Number.isSafeInteger(claimNow) || !Number.isSafeInteger(leaseMs) || leaseMs <= 0) {
         throw relayError('RELAY_VALIDATION', 'relay claim requires a safe-integer now and a positive safe-integer leaseMs');
       }
-      const row = db.prepare(`
-        UPDATE cctp_relay_work
-        SET attempts = attempts + 1, lease_token = ?, lease_expires_at = ?, updated_at = ?
-        WHERE exec_id = ? AND state IN ('attestation_pending','attested','mint_submitted')
-          AND lease_token IS NULL
-        RETURNING *
-      `).get(randomUUID(), claimNow + leaseMs, claimNow, execId);
-      return cctpRowToRecord(row);
+      return relayTransaction(() => {
+        // Validate durable truth under the same write lock before SQLite evaluates the
+        // hardened CHECKs on UPDATE. A bypass-injected corrupt row therefore yields the
+        // stable relay validation contract and never acquires a lease or leaks raw SQL.
+        const current = cctpGet(execId);
+        if (!current || !RELAY_CLAIMABLE_STATES.includes(current.state)
+            || current.leaseToken !== null) return null;
+        const row = db.prepare(`
+          UPDATE cctp_relay_work
+          SET attempts = attempts + 1, lease_token = ?, lease_expires_at = ?, updated_at = ?
+          WHERE exec_id = ? AND state IN ('attestation_pending','attested','mint_submitted')
+            AND lease_token IS NULL
+          RETURNING *
+        `).get(randomUUID(), claimNow + leaseMs, claimNow, execId);
+        return cctpRowToRecord(row);
+      });
     },
 
     renew({ execId, leaseToken, now: renewNow, leaseMs }) {
@@ -2561,9 +3001,21 @@ export function createSqliteStores(path, {
       requireSweepArgs(sweepNow, limit);
       const rows = db.prepare(includeTerminal
         ? "SELECT * FROM cctp_relay_work WHERE state <> 'minted' ORDER BY created_at, exec_id LIMIT ?"
-        : "SELECT * FROM cctp_relay_work WHERE state NOT IN ('minted','blocked','uncertain') ORDER BY created_at, exec_id LIMIT ?")
-        .all(limit);
+        : `SELECT * FROM cctp_relay_work
+           WHERE state IN ('attestation_pending','attested','mint_submitted')
+             AND lease_token IS NULL
+           ORDER BY updated_at,created_at,exec_id LIMIT ?`)
+        .all(...(includeTerminal ? [limit] : [limit]));
       return rows.map(cctpRowToRecord);
+    },
+
+    listSweepSummary({ now: summaryNow, limit }) {
+      requireSweepArgs(summaryNow, limit);
+      return db.prepare(`
+        SELECT * FROM cctp_relay_work
+        WHERE state IN ('blocked','uncertain') OR lease_token IS NOT NULL
+        ORDER BY created_at,exec_id LIMIT ?
+      `).all(limit).map(cctpRowToRecord);
     },
 
     reconcileExpired({ now: reconcileNow, limit }) {
@@ -2571,9 +3023,9 @@ export function createSqliteStores(path, {
       return relayTransaction(() => {
         const rows = db.prepare(`
           SELECT * FROM cctp_relay_work
-          WHERE lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
-            AND state NOT IN ('minted','blocked','uncertain')
-          ORDER BY created_at, exec_id LIMIT ?
+          WHERE state IN ('attestation_pending','attested','mint_submitting','mint_submitted')
+            AND lease_token IS NOT NULL AND lease_expires_at <= ?
+          ORDER BY lease_expires_at,created_at,exec_id LIMIT ?
         `).all(reconcileNow, limit);
         const reconciled = [];
         for (const row of rows) {
@@ -2594,6 +3046,34 @@ export function createSqliteStores(path, {
       });
     },
 
+    reconcileOne({ execId, now: reconcileNow }) {
+      if (!Number.isSafeInteger(reconcileNow) || reconcileNow < 0) {
+        throw relayError('RELAY_VALIDATION', 'relay reconciliation requires a non-negative safe-integer now');
+      }
+      return relayTransaction(() => {
+        const row = db.prepare('SELECT * FROM cctp_relay_work WHERE exec_id=?').get(execId);
+        if (!row) return null;
+        const current = cctpRowToRecord(row);
+        if (['minted', 'blocked', 'uncertain'].includes(current.state)
+            || current.leaseToken === null || current.leaseExpiresAt > reconcileNow) {
+          return current;
+        }
+        const next = relayReconcileExpired(current, reconcileNow);
+        const result = db.prepare(`
+          UPDATE cctp_relay_work
+          SET state=?,reason_code=?,lease_token=NULL,lease_expires_at=NULL,updated_at=?
+          WHERE exec_id=? AND state=? AND lease_token=? AND lease_expires_at<=?
+        `).run(
+          next.state, next.reasonCode, reconcileNow, current.execId, current.state,
+          current.leaseToken, reconcileNow,
+        );
+        if (result.changes !== 1) {
+          throw relayError('RELAY_CAS_CONFLICT', 'relay reconciliation conflicts with the durable record (zero-row conditional update)');
+        }
+        return next;
+      });
+    },
+
     statusOf(execId) {
       return relayStatusOf(cctpGet(execId));
     },
@@ -2605,6 +3085,12 @@ export function createSqliteStores(path, {
       if (ensemble.kind !== 'current') {
         throw new Error('mandate readiness schema ensemble is incompatible');
       }
+      if (classifyCctpRelaySchema(db).kind !== 'current') {
+        throw new Error('CCTP relay-work schema ensemble is incompatible');
+      }
+      if (classifyUnwindSchema(db).kind !== 'current') {
+        throw new Error('unwind authority schema ensemble is incompatible');
+      }
       db.prepare('UPDATE jobs SET job = job WHERE 0').run();
       db.prepare('SELECT id FROM association_outbox WHERE 0').all();
       db.prepare('SELECT job_id FROM farm_execution_work WHERE 0').all();
@@ -2614,10 +3100,12 @@ export function createSqliteStores(path, {
       db.prepare('SELECT mandate_id FROM mandates_v3 WHERE 0').all();
       db.prepare('SELECT mandate_id FROM mandate_activation_work WHERE 0').all();
       db.prepare('SELECT exec_id FROM cctp_relay_work WHERE 0').all();
+      db.prepare('SELECT job_id FROM unwind_jobs WHERE 0').all();
       return {
         writable: true,
         baseEvidenceDurable: true,
         farmIntentDurable: true,
+        unwindDurable: true,
         legacyMandateTables: legacyMandateTables(),
         mandateMigrationCleanupPending: ensemble.cleanupPending,
       };
@@ -2646,6 +3134,7 @@ export function createSqliteStores(path, {
     farmExecutions,
     farmIntents,
     cctpRelays,
+    unwindJobs,
     probe,
   };
 }

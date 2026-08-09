@@ -19,6 +19,12 @@ const MAX_CAPABILITY_AGE_SECONDS = 2_592_000 // the relayer's 30-day cookie cap
 
 const CANONICAL_ID = /^[0-9a-f]{32}$/ // 128-bit lowercase hex mandate/job identity
 const CANONICAL_CAPABILITY = /^[0-9a-f]{64}$/ // 256-bit lowercase hex capability
+const CANONICAL_EVM_ADDRESS = /^0x[0-9a-f]{40}$/i
+const CANONICAL_EVM_HASH = /^0x[0-9a-f]{64}$/
+
+const UNWIND_RESERVE_FIELDS = ['jobId', 'capability', 'kernelAddress', 'recipientHint']
+const UNWIND_ATTACH_FIELDS = ['jobId', 'userOpHash', 'unwindTxHash']
+const UNWIND_STATUS_FIELDS = ['jobId']
 
 // The only method+path pairs this proxy will ever open the relayer tunnel for. Everything else
 // (legacy GET status paths, health probes, admin routes, wrong methods) is refused locally.
@@ -26,12 +32,23 @@ const CANONICAL_CAPABILITY = /^[0-9a-f]{64}$/ // 256-bit lowercase hex capabilit
 const ROUTES = {
   'GET /config': { auth: null },
   'POST /mandate': { auth: null, cookieIssue: 'register' },
-  'POST /unwind': { auth: null },
+  'POST /unwind': {
+    auth: null,
+    cookieIssue: 'register',
+    cookieKind: 'unwind',
+    exactFields: UNWIND_RESERVE_FIELDS,
+    noStore: true,
+  },
+  'POST /unwind/attach': {
+    auth: 'unwind',
+    exactFields: UNWIND_ATTACH_FIELDS,
+    noStore: true,
+  },
   'POST /mandate/status': { auth: 'mandate' },
   'POST /mandate/revoke': { auth: 'mandate', cookieIssue: 'revoke' },
   'POST /farm': { auth: 'mandate' },
   'POST /farm/attach': { auth: 'mandate', needsJob: true },
-  'POST /status': { auth: 'mandateOrJob' },
+  'POST /status': { auth: 'mandateOrJob', unwindFields: UNWIND_STATUS_FIELDS, noStore: true },
 }
 
 function subPath(url) {
@@ -60,6 +77,7 @@ function canonicalIdentityFor(route, body) {
   const jobOk = CANONICAL_ID.test(jobId)
   if (route.needsJob && !jobOk) return null
   if (route.auth === 'mandate') return mandateOk ? { kind: 'mandate', id: mandateId } : null
+  if (route.auth === 'unwind') return jobOk ? { kind: 'unwind', id: jobId } : null
   if (route.auth === 'mandateOrJob') {
     if (mandateId !== undefined) {
       return mandateOk && jobOk ? { kind: 'mandate', id: mandateId } : null
@@ -67,6 +85,33 @@ function canonicalIdentityFor(route, body) {
     return jobOk ? { kind: 'unwind', id: jobId } : null
   }
   return null
+}
+
+function hasExactFields(body, fields) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false
+  const keys = Object.keys(body)
+  return keys.length === fields.length && keys.every((key) => fields.includes(key))
+}
+
+function isValidUnwindBody(path, body) {
+  if (path === '/unwind') {
+    return (
+      hasExactFields(body, UNWIND_RESERVE_FIELDS) &&
+      CANONICAL_ID.test(body.jobId) &&
+      CANONICAL_CAPABILITY.test(body.capability) &&
+      CANONICAL_EVM_ADDRESS.test(body.kernelAddress) &&
+      typeof body.recipientHint === 'string'
+    )
+  }
+  if (path === '/unwind/attach') {
+    return (
+      hasExactFields(body, UNWIND_ATTACH_FIELDS) &&
+      CANONICAL_ID.test(body.jobId) &&
+      CANONICAL_EVM_HASH.test(body.userOpHash) &&
+      CANONICAL_EVM_HASH.test(body.unwindTxHash)
+    )
+  }
+  return hasExactFields(body, UNWIND_STATUS_FIELDS) && CANONICAL_ID.test(body.jobId)
 }
 
 // Select the ONE cookie named by the validated public identity. Unrelated cookies are ignored;
@@ -89,7 +134,7 @@ function parseCapabilityCookies(rawCookieHeader, exactName) {
 // attributes), a canonical 64-hex capability with a bounded positive Max-Age for issue, or the
 // exact empty-value Max-Age=0 clear form for revoke. Anything else is rejected, never
 // forwarded "best effort".
-function validateUpstreamSetCookie(setCookie, { kind, id, issue }) {
+function validateUpstreamSetCookie(setCookie, { kind, id, issue, expectedCapability }) {
   if (typeof setCookie !== 'string') return false
   const parts = setCookie.split(';').map((part) => part.trim())
   const [nameValue, ...attrs] = parts
@@ -105,10 +150,19 @@ function validateUpstreamSetCookie(setCookie, { kind, id, issue }) {
   if (!ageMatch) return false
   const age = Number(ageMatch[1])
   if (issue === 'revoke') return value === '' && age === 0
-  return CANONICAL_CAPABILITY.test(value) && age >= 1 && age <= MAX_CAPABILITY_AGE_SECONDS
+  return (
+    CANONICAL_CAPABILITY.test(value) &&
+    (expectedCapability === undefined || value === expectedCapability) &&
+    age >= 1 &&
+    age <= MAX_CAPABILITY_AGE_SECONDS
+  )
 }
 
 export default async function handler(req, res, { fetchImpl = fetch } = {}) {
+  const path = subPath(req.url)
+  const route = ROUTES[`${req.method} ${path}`]
+  if (route?.noStore) res.setHeader('Cache-Control', 'no-store')
+
   if (!applyCors(req, res)) return
   if (req.method === 'OPTIONS') {
     res.statusCode = 204
@@ -116,8 +170,8 @@ export default async function handler(req, res, { fetchImpl = fetch } = {}) {
   }
   if (!rateLimit(req, res, { max: 30, windowMs: 60_000, bucket: 'vf-cross' })) return
 
-  const path = subPath(req.url)
-  const route = ROUTES[`${req.method} ${path}`]
+  if (new URL(req.url, 'http://local').search)
+    return sendJson(res, 400, { error: 'invalid request' })
   if (!route) return sendJson(res, 404, { error: 'not found' })
 
   const origin = process.env.RELAYER_ORIGIN
@@ -126,13 +180,22 @@ export default async function handler(req, res, { fetchImpl = fetch } = {}) {
   // Registration must name the mandate its cookie will be bound to; protected routes must name
   // exactly one canonical public identity. Malformed or missing identity is refused locally with
   // the same generic response whether or not such a mandate/job exists upstream.
-  const body = req.method === 'GET' || req.method === 'HEAD' ? null : (req.body ?? null)
+  let body = req.method === 'GET' || req.method === 'HEAD' ? null : (req.body ?? null)
+  if (
+    (route.exactFields && !isValidUnwindBody(path, body)) ||
+    (route.unwindFields && body?.mandateId === undefined && !isValidUnwindBody(path, body))
+  ) {
+    return sendJson(res, 400, { error: 'invalid request' })
+  }
+  if (path === '/unwind') body = { ...body, kernelAddress: body.kernelAddress.toLowerCase() }
   let identity = null
   if (route.cookieIssue === 'register') {
-    if (!CANONICAL_ID.test(body?.mandateId)) {
+    const kind = route.cookieKind ?? 'mandate'
+    const id = kind === 'unwind' ? body?.jobId : body?.mandateId
+    if (!CANONICAL_ID.test(id)) {
       return sendJson(res, 400, { error: 'invalid request' })
     }
-    identity = { kind: 'mandate', id: body.mandateId }
+    identity = { kind, id }
   } else if (route.auth) {
     identity = canonicalIdentityFor(route, body)
     if (!identity) return sendJson(res, 400, { error: 'invalid request' })
@@ -153,6 +216,8 @@ export default async function handler(req, res, { fetchImpl = fetch } = {}) {
         capabilityCookieName(identity.kind, identity.id)
       )
       if (!capability) return sendJson(res, 401, { error: 'unauthorized' })
+    } else if (identity.kind === 'unwind') {
+      return sendJson(res, 401, { error: 'unauthorized' })
     }
   }
 
@@ -170,10 +235,7 @@ export default async function handler(req, res, { fetchImpl = fetch } = {}) {
   let upstream
   let text
   try {
-    upstream = await fetchImpl(
-      `${origin.replace(/\/$/, '')}/api/vf-cross${path}`,
-      init
-    )
+    upstream = await fetchImpl(`${origin.replace(/\/$/, '')}/api/vf-cross${path}`, init)
     text = await upstream.text()
   } catch {
     // Never leak upstream/tunnel details to the browser.
@@ -192,6 +254,13 @@ export default async function handler(req, res, { fetchImpl = fetch } = {}) {
         kind: identity?.kind,
         id: identity?.id,
         issue: route.cookieIssue,
+        // Unwind capability bytes are browser-generated and immediately erased after reserve.
+        // The upstream cookie must preserve that exact authority or the durable job is orphaned.
+        // Mandate registration retains its existing server-issued cookie semantics.
+        expectedCapability:
+          identity?.kind === 'unwind' && route.cookieIssue === 'register'
+            ? body?.capability
+            : undefined,
       })
     if (!valid) return sendJson(res, 502, { error: 'relayer response rejected' })
   }

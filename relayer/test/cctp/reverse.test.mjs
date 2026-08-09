@@ -75,6 +75,121 @@ describe('contractStrkeyToBytes32', () => {
   });
 });
 
+describe('burnBaseWithHook receipt fences', () => {
+  const APPROVE_HASH = `0x${'a1'.repeat(32)}`;
+  const BURN_HASH = `0x${'b2'.repeat(32)}`;
+
+  const burnArgs = ({ walletClient, publicClient }) => ({
+    walletClient,
+    publicClient,
+    usdcAddress: `0x${'11'.repeat(20)}`,
+    tokenMessengerV2Address: `0x${'22'.repeat(20)}`,
+    amount6dp: 1_000_000n,
+    approveAmount6dp: 1_000_000n,
+    destDomain: 27,
+    forwarder32: `0x${'33'.repeat(32)}`,
+    maxFee: 10_000n,
+    minFinality: 1000,
+    hookData: buildForwarderHookData(SAMPLE_STRKEY),
+  });
+
+  it('rejects a malformed approval submission hash before receipt polling or the burn write', async () => {
+    const walletClient = { writeContract: vi.fn().mockResolvedValue('0x1234') };
+    const publicClient = { waitForTransactionReceipt: vi.fn() };
+
+    await expect(reverse.burnBaseWithHook(burnArgs({ walletClient, publicClient })))
+      .rejects.toThrow(/approval hash/i);
+
+    expect(walletClient.writeContract).toHaveBeenCalledTimes(1);
+    expect(publicClient.waitForTransactionReceipt).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed burn submission hash before polling that untrusted identity', async () => {
+    const walletClient = {
+      writeContract: vi.fn()
+        .mockResolvedValueOnce(APPROVE_HASH)
+        .mockResolvedValueOnce('0x1234'),
+    };
+    const publicClient = {
+      waitForTransactionReceipt: vi.fn()
+        .mockResolvedValueOnce({ status: 'success', transactionHash: APPROVE_HASH }),
+    };
+
+    await expect(reverse.burnBaseWithHook(burnArgs({ walletClient, publicClient })))
+      .rejects.toThrow(/burn hash/i);
+
+    expect(walletClient.writeContract).toHaveBeenCalledTimes(2);
+    expect(publicClient.waitForTransactionReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['reverted', { status: 'reverted', transactionHash: APPROVE_HASH }],
+    ['malformed', { transactionHash: APPROVE_HASH }],
+    ['missing', null],
+    ['success without a hash', { status: 'success' }],
+    ['success with a malformed hash', { status: 'success', transactionHash: '0x1' }],
+    ['success for a different hash', { status: 'success', transactionHash: BURN_HASH }],
+  ])('stops before the burn write when the approval receipt is %s', async (_label, approvalReceipt) => {
+    const walletClient = {
+      writeContract: vi.fn()
+        .mockResolvedValueOnce(APPROVE_HASH)
+        .mockResolvedValueOnce(BURN_HASH),
+    };
+    const publicClient = {
+      waitForTransactionReceipt: vi.fn()
+        .mockResolvedValueOnce(approvalReceipt)
+        .mockResolvedValueOnce({ status: 'success' }),
+    };
+
+    await expect(reverse.burnBaseWithHook(burnArgs({ walletClient, publicClient })))
+      .rejects.toThrow(/approval receipt/i);
+    expect(walletClient.writeContract).toHaveBeenCalledTimes(1);
+    expect(publicClient.waitForTransactionReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['reverted', { status: 'reverted', transactionHash: BURN_HASH }],
+    ['malformed', { transactionHash: BURN_HASH }],
+    ['missing', null],
+    ['success without a hash', { status: 'success' }],
+    ['success with a malformed hash', { status: 'success', transactionHash: '0x1' }],
+    ['success for a different hash', { status: 'success', transactionHash: APPROVE_HASH }],
+  ])('rejects a %s burn receipt after one approval and one burn write', async (_label, burnReceipt) => {
+    const walletClient = {
+      writeContract: vi.fn()
+        .mockResolvedValueOnce(APPROVE_HASH)
+        .mockResolvedValueOnce(BURN_HASH),
+    };
+    const publicClient = {
+      waitForTransactionReceipt: vi.fn()
+        .mockResolvedValueOnce({ status: 'success', transactionHash: APPROVE_HASH })
+        .mockResolvedValueOnce(burnReceipt),
+    };
+
+    await expect(reverse.burnBaseWithHook(burnArgs({ walletClient, publicClient })))
+      .rejects.toThrow(/burn receipt/i);
+    expect(walletClient.writeContract).toHaveBeenCalledTimes(2);
+    expect(publicClient.waitForTransactionReceipt).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns only after exact successful approval and burn receipts', async () => {
+    const walletClient = {
+      writeContract: vi.fn()
+        .mockResolvedValueOnce(APPROVE_HASH)
+        .mockResolvedValueOnce(BURN_HASH),
+    };
+    const publicClient = {
+      waitForTransactionReceipt: vi.fn()
+        .mockResolvedValueOnce({ status: 'success', transactionHash: APPROVE_HASH })
+        .mockResolvedValueOnce({ status: 'success', transactionHash: BURN_HASH }),
+    };
+
+    await expect(reverse.burnBaseWithHook(burnArgs({ walletClient, publicClient })))
+      .resolves.toEqual({ hash: BURN_HASH, status: 'success' });
+    expect(walletClient.writeContract).toHaveBeenCalledTimes(2);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Task 8 RED: split Stellar destination seams.
 //

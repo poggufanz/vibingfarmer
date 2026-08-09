@@ -7,7 +7,13 @@ import {
   resolveBaseAvailability,
   setupBaseMandate,
 } from './mergeFlowHelpers.js'
-import { postFarm, postFarmAttach, postMandate, postUnwind } from './base/relayerClient.js'
+import {
+  postFarm,
+  postFarmAttach,
+  postMandate,
+  postUnwindAttach,
+  reserveUnwind,
+} from './base/relayerClient.js'
 
 describe('legacy Base deployment global execution fence', () => {
   it('settles the Base leg unavailable before mandate reads, quotes, pulls, or burns', async () => {
@@ -93,7 +99,8 @@ describe('legacy Base deployment global execution fence', () => {
     ['farm', postFarm],
     ['farm attach', postFarmAttach],
     ['mandate', postMandate],
-    ['unwind', postUnwind],
+    ['unwind reserve', reserveUnwind],
+    ['unwind attach', postUnwindAttach],
   ])('blocks the low-level %s client before validation or fetch', async (_name, client) => {
     const fetchImpl = vi.fn()
     await expect(client({ deps: { fetchImpl } })).rejects.toMatchObject({

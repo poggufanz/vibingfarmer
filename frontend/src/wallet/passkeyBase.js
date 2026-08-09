@@ -34,6 +34,10 @@ import {
   ZERODEV_PASSKEY_RP_ID,
 } from '../base/config.js'
 import { createGaslessKernelClient } from '../base/paymaster.js'
+import {
+  requireCanonicalUserOperationHash,
+  requireSuccessfulUserOperation,
+} from '../base/userOpReceipt.js'
 
 const ENTRY_POINT = getEntryPoint('0.7')
 const KERNEL_VERSION = KERNEL_V3_1
@@ -167,8 +171,15 @@ export async function createBaseSmartAccount({
     const callData = await kernelAccount.encodeCalls([
       { to: kernelAccount.address, value: 0n, data: '0x' },
     ])
-    const userOpHash = await kernelClient.sendUserOperation({ callData })
-    await kernelClient.waitForUserOperationReceipt({ hash: userOpHash, timeout: DEPLOY_TIMEOUT_MS })
+    const userOpHash = requireCanonicalUserOperationHash(
+      await kernelClient.sendUserOperation({ callData }),
+      { label: 'Kernel deployment user operation' }
+    )
+    const deploymentReceipt = await kernelClient.waitForUserOperationReceipt({
+      hash: userOpHash,
+      timeout: DEPLOY_TIMEOUT_MS,
+    })
+    requireSuccessfulUserOperation(deploymentReceipt, { label: 'Kernel deployment user operation' })
   }
 
   return { address: kernelAccount.address, kernelAccount, publicClient, passkeyValidator }

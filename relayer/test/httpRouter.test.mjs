@@ -74,6 +74,28 @@ const SESSION_KEY = `0x${'22'.repeat(32)}`;
 const SESSION = privateKeyToAccount(SESSION_KEY).address;
 const USER_OP_HASH = `0x${'33'.repeat(32)}`;
 const TX_HASH = `0x${'44'.repeat(32)}`;
+const unwindJobCommitment = (jobId) => keccak256(concatHex([
+  '0x76662d756e77696e642d6a6f622d7631', `0x${jobId}`,
+]));
+const UNWIND_PUBLIC_CLIENT = Object.freeze({
+  getChainId() {}, getTransactionReceipt() {},
+});
+const UNWIND_BUNDLER_CLIENT = Object.freeze({
+  getUserOperation() {}, getUserOperationReceipt() {},
+});
+const UNWIND_FACTS = Object.freeze({
+  generation: 'hardened-v2',
+  chainId: 84532,
+  entryPointAddress: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+  baseExitSweeperAddress: `0x${'44'.repeat(20)}`,
+  usdcAddress: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+  tokenMessengerV2Address: '0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa',
+  messageTransmitterV2Address: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
+  stellarDomain: 27,
+  stellarTokenMessenger: `0x${'55'.repeat(32)}`,
+  cctpForwarder: `0x${'66'.repeat(32)}`,
+  finalityThreshold: 1000,
+});
 const CALL_POLICY = '0x9a52283276A0ec8740DF50bF01B28A80D880eaf2';
 const TIMESTAMP_POLICY = '0xB9f8f524bE6EcD8C945b1b87f9ae5C192FdCE20F';
 const ECDSA_SIGNER = '0x6A6F069E2a08c2468e7724Ab3250CdBFBA14D4FF';
@@ -401,7 +423,6 @@ function makeHarness({
   let nextId = 0;
   const router = createRelayerRouter({
     buildFarm: vi.fn(() => ({ farm: vi.fn() })),
-    relayUnwindMint: vi.fn(),
     jobs: new Map(),
     mandatesV2: new Proxy({}, {
       get() { throw new Error('v2 mandate store must not be consulted by the v3 router'); },
@@ -1401,7 +1422,6 @@ describe("v3 mandate route authorization and execution gates", () => {
     forwardFarmDeployment = null,
     relayForwardMint = null,
     sanitizeErrors = false,
-    relayUnwindMint: providedRelayUnwindMint,
     poolTargets: providedPoolTargets = null,
     baseCrossChainAvailable = true,
   } = {}) {
@@ -1547,16 +1567,9 @@ describe("v3 mandate route authorization and execution gates", () => {
       if (buildFarmImplementation) return buildFarmImplementation(sessionPrivateKey);
       return { farm: (params) => farmFn(params) };
     });
-    const relayUnwindMint =
-      providedRelayUnwindMint ??
-      vi.fn(async () => ({
-        status: "minted",
-        mintTxHash: "0xreverse",
-      }));
     let nextJob = 0;
     const routeHandler = createRelayerRouter({
       buildFarm,
-      relayUnwindMint,
       jobs,
       mandatesV2: new Proxy(
         {},
@@ -1624,7 +1637,6 @@ describe("v3 mandate route authorization and execution gates", () => {
       farmFn,
       buildFarm,
       farmIntents: providedFarmIntents,
-      relayUnwindMint,
       router,
       setEvidence(next) {
         currentEvidence = next;
@@ -2017,21 +2029,25 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(revoke.json).toMatchObject({ ok: true, status: 'revoked' });
   });
 
-  it('rejects unwind before reserving a job or invoking the reverse relay', async () => {
+  it('rejects unwind before reserving a job when Base execution is unavailable', async () => {
+    const reserve = vi.fn();
     const harness = makeRouteHarness({ baseCrossChainAvailable: false });
     const res = mockRes();
 
     await harness.router({
       method: 'POST',
       url: '/api/vf-cross/unwind',
-      body: { unwindTxHash: '0xowner-signed-exit-and-burn', stellarRecipient: OWNER },
+      body: {
+        jobId: 'ab'.repeat(16), capability: CAPABILITY,
+        kernelAddress: KERNEL, recipientHint: OWNER,
+      },
       headers: {},
     }, res);
 
     expect(res.statusCode).toBe(503);
     expect(jsonOf(res)).toEqual({ error: 'Base cross-chain execution is unavailable' });
     expect(harness.jobs.size).toBe(0);
-    expect(harness.relayUnwindMint).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
     expect(harness.buildFarm).not.toHaveBeenCalled();
   });
 
@@ -2946,12 +2962,27 @@ describe("v3 mandate route authorization and execution gates", () => {
     };
     const corrupt = await create('01'.repeat(16), 'ba'.repeat(32), { projectMint: false });
     const valid = await create('02'.repeat(16), 'bb'.repeat(32));
-    stores.db.prepare(`UPDATE cctp_relay_work SET state='minted',message_digest=?,
-      attestation_digest=?,evidence_version=1,mint_tx_hash=?,updated_at=? WHERE exec_id=?`)
-      .run(
-        'cc'.repeat(32), 'dd'.repeat(32), `0x${'ee'.repeat(32)}`,
-        2_000_000_000_000, corrupt.relayExecId,
-      );
+    const relayAt = 2_000_000_000_000;
+    const relayClaim = stores.cctpRelays.claim({
+      execId: corrupt.relayExecId, now: relayAt, leaseMs: 60_000,
+    });
+    stores.cctpRelays.recordAttested({
+      execId: corrupt.relayExecId, leaseToken: relayClaim.leaseToken,
+      messageHex: '0xab', nonceHex: `0x${'01'.repeat(32)}`,
+      attestationHex: '0xcd', now: relayAt + 1,
+    });
+    stores.cctpRelays.markMintSubmitting({
+      execId: corrupt.relayExecId, leaseToken: relayClaim.leaseToken, now: relayAt + 2,
+    });
+    const canonicalMintTxHash = `0x${'ee'.repeat(32)}`;
+    stores.cctpRelays.markMintSubmitted({
+      execId: corrupt.relayExecId, leaseToken: relayClaim.leaseToken,
+      mintTxHash: canonicalMintTxHash, now: relayAt + 3,
+    });
+    stores.cctpRelays.finishMinted({
+      execId: corrupt.relayExecId, leaseToken: relayClaim.leaseToken,
+      mintTxHash: canonicalMintTxHash, now: relayAt + 4,
+    });
     stores.db.prepare(`UPDATE jobs SET job='{\"serializedApproval\":\"must-not-leak\"'
       WHERE job_id=?`).run(corrupt.jobId);
 
@@ -4007,187 +4038,1032 @@ describe("v3 mandate route authorization and execution gates", () => {
   });
 
 
-  it("keeps reverse mint relay non-custodial while status remains unavailable until job capabilities exist", async () => {
-    const relayUnwindMint = vi.fn(async () => ({
-      status: "minted",
-      mintTxHash: "0xreverse-safe",
+  it.each([
+    'getAuthority', 'status', 'claimEvidence', 'renewEvidence', 'releaseEvidence',
+    'attachAndEnqueue', 'finishBlocked', 'finishUncertain', 'reconcileFromCctp',
+    'reconcileExpired', 'listForResume',
+    'readUnwindEvidence', 'relayReverseMint', 'unwindPublicClient',
+    'unwindBundlerClient', 'unwindEvidenceFacts',
+  ])('fails reserve closed before persistence when attach dependency %s is unavailable', async (missing) => {
+    const reserve = vi.fn(() => ({
+      jobId: 'ab'.repeat(16), status: 'awaiting_burn', expiresAt: 1_700_003_600_000,
     }));
-    const harness = makeRouteHarness({ relayUnwindMint });
-    const unwind = mockRes();
-    await harness.router(
-      {
-        method: "POST",
-        url: "/api/vf-cross/unwind",
-        body: {
-          unwindTxHash: "0xowner-signed-exit-and-burn",
-          stellarRecipient: OWNER,
-        },
-        headers: {},
+    const unwindJobs = {
+      reserve,
+      getAuthority: vi.fn(), status: vi.fn(), claimEvidence: vi.fn(),
+      renewEvidence: vi.fn(), releaseEvidence: vi.fn(), attachAndEnqueue: vi.fn(),
+      finishBlocked: vi.fn(), finishUncertain: vi.fn(), reconcileFromCctp: vi.fn(),
+      reconcileExpired: vi.fn(), listForResume: vi.fn(),
+    };
+    const dependencies = {
+      readUnwindEvidence: vi.fn(), relayReverseMint: vi.fn(),
+      unwindPublicClient: { getChainId() {}, getTransactionReceipt() {} },
+      unwindBundlerClient: { getUserOperation() {}, getUserOperationReceipt() {} },
+      unwindEvidenceFacts: {
+        generation: 'hardened-v2', chainId: 84532,
+        entryPointAddress: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+        baseExitSweeperAddress: `0x${'44'.repeat(20)}`,
+        usdcAddress: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+        tokenMessengerV2Address: '0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa',
+        messageTransmitterV2Address: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
+        stellarDomain: 27,
+        stellarTokenMessenger: `0x${'55'.repeat(32)}`,
+        cctpForwarder: `0x${'66'.repeat(32)}`,
+        finalityThreshold: 1000,
       },
-      unwind,
-    );
-    expect(unwind.statusCode).toBe(200);
-    const { jobId } = jsonOf(unwind);
-    expect(jobId).toMatch(JOB_ID_RE);
-    await vi.waitFor(() =>
-      expect(relayUnwindMint).toHaveBeenCalledWith({
-        unwindTxHash: "0xowner-signed-exit-and-burn",
-        stellarRecipient: OWNER,
-      }),
-    );
-    expect(harness.buildFarm).not.toHaveBeenCalled();
-    harness.events.length = 0;
-    const jobGet = vi.spyOn(harness.jobs, "get");
+    };
+    if (Object.hasOwn(unwindJobs, missing)) delete unwindJobs[missing];
+    else delete dependencies[missing];
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs, ...dependencies,
+      unwindCookieMaxAgeSeconds: 3600,
+      nowMs: () => 1_700_000_000_000,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+    await router({
+      method: 'POST', url: '/api/vf-cross/unwind', headers: {},
+      body: {
+        jobId: 'ab'.repeat(16), capability: CAPABILITY,
+        kernelAddress: KERNEL, recipientHint: OWNER,
+      },
+    }, response);
 
-    const existing = await postProtected(
-      harness,
-      "/status",
-      { jobId },
-      CAPABILITY,
+    expect(response.statusCode).toBe(503);
+    expect(jsonOf(response)).toEqual({ error: 'unwind relay is unavailable' });
+    expect(response.headers['Set-Cookie']).toBeUndefined();
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it('reserves a durable hash-only unwind authority before any Base or CCTP action', async () => {
+    const jobId = 'ab'.repeat(16);
+    const mixedKernel = '0xAbCdEf0123456789aBCdef0123456789AbCdEf01';
+    const canonicalKernel = mixedKernel.toLowerCase();
+    const reserve = vi.fn((input) => ({
+      jobId: input.jobId,
+      status: 'awaiting_burn',
+      createdAt: input.now,
+      updatedAt: input.now,
+      expiresAt: input.expiresAt,
+      capabilityExpiresAt: input.capabilityExpiresAt,
+    }));
+    const relayReverseMint = vi.fn();
+    const jobs = new Map();
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(),
+      jobs,
+      genId: vi.fn(),
+      unwindJobs: {
+        reserve,
+        getAuthority: vi.fn(), status: vi.fn(), claimEvidence: vi.fn(),
+        renewEvidence: vi.fn(), releaseEvidence: vi.fn(), attachAndEnqueue: vi.fn(),
+        finishBlocked: vi.fn(), finishUncertain: vi.fn(), reconcileFromCctp: vi.fn(),
+        reconcileExpired: vi.fn(), listForResume: vi.fn(),
+      },
+      readUnwindEvidence: vi.fn(),
+      relayReverseMint,
+      unwindPublicClient: { getChainId() {}, getTransactionReceipt() {} },
+      unwindBundlerClient: { getUserOperation() {}, getUserOperationReceipt() {} },
+      unwindEvidenceFacts: {
+        generation: 'hardened-v2', chainId: 84532,
+        entryPointAddress: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+        baseExitSweeperAddress: `0x${'44'.repeat(20)}`,
+        usdcAddress: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+        tokenMessengerV2Address: '0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa',
+        messageTransmitterV2Address: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
+        stellarDomain: 27, stellarTokenMessenger: `0x${'55'.repeat(32)}`,
+        cctpForwarder: `0x${'66'.repeat(32)}`, finalityThreshold: 1000,
+      },
+      unwindCookieMaxAgeSeconds: 3600,
+      nowMs: () => 1_700_000_000_000,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+
+    await router({
+      method: 'POST',
+      url: '/api/vf-cross/unwind',
+      headers: {},
+      body: { jobId, capability: CAPABILITY, kernelAddress: mixedKernel, recipientHint: OWNER },
+    }, response);
+
+    expect(response.statusCode).toBe(202);
+    expect(jsonOf(response)).toEqual({ jobId, status: 'awaiting_burn' });
+    expect(response.headers['Cache-Control']).toBe('no-store');
+    expect(response.headers['Set-Cookie']).toBe(
+      `__Host-vf-unwind-${jobId}=${CAPABILITY}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`,
     );
-    const unknown = await postProtected(
-      harness,
-      "/status",
-      { jobId: UNKNOWN_JOB_ID },
-      CAPABILITY,
-    );
-    expect(existing.res.statusCode).toBe(400);
-    expect(unknown.res.statusCode).toBe(400);
-    expect(existing.json).toEqual({ error: "unsupported status identity" });
-    expect(unknown.json).toEqual(existing.json);
-    expect(existing.res.body).toBe(unknown.res.body);
-    expect(existing.res.body).not.toContain("0xreverse-safe");
-    expect(unknown.res.body).not.toContain(UNKNOWN_JOB_ID);
-    expect(jobGet).not.toHaveBeenCalled();
-    jobGet.mockRestore();
-    expect(harness.events).not.toContain("store:get");
-    expect(harness.evaluator).not.toHaveBeenCalled();
-    expect(harness.buildFarm).not.toHaveBeenCalled();
+    expect(reserve).toHaveBeenCalledWith(expect.objectContaining({
+      jobId,
+      capabilityHash: CAPABILITY_HASH,
+      kernelAddress: canonicalKernel,
+      recipientHint: OWNER,
+      expiresAt: 1_700_003_300_000,
+      capabilityExpiresAt: 1_700_003_600_000,
+      now: 1_700_000_000_000,
+    }));
+    expect(Object.keys(reserve.mock.calls[0][0])).not.toContain('capability');
+    expect(jobs.size).toBe(0);
+    expect(relayReverseMint).not.toHaveBeenCalled();
+  });
+
+  it('reinstalls an exact reserve retry cookie only for the immutable remaining lifetime', async () => {
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-unwind-retry-')), 'relayer.db'));
+    const jobId = 'ab'.repeat(16);
+    let now = 1_700_000_000_000;
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs: stores.unwindJobs,
+      readUnwindEvidence: vi.fn(), relayReverseMint: vi.fn(),
+      unwindPublicClient: { getChainId() {}, getTransactionReceipt() {} },
+      unwindBundlerClient: { getUserOperation() {}, getUserOperationReceipt() {} },
+      unwindEvidenceFacts: {
+        generation: 'hardened-v2', chainId: 84532,
+        entryPointAddress: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+        baseExitSweeperAddress: `0x${'44'.repeat(20)}`,
+        usdcAddress: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+        tokenMessengerV2Address: '0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa',
+        messageTransmitterV2Address: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
+        stellarDomain: 27, stellarTokenMessenger: `0x${'55'.repeat(32)}`,
+        cctpForwarder: `0x${'66'.repeat(32)}`, finalityThreshold: 1000,
+      },
+      unwindCookieMaxAgeSeconds: 3600,
+      nowMs: () => now,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const request = () => ({
+      method: 'POST', url: '/api/vf-cross/unwind', headers: {},
+      body: { jobId, capability: CAPABILITY, kernelAddress: KERNEL, recipientHint: OWNER },
+    });
+    const first = mockRes();
+    await router(request(), first);
+    const before = stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?').get(jobId);
+    now += 1_234_000;
+    const retry = mockRes();
+    await router(request(), retry);
+
+    expect(first.statusCode).toBe(202);
+    expect(retry.statusCode).toBe(202);
+    expect(retry.headers['Set-Cookie']).toContain('Max-Age=2366');
+    expect(retry.headers['Set-Cookie']).not.toContain('Max-Age=3600');
+    expect(stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?').get(jobId)).toEqual(before);
+    stores.db.close();
+  });
+
+  it('keeps the exact attach capability alive through bounded evidence grace without reopening burn admission', async () => {
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-unwind-grace-')), 'relayer.db'));
+    const jobId = 'ab'.repeat(16);
+    const start = 1_700_000_000_000;
+    let now = start;
+    const readUnwindEvidence = vi.fn(async () => {
+      const error = new Error('receipt index is not ready');
+      error.code = 'UNWIND_EVIDENCE_RETRYABLE';
+      throw error;
+    });
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: stores.jobs, genId: vi.fn(),
+      unwindJobs: stores.unwindJobs, readUnwindEvidence, relayReverseMint: vi.fn(),
+      unwindPublicClient: UNWIND_PUBLIC_CLIENT,
+      unwindBundlerClient: UNWIND_BUNDLER_CLIENT,
+      unwindEvidenceFacts: UNWIND_FACTS,
+      unwindCookieMaxAgeSeconds: 3_600,
+      unwindBurnMaxAgeSeconds: 3_300,
+      unwindEvidenceRetryMs: 300_000,
+      nowMs: () => now,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const reserveRequest = () => ({
+      method: 'POST', url: '/api/vf-cross/unwind', headers: {},
+      body: { jobId, capability: CAPABILITY, kernelAddress: KERNEL, recipientHint: OWNER },
+    });
+    const attachRequest = (userOpHash = USER_OP_HASH) => ({
+      method: 'POST', url: '/api/vf-cross/unwind/attach',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: { jobId, userOpHash, unwindTxHash: TX_HASH },
+    });
+
+    const reserved = mockRes();
+    await router(reserveRequest(), reserved);
+    expect(reserved.statusCode).toBe(202);
+    expect(reserved.headers['Set-Cookie']).toContain('Max-Age=3600');
+    expect(stores.unwindJobs.getAuthority(jobId)).toMatchObject({
+      expiresAt: start + 3_300_000,
+      capabilityExpiresAt: start + 3_600_000,
+    });
+
+    now = start + 3_299_000;
+    const transient = mockRes();
+    await router(attachRequest(), transient);
+    expect(transient.statusCode).toBe(503);
+    expect(readUnwindEvidence).toHaveBeenCalledTimes(1);
+
+    now = start + 3_301_000;
+    const secondBurn = mockRes();
+    await router(reserveRequest(), secondBurn);
+    expect(secondBurn.statusCode).toBe(409);
+    expect(secondBurn.headers['Set-Cookie']).toBeUndefined();
+
+    const exactRetry = mockRes();
+    await router(attachRequest(), exactRetry);
+    expect(exactRetry.statusCode).toBe(503);
+    expect(readUnwindEvidence).toHaveBeenCalledTimes(2);
+
+    const changed = mockRes();
+    await router(attachRequest(`0x${'35'.repeat(32)}`), changed);
+    expect(changed.statusCode).toBe(409);
+    expect(readUnwindEvidence).toHaveBeenCalledTimes(2);
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n).toBe(0);
+    stores.db.close();
+  });
+
+  it('returns only the authenticated unwind public projection from POST /status', async () => {
+    const jobId = 'ab'.repeat(16);
+    const getAuthority = vi.fn(() => ({
+      jobId,
+      kernelAddress: KERNEL,
+      recipientHint: OWNER,
+      expiresAt: 1_700_003_600_000,
+      capabilityExpiresAt: 1_700_003_600_000,
+      state: 'relay_pending',
+      capabilityHash: CAPABILITY_HASH,
+    }));
+    const status = vi.fn(() => { throw new Error('stale wrapper read must not answer status'); });
+    const reconcileFromCctp = vi.fn(() => ({
+      jobId,
+      status: 'relay_pending',
+      unwindTxHash: TX_HASH,
+    }));
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
+      unwindJobs: { getAuthority, status, reconcileFromCctp },
+      nowMs: () => 1_700_000_000_000,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+
+    await router({
+      method: 'POST',
+      url: '/api/vf-cross/status',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: { jobId },
+    }, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(jsonOf(response)).toEqual({ jobId, status: 'relay_pending', unwindTxHash: TX_HASH });
+    expect(response.headers['Cache-Control']).toBe('no-store');
+    expect(getAuthority).toHaveBeenCalledWith(jobId);
+    expect(reconcileFromCctp).toHaveBeenCalledWith({ jobId, now: 1_700_000_000_000 });
+    expect(status).not.toHaveBeenCalled();
+    expect(response.body).not.toContain(CAPABILITY);
+    expect(response.body).not.toContain(CAPABILITY_HASH);
+  });
+
+  it('enforces the durable capability expiry boundary before attach/status follow-on work', async () => {
+    const jobId = 'ab'.repeat(16);
+    const capabilityExpiresAt = 1_700_000_001_000;
+    let now = capabilityExpiresAt - 1;
+    const claimEvidence = vi.fn(() => ({
+      jobId, kernelAddress: KERNEL, recipientHint: OWNER,
+      leaseToken: 'boundary-lease', leaseExpiresAt: capabilityExpiresAt,
+    }));
+    const reconcileFromCctp = vi.fn(() => ({ jobId, status: 'awaiting_burn' }));
+    const readUnwindEvidence = vi.fn(async () => {
+      const error = new Error('retry');
+      error.code = 'UNWIND_EVIDENCE_RETRYABLE';
+      throw error;
+    });
+    const unwindJobs = {
+      reserve: vi.fn(),
+      getAuthority: vi.fn(() => ({
+        jobId, kernelAddress: KERNEL, recipientHint: OWNER,
+        state: 'awaiting_burn', capabilityHash: CAPABILITY_HASH,
+        capabilityExpiresAt, userOpHash: null, unwindTxHash: null,
+      })),
+      status: vi.fn(), claimEvidence, renewEvidence: vi.fn(), releaseEvidence: vi.fn(),
+      attachAndEnqueue: vi.fn(), finishBlocked: vi.fn(), finishUncertain: vi.fn(),
+      reconcileFromCctp, reconcileExpired: vi.fn(), listForResume: vi.fn(),
+    };
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(), unwindJobs,
+      readUnwindEvidence, relayReverseMint: vi.fn(),
+      unwindPublicClient: UNWIND_PUBLIC_CLIENT,
+      unwindBundlerClient: UNWIND_BUNDLER_CLIENT,
+      unwindEvidenceFacts: UNWIND_FACTS,
+      nowMs: () => now,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const statusRequest = () => ({
+      method: 'POST', url: '/api/vf-cross/status',
+      headers: { authorization: `Bearer ${CAPABILITY}` }, body: { jobId },
+    });
+    const attachRequest = () => ({
+      method: 'POST', url: '/api/vf-cross/unwind/attach',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
+    });
+
+    const justBeforeStatus = mockRes();
+    await router(statusRequest(), justBeforeStatus);
+    expect(justBeforeStatus.statusCode).toBe(200);
+    const justBeforeAttach = mockRes();
+    await router(attachRequest(), justBeforeAttach);
+    expect(justBeforeAttach.statusCode).toBe(503);
+    expect({ claim: claimEvidence.mock.calls.length, reconcile: reconcileFromCctp.mock.calls.length,
+      reads: readUnwindEvidence.mock.calls.length }).toEqual({ claim: 1, reconcile: 1, reads: 1 });
+
+    for (const boundary of [capabilityExpiresAt, capabilityExpiresAt + 1]) {
+      now = boundary;
+      for (const request of [statusRequest(), attachRequest()]) {
+        const response = mockRes();
+        await router(request, response);
+        expect(response.statusCode).toBe(401);
+        expect(jsonOf(response)).toEqual({ error: 'unauthorized' });
+      }
+    }
+    expect({ claim: claimEvidence.mock.calls.length, reconcile: reconcileFromCctp.mock.calls.length,
+      reads: readUnwindEvidence.mock.calls.length }).toEqual({ claim: 1, reconcile: 1, reads: 1 });
   });
 
   it.each([
-    ["missing unwind hash", { stellarRecipient: OWNER }],
-    ["empty unwind hash", { unwindTxHash: "", stellarRecipient: OWNER }],
-    ["numeric unwind hash", { unwindTxHash: 1234, stellarRecipient: OWNER }],
-    ["missing Stellar recipient", { unwindTxHash: "0xunwind" }],
-    [
-      "empty Stellar recipient",
-      { unwindTxHash: "0xunwind", stellarRecipient: "" },
-    ],
-    [
-      "numeric Stellar recipient",
-      { unwindTxHash: "0xunwind", stellarRecipient: 1234 },
-    ],
-    [
-      "extra routing field",
-      {
-        unwindTxHash: "0xunwind",
-        stellarRecipient: OWNER,
-        amount: "1000000",
+    ['pending', { jobId: 'ab'.repeat(16), status: 'relay_pending', unwindTxHash: TX_HASH }],
+    ['running', { jobId: 'ab'.repeat(16), status: 'relay_running', unwindTxHash: TX_HASH }],
+    ['submitted', {
+      jobId: 'ab'.repeat(16), status: 'relay_running', unwindTxHash: TX_HASH,
+      mintTxHash: 'aa'.repeat(32),
+    }],
+    ['done', {
+      jobId: 'ab'.repeat(16), status: 'done', unwindTxHash: TX_HASH,
+      mintTxHash: 'aa'.repeat(32),
+    }],
+    ['blocked', {
+      jobId: 'ab'.repeat(16), status: 'blocked', unwindTxHash: TX_HASH,
+      reasonCode: 'destination_reverted',
+    }],
+    ['uncertain', {
+      jobId: 'ab'.repeat(16), status: 'uncertain', unwindTxHash: TX_HASH,
+      mintTxHash: 'aa'.repeat(32), reasonCode: 'submitted_checkpoint_failed',
+    }],
+  ])('projects authenticated Task8 %s truth on status without evidence reads or relay sends', async (_label, projection) => {
+    const readUnwindEvidence = vi.fn();
+    const relayReverseMint = vi.fn();
+    const reconcileFromCctp = vi.fn(() => projection);
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs: {
+        reserve: vi.fn(),
+        getAuthority: vi.fn(() => ({
+          jobId: projection.jobId, kernelAddress: KERNEL, recipientHint: OWNER,
+          capabilityHash: CAPABILITY_HASH,
+          capabilityExpiresAt: 1_700_003_600_000,
+        })),
+        reconcileFromCctp,
       },
-    ],
-  ])(
-    "rejects %s before creating an unwind job or invoking the reverse mint relay",
-    async (_label, requestBody) => {
-      const harness = makeRouteHarness();
-      const res = mockRes();
+      readUnwindEvidence, relayReverseMint,
+      nowMs: () => 1_700_000_000_000,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+    await router({
+      method: 'POST', url: '/api/vf-cross/status',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: { jobId: projection.jobId },
+    }, response);
 
-      await harness.router(
-        {
-          method: "POST",
-          url: "/api/vf-cross/unwind",
-          body: requestBody,
-          headers: {},
+    expect(response.statusCode).toBe(200);
+    expect(jsonOf(response)).toEqual(projection);
+    expect(reconcileFromCctp).toHaveBeenCalledOnce();
+    expect(readUnwindEvidence).not.toHaveBeenCalled();
+    expect(relayReverseMint).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing Authorization', {}],
+    ['Basic Authorization', { authorization: `Basic ${CAPABILITY}` }],
+    ['lowercase bearer', { authorization: `bearer ${CAPABILITY}` }],
+    ['trailing bearer token', { authorization: `Bearer ${CAPABILITY} extra` }],
+    ['Node Cookie only', { cookie: `__Host-vf-unwind-${'ab'.repeat(16)}=${CAPABILITY}` }],
+    ['Bearer plus Node Cookie', {
+      authorization: `Bearer ${CAPABILITY}`,
+      cookie: `__Host-vf-unwind-${'ab'.repeat(16)}=${CAPABILITY}`,
+    }],
+  ])('rejects unwind attach with %s before authority, evidence, or state reads', async (_label, headers) => {
+    const getAuthority = vi.fn();
+    const status = vi.fn();
+    const readUnwindEvidence = vi.fn();
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs: { getAuthority, status }, readUnwindEvidence,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+
+    await router({
+      method: 'POST', url: '/api/vf-cross/unwind/attach', headers,
+      body: { jobId: 'ab'.repeat(16), userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
+    }, response);
+
+    expect(response.statusCode).toBe(401);
+    expect(jsonOf(response)).toEqual({ error: 'unauthorized' });
+    expect(getAuthority).not.toHaveBeenCalled();
+    expect(status).not.toHaveBeenCalled();
+    expect(readUnwindEvidence).not.toHaveBeenCalled();
+    expect(response.body).not.toContain(CAPABILITY);
+  });
+
+  it('returns indistinguishable authorization failures for wrong, cross-job, and unknown unwind authority', async () => {
+    const existingJob = 'ab'.repeat(16);
+    const unknownJob = 'cd'.repeat(16);
+    const wrongCapability = 'f'.repeat(64);
+    const secondCapability = 'e'.repeat(64);
+    const authorities = new Map([
+      [existingJob, {
+        jobId: existingJob, capabilityHash: CAPABILITY_HASH,
+        kernelAddress: KERNEL, recipientHint: OWNER,
+        capabilityExpiresAt: 1_700_003_600_000,
+      }],
+      [unknownJob, {
+        jobId: unknownJob, capabilityHash: sha256(secondCapability),
+        kernelAddress: KERNEL, recipientHint: OWNER,
+        capabilityExpiresAt: 1_700_003_600_000,
+      }],
+    ]);
+    const getAuthority = vi.fn((jobId) => authorities.get(jobId) ?? null);
+    const status = vi.fn();
+    const readUnwindEvidence = vi.fn();
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs: { getAuthority, status }, readUnwindEvidence,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const cases = [
+      { jobId: existingJob, capability: wrongCapability },
+      { jobId: existingJob, capability: secondCapability },
+      { jobId: 'ef'.repeat(16), capability: wrongCapability },
+    ];
+    const bodies = [];
+    for (const testCase of cases) {
+      const response = mockRes();
+      await router({
+        method: 'POST', url: '/api/vf-cross/status',
+        headers: { authorization: `Bearer ${testCase.capability}` },
+        body: { jobId: testCase.jobId },
+      }, response);
+      expect(response.statusCode).toBe(401);
+      bodies.push(response.body);
+    }
+
+    expect(new Set(bodies)).toEqual(new Set([JSON.stringify({ error: 'unauthorized' })]));
+    expect(status).not.toHaveBeenCalled();
+    expect(readUnwindEvidence).not.toHaveBeenCalled();
+    for (const body of bodies) {
+      expect(body).not.toMatch(new RegExp(`${wrongCapability}|${secondCapability}|${existingJob}`));
+    }
+  });
+
+  it('rejects capability material in attach JSON before authority lookup', async () => {
+    const getAuthority = vi.fn();
+    const readUnwindEvidence = vi.fn();
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs: { getAuthority }, readUnwindEvidence,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+    await router({
+      method: 'POST', url: '/api/vf-cross/unwind/attach',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: {
+        jobId: 'ab'.repeat(16), userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH,
+        capability: CAPABILITY,
+      },
+    }, response);
+    expect(response.statusCode).toBe(400);
+    expect(jsonOf(response)).toEqual({ error: 'invalid unwind attach' });
+    expect(getAuthority).not.toHaveBeenCalled();
+    expect(readUnwindEvidence).not.toHaveBeenCalled();
+    expect(response.body).not.toContain(CAPABILITY);
+  });
+
+  it('rejects extra unwind status fields before authority lookup or RPC', async () => {
+    const getAuthority = vi.fn();
+    const readUnwindEvidence = vi.fn();
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs: { getAuthority, status: vi.fn() },
+      readUnwindEvidence,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+
+    await router({
+      method: 'POST', url: '/api/vf-cross/status',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: { jobId: 'ab'.repeat(16), owner: KERNEL },
+    }, response);
+
+    expect(response.statusCode).toBe(400);
+    expect(jsonOf(response)).toEqual({ error: 'invalid status request' });
+    expect(getAuthority).not.toHaveBeenCalled();
+    expect(readUnwindEvidence).not.toHaveBeenCalled();
+  });
+
+  it('authenticates and atomically attaches chain proof before scheduling only Task8 mint resume', async () => {
+    const jobId = 'ab'.repeat(16);
+    const proof = Object.freeze({
+      synthetic: 'verified-proof', userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH,
+    });
+    const expectation = Object.freeze({ sourceDomain: 6, direction: 'base-to-stellar' });
+    const publicClient = UNWIND_PUBLIC_CLIENT;
+    const bundlerClient = UNWIND_BUNDLER_CLIENT;
+    const facts = UNWIND_FACTS;
+    const getAuthority = vi.fn(() => ({
+      jobId,
+      kernelAddress: KERNEL,
+      recipientHint: OWNER,
+      state: 'awaiting_burn',
+      capabilityHash: CAPABILITY_HASH,
+      capabilityExpiresAt: 1_700_003_600_000,
+      userOpHash: null,
+      unwindTxHash: null,
+    }));
+    const claimEvidence = vi.fn(() => ({
+      jobId,
+      kernelAddress: KERNEL,
+      recipientHint: OWNER,
+      leaseToken: 'evidence-lease',
+      leaseExpiresAt: 1_700_000_030_000,
+    }));
+    const attachAndEnqueue = vi.fn(() => ({
+      duplicate: false,
+      record: { jobId, status: 'relay_pending', unwindTxHash: TX_HASH },
+    }));
+    const readUnwindEvidence = vi.fn(async () => ({ proof, expectation }));
+    const relayReverseMint = vi.fn(async () => ({ status: 'in-progress' }));
+    const buildFarm = vi.fn();
+    const router = createRelayerRouter({
+      buildFarm,
+      jobs: new Map(),
+      genId: vi.fn(),
+      unwindJobs: {
+        reserve: vi.fn(), getAuthority, status: vi.fn(), claimEvidence,
+        renewEvidence: vi.fn(),
+        releaseEvidence: vi.fn(),
+        attachAndEnqueue,
+        finishBlocked: vi.fn(), finishUncertain: vi.fn(), reconcileFromCctp: vi.fn(),
+        reconcileExpired: vi.fn(), listForResume: vi.fn(),
+      },
+      readUnwindEvidence,
+      relayReverseMint,
+      unwindPublicClient: publicClient,
+      unwindBundlerClient: bundlerClient,
+      unwindEvidenceFacts: facts,
+      nowMs: () => 1_700_000_000_000,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+
+    await router({
+      method: 'POST',
+      url: '/api/vf-cross/unwind/attach',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
+    }, response);
+
+    expect(response.statusCode).toBe(202);
+    expect(jsonOf(response)).toEqual({ jobId, status: 'relay_pending', unwindTxHash: TX_HASH });
+    expect(readUnwindEvidence).toHaveBeenCalledWith({
+      publicClient,
+      bundlerClient,
+      jobId,
+      userOpHash: USER_OP_HASH,
+      unwindTxHash: TX_HASH,
+      kernelAddress: KERNEL,
+      recipientHint: OWNER,
+      facts,
+    });
+    expect(claimEvidence).toHaveBeenCalledWith({
+      jobId,
+      userOpHash: USER_OP_HASH,
+      unwindTxHash: TX_HASH,
+      now: 1_700_000_000_000,
+      leaseMs: 30_000,
+      retryMs: 300_000,
+    });
+    expect(attachAndEnqueue).toHaveBeenCalledWith({
+      jobId,
+      proof,
+      expectation,
+      relayExecId: `unwind:${jobId}`,
+      leaseToken: 'evidence-lease',
+      now: 1_700_000_000_000,
+    });
+    await vi.waitFor(() => expect(relayReverseMint).toHaveBeenCalledWith({
+      execId: `unwind:${jobId}`,
+      sourceDomain: 6,
+      burnTxHash: TX_HASH,
+      expectation,
+    }));
+    expect(buildFarm).not.toHaveBeenCalled();
+  });
+
+  it('attaches through the real SQLite authority from a fresh reservation with nullable hashes', async () => {
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-unwind-route-')), 'relayer.db'));
+    const jobId = 'ab'.repeat(16);
+    const reserveJson = JSON.stringify({
+      jobId, kernelAddress: KERNEL, recipientHint: OWNER,
+    });
+    const requestDigest = sha256(`vf-unwind-reserve-v1\0${reserveJson}`);
+    stores.unwindJobs.reserve({
+      jobId,
+      capabilityHash: CAPABILITY_HASH,
+      kernelAddress: KERNEL,
+      recipientHint: OWNER,
+      requestDigest,
+      expiresAt: 1_700_003_300_000,
+      capabilityExpiresAt: 1_700_003_600_000,
+      now: 1_700_000_000_000,
+    });
+    expect(stores.unwindJobs.getAuthority(jobId).userOpHash).toBeNull();
+    expect(stores.unwindJobs.getAuthority(jobId).unwindTxHash).toBeNull();
+    const expectation = Object.freeze({
+      version: 1,
+      direction: 'base-to-stellar',
+      sourceDomain: 6,
+      destinationDomain: 27,
+      sender: `0x${'01'.repeat(32)}`,
+      recipient: `0x${'02'.repeat(32)}`,
+      destinationCaller: `0x${'03'.repeat(32)}`,
+      burnToken: `0x${'04'.repeat(32)}`,
+      mintRecipient: `0x${'05'.repeat(32)}`,
+      messageSender: `0x${'00'.repeat(12)}${'06'.repeat(20)}`,
+      amount: '123',
+      burnUnits7: null,
+      maxFee: '7',
+      minFinalityThreshold: 1000,
+      hookData: '0x',
+    });
+    const proof = Object.freeze({
+      version: 1,
+      chainId: 84532,
+      userOpHash: USER_OP_HASH,
+      jobCommitment: unwindJobCommitment(jobId),
+      unwindTxHash: TX_HASH,
+      entryPointAddress: `0x${'07'.repeat(20)}`,
+      kernelAddress: KERNEL,
+      blockNumber: '1234',
+      blockHash: `0x${'08'.repeat(32)}`,
+      userOpNonce: '9',
+      burned: '123',
+      exited: '125',
+      skipped: '0',
+      maxFee: '7',
+      hookData: '0x',
+      sourceMessageHex: '0xdeadbeef',
+      sourceMessageDigest: sha256(Buffer.from('deadbeef', 'hex')),
+      logIndices: Object.freeze({
+        messageSent: 1, depositForBurn: 2, swept: 3, userOperationEvent: 4,
+      }),
+      logDigests: Object.freeze({
+        messageSent: '11'.repeat(32), depositForBurn: '12'.repeat(32),
+        swept: '13'.repeat(32), userOperationEvent: '14'.repeat(32),
+      }),
+    });
+    const relayReverseMint = vi.fn(async () => ({ status: 'in-progress' }));
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: stores.jobs, genId: vi.fn(),
+      unwindJobs: stores.unwindJobs,
+      readUnwindEvidence: vi.fn(async () => ({ proof, expectation })),
+      relayReverseMint,
+      unwindPublicClient: UNWIND_PUBLIC_CLIENT,
+      unwindBundlerClient: UNWIND_BUNDLER_CLIENT,
+      unwindEvidenceFacts: UNWIND_FACTS,
+      nowMs: () => 1_700_000_000_100,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+
+    await router({
+      method: 'POST', url: '/api/vf-cross/unwind/attach',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
+    }, response);
+
+    expect(response.statusCode).toBe(202);
+    expect(jsonOf(response)).toEqual({ jobId, status: 'relay_pending', unwindTxHash: TX_HASH });
+    expect(stores.cctpRelays.get(`unwind:${jobId}`)).toMatchObject({
+      sourceDomain: 6, burnTxHash: TX_HASH, state: 'attestation_pending',
+    });
+    expect(JSON.stringify(stores.unwindJobs.getAuthority(jobId))).not.toContain(CAPABILITY);
+    await vi.waitFor(() => expect(relayReverseMint).toHaveBeenCalledTimes(1));
+    stores.db.close();
+  });
+
+  it('rejects a reader-returned receipt identity that differs from the authenticated attach pair', async () => {
+    const jobId = 'ab'.repeat(16);
+    const finishBlocked = vi.fn(() => ({
+      jobId, status: 'blocked', reasonCode: 'message_mismatch',
+    }));
+    const attachAndEnqueue = vi.fn();
+    const relayReverseMint = vi.fn();
+    const unwindJobs = {
+      reserve: vi.fn(),
+      getAuthority: vi.fn(() => ({
+        jobId, kernelAddress: KERNEL, recipientHint: OWNER,
+        state: 'awaiting_burn', capabilityHash: CAPABILITY_HASH,
+        capabilityExpiresAt: 1_700_003_600_000,
+        userOpHash: null, unwindTxHash: null,
+      })),
+      status: vi.fn(),
+      claimEvidence: vi.fn(() => ({
+        jobId, kernelAddress: KERNEL, recipientHint: OWNER,
+        leaseToken: 'identity-lease', leaseExpiresAt: 1_700_000_030_000,
+      })),
+      renewEvidence: vi.fn(), releaseEvidence: vi.fn(), attachAndEnqueue,
+      finishBlocked, finishUncertain: vi.fn(), reconcileFromCctp: vi.fn(),
+      reconcileExpired: vi.fn(), listForResume: vi.fn(),
+    };
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(), unwindJobs,
+      readUnwindEvidence: vi.fn(async () => ({
+        proof: {
+          userOpHash: `0x${'35'.repeat(32)}`,
+          unwindTxHash: TX_HASH,
         },
-        res,
-      );
+        expectation: { direction: 'base-to-stellar', sourceDomain: 6 },
+      })),
+      relayReverseMint,
+      unwindPublicClient: UNWIND_PUBLIC_CLIENT,
+      unwindBundlerClient: UNWIND_BUNDLER_CLIENT,
+      unwindEvidenceFacts: UNWIND_FACTS,
+      nowMs: () => 1_700_000_000_000,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+    await router({
+      method: 'POST', url: '/api/vf-cross/unwind/attach',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
+    }, response);
 
-      expect(res.statusCode).toBe(400);
-      expect(harness.jobs.size).toBe(0);
-      expect(harness.relayUnwindMint).not.toHaveBeenCalled();
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expect(res.body).not.toContain(SESSION_KEY);
+    expect(response.statusCode).toBe(409);
+    expect(finishBlocked).toHaveBeenCalledWith(expect.objectContaining({
+      jobId, leaseToken: 'identity-lease', reasonCode: 'message_mismatch',
+    }));
+    expect(attachAndEnqueue).not.toHaveBeenCalled();
+    expect(relayReverseMint).not.toHaveBeenCalled();
+  });
+
+  it('durably blocks an authenticated mismatched proof under the live evidence lease', async () => {
+    const jobId = 'ab'.repeat(16);
+    const finishBlocked = vi.fn(() => ({
+      jobId, status: 'blocked', reasonCode: 'message_mismatch',
+    }));
+    const releaseEvidence = vi.fn();
+    const attachAndEnqueue = vi.fn();
+    const relayReverseMint = vi.fn();
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs: {
+        reserve: vi.fn(),
+        getAuthority: vi.fn(() => ({
+          jobId, kernelAddress: KERNEL, recipientHint: OWNER,
+          state: 'awaiting_burn', capabilityHash: CAPABILITY_HASH,
+          capabilityExpiresAt: 1_700_003_600_000,
+          userOpHash: null, unwindTxHash: null,
+        })),
+        claimEvidence: vi.fn(() => ({
+          jobId, kernelAddress: KERNEL, recipientHint: OWNER,
+          leaseToken: 'evidence-lease', leaseExpiresAt: 1_700_000_030_000,
+        })),
+        renewEvidence: vi.fn(),
+        releaseEvidence,
+        finishBlocked,
+        finishUncertain: vi.fn(), status: vi.fn(), reconcileFromCctp: vi.fn(),
+        reconcileExpired: vi.fn(), listForResume: vi.fn(),
+        attachAndEnqueue,
+      },
+      readUnwindEvidence: vi.fn(async () => {
+        const error = new Error('private decoder detail');
+        error.code = 'UNWIND_EVIDENCE_MISMATCH';
+        throw error;
+      }),
+      relayReverseMint,
+      unwindPublicClient: UNWIND_PUBLIC_CLIENT,
+      unwindBundlerClient: UNWIND_BUNDLER_CLIENT,
+      unwindEvidenceFacts: UNWIND_FACTS,
+      nowMs: () => 1_700_000_000_000,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+    const response = mockRes();
+
+    await router({
+      method: 'POST', url: '/api/vf-cross/unwind/attach',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
+    }, response);
+
+    expect(response.statusCode).toBe(409);
+    expect(jsonOf(response)).toEqual({ error: 'unwind evidence was rejected' });
+    expect(response.body).not.toContain('private decoder detail');
+    expect(finishBlocked).toHaveBeenCalledWith({
+      jobId, leaseToken: 'evidence-lease', reasonCode: 'message_mismatch',
+      now: 1_700_000_000_000,
+    });
+    expect(releaseEvidence).not.toHaveBeenCalled();
+    expect(attachAndEnqueue).not.toHaveBeenCalled();
+    expect(relayReverseMint).not.toHaveBeenCalled();
+  });
+
+  it.each(['/unwind?capability=secret', '/unwind/attach?x=1', '/status?token=secret'])(
+    'rejects query-bearing unwind request %s before auth, lookup, or RPC',
+    async (suffix) => {
+      const reserve = vi.fn();
+      const getAuthority = vi.fn();
+      const readUnwindEvidence = vi.fn();
+      const router = createRelayerRouter({
+        buildFarm: vi.fn(),
+        jobs: new Map(),
+        genId: vi.fn(),
+        unwindJobs: { reserve, getAuthority, status: vi.fn() },
+        readUnwindEvidence,
+        publicRuntime: { baseCrossChainAvailable: true },
+      });
+      const response = mockRes();
+      const path = suffix.split('?')[0];
+      const body = path === '/unwind'
+        ? { jobId: 'ab'.repeat(16), capability: CAPABILITY, kernelAddress: KERNEL, recipientHint: OWNER }
+        : path === '/unwind/attach'
+          ? { jobId: 'ab'.repeat(16), userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH }
+          : { jobId: 'ab'.repeat(16) };
+
+      await router({
+        method: 'POST',
+        url: `/api/vf-cross${suffix}`,
+        headers: { authorization: `Bearer ${CAPABILITY}` },
+        body,
+      }, response);
+
+      expect(response.statusCode).toBe(400);
+      expect(jsonOf(response)).toEqual({ error: 'invalid request' });
+      expect(response.headers['Cache-Control']).toBe('no-store');
+      expect(reserve).not.toHaveBeenCalled();
+      expect(getAuthority).not.toHaveBeenCalled();
+      expect(readUnwindEvidence).not.toHaveBeenCalled();
     },
   );
 
-  it("sanitizes an unwind relay rejection internally while keeping both existing and unknown jobs publicly unavailable", async () => {
-    const rawFailure = `iris ${SESSION_KEY} https://iris.private timed out`;
-    const relayUnwindMint = vi.fn(async () => {
-      throw new Error(rawFailure);
+  it.each([
+    ['POST', '/api/vf-cross/unwind'],
+    ['POST', '/api/vf-cross/unwind/attach'],
+    ['POST', '/api/vf-cross/status'],
+    ['OPTIONS', '/api/vf-cross/unwind/attach'],
+  ])('never exposes protected unwind authority with wildcard CORS: %s %s', async (method, url) => {
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      publicRuntime: { baseCrossChainAvailable: true },
     });
-    const harness = makeRouteHarness({
-      relayUnwindMint,
-      sanitizeErrors: true,
+    const response = mockRes();
+
+    await router({ method, url, headers: {}, body: {} }, response);
+
+    expect(response.headers['Access-Control-Allow-Origin']).not.toBe('*');
+    expect(response.headers['Access-Control-Allow-Credentials']).not.toBe('true');
+  });
+
+  it('reconciles expired leases then bounded Task8 projections without evidence reads or mint sends', async () => {
+    const calls = [];
+    const readUnwindEvidence = vi.fn();
+    const relayReverseMint = vi.fn();
+    const unwindJobs = {
+      reconcileExpired: vi.fn(() => {
+        calls.push('expired');
+        return [{ jobId: 'ee'.repeat(16), status: 'expired' }];
+      }),
+      listForResume: vi.fn(() => {
+        calls.push('list');
+        return [
+          { jobId: '01'.repeat(16), relayExecId: `unwind:${'01'.repeat(16)}`, state: 'relay_pending' },
+          { jobId: '02'.repeat(16), relayExecId: `unwind:${'02'.repeat(16)}`, state: 'relay_running' },
+        ];
+      }),
+      reconcileFromCctp: vi.fn(({ jobId }) => {
+        calls.push(`project:${jobId}`);
+        return jobId.startsWith('01')
+          ? { jobId, status: 'done', unwindTxHash: TX_HASH, mintTxHash: 'aa'.repeat(32) }
+          : { jobId, status: 'relay_running', unwindTxHash: TX_HASH };
+      }),
+    };
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs, readUnwindEvidence, relayReverseMint,
+      nowMs: () => 1_700_000_000_000,
+      recoveryLimit: 10, recoveryConcurrency: 1,
+      publicRuntime: { baseCrossChainAvailable: true },
     });
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
-    try {
-      const unwind = mockRes();
-      await harness.router(
-        {
-          method: "POST",
-          url: "/api/vf-cross/unwind",
-          body: {
-            unwindTxHash: "0xowner-signed-failing-unwind",
-            stellarRecipient: OWNER,
-          },
-          headers: {},
-        },
-        unwind,
-      );
 
-      expect(unwind.statusCode).toBe(200);
-      const { jobId } = jsonOf(unwind);
-      expect(jobId).toMatch(JOB_ID_RE);
-      await flushMicrotasks(30);
-      expect(relayUnwindMint).toHaveBeenCalledTimes(1);
-      expect(harness.jobs.get(jobId)).toMatchObject({
-        status: "error",
-        steps: [
-          expect.objectContaining({
-            status: "error",
-            message: "internal error",
-          }),
-        ],
-      });
-      expect(JSON.stringify(harness.jobs.get(jobId))).not.toContain(
-        rawFailure,
-      );
-      expect(JSON.stringify(harness.jobs.get(jobId))).not.toContain(
-        "iris.private",
-      );
-      expect(consoleError).toHaveBeenCalled();
-      harness.events.length = 0;
-      const jobGet = vi.spyOn(harness.jobs, "get");
+    const result = await router.resumeUnwindJobs({ limit: 2 });
 
-      const existing = await postProtected(
-        harness,
-        "/status",
-        { jobId },
-        CAPABILITY,
-      );
-      const unknown = await postProtected(
-        harness,
-        "/status",
-        { jobId: UNKNOWN_JOB_ID },
-        CAPABILITY,
-      );
-      expect(existing.res.statusCode).toBe(400);
-      expect(existing.json).toEqual({ error: "unsupported status identity" });
-      expect(unknown.res.statusCode).toBe(400);
-      expect(unknown.res.body).toBe(existing.res.body);
-      expect(existing.res.body).not.toContain("internal error");
-      expect(existing.res.body).not.toContain("iris.private");
-      expect(existing.res.body).not.toContain(jobId);
-      expect(unknown.res.body).not.toContain(UNKNOWN_JOB_ID);
-      expect(jobGet).not.toHaveBeenCalled();
-      jobGet.mockRestore();
-      expect(harness.events).not.toContain("store:get");
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-    } finally {
-      consoleError.mockRestore();
-    }
+    expect(calls).toEqual([
+      'expired', 'list', `project:${'01'.repeat(16)}`, `project:${'02'.repeat(16)}`,
+    ]);
+    expect(unwindJobs.reconcileExpired).toHaveBeenCalledWith({
+      now: 1_700_000_000_000, limit: 2,
+    });
+    expect(unwindJobs.listForResume).toHaveBeenCalledWith({
+      now: 1_700_000_000_000, limit: 2,
+    });
+    expect(result).toEqual({
+      resumed: ['01'.repeat(16)],
+      held: ['02'.repeat(16)],
+      blocked: [],
+      uncertain: [],
+      expired: ['ee'.repeat(16)],
+    });
+    expect(readUnwindEvidence).not.toHaveBeenCalled();
+    expect(relayReverseMint).not.toHaveBeenCalled();
+  });
+
+  it('recovers only proof-fenced existing reverse work while new Base execution is unavailable', async () => {
+    const jobId = '03'.repeat(16);
+    const relayExecId = `unwind:${jobId}`;
+    const calls = [];
+    const readUnwindEvidence = vi.fn();
+    const relayReverseMint = vi.fn();
+    const resumeExistingReverse = vi.fn(async (execId) => {
+      calls.push(`drive:${execId}`);
+      return { status: 'mint_submitted', mintTxHash: 'aa'.repeat(32) };
+    });
+    const unwindJobs = {
+      reconcileExpired: vi.fn(() => []),
+      listForResume: vi.fn(() => [{ jobId, relayExecId, state: 'relay_running' }]),
+      reconcileFromCctp: vi.fn(({ jobId: projectedJobId }) => {
+        calls.push(`project:${projectedJobId}`);
+        return {
+          jobId: projectedJobId, status: 'relay_running', unwindTxHash: TX_HASH,
+          mintTxHash: 'aa'.repeat(32),
+        };
+      }),
+    };
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs, readUnwindEvidence, relayReverseMint, resumeExistingReverse,
+      nowMs: () => 1_700_000_000_000,
+      recoveryLimit: 10, recoveryConcurrency: 1,
+      publicRuntime: { baseCrossChainAvailable: false },
+    });
+
+    await expect(router.resumeUnwindJobs({ limit: 2 })).resolves.toEqual({
+      resumed: [], held: [jobId], blocked: [], uncertain: [], expired: [],
+    });
+    expect(calls).toEqual([`drive:${relayExecId}`, `project:${jobId}`]);
+    expect(readUnwindEvidence).not.toHaveBeenCalled();
+    expect(relayReverseMint).not.toHaveBeenCalled();
+  });
+
+  it('keeps the recovery guard until every sibling settles after an early worker failure', async () => {
+    const firstJob = '04'.repeat(16);
+    const gatedJob = '05'.repeat(16);
+    let releaseGate;
+    const gate = new Promise((resolve) => { releaseGate = resolve; });
+    const listForResume = vi.fn(() => [
+      { jobId: firstJob, relayExecId: `unwind:${firstJob}`, state: 'relay_pending' },
+      { jobId: gatedJob, relayExecId: `unwind:${gatedJob}`, state: 'relay_pending' },
+    ]);
+    const reconcileFromCctp = vi.fn(async ({ jobId }) => {
+      if (jobId === firstJob) throw new Error('injected early projection failure');
+      await gate;
+      return { jobId, status: 'relay_pending', unwindTxHash: TX_HASH };
+    });
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      unwindJobs: {
+        reconcileExpired: vi.fn(() => []), listForResume, reconcileFromCctp,
+      },
+      nowMs: () => 1_700_000_000_000,
+      recoveryLimit: 10, recoveryConcurrency: 2,
+      publicRuntime: { baseCrossChainAvailable: true },
+    });
+
+    const first = router.resumeUnwindJobs({ limit: 2 });
+    const firstOutcome = first.catch((error) => error);
+    let firstSettled = false;
+    firstOutcome.finally(() => { firstSettled = true; });
+    await vi.waitFor(() => expect(reconcileFromCctp).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(firstSettled).toBe(false);
+    const overlapping = router.resumeUnwindJobs({ limit: 2 });
+    const overlappingOutcome = overlapping.catch((error) => error);
+    await Promise.resolve();
+
+    expect(listForResume).toHaveBeenCalledTimes(1);
+    expect(reconcileFromCctp).toHaveBeenCalledTimes(2);
+    releaseGate();
+    expect((await firstOutcome).message).toBe('injected early projection failure');
+    expect((await overlappingOutcome).message).toBe('injected early projection failure');
+    expect(listForResume).toHaveBeenCalledTimes(1);
   });
 
 });

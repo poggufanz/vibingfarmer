@@ -4,15 +4,17 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import _Withdraw from './Withdraw.jsx'
 
 const signAndSubmitUnwind = vi.fn()
-const postUnwind = vi.fn()
-const pollFarmStatus = vi.fn()
+const reserveUnwind = vi.fn()
+const postUnwindAttach = vi.fn()
+const pollUnwindStatus = vi.fn()
 
 vi.mock('../base/withdrawBatch.js', () => ({
   signAndSubmitUnwind: (...args) => signAndSubmitUnwind(...args),
 }))
 vi.mock('../base/relayerClient.js', () => ({
-  postUnwind: (...args) => postUnwind(...args),
-  pollFarmStatus: (...args) => pollFarmStatus(...args),
+  reserveUnwind: (...args) => reserveUnwind(...args),
+  postUnwindAttach: (...args) => postUnwindAttach(...args),
+  pollUnwindStatus: (...args) => pollUnwindStatus(...args),
 }))
 
 afterEach(cleanup)
@@ -42,7 +44,8 @@ describe('Withdraw legacy deployment fence', () => {
 
     fireEvent.click(button)
     expect(signAndSubmitUnwind).not.toHaveBeenCalled()
-    expect(postUnwind).not.toHaveBeenCalled()
-    expect(pollFarmStatus).not.toHaveBeenCalled()
+    expect(reserveUnwind).not.toHaveBeenCalled()
+    expect(postUnwindAttach).not.toHaveBeenCalled()
+    expect(pollUnwindStatus).not.toHaveBeenCalled()
   })
 })

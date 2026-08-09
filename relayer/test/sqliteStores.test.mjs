@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { Keypair } from '@stellar/stellar-sdk';
+import { concatHex, keccak256 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createSecretEnvelope, parseSecretKeyring } from '../src/secretEnvelope.mjs';
 import {
@@ -4642,8 +4643,29 @@ const CCTP_FORWARD_EXPECTATION = {
 // sha256('vf-cctp-expectation-v1\0' + canonical JSON) — hand-calculated, see store.test.mjs.
 const CCTP_FORWARD_EXPECTATION_DIGEST =
   '11168b4892206a45bb692ff36133a2571db05d6192a257edeafb247cfa8a8a98';
+const CCTP_REVERSE_EXPECTATION_DIGEST =
+  'b520b25d0f960eef4edda77137065bb666a46fa8b1cf79fa8d6bc159978e5cd0';
+
+const CCTP_REVERSE_EXPECTATION = {
+  version: 1,
+  direction: 'base-to-stellar',
+  sourceDomain: 6,
+  destinationDomain: 27,
+  sender: '0x0000000000000000000000008fe6b999dc680ccfdd5bf7eb0974218be2542daa',
+  recipient: '0xda6f9ee0786c812344d82817ef19b648b4af120f8bd10bf658e6b99eacff24b8',
+  destinationCaller: '0x3de86ac50b47eaf2840fe23e48179551660fd1072fba6f445d4a6bd7af4ab93e',
+  burnToken: '0x000000000000000000000000036cbd53842c5426634e7929541ec2318f3dcf7e',
+  mintRecipient: '0x3de86ac50b47eaf2840fe23e48179551660fd1072fba6f445d4a6bd7af4ab93e',
+  messageSender: '0x0000000000000000000000005451a6dc234d07f3c80752e3c0e798913e53de6d',
+  amount: '1234567',
+  burnUnits7: null,
+  maxFee: '1000',
+  minFinalityThreshold: 1000,
+  hookData: `0x${'00'.repeat(24)}00000000000000384743584d5a434456595441414e42524153554757533547444b52475351574e4d3558485642344a4937505845435a594b4247354f5454524b`,
+};
 
 const CCTP_BURN_FORWARD = 'aa'.repeat(32);
+const CCTP_BURN_REVERSE = `0x${'cc'.repeat(32)}`;
 const CCTP_MINT_BASE = `0x${'bb'.repeat(32)}`;
 const CCTP_MESSAGE_HEX = '0xdeadbeef';
 const CCTP_MESSAGE_DIGEST = '5f78c33274e43fa9de5659265c1d917e25c03722dcb0b8d27db8d5feaa813953';
@@ -4654,6 +4676,94 @@ const CCTP_ATTESTATION_DIGEST =
 const CCTP_NEW_ATTESTATION_HEX = '0xccdd';
 const CCTP_NEW_ATTESTATION_DIGEST =
   '5a8814ae66ff07179d2c22381da6221f6fe754e6175c47d7d87846080f0a9715';
+
+const UNWIND_JOB_ID = '10'.repeat(16);
+const UNWIND_CAPABILITY_HASH = '20'.repeat(32);
+const UNWIND_KERNEL = `0x${'30'.repeat(20)}`;
+const UNWIND_RECIPIENT = 'GCXMZCDVYTAANBRASUGWS5GDKRGSQWNM5XHVB4JI7PXECZYKBG5OTTRK';
+// sha256('vf-unwind-reserve-v1\0' + exact canonical reserve JSON), calculated independently.
+const UNWIND_REQUEST_DIGEST =
+  '861ab14ae726044accae31aa7ae940f1a5e5f3137e034c4ca3e27bd6a4980abe';
+const UNWIND_USER_OP_HASH = `0x${'50'.repeat(32)}`;
+const UNWIND_JOB_COMMITMENT =
+  '0x03ac096b55e45c72290a902df8be9eb3e1c6f0614d7c328aa878097e2662fc86';
+const UNWIND_TX_HASH = `0x${'60'.repeat(32)}`;
+const UNWIND_ENTRY_POINT = '0x0000000071727de22e5e9d8baf0edac6f37da032';
+const UNWIND_BLOCK_HASH = `0x${'70'.repeat(32)}`;
+const UNWIND_PROOF = Object.freeze({
+  version: 1,
+  chainId: 84532,
+  userOpHash: UNWIND_USER_OP_HASH,
+  jobCommitment: UNWIND_JOB_COMMITMENT,
+  unwindTxHash: UNWIND_TX_HASH,
+  entryPointAddress: UNWIND_ENTRY_POINT,
+  kernelAddress: UNWIND_KERNEL,
+  blockNumber: '12345678',
+  blockHash: UNWIND_BLOCK_HASH,
+  userOpNonce: '9',
+  burned: '1234567',
+  exited: '1300000',
+  skipped: '0',
+  maxFee: '1000',
+  hookData: CCTP_REVERSE_EXPECTATION.hookData,
+  sourceMessageHex: CCTP_MESSAGE_HEX,
+  sourceMessageDigest: CCTP_MESSAGE_DIGEST,
+  logIndices: Object.freeze({
+    messageSent: 4,
+    depositForBurn: 5,
+    swept: 6,
+    userOperationEvent: 7,
+  }),
+  logDigests: Object.freeze({
+    messageSent: '81'.repeat(32),
+    depositForBurn: '82'.repeat(32),
+    swept: '83'.repeat(32),
+    userOperationEvent: '84'.repeat(32),
+  }),
+});
+
+function unwindJobId(index) {
+  return index.toString(16).padStart(32, '0');
+}
+
+function unwindReserveInput(index, overrides = {}) {
+  const jobId = overrides.jobId ?? unwindJobId(index);
+  const kernelAddress = overrides.kernelAddress ?? UNWIND_KERNEL;
+  const recipientHint = overrides.recipientHint ?? UNWIND_RECIPIENT;
+  const reserveJson = JSON.stringify({ jobId, kernelAddress, recipientHint });
+  return {
+    jobId,
+    capabilityHash: overrides.capabilityHash ?? createHash('sha256')
+      .update(`capability-${index}`).digest('hex'),
+    kernelAddress,
+    recipientHint,
+    requestDigest: createHash('sha256')
+      .update(`vf-unwind-reserve-v1\0${reserveJson}`).digest('hex'),
+    expiresAt: overrides.expiresAt ?? CCTP_T0 + 3_600_000,
+    capabilityExpiresAt: overrides.capabilityExpiresAt ?? CCTP_T0 + 4_200_000,
+    now: overrides.now ?? CCTP_T0 + index,
+  };
+}
+
+function unwindProofFor(index, overrides = {}) {
+  const byte = (0x90 + index).toString(16).padStart(2, '0');
+  return {
+    ...UNWIND_PROOF,
+    userOpHash: overrides.userOpHash ?? `0x${byte.repeat(32)}`,
+    jobCommitment: overrides.jobCommitment ?? keccak256(concatHex([
+      '0x76662d756e77696e642d6a6f622d7631', `0x${unwindJobId(index)}`,
+    ])),
+    unwindTxHash: overrides.unwindTxHash ?? `0x${(0xa0 + index).toString(16).repeat(32)}`,
+    burned: overrides.burned ?? UNWIND_PROOF.burned,
+    maxFee: overrides.maxFee ?? UNWIND_PROOF.maxFee,
+    logDigests: {
+      messageSent: byte.repeat(32),
+      depositForBurn: (0xb0 + index).toString(16).repeat(32),
+      swept: (0xc0 + index).toString(16).repeat(32),
+      userOperationEvent: (0xd0 + index).toString(16).repeat(32),
+    },
+  };
+}
 
 function cctpThrowsCode(fn, code) {
   try {
@@ -4675,6 +4785,149 @@ const cctpIntent = (execId, overrides = {}) => ({
   now: CCTP_T0,
   ...overrides,
 });
+
+const cctpReverseIntent = (execId, overrides = {}) => ({
+  execId,
+  sourceDomain: 6,
+  burnTxHash: CCTP_BURN_REVERSE,
+  expectation: CCTP_REVERSE_EXPECTATION,
+  now: CCTP_T0,
+  ...overrides,
+});
+
+function createLegacyUniqueBurnCctpTable(path) {
+  const db = new DatabaseSync(path);
+  db.exec(`
+    CREATE TABLE cctp_relay_work (
+      exec_id TEXT PRIMARY KEY,
+      source_domain INTEGER NOT NULL,
+      burn_tx_hash TEXT NOT NULL UNIQUE,
+      expectation_json TEXT NOT NULL,
+      expectation_digest TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN (
+        'attestation_pending','attested','mint_submitting','mint_submitted',
+        'minted','blocked','uncertain'
+      )),
+      message_hex TEXT,
+      nonce_hex TEXT,
+      message_digest TEXT,
+      attestation_hex TEXT,
+      attestation_digest TEXT,
+      evidence_version INTEGER NOT NULL DEFAULT 0,
+      mint_tx_hash TEXT,
+      reason_code TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      lease_token TEXT,
+      lease_expires_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      CHECK (state <> 'attested' OR (
+        message_hex IS NOT NULL AND nonce_hex IS NOT NULL AND message_digest IS NOT NULL
+        AND attestation_hex IS NOT NULL AND attestation_digest IS NOT NULL
+      )),
+      CHECK (state <> 'mint_submitted' OR mint_tx_hash IS NOT NULL),
+      CHECK (state <> 'minted' OR mint_tx_hash IS NOT NULL)
+    );
+    CREATE INDEX idx_cctp_relay_recovery
+      ON cctp_relay_work(created_at, exec_id, state, lease_expires_at);
+  `);
+  db.prepare(`
+    INSERT INTO cctp_relay_work (
+      exec_id,source_domain,burn_tx_hash,expectation_json,expectation_digest,state,
+      message_hex,nonce_hex,message_digest,attestation_hex,attestation_digest,
+      evidence_version,mint_tx_hash,reason_code,attempts,lease_token,lease_expires_at,
+      created_at,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+    'legacy-base-active', 6, CCTP_BURN_REVERSE, JSON.stringify(CCTP_REVERSE_EXPECTATION),
+    CCTP_REVERSE_EXPECTATION_DIGEST, 'attested', CCTP_MESSAGE_HEX, CCTP_NONCE_HEX,
+    CCTP_MESSAGE_DIGEST, CCTP_ATTESTATION_HEX, CCTP_ATTESTATION_DIGEST, 7, null, null,
+    3, 'legacy-live-lease', CCTP_T0 + 60_000, CCTP_T0, CCTP_T0 + 1,
+  );
+  db.prepare(`
+    INSERT INTO cctp_relay_work (
+      exec_id,source_domain,burn_tx_hash,expectation_json,expectation_digest,state,
+      message_hex,nonce_hex,message_digest,attestation_hex,attestation_digest,
+      evidence_version,mint_tx_hash,reason_code,attempts,lease_token,lease_expires_at,
+      created_at,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+    'legacy-forward-active', 27, CCTP_BURN_FORWARD, JSON.stringify(CCTP_FORWARD_EXPECTATION),
+    CCTP_FORWARD_EXPECTATION_DIGEST, 'attestation_pending', null, null, null, null, null,
+    0, null, null, 2, null, null, CCTP_T0 + 2, CCTP_T0 + 2,
+  );
+  db.close();
+}
+
+function createLiteralV1CctpTable(path, { includeBase = false } = {}) {
+  const db = new DatabaseSync(path);
+  db.exec(`
+    CREATE TABLE cctp_relay_work (
+      exec_id TEXT PRIMARY KEY,
+      source_domain INTEGER NOT NULL,
+      burn_tx_hash TEXT NOT NULL,
+      expectation_json TEXT NOT NULL,
+      expectation_digest TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN (
+        'attestation_pending','attested','mint_submitting','mint_submitted',
+        'minted','blocked','uncertain'
+      )),
+      message_hex TEXT,
+      nonce_hex TEXT,
+      message_digest TEXT,
+      attestation_hex TEXT,
+      attestation_digest TEXT,
+      evidence_version INTEGER NOT NULL DEFAULT 0,
+      mint_tx_hash TEXT,
+      reason_code TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      lease_token TEXT,
+      lease_expires_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      CHECK (state <> 'attested' OR (
+        message_hex IS NOT NULL AND nonce_hex IS NOT NULL AND message_digest IS NOT NULL
+        AND attestation_hex IS NOT NULL AND attestation_digest IS NOT NULL
+      )),
+      CHECK (state <> 'mint_submitted' OR mint_tx_hash IS NOT NULL),
+      CHECK (state <> 'minted' OR mint_tx_hash IS NOT NULL)
+    );
+    CREATE INDEX idx_cctp_relay_recovery
+      ON cctp_relay_work(created_at,exec_id,state,lease_expires_at);
+    CREATE INDEX idx_cctp_relay_burn ON cctp_relay_work(burn_tx_hash);
+    CREATE UNIQUE INDEX idx_cctp_relay_identity
+      ON cctp_relay_work(source_domain,burn_tx_hash,expectation_digest);
+    CREATE UNIQUE INDEX idx_cctp_relay_forward_burn
+      ON cctp_relay_work(source_domain,burn_tx_hash) WHERE source_domain=27;
+  `);
+  db.prepare(`
+    INSERT INTO cctp_relay_work (
+      exec_id,source_domain,burn_tx_hash,expectation_json,expectation_digest,state,
+      message_hex,nonce_hex,message_digest,attestation_hex,attestation_digest,
+      evidence_version,mint_tx_hash,reason_code,attempts,lease_token,lease_expires_at,
+      created_at,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+    'v1-forward', 27, CCTP_BURN_FORWARD, JSON.stringify(CCTP_FORWARD_EXPECTATION),
+    CCTP_FORWARD_EXPECTATION_DIGEST, 'attestation_pending', null, null, null, null, null,
+    0, null, null, 2, null, null, CCTP_T0, CCTP_T0 + 1,
+  );
+  if (includeBase) {
+    db.prepare(`
+      INSERT INTO cctp_relay_work (
+        exec_id,source_domain,burn_tx_hash,expectation_json,expectation_digest,state,
+        message_hex,nonce_hex,message_digest,attestation_hex,attestation_digest,
+        evidence_version,mint_tx_hash,reason_code,attempts,lease_token,lease_expires_at,
+        created_at,updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      `unwind:${UNWIND_JOB_ID}`, 6, UNWIND_TX_HASH, JSON.stringify(CCTP_REVERSE_EXPECTATION),
+      CCTP_REVERSE_EXPECTATION_DIGEST, 'attestation_pending', null, null, null, null, null,
+      0, null, null, 0, null, null, CCTP_T0, CCTP_T0 + 2,
+    );
+  }
+  db.close();
+}
 
 function cctpSeedAttested(cctpRelays, execId, { now = CCTP_T0, leaseMs = 60_000, burnTxHash = CCTP_BURN_FORWARD } = {}) {
   cctpRelays.enqueue(cctpIntent(execId, { now, burnTxHash }));
@@ -4719,8 +4972,200 @@ describe('cctpRelays — cctp_relay_work SQLite relay-work store (Task 8 RED)', 
       "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_cctp_relay_recovery'",
     ).get();
     expect(index).toBeDefined();
+    const indexFacts = Object.fromEntries(
+      stores.db.prepare('PRAGMA index_list(cctp_relay_work)').all()
+        .filter(({ name }) => name.startsWith('idx_cctp_relay_'))
+        .map(({ name, unique, partial }) => [name, {
+          unique,
+          partial,
+          columns: stores.db.prepare(`PRAGMA index_info("${name}")`).all()
+            .map(({ name: column }) => column),
+        }]),
+    );
+    expect(indexFacts.idx_cctp_relay_identity).toEqual({
+      unique: 1,
+      partial: 0,
+      columns: ['source_domain', 'burn_tx_hash', 'expectation_digest'],
+    });
+    expect(indexFacts.idx_cctp_relay_forward_burn).toEqual({
+      unique: 1,
+      partial: 1,
+      columns: ['source_domain', 'burn_tx_hash'],
+    });
+    expect(indexFacts.idx_cctp_relay_actionable).toEqual({
+      unique: 0,
+      partial: 1,
+      columns: ['updated_at', 'created_at', 'exec_id'],
+    });
+    expect(indexFacts.idx_cctp_relay_expiry).toEqual({
+      unique: 0,
+      partial: 1,
+      columns: ['lease_expires_at', 'created_at', 'exec_id'],
+    });
+    expect(indexFacts.idx_cctp_relay_summary).toEqual({
+      unique: 0,
+      partial: 1,
+      columns: ['created_at', 'exec_id'],
+    });
     expect(stores.probe().writable).toBe(true);
     stores.db.close();
+  });
+
+  // Task 12 migration trap: CREATE TABLE IF NOT EXISTS cannot remove the table-level UNIQUE
+  // autoindex. Rebuild must preserve Task8 evidence while quarantining unauthenticated Base work.
+  it('atomically rebuilds the legacy unique-burn table and fail-closes active Base rows', () => {
+    const path = freshPath();
+    createLegacyUniqueBurnCctpTable(path);
+
+    const stores = createSqliteStores(path, { now: () => CCTP_T0 + 999 });
+    expect(stores.cctpRelays.get('legacy-base-active')).toMatchObject({
+      state: 'blocked',
+      reasonCode: 'legacy_record_unrecoverable',
+      messageHex: CCTP_MESSAGE_HEX,
+      attestationHex: CCTP_ATTESTATION_HEX,
+      evidenceVersion: 7,
+      attempts: 3,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      messageDigest: CCTP_MESSAGE_DIGEST,
+      attestationDigest: CCTP_ATTESTATION_DIGEST,
+      createdAt: CCTP_T0,
+      updatedAt: CCTP_T0 + 999,
+    });
+    expect(stores.cctpRelays.get('legacy-forward-active')).toMatchObject({
+      state: 'attestation_pending',
+      attempts: 2,
+    });
+    const oneColumnBurnUnique = stores.db.prepare('PRAGMA index_list(cctp_relay_work)').all()
+      .filter(({ unique }) => unique === 1)
+      .some(({ name }) => {
+        const columns = stores.db.prepare(`PRAGMA index_info("${name}")`).all()
+          .map(({ name: column }) => column);
+        return columns.length === 1 && columns[0] === 'burn_tx_hash';
+      });
+    expect(oneColumnBurnUnique).toBe(false);
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n).toBe(2);
+    stores.db.close();
+  });
+
+  it.each([
+    ['source domain', "source_domain=999"],
+    ['burn hash', "burn_tx_hash='not-a-hash'"],
+    ['expectation JSON', "expectation_json='{}'"],
+    ['expectation digest', "expectation_digest='zz'"],
+  ])('quarantines a legacy runnable row with malformed %s during the one-time rebuild', (_label, mutation) => {
+    const path = freshPath();
+    createLegacyUniqueBurnCctpTable(path);
+    const raw = new DatabaseSync(path);
+    raw.exec(`UPDATE cctp_relay_work SET ${mutation},updated_at=${CCTP_T0 + 2}
+      WHERE exec_id='legacy-forward-active'`);
+    raw.close();
+
+    const stores = createSqliteStores(path, { now: () => CCTP_T0 + 999 });
+    expect(stores.cctpRelays.get('legacy-forward-active')).toMatchObject({
+      state: 'blocked', reasonCode: 'legacy_record_unrecoverable',
+      mintTxHash: null, leaseToken: null, updatedAt: CCTP_T0 + 999,
+    });
+    expect(stores.cctpRelays.listForSweep({ now: CCTP_T0 + 2_000, limit: 100 })
+      .map(({ execId }) => execId)).not.toContain('legacy-forward-active');
+    expect(stores.probe().writable).toBe(true);
+    stores.db.close();
+  });
+
+  it('recognizes the literal deployed v1 fingerprint and preserves valid forward authority while hardening it', () => {
+    const path = freshPath();
+    createLiteralV1CctpTable(path);
+
+    const stores = createSqliteStores(path, { now: () => CCTP_T0 + 999 });
+    expect(stores.cctpRelays.get('v1-forward')).toEqual({
+      execId: 'v1-forward', sourceDomain: 27, burnTxHash: CCTP_BURN_FORWARD,
+      expectation: CCTP_FORWARD_EXPECTATION,
+      expectationDigest: CCTP_FORWARD_EXPECTATION_DIGEST,
+      state: 'attestation_pending', messageHex: null, nonceHex: null,
+      messageDigest: null, attestationHex: null, attestationDigest: null,
+      evidenceVersion: 0, mintTxHash: null, reasonCode: null, attempts: 2,
+      leaseToken: null, leaseExpiresAt: null, createdAt: CCTP_T0, updatedAt: CCTP_T0 + 1,
+    });
+    expect(stores.db.prepare('PRAGMA index_info(idx_cctp_relay_recovery)').all()
+      .map(({ name }) => name)).toEqual([
+      'updated_at', 'created_at', 'exec_id', 'state', 'lease_token',
+    ]);
+    expect(stores.probe().writable).toBe(true);
+    stores.db.close();
+  });
+
+  it('quarantines every active Base row from pre-Task12 v1 despite shallow matching unwind linkage', () => {
+    const path = freshPath();
+    let stores = createSqliteStores(path);
+    stores.unwindJobs.reserve(unwindReserveInput(1, {
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      now: CCTP_T0,
+    }));
+    stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 1,
+    });
+    const proofTrigger = stores.db.prepare(`
+      SELECT sql FROM sqlite_master
+      WHERE type='trigger' AND name='unwind_jobs_proof_immutable'
+    `).get().sql;
+    stores.db.exec('DROP TRIGGER unwind_jobs_proof_immutable');
+    stores.db.prepare('UPDATE unwind_jobs SET proof_json=? WHERE job_id=?')
+      .run('{}', UNWIND_JOB_ID);
+    stores.db.exec(proofTrigger);
+    stores.db.exec(`
+      DROP INDEX idx_cctp_relay_recovery;
+      DROP INDEX idx_cctp_relay_burn;
+      DROP INDEX idx_cctp_relay_identity;
+      DROP INDEX idx_cctp_relay_forward_burn;
+      DROP TABLE cctp_relay_work;
+    `);
+    stores.db.close();
+    createLiteralV1CctpTable(path, { includeBase: true });
+
+    stores = createSqliteStores(path, { now: () => CCTP_T0 + 999 });
+    expect(stores.cctpRelays.get(`unwind:${UNWIND_JOB_ID}`)).toMatchObject({
+      state: 'blocked', reasonCode: 'legacy_record_unrecoverable',
+      mintTxHash: null, leaseToken: null, leaseExpiresAt: null,
+    });
+    expect(stores.cctpRelays.listForSweep({ now: CCTP_T0 + 2_000, limit: 100 })
+      .map(({ execId }) => execId)).not.toContain(`unwind:${UNWIND_JOB_ID}`);
+    expect(stores.cctpRelays.get('v1-forward').state).toBe('attestation_pending');
+    stores.db.close();
+  });
+
+  // Catches a destructive rename/copy sequence that commits or drops the only authoritative
+  // table after a mid-migration exception.
+  it('rolls back a mid-rebuild failure with the legacy schema and every row byte-exact', () => {
+    const path = freshPath();
+    createLegacyUniqueBurnCctpTable(path);
+    const before = new DatabaseSync(path, { readOnly: true });
+    const beforeSql = before.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='cctp_relay_work'",
+    ).get().sql;
+    const beforeRows = before.prepare('SELECT * FROM cctp_relay_work ORDER BY exec_id').all();
+    before.close();
+
+    expect(() => createSqliteStores(path, {
+      now: () => CCTP_T0 + 999,
+      cctpMigrationFault(phase) {
+        if (phase === 'rows_copied') throw new Error('injected CCTP migration failure');
+      },
+    })).toThrow('injected CCTP migration failure');
+
+    const after = new DatabaseSync(path, { readOnly: true });
+    expect(after.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='cctp_relay_work'",
+    ).get().sql).toBe(beforeSql);
+    expect(after.prepare('SELECT * FROM cctp_relay_work ORDER BY exec_id').all()).toEqual(beforeRows);
+    expect(after.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cctp_relay_work_task8_legacy'",
+    ).get()).toBeUndefined();
+    after.close();
   });
 
   it('probe() fails closed when the cctp_relay_work table is missing', () => {
@@ -4729,6 +5174,42 @@ describe('cctpRelays — cctp_relay_work SQLite relay-work store (Task 8 RED)', 
     stores.db.exec('DROP TABLE cctp_relay_work');
     expect(() => stores.probe()).toThrow();
     stores.db.close();
+  });
+
+  it('probe fails closed when a required CCTP identity index is missing', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.db.exec('DROP INDEX idx_cctp_relay_identity');
+    expect(() => stores.probe()).toThrow(/CCTP relay-work schema/i);
+    stores.db.close();
+  });
+
+  it('rejects a same-name CCTP index with the wrong uniqueness and ordered columns', () => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    stores.db.exec(`
+      DROP INDEX idx_cctp_relay_identity;
+      CREATE INDEX idx_cctp_relay_identity ON cctp_relay_work(exec_id);
+    `);
+    expect(() => stores.probe()).toThrow(/CCTP relay-work schema/i);
+    stores.db.close();
+    expect(() => createSqliteStores(path)).toThrow(/CCTP relay-work schema/i);
+  });
+
+  it.each([
+    ['view', `CREATE VIEW cctp_shadow AS SELECT exec_id FROM cctp_relay_work`],
+    ['other-table trigger', `
+      CREATE TABLE cctp_aux (id INTEGER PRIMARY KEY);
+      CREATE TRIGGER cctp_aux_reader AFTER INSERT ON cctp_aux BEGIN
+        SELECT exec_id FROM cctp_relay_work LIMIT 1;
+      END
+    `],
+  ])('rejects an unexpected %s that references relay authority', (_label, ddl) => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    stores.db.exec(ddl);
+    stores.db.close();
+
+    expect(() => createSqliteStores(path)).toThrow(/CCTP.*dependency|dependency.*CCTP/i);
   });
 
   // Regression caught (row 2): JSON/number round-trips that lose precision would split an
@@ -4808,6 +5289,25 @@ describe('cctpRelays — cctp_relay_work SQLite relay-work store (Task 8 RED)', 
     expect(second.cctpRelays.get('exec-1').expectation).toEqual(CCTP_FORWARD_EXPECTATION);
     first.db.close();
     second.db.close();
+  });
+
+  // Task 12: Base reverse bundle transactions are not unique relay identities; the immutable
+  // expectation disambiguates separate successful UserOperations in the same transaction.
+  it('persists two reverse expectations from one outer bundle but blocks an identical tuple', () => {
+    const stores = createSqliteStores(freshPath());
+    const first = stores.cctpRelays.enqueue(cctpReverseIntent('reverse-1'));
+    const second = stores.cctpRelays.enqueue(cctpReverseIntent('reverse-2', {
+      expectation: { ...CCTP_REVERSE_EXPECTATION, amount: '7654321' },
+    }));
+
+    expect(first.burnTxHash).toBe(CCTP_BURN_REVERSE);
+    expect(second.expectation.amount).toBe('7654321');
+    cctpThrowsCode(
+      () => stores.cctpRelays.enqueue(cctpReverseIntent('reverse-ambiguous')),
+      'RELAY_ENQUEUE_CONFLICT',
+    );
+    expect(stores.cctpRelays.get('reverse-ambiguous')).toBeNull();
+    stores.db.close();
   });
 
   // Regression caught (row 5): two connections both claimed the same row when claim was a
@@ -4964,9 +5464,35 @@ describe('cctpRelays — cctp_relay_work SQLite relay-work store (Task 8 RED)', 
     expect(c.listForSweep({ now: CCTP_T0 + 10_000, limit: 2 }).map((r) => r.execId))
       .toEqual(['exec-a', 'exec-b']);
     const plan = stores.db.prepare(
-      'EXPLAIN QUERY PLAN SELECT * FROM cctp_relay_work WHERE state NOT IN (\'minted\',\'blocked\',\'uncertain\') ORDER BY created_at, exec_id',
-    ).all().map((row) => row.detail).join(' | ');
-    expect(plan).toContain('idx_cctp_relay_recovery');
+      `EXPLAIN QUERY PLAN SELECT * FROM cctp_relay_work
+       WHERE state IN ('attestation_pending','attested','mint_submitted')
+         AND lease_token IS NULL
+       ORDER BY updated_at,created_at,exec_id LIMIT ?`,
+    ).all(100).map((row) => row.detail).join(' | ');
+    expect(plan).toContain('idx_cctp_relay_actionable');
+    expect(plan).not.toContain('TEMP B-TREE');
+    stores.db.close();
+  });
+
+  it('uses exact partial indexes for expiry and terminal/live-lease summaries', () => {
+    const stores = createSqliteStores(freshPath());
+    const expiryPlan = stores.db.prepare(`
+      EXPLAIN QUERY PLAN SELECT * FROM cctp_relay_work
+      WHERE state IN ('attestation_pending','attested','mint_submitting','mint_submitted')
+        AND lease_token IS NOT NULL AND lease_expires_at<=?
+      ORDER BY lease_expires_at,created_at,exec_id LIMIT ?
+    `).all(CCTP_T0, 100).map((row) => row.detail).join(' | ');
+    expect(expiryPlan).toContain('idx_cctp_relay_expiry');
+    expect(expiryPlan).not.toContain('TEMP B-TREE');
+
+    const summaryPlan = stores.db.prepare(`
+      EXPLAIN QUERY PLAN SELECT * FROM cctp_relay_work
+      WHERE state IN ('blocked','uncertain') OR lease_token IS NOT NULL
+      ORDER BY created_at,exec_id LIMIT ?
+    `).all(100).map((row) => row.detail).join(' | ');
+    expect(summaryPlan).toContain('idx_cctp_relay_summary');
+    expect(summaryPlan).not.toContain('TEMP B-TREE');
+    expect(stores.cctpRelays.listSweepSummary({ now: CCTP_T0, limit: 100 })).toEqual([]);
     stores.db.close();
   });
 
@@ -4997,6 +5523,31 @@ describe('cctpRelays — cctp_relay_work SQLite relay-work store (Task 8 RED)', 
     stores.db.close();
   });
 
+  it.each([
+    ['source domain', "source_domain=999"],
+    ['burn hash', "burn_tx_hash='not-a-hash'"],
+    ['expectation JSON', "expectation_json='{}'"],
+    ['expectation digest', "expectation_digest='zz'"],
+  ])('never runs a current row with a corrupt canonical %s binding', (_label, mutation) => {
+    const stores = createSqliteStores(freshPath());
+    stores.cctpRelays.enqueue(cctpIntent('corrupt-runtime'));
+    stores.db.exec('PRAGMA ignore_check_constraints=ON');
+    stores.db.exec(`UPDATE cctp_relay_work SET ${mutation} WHERE exec_id='corrupt-runtime'`);
+    stores.db.exec('PRAGMA ignore_check_constraints=OFF');
+
+    expect(() => stores.cctpRelays.get('corrupt-runtime')).toThrow(/invalid|integrity|canonical/i);
+    expect(() => stores.cctpRelays.statusOf('corrupt-runtime')).toThrow(/invalid|integrity|canonical/i);
+    expect(() => stores.cctpRelays.listForSweep({ now: CCTP_T0, limit: 10 }))
+      .toThrow(/invalid|integrity|canonical/i);
+    expect(() => stores.cctpRelays.claim({
+      execId: 'corrupt-runtime', now: CCTP_T0, leaseMs: 1_000,
+    })).toThrow(/invalid|integrity|canonical/i);
+    expect(stores.db.prepare(
+      'SELECT lease_token,lease_expires_at,attempts FROM cctp_relay_work WHERE exec_id=?',
+    ).get('corrupt-runtime')).toEqual({ lease_token: null, lease_expires_at: null, attempts: 0 });
+    stores.db.close();
+  });
+
   // Regression caught (row 12): the watcher used to read generic relay_records rows as truth;
   // a legacy {status:'minted'} blob must never authorize skipping a mint (plan mismatch #10).
   it('the generic relay_records table is never an authority fallback for relay work', () => {
@@ -5012,4 +5563,1276 @@ describe('cctpRelays — cctp_relay_work SQLite relay-work store (Task 8 RED)', 
     expect(stores.cctpRelays.claim({ execId: 'legacy-pending', now: CCTP_T0, leaseMs: 1000 })).toBeNull();
     stores.db.close();
   });
+});
+
+describe('unwindJobs — dedicated durable unwind authority (Task 12 RED)', () => {
+  it('fails readiness when the exact unwind index ensemble is incomplete', () => {
+    const stores = createSqliteStores(freshPath());
+    try {
+      stores.db.exec('DROP INDEX idx_unwind_tx_hash');
+      expect(() => stores.probe()).toThrow(/unwind.*schema|schema.*unwind|readiness/i);
+    } finally {
+      stores.db.close();
+    }
+  });
+
+  it('atomically adds bounded recovery indexes on reopen without rewriting unwind authority', () => {
+    const path = freshPath();
+    let stores = createSqliteStores(path);
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+    const expected = stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?')
+      .get(UNWIND_JOB_ID);
+    stores.db.exec('DROP INDEX idx_unwind_expiry; DROP INDEX idx_unwind_resume');
+    stores.db.close();
+
+    stores = createSqliteStores(path);
+    try {
+      expect(stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?').get(UNWIND_JOB_ID))
+        .toEqual(expected);
+      expect(stores.db.prepare(`
+        SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_unwind_resume'
+      `).get().sql).toMatch(/WHERE state IN \('relay_pending','relay_running'\)/);
+      expect(stores.db.prepare(`
+        SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_unwind_expiry'
+      `).get().sql).toMatch(/WHERE state='awaiting_burn' OR lease_token IS NOT NULL/);
+      expect(stores.probe()).toMatchObject({ writable: true, unwindDurable: true });
+    } finally {
+      stores.db.close();
+    }
+  });
+
+  // Catches routing reverse authority through the generic jobs Map or storing a raw capability.
+  it('reserves one hash-only awaiting_burn row and returns an exact idempotent retry unchanged', () => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    const input = {
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    };
+
+    const first = stores.unwindJobs.reserve(input);
+    const retry = stores.unwindJobs.reserve({
+      ...input,
+      expiresAt: CCTP_T0 + 7_200_000,
+      capabilityExpiresAt: CCTP_T0 + 7_800_000,
+      now: CCTP_T0 + 999,
+    });
+    expect(retry).toEqual(first);
+    expect(first).toEqual({
+      jobId: UNWIND_JOB_ID,
+      status: 'awaiting_burn',
+      createdAt: CCTP_T0,
+      updatedAt: CCTP_T0,
+    });
+    const raw = stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?').get(UNWIND_JOB_ID);
+    expect(raw.capability_hash).toBe(UNWIND_CAPABILITY_HASH);
+    expect(Object.keys(raw)).not.toContain('capability');
+    expect(stores.jobs.get(UNWIND_JOB_ID)).toBeUndefined();
+    stores.db.close();
+  });
+
+  it('rejects wrong capability and changed immutable reserve binding without changing the original row', () => {
+    const stores = createSqliteStores(freshPath());
+    const original = unwindReserveInput(1, {
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      now: CCTP_T0,
+    });
+    stores.unwindJobs.reserve(original);
+    const before = stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?').get(UNWIND_JOB_ID);
+
+    cctpThrowsCode(() => stores.unwindJobs.reserve({
+      ...original, capabilityHash: 'ff'.repeat(32), now: CCTP_T0 + 1,
+    }), 'UNWIND_UNAUTHORIZED');
+    cctpThrowsCode(() => stores.unwindJobs.reserve(unwindReserveInput(2, {
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: `0x${'31'.repeat(20)}`,
+      now: CCTP_T0 + 1,
+    })), 'UNWIND_CONFLICT');
+    expect(stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?').get(UNWIND_JOB_ID))
+      .toEqual(before);
+    stores.db.close();
+  });
+
+  it('never persists or projects the raw unwind capability', () => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    const rawCapability = '0123456789abcdef'.repeat(4);
+    const input = unwindReserveInput(1, {
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: createHash('sha256').update(rawCapability).digest('hex'),
+      now: CCTP_T0,
+    });
+    const projection = stores.unwindJobs.reserve(input);
+    const authority = stores.unwindJobs.getAuthority(UNWIND_JOB_ID);
+    let rejection;
+    try {
+      stores.unwindJobs.reserve({ ...input, capabilityHash: 'ff'.repeat(32), now: CCTP_T0 + 1 });
+    } catch (error) {
+      rejection = error;
+    }
+    stores.db.close();
+
+    expect(JSON.stringify(projection)).not.toContain(rawCapability);
+    expect(JSON.stringify(authority)).not.toContain(rawCapability);
+    expect(String(rejection)).not.toContain(rawCapability);
+    expect(readFileSync(path).includes(Buffer.from(rawCapability))).toBe(false);
+  });
+
+  it('enforces global UserOperation ownership across distinct unwind jobs', () => {
+    const stores = createSqliteStores(freshPath());
+    const first = unwindReserveInput(1);
+    const second = unwindReserveInput(2);
+    stores.unwindJobs.reserve(first);
+    stores.unwindJobs.reserve(second);
+    const firstProof = unwindProofFor(1);
+    stores.unwindJobs.attachAndEnqueue({
+      jobId: first.jobId, proof: firstProof, expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${first.jobId}`, now: CCTP_T0 + 10,
+    });
+    const distinctExpectation = { ...CCTP_REVERSE_EXPECTATION, amount: '1234568' };
+    cctpThrowsCode(() => stores.unwindJobs.attachAndEnqueue({
+      jobId: second.jobId,
+      proof: unwindProofFor(2, {
+        userOpHash: firstProof.userOpHash, burned: distinctExpectation.amount,
+      }),
+      expectation: distinctExpectation,
+      relayExecId: `unwind:${second.jobId}`,
+      now: CCTP_T0 + 11,
+    }), 'UNWIND_CONFLICT');
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n).toBe(1);
+    stores.db.close();
+  });
+
+  it('rejects a valid receipt proof whose signed UserOperation commits to another job', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve(unwindReserveInput(1, { jobId: UNWIND_JOB_ID }));
+
+    cctpThrowsCode(() => stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: { ...UNWIND_PROOF, jobCommitment: unwindProofFor(2).jobCommitment },
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 10,
+    }), 'UNWIND_CONFLICT');
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n).toBe(0);
+    expect(stores.unwindJobs.status(UNWIND_JOB_ID)).toEqual({
+      jobId: UNWIND_JOB_ID, status: 'awaiting_burn',
+    });
+    stores.db.close();
+  });
+
+  it('allows distinct UserOperations and expectations in one outer transaction but blocks an identical tuple', () => {
+    const stores = createSqliteStores(freshPath());
+    const jobs = [unwindReserveInput(1), unwindReserveInput(2), unwindReserveInput(3)];
+    jobs.forEach((input) => stores.unwindJobs.reserve(input));
+    const sharedTx = `0x${'ab'.repeat(32)}`;
+    const firstProof = unwindProofFor(1, { unwindTxHash: sharedTx });
+    const secondExpectation = { ...CCTP_REVERSE_EXPECTATION, amount: '1234568' };
+    const secondProof = unwindProofFor(2, {
+      unwindTxHash: sharedTx, burned: secondExpectation.amount,
+    });
+    stores.unwindJobs.attachAndEnqueue({
+      jobId: jobs[0].jobId, proof: firstProof, expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${jobs[0].jobId}`, now: CCTP_T0 + 10,
+    });
+    expect(stores.unwindJobs.attachAndEnqueue({
+      jobId: jobs[1].jobId, proof: secondProof, expectation: secondExpectation,
+      relayExecId: `unwind:${jobs[1].jobId}`, now: CCTP_T0 + 11,
+    }).duplicate).toBe(false);
+    cctpThrowsCode(() => stores.unwindJobs.attachAndEnqueue({
+      jobId: jobs[2].jobId,
+      proof: unwindProofFor(3, { unwindTxHash: sharedTx }),
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${jobs[2].jobId}`,
+      now: CCTP_T0 + 12,
+    }), 'UNWIND_CONFLICT');
+    expect(stores.db.prepare('SELECT unwind_tx_hash FROM unwind_jobs WHERE proof_digest IS NOT NULL')
+      .all()).toEqual([{ unwind_tx_hash: sharedTx }, { unwind_tx_hash: sharedTx }]);
+    stores.db.close();
+  });
+
+  it('preserves awaiting, relay, and terminal unwind authority exactly across reopen', () => {
+    const path = freshPath();
+    const input = unwindReserveInput(1, { jobId: UNWIND_JOB_ID, now: CCTP_T0 });
+    let stores = createSqliteStores(path);
+    stores.unwindJobs.reserve(input);
+    stores.db.close();
+
+    stores = createSqliteStores(path);
+    expect(stores.unwindJobs.status(UNWIND_JOB_ID)).toEqual({
+      jobId: UNWIND_JOB_ID, status: 'awaiting_burn',
+    });
+    expect(stores.unwindJobs.getAuthority(UNWIND_JOB_ID)).toMatchObject({
+      jobId: UNWIND_JOB_ID, capabilityHash: input.capabilityHash,
+    });
+    stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 1,
+    });
+    stores.db.close();
+
+    stores = createSqliteStores(path);
+    expect(stores.unwindJobs.status(UNWIND_JOB_ID)).toEqual({
+      jobId: UNWIND_JOB_ID, status: 'relay_pending', unwindTxHash: UNWIND_TX_HASH,
+    });
+    const execId = `unwind:${UNWIND_JOB_ID}`;
+    const claim = stores.cctpRelays.claim({ execId, now: CCTP_T0 + 2, leaseMs: 10_000 });
+    stores.cctpRelays.recordAttested({
+      execId, leaseToken: claim.leaseToken,
+      messageHex: CCTP_MESSAGE_HEX,
+      nonceHex: CCTP_NONCE_HEX,
+      attestationHex: CCTP_ATTESTATION_HEX,
+      now: CCTP_T0 + 3,
+    });
+    stores.cctpRelays.markMintSubmitting({
+      execId, leaseToken: claim.leaseToken, now: CCTP_T0 + 4,
+    });
+    const mintTxHash = 'aa'.repeat(32);
+    stores.cctpRelays.markMintSubmitted({
+      execId, leaseToken: claim.leaseToken, mintTxHash, now: CCTP_T0 + 5,
+    });
+    stores.cctpRelays.finishMinted({
+      execId, leaseToken: claim.leaseToken, mintTxHash, now: CCTP_T0 + 6,
+    });
+    expect(stores.unwindJobs.reconcileFromCctp({
+      jobId: UNWIND_JOB_ID, now: CCTP_T0 + 7,
+    })).toEqual({
+      jobId: UNWIND_JOB_ID, status: 'done', unwindTxHash: UNWIND_TX_HASH, mintTxHash,
+    });
+    stores.db.close();
+
+    stores = createSqliteStores(path);
+    expect(stores.unwindJobs.reconcileFromCctp({
+      jobId: UNWIND_JOB_ID, now: CCTP_T0 + 8,
+    })).toEqual({
+      jobId: UNWIND_JOB_ID, status: 'done', unwindTxHash: UNWIND_TX_HASH, mintTxHash,
+    });
+    stores.db.close();
+  });
+
+  it('lists recoverable unwind rows in stable bounded order while excluding an active lease', () => {
+    const stores = createSqliteStores(freshPath());
+    const inputs = Array.from({ length: 5 }, (_, index) => unwindReserveInput(index + 1));
+    for (let index = 0; index < inputs.length; index += 1) {
+      const input = inputs[index];
+      stores.unwindJobs.reserve(input);
+      if (index === 1) {
+        stores.unwindJobs.claimEvidence({
+          jobId: input.jobId,
+          userOpHash: unwindProofFor(index + 1).userOpHash,
+          unwindTxHash: unwindProofFor(index + 1).unwindTxHash,
+          now: CCTP_T0 + 10, leaseMs: 10_000, retryMs: 20_000,
+        });
+        continue;
+      }
+      stores.unwindJobs.attachAndEnqueue({
+        jobId: input.jobId,
+        proof: unwindProofFor(index + 1),
+        expectation: CCTP_REVERSE_EXPECTATION,
+        relayExecId: `unwind:${input.jobId}`,
+        now: CCTP_T0 + 100 + index,
+      });
+    }
+
+    const expected = [inputs[0], inputs[2]].map(({ jobId }) => ({
+      jobId, relayExecId: `unwind:${jobId}`, state: 'relay_pending',
+    }));
+    expect(stores.unwindJobs.listForResume({ now: CCTP_T0 + 1_000, limit: 2 }))
+      .toEqual(expected);
+    expect(stores.unwindJobs.listForResume({ now: CCTP_T0 + 1_000, limit: 2 }))
+      .toEqual(expected);
+    expect(stores.unwindJobs.listForResume({ now: CCTP_T0 + 1_000, limit: 1 }))
+      .toHaveLength(1);
+    const plan = stores.db.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT u.* FROM unwind_jobs AS u INDEXED BY idx_unwind_resume
+      JOIN cctp_relay_work AS c
+        ON c.exec_id=u.relay_exec_id
+       AND c.burn_tx_hash=u.unwind_tx_hash
+       AND c.expectation_digest=u.expectation_digest
+       AND c.expectation_json=u.expectation_json
+      WHERE u.state IN ('relay_pending','relay_running')
+        AND u.proof_digest IS NOT NULL
+        AND c.source_domain=6
+        AND (c.lease_token IS NULL OR c.lease_expires_at<=?)
+      ORDER BY u.updated_at,u.created_at,u.job_id LIMIT ?
+    `).all(CCTP_T0 + 1_000, 2).map((row) => row.detail).join(' | ');
+    expect(plan).toContain('idx_unwind_resume');
+    expect(plan).toMatch(/cctp_relay_work.*(exec_id|sqlite_autoindex)/i);
+    expect(plan).not.toContain('TEMP B-TREE');
+    stores.db.close();
+  });
+
+  it('rotates a transient reverse head behind later proof-backed work across bounded pages', () => {
+    const stores = createSqliteStores(freshPath());
+    const inputs = [1, 2, 3].map((index) => unwindReserveInput(index));
+    for (let index = 0; index < inputs.length; index += 1) {
+      stores.unwindJobs.reserve(inputs[index]);
+      stores.unwindJobs.attachAndEnqueue({
+        jobId: inputs[index].jobId,
+        proof: unwindProofFor(index + 1),
+        expectation: CCTP_REVERSE_EXPECTATION,
+        relayExecId: `unwind:${inputs[index].jobId}`,
+        now: CCTP_T0 + 100 + index,
+      });
+    }
+    expect(stores.unwindJobs.listForResume({ now: CCTP_T0 + 200, limit: 1 })[0].jobId)
+      .toBe(inputs[0].jobId);
+
+    const firstExec = `unwind:${inputs[0].jobId}`;
+    const claim = stores.cctpRelays.claim({ execId: firstExec, now: CCTP_T0 + 200, leaseMs: 10 });
+    stores.cctpRelays.release({
+      execId: firstExec, leaseToken: claim.leaseToken, now: CCTP_T0 + 201,
+    });
+    expect(stores.unwindJobs.reconcileFromCctp({
+      jobId: inputs[0].jobId, now: CCTP_T0 + 201,
+    }).status).toBe('relay_pending');
+
+    expect(stores.unwindJobs.listForResume({ now: CCTP_T0 + 202, limit: 1 })[0].jobId)
+      .toBe(inputs[1].jobId);
+    stores.db.close();
+  });
+
+  it('lists only proof-backed reverse rows whose wrapper and Task8 identities still match', () => {
+    const stores = createSqliteStores(freshPath());
+    const inputs = [1, 2, 3].map((index) => unwindReserveInput(index));
+    for (let index = 0; index < inputs.length; index += 1) {
+      const input = inputs[index];
+      stores.unwindJobs.reserve(input);
+      stores.unwindJobs.attachAndEnqueue({
+        jobId: input.jobId,
+        proof: unwindProofFor(index + 1),
+        expectation: CCTP_REVERSE_EXPECTATION,
+        relayExecId: `unwind:${input.jobId}`,
+        now: CCTP_T0 + 10 + index,
+      });
+    }
+    // A generic forward row is never reverse recovery authority.
+    stores.cctpRelays.enqueue({
+      execId: 'forward-unrelated', sourceDomain: 27,
+      burnTxHash: 'f5'.repeat(32), expectation: CCTP_FORWARD_EXPECTATION,
+      now: CCTP_T0 + 20,
+    });
+    // Simulate corrupt/orphan current storage. Recovery listing must fail closed per row,
+    // not hand either identity to the existing-only watcher seam.
+    stores.db.prepare('DELETE FROM cctp_relay_work WHERE exec_id=?')
+      .run(`unwind:${inputs[1].jobId}`);
+    stores.db.exec('PRAGMA ignore_check_constraints=ON');
+    try {
+      stores.db.prepare('UPDATE cctp_relay_work SET source_domain=27 WHERE exec_id=?')
+        .run(`unwind:${inputs[2].jobId}`);
+    } finally {
+      stores.db.exec('PRAGMA ignore_check_constraints=OFF');
+    }
+
+    expect(stores.unwindJobs.listForResume({ now: CCTP_T0 + 1_000, limit: 10 }))
+      .toEqual([{
+        jobId: inputs[0].jobId,
+        relayExecId: `unwind:${inputs[0].jobId}`,
+        state: 'relay_pending',
+      }]);
+    stores.db.close();
+  });
+
+  it.each(['expired_unreconciled', 'expired_reconciled', 'attached', 'terminal'])(
+    'rejects an exact reserve retry after the original authority becomes %s',
+    (state) => {
+      const stores = createSqliteStores(freshPath());
+      const original = {
+        jobId: UNWIND_JOB_ID,
+        capabilityHash: UNWIND_CAPABILITY_HASH,
+        kernelAddress: UNWIND_KERNEL,
+        recipientHint: UNWIND_RECIPIENT,
+        requestDigest: UNWIND_REQUEST_DIGEST,
+        expiresAt: CCTP_T0 + 100,
+        capabilityExpiresAt: CCTP_T0 + 10_000,
+        now: CCTP_T0,
+      };
+      stores.unwindJobs.reserve(original);
+      if (state === 'expired_reconciled') {
+        stores.unwindJobs.reconcileExpired({ now: CCTP_T0 + 101, limit: 1 });
+      } else if (state === 'attached') {
+        stores.unwindJobs.attachAndEnqueue({
+          jobId: UNWIND_JOB_ID,
+          proof: UNWIND_PROOF,
+          expectation: CCTP_REVERSE_EXPECTATION,
+          relayExecId: `unwind:${UNWIND_JOB_ID}`,
+          now: CCTP_T0 + 1,
+        });
+      } else if (state === 'terminal') {
+        stores.unwindJobs.finishBlocked({
+          jobId: UNWIND_JOB_ID,
+          reasonCode: 'message_mismatch',
+          now: CCTP_T0 + 1,
+        });
+      }
+      const retryNow = state === 'expired_unreconciled' || state === 'expired_reconciled'
+        ? CCTP_T0 + 101 : CCTP_T0 + 2;
+
+      const error = cctpThrowsCode(() => stores.unwindJobs.reserve({
+        ...original,
+        expiresAt: retryNow + 3_600_000,
+        capabilityExpiresAt: retryNow + 4_200_000,
+        now: retryNow,
+      }), 'UNWIND_CONFLICT');
+      expect(error.message).not.toContain(UNWIND_CAPABILITY_HASH);
+      expect(stores.db.prepare('SELECT COUNT(*) AS n FROM unwind_jobs').get().n).toBe(1);
+      stores.db.close();
+    },
+  );
+
+  it('does not expire an awaiting reservation while its bounded evidence lease is live', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 100,
+      capabilityExpiresAt: CCTP_T0 + 10_000,
+      now: CCTP_T0,
+    });
+    const lease = stores.unwindJobs.claimEvidence({
+      jobId: UNWIND_JOB_ID, userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 50, leaseMs: 1_000, retryMs: 5_000,
+    });
+
+    expect(stores.unwindJobs.reconcileExpired({ now: CCTP_T0 + 101, limit: 10 }))
+      .toEqual([]);
+    expect(stores.unwindJobs.getAuthority(UNWIND_JOB_ID)).toMatchObject({
+      state: 'awaiting_burn',
+    });
+    expect(stores.db.prepare('SELECT lease_token FROM unwind_jobs WHERE job_id=?')
+      .get(UNWIND_JOB_ID).lease_token).toBe(lease.leaseToken);
+    stores.db.close();
+  });
+
+  it('uses a bounded partial expiry index without scanning retained terminal unwind history', () => {
+    const stores = createSqliteStores(freshPath());
+    for (let index = 1; index <= 16; index += 1) {
+      const input = unwindReserveInput(index);
+      stores.unwindJobs.reserve(input);
+      stores.unwindJobs.finishBlocked({
+        jobId: input.jobId, reasonCode: 'message_mismatch', now: CCTP_T0 + 100 + index,
+      });
+    }
+    const expired = unwindReserveInput(100, {
+      expiresAt: CCTP_T0 + 300,
+      capabilityExpiresAt: CCTP_T0 + 600,
+    });
+    stores.unwindJobs.reserve(expired);
+
+    const plan = stores.db.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT job_id FROM unwind_jobs INDEXED BY idx_unwind_expiry
+      WHERE (state='awaiting_burn' OR lease_token IS NOT NULL)
+        AND ((state='awaiting_burn'
+              AND ((candidate_user_op_hash IS NULL AND expires_at<=?)
+                OR (candidate_user_op_hash IS NOT NULL AND evidence_retry_until<=?))
+              AND (lease_token IS NULL OR lease_expires_at<=?))
+          OR (lease_token IS NOT NULL AND lease_expires_at<=?))
+      ORDER BY created_at,job_id LIMIT ?
+    `).all(CCTP_T0 + 301, CCTP_T0 + 301, CCTP_T0 + 301, CCTP_T0 + 301, 1)
+      .map((row) => row.detail).join(' | ');
+    expect(plan).toContain('idx_unwind_expiry');
+    expect(plan).not.toContain('TEMP B-TREE');
+    expect(stores.unwindJobs.reconcileExpired({ now: CCTP_T0 + 301, limit: 1 }))
+      .toEqual([{ jobId: expired.jobId, status: 'expired' }]);
+    stores.db.close();
+  });
+
+  it('projects an elapsed unleased reservation to expired on targeted authenticated reconciliation', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 100,
+      capabilityExpiresAt: CCTP_T0 + 10_000,
+      now: CCTP_T0,
+    });
+
+    expect(stores.unwindJobs.reconcileFromCctp({
+      jobId: UNWIND_JOB_ID, now: CCTP_T0 + 101,
+    })).toEqual({ jobId: UNWIND_JOB_ID, status: 'expired' });
+    expect(stores.unwindJobs.status(UNWIND_JOB_ID)).toEqual({
+      jobId: UNWIND_JOB_ID, status: 'expired',
+    });
+    stores.db.close();
+  });
+
+  it('lets a pre-expiry evidence claim commit after reservation expiry only while its exact lease is live', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 100,
+      capabilityExpiresAt: CCTP_T0 + 10_000,
+      now: CCTP_T0,
+    });
+    const lease = stores.unwindJobs.claimEvidence({
+      jobId: UNWIND_JOB_ID, userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 50, leaseMs: 1_000, retryMs: 5_000,
+    });
+
+    expect(stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      leaseToken: lease.leaseToken,
+      now: CCTP_T0 + 101,
+    })).toEqual({
+      duplicate: false,
+      record: { jobId: UNWIND_JOB_ID, status: 'relay_pending', unwindTxHash: UNWIND_TX_HASH },
+    });
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n).toBe(1);
+    stores.db.close();
+  });
+
+  it('binds an exact receipt candidate before burn expiry and retries it after expiry across reopen', () => {
+    const path = freshPath();
+    const input = unwindReserveInput(1, {
+      expiresAt: CCTP_T0 + 100,
+      capabilityExpiresAt: CCTP_T0 + 1_000,
+    });
+    let stores = createSqliteStores(path);
+    stores.unwindJobs.reserve(input);
+    const first = stores.unwindJobs.claimEvidence({
+      jobId: input.jobId,
+      userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 90,
+      leaseMs: 30,
+      retryMs: 400,
+    });
+    expect(stores.db.prepare('SELECT COUNT(*) AS count FROM cctp_relay_work').get().count).toBe(0);
+    stores.unwindJobs.releaseEvidence({
+      jobId: input.jobId, leaseToken: first.leaseToken, now: CCTP_T0 + 110,
+    });
+    stores.db.close();
+
+    stores = createSqliteStores(path);
+    const authority = stores.unwindJobs.getAuthority(input.jobId);
+    expect(authority).toMatchObject({ state: 'awaiting_burn' });
+    expect(authority.candidateUserOpHash).toBe(UNWIND_USER_OP_HASH);
+    expect(authority.candidateUnwindTxHash).toBe(UNWIND_TX_HASH);
+    expect(authority.evidenceRetryUntil).toBe(CCTP_T0 + 500);
+    expect(stores.unwindJobs.status(input.jobId)).toEqual({
+      jobId: input.jobId, status: 'awaiting_burn',
+    });
+    cctpThrowsCode(() => stores.unwindJobs.claimEvidence({
+      jobId: input.jobId,
+      userOpHash: `0x${'51'.repeat(32)}`,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 120,
+      leaseMs: 30,
+      retryMs: 400,
+    }), 'UNWIND_CONFLICT');
+    cctpThrowsCode(() => stores.unwindJobs.claimEvidence({
+      jobId: input.jobId,
+      userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: `0x${'61'.repeat(32)}`,
+      now: CCTP_T0 + 120,
+      leaseMs: 30,
+      retryMs: 400,
+    }), 'UNWIND_CONFLICT');
+
+    const retry = stores.unwindJobs.claimEvidence({
+      jobId: input.jobId,
+      userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 120,
+      leaseMs: 30,
+      retryMs: 400,
+    });
+    expect(stores.unwindJobs.attachAndEnqueue({
+      jobId: input.jobId,
+      proof: { ...UNWIND_PROOF, jobCommitment: unwindProofFor(1).jobCommitment },
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${input.jobId}`,
+      leaseToken: retry.leaseToken,
+      now: CCTP_T0 + 130,
+    }).record).toEqual({
+      jobId: input.jobId, status: 'relay_pending', unwindTxHash: UNWIND_TX_HASH,
+    });
+    expect(stores.db.prepare('SELECT COUNT(*) AS count FROM cctp_relay_work').get().count).toBe(1);
+    stores.db.close();
+  });
+
+  it('terminalizes an unproved candidate as submission_unknown after its bounded retry grace', () => {
+    const stores = createSqliteStores(freshPath());
+    const input = unwindReserveInput(1, {
+      expiresAt: CCTP_T0 + 100,
+      capabilityExpiresAt: CCTP_T0 + 500,
+    });
+    stores.unwindJobs.reserve(input);
+    const claim = stores.unwindJobs.claimEvidence({
+      jobId: input.jobId,
+      userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 90,
+      leaseMs: 30,
+      retryMs: 200,
+    });
+    stores.unwindJobs.releaseEvidence({
+      jobId: input.jobId, leaseToken: claim.leaseToken, now: CCTP_T0 + 110,
+    });
+    expect(stores.unwindJobs.reconcileExpired({ now: CCTP_T0 + 301, limit: 10 }))
+      .toEqual([{
+        jobId: input.jobId, status: 'uncertain', reasonCode: 'submission_unknown',
+      }]);
+    expect(stores.unwindJobs.claimEvidence({
+      jobId: input.jobId,
+      userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 302,
+      leaseMs: 30,
+      retryMs: 200,
+    })).toBeNull();
+    expect(stores.db.prepare('SELECT COUNT(*) AS count FROM cctp_relay_work').get().count).toBe(0);
+    expect(JSON.stringify(stores.unwindJobs.status(input.jobId))).not.toContain(UNWIND_TX_HASH);
+    stores.db.close();
+  });
+
+  it('does not make tentative candidate UserOperations globally unique before proof', () => {
+    const stores = createSqliteStores(freshPath());
+    const first = unwindReserveInput(1);
+    const second = unwindReserveInput(2);
+    stores.unwindJobs.reserve(first);
+    stores.unwindJobs.reserve(second);
+    const left = stores.unwindJobs.claimEvidence({
+      jobId: first.jobId,
+      userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 10,
+      leaseMs: 30,
+      retryMs: 200,
+    });
+    const right = stores.unwindJobs.claimEvidence({
+      jobId: second.jobId,
+      userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: `0x${'61'.repeat(32)}`,
+      now: CCTP_T0 + 11,
+      leaseMs: 30,
+      retryMs: 200,
+    });
+    expect([left.jobId, right.jobId]).toEqual([first.jobId, second.jobId]);
+    expect(stores.db.prepare(
+      'SELECT COUNT(*) AS count FROM unwind_jobs WHERE candidate_user_op_hash=?',
+    ).get(UNWIND_USER_OP_HASH).count).toBe(2);
+    stores.db.close();
+  });
+
+  it('rejects post-expiry attach under an expired evidence lease without Task8 work', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 100,
+      capabilityExpiresAt: CCTP_T0 + 10_000,
+      now: CCTP_T0,
+    });
+    const lease = stores.unwindJobs.claimEvidence({
+      jobId: UNWIND_JOB_ID, userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 50, leaseMs: 50, retryMs: 5_000,
+    });
+    cctpThrowsCode(() => stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      leaseToken: lease.leaseToken,
+      now: CCTP_T0 + 101,
+    }), 'UNWIND_CAS_CONFLICT');
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n).toBe(0);
+    stores.db.close();
+  });
+
+  it('rejects release with an evidence lease at or past its durable expiry', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+    const lease = stores.unwindJobs.claimEvidence({
+      jobId: UNWIND_JOB_ID, userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 1, leaseMs: 100, retryMs: 5_000,
+    });
+
+    expect(() => stores.unwindJobs.releaseEvidence({
+      jobId: UNWIND_JOB_ID,
+      leaseToken: lease.leaseToken,
+      now: CCTP_T0 + 101,
+    })).toThrow(/lease.*stale|CAS/i);
+    expect(stores.db.prepare('SELECT lease_token FROM unwind_jobs WHERE job_id=?')
+      .get(UNWIND_JOB_ID).lease_token).toBe(lease.leaseToken);
+    stores.db.close();
+  });
+
+  it('fences terminal evidence classification and exposes only allowlisted public reasons', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+    const lease = stores.unwindJobs.claimEvidence({
+      jobId: UNWIND_JOB_ID, userOpHash: UNWIND_USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      now: CCTP_T0 + 1, leaseMs: 1_000, retryMs: 5_000,
+    });
+
+    expect(() => stores.unwindJobs.finishBlocked({
+      jobId: UNWIND_JOB_ID,
+      leaseToken: 'foreign-lease',
+      reasonCode: 'message_mismatch',
+      now: CCTP_T0 + 2,
+    })).toThrow(/lease|CAS/i);
+    expect(stores.unwindJobs.finishBlocked({
+      jobId: UNWIND_JOB_ID,
+      leaseToken: lease.leaseToken,
+      reasonCode: 'message_mismatch',
+      now: CCTP_T0 + 2,
+    })).toEqual({
+      jobId: UNWIND_JOB_ID,
+      status: 'blocked',
+      reasonCode: 'message_mismatch',
+    });
+    let invalidReason;
+    try {
+      stores.unwindJobs.finishUncertain({
+        jobId: UNWIND_JOB_ID,
+        reasonCode: 'not_allowlisted',
+        now: CCTP_T0 + 3,
+      });
+    } catch (error) {
+      invalidReason = error;
+    }
+    expect(invalidReason?.code).toBe('UNWIND_VALIDATION');
+    expect(stores.unwindJobs.status(UNWIND_JOB_ID)).toEqual({
+      jobId: UNWIND_JOB_ID,
+      status: 'blocked',
+      reasonCode: 'message_mismatch',
+    });
+    stores.db.close();
+  });
+
+  it('pins the exact unwind index and immutability-trigger ensemble', () => {
+    const stores = createSqliteStores(freshPath());
+    try {
+      const indexes = stores.db.prepare('PRAGMA index_list(unwind_jobs)').all()
+        .filter(({ origin }) => origin === 'c')
+        .map(({ name, unique, partial }) => ({
+          name, unique, partial,
+          columns: stores.db.prepare(`PRAGMA index_info(${name})`).all()
+            .map(({ name: column }) => column),
+        })).sort((left, right) => left.name.localeCompare(right.name));
+      expect(indexes).toEqual([
+        { name: 'idx_unwind_expiry', unique: 0, partial: 1,
+          columns: ['created_at', 'job_id'] },
+        { name: 'idx_unwind_recovery', unique: 0, partial: 0,
+          columns: [
+            'created_at', 'job_id', 'state', 'expires_at',
+            'evidence_retry_until', 'lease_expires_at',
+          ] },
+        { name: 'idx_unwind_relay_exec_id', unique: 1, partial: 0,
+          columns: ['relay_exec_id'] },
+        { name: 'idx_unwind_resume', unique: 0, partial: 1,
+          columns: ['updated_at', 'created_at', 'job_id'] },
+        { name: 'idx_unwind_tx_hash', unique: 0, partial: 0,
+          columns: ['unwind_tx_hash'] },
+        { name: 'idx_unwind_user_op_hash', unique: 1, partial: 0,
+          columns: ['user_op_hash'] },
+      ]);
+      expect(stores.db.prepare(`
+        SELECT lower(replace(replace(sql,' ',''),char(10),'')) AS sql
+        FROM sqlite_master WHERE type='index' AND name='idx_unwind_resume'
+      `).get().sql).toContain(
+        "wherestatein('relay_pending','relay_running')andproof_digestisnotnull",
+      );
+      expect(stores.db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='unwind_jobs'
+        ORDER BY name
+      `).all().map(({ name }) => name)).toEqual([
+        'unwind_jobs_candidate_immutable',
+        'unwind_jobs_no_delete',
+        'unwind_jobs_proof_immutable',
+        'unwind_jobs_reserve_immutable',
+      ]);
+      expect(stores.probe()).toMatchObject({ writable: true });
+    } finally {
+      stores.db.close();
+    }
+  });
+
+  it.each([
+    ['table', (db) => db.exec('ALTER TABLE unwind_jobs ADD COLUMN shadow TEXT')],
+    ['index', (db) => db.exec(`
+      DROP INDEX idx_unwind_tx_hash;
+      CREATE UNIQUE INDEX idx_unwind_tx_hash ON unwind_jobs(unwind_tx_hash,job_id)
+    `)],
+    ['trigger', (db) => db.exec(`
+      DROP TRIGGER unwind_jobs_no_delete;
+      CREATE TRIGGER unwind_jobs_no_delete BEFORE DELETE ON unwind_jobs BEGIN SELECT 1; END
+    `)],
+  ])('fails closed on a corrupt preexisting unwind %s definition', (_label, corrupt) => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    corrupt(stores.db);
+    stores.db.close();
+
+    expect(() => createSqliteStores(path)).toThrow(/unwind.*(?:schema|table|index|trigger)|incompatible/i);
+  });
+
+  it('makes reservation and attached proof bindings immutable at the database boundary', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+    expect(() => stores.db.prepare('UPDATE unwind_jobs SET kernel_address=? WHERE job_id=?')
+      .run(`0x${'99'.repeat(20)}`, UNWIND_JOB_ID)).toThrow(/immutable unwind reservation/i);
+    expect(() => stores.db.prepare('DELETE FROM unwind_jobs WHERE job_id=?')
+      .run(UNWIND_JOB_ID)).toThrow(/immutable unwind authority/i);
+
+    stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 1,
+    });
+    expect(() => stores.db.prepare('UPDATE unwind_jobs SET proof_digest=? WHERE job_id=?')
+      .run('99'.repeat(32), UNWIND_JOB_ID)).toThrow(/immutable unwind proof/i);
+    stores.db.close();
+  });
+
+  it('rejects a checksum-invalid persisted Stellar recipient even when SQL shape checks pass', () => {
+    const path = freshPath();
+    const stores = createSqliteStores(path);
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+    const trigger = stores.db.prepare(`
+      SELECT sql FROM sqlite_master WHERE type='trigger' AND name='unwind_jobs_reserve_immutable'
+    `).get().sql;
+    const invalidRecipient = `G${'A'.repeat(55)}`;
+    const reserveJson = JSON.stringify({
+      jobId: UNWIND_JOB_ID,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: invalidRecipient,
+    });
+    const requestDigest = createHash('sha256')
+      .update(`vf-unwind-reserve-v1\0${reserveJson}`).digest('hex');
+    stores.db.exec('DROP TRIGGER unwind_jobs_reserve_immutable');
+    stores.db.prepare(`
+      UPDATE unwind_jobs SET recipient_hint=?,reserve_json=?,request_digest=? WHERE job_id=?
+    `).run(invalidRecipient, reserveJson, requestDigest, UNWIND_JOB_ID);
+    stores.db.exec(trigger);
+
+    expect(() => stores.unwindJobs.status(UNWIND_JOB_ID))
+      .toThrow(/recipient|StrKey|unwind.*integrity/i);
+    stores.db.close();
+  });
+
+  it('recomputes the persisted source-message byte digest during readiness', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+    stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 1,
+    });
+    const trigger = stores.db.prepare(`
+      SELECT sql FROM sqlite_master WHERE type='trigger' AND name='unwind_jobs_proof_immutable'
+    `).get().sql;
+    const wrongDigest = '99'.repeat(32);
+    const wrongProof = { ...UNWIND_PROOF, sourceMessageDigest: wrongDigest };
+    const proofJson = JSON.stringify(wrongProof);
+    const digest = createHash('sha256')
+      .update(`vf-unwind-proof-v1\0${proofJson}`).digest('hex');
+    stores.db.exec('DROP TRIGGER unwind_jobs_proof_immutable');
+    stores.db.prepare(`
+      UPDATE unwind_jobs SET source_message_digest=?,proof_json=?,proof_digest=? WHERE job_id=?
+    `).run(wrongDigest, proofJson, digest, UNWIND_JOB_ID);
+    stores.db.exec(trigger);
+
+    expect(() => stores.unwindJobs.status(UNWIND_JOB_ID))
+      .toThrow(/source.*digest|message.*integrity|unwind.*integrity/i);
+    stores.db.close();
+  });
+
+  it('reopens from schema fingerprints without scanning lifetime unwind history', () => {
+    const path = freshPath();
+    let stores = createSqliteStores(path);
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+    const columns = stores.db.prepare('PRAGMA table_xinfo(unwind_jobs)').all()
+      .map(({ name }) => name);
+    const expressions = columns.map((column) => {
+      if (column === 'job_id') return "printf('%032x',seq.n)";
+      if (column === 'capability_hash') return "printf('%064x',seq.n)";
+      return `seed.${column}`;
+    });
+    stores.db.exec(`
+      WITH RECURSIVE seq(n) AS (
+        SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<500
+      )
+      INSERT INTO unwind_jobs (${columns.join(',')})
+      SELECT ${expressions.join(',')}
+      FROM unwind_jobs AS seed CROSS JOIN seq
+      WHERE seed.job_id='${UNWIND_JOB_ID}'
+    `);
+    stores.db.close();
+
+    // Copied historical rows intentionally retain the seed's reserve_json/request_digest while
+    // carrying different job IDs. A lifetime semantic scan would reject startup; bounded lazy
+    // validation instead rejects only the selected corrupt authority.
+    stores = createSqliteStores(path);
+    expect(stores.probe().unwindDurable).toBe(true);
+    expect(() => stores.unwindJobs.status('000000000000000000000000000001f4'))
+      .toThrow(/reservation.*integrity|binding.*integrity/i);
+    expect(stores.unwindJobs.status(UNWIND_JOB_ID)).toEqual({
+      jobId: UNWIND_JOB_ID, status: 'awaiting_burn',
+    });
+    stores.db.close();
+  });
+
+  it('rejects an unwind terminal projection that is ahead of Task8 authority', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+    stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 1,
+    });
+    stores.db.prepare(`
+      UPDATE unwind_jobs SET state='done',mint_tx_hash=?,updated_at=? WHERE job_id=?
+    `).run('aa'.repeat(32), CCTP_T0 + 2, UNWIND_JOB_ID);
+
+    expect(() => stores.unwindJobs.status(UNWIND_JOB_ID))
+      .toThrow(/Task8|terminal|projection|unwind.*integrity/i);
+    stores.db.close();
+  });
+
+  it('fails runtime reconciliation closed when the unwind wrapper is ahead of Task8', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+    stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 1,
+    });
+    stores.db.prepare(`UPDATE unwind_jobs SET state='relay_running' WHERE job_id=?`)
+      .run(UNWIND_JOB_ID);
+
+    cctpThrowsCode(() => stores.unwindJobs.reconcileFromCctp({
+      jobId: UNWIND_JOB_ID, now: CCTP_T0 + 2,
+    }), 'UNWIND_CONFLICT');
+    expect(() => stores.unwindJobs.status(UNWIND_JOB_ID))
+      .toThrow(/Task8|projection|integrity/i);
+    stores.db.close();
+  });
+
+  it('rejects a raw-SQL-corrupt Task8 row before projecting unwind completion', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve(unwindReserveInput(1, {
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      now: CCTP_T0,
+    }));
+    stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 1,
+    });
+    const before = stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?')
+      .get(UNWIND_JOB_ID);
+
+    stores.db.exec('PRAGMA ignore_check_constraints=ON');
+    stores.db.prepare(`
+      UPDATE cctp_relay_work SET state='minted',mint_tx_hash=?,updated_at=?
+      WHERE exec_id=?
+    `).run('aa'.repeat(32), CCTP_T0 + 2, `unwind:${UNWIND_JOB_ID}`);
+    stores.db.exec('PRAGMA ignore_check_constraints=OFF');
+
+    cctpThrowsCode(() => stores.unwindJobs.reconcileFromCctp({
+      jobId: UNWIND_JOB_ID, now: CCTP_T0 + 3,
+    }), 'UNWIND_CONFLICT');
+    expect(stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?').get(UNWIND_JOB_ID))
+      .toEqual(before);
+    expect(stores.db.prepare('SELECT state,mint_tx_hash FROM unwind_jobs WHERE job_id=?')
+      .get(UNWIND_JOB_ID)).toEqual({ state: 'relay_pending', mint_tx_hash: null });
+    stores.db.close();
+  });
+
+  it('makes an invented pre-proof mint hash unrepresentable in SQLite', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+
+    expect(() => stores.db.prepare(`
+      UPDATE unwind_jobs SET state='uncertain',reason_code='submission_unknown',
+        mint_tx_hash=?,updated_at=? WHERE job_id=?
+    `).run('aa'.repeat(32), CCTP_T0 + 1, UNWIND_JOB_ID)).toThrow(/constraint|check/i);
+    expect(stores.unwindJobs.status(UNWIND_JOB_ID)).toEqual({
+      jobId: UNWIND_JOB_ID, status: 'awaiting_burn',
+    });
+    stores.db.close();
+  });
+
+  it('retains a known Stellar mint hash when Task8 projects submitted-checkpoint uncertainty', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+    stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 1,
+    });
+    const mintTxHash = 'dd'.repeat(32);
+    const execId = `unwind:${UNWIND_JOB_ID}`;
+    const claim = stores.cctpRelays.claim({ execId, now: CCTP_T0 + 2, leaseMs: 10_000 });
+    stores.cctpRelays.recordAttested({
+      execId, leaseToken: claim.leaseToken,
+      messageHex: CCTP_MESSAGE_HEX, nonceHex: CCTP_NONCE_HEX,
+      attestationHex: CCTP_ATTESTATION_HEX, now: CCTP_T0 + 2,
+    });
+    stores.cctpRelays.markMintSubmitting({
+      execId, leaseToken: claim.leaseToken, now: CCTP_T0 + 2,
+    });
+    stores.cctpRelays.finishUncertain({
+      execId, leaseToken: claim.leaseToken, mintTxHash,
+      reasonCode: 'submitted_checkpoint_failed', now: CCTP_T0 + 2,
+    });
+
+    expect(stores.unwindJobs.reconcileFromCctp({
+      jobId: UNWIND_JOB_ID, now: CCTP_T0 + 3,
+    })).toEqual({
+      jobId: UNWIND_JOB_ID,
+      status: 'uncertain',
+      unwindTxHash: UNWIND_TX_HASH,
+      mintTxHash,
+      reasonCode: 'submitted_checkpoint_failed',
+    });
+    expect(stores.unwindJobs.status(UNWIND_JOB_ID)).toEqual({
+      jobId: UNWIND_JOB_ID,
+      status: 'uncertain',
+      unwindTxHash: UNWIND_TX_HASH,
+      mintTxHash,
+      reasonCode: 'submitted_checkpoint_failed',
+    });
+    stores.db.close();
+  });
+
+  it('atomically commits canonical proof, immutable expectation, and one Task8 relay row', () => {
+    const stores = createSqliteStores(freshPath());
+    stores.unwindJobs.reserve({
+      jobId: UNWIND_JOB_ID,
+      capabilityHash: UNWIND_CAPABILITY_HASH,
+      kernelAddress: UNWIND_KERNEL,
+      recipientHint: UNWIND_RECIPIENT,
+      requestDigest: UNWIND_REQUEST_DIGEST,
+      expiresAt: CCTP_T0 + 3_600_000,
+      capabilityExpiresAt: CCTP_T0 + 4_200_000,
+      now: CCTP_T0,
+    });
+
+    const first = stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 1,
+    });
+    const before = stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?')
+      .get(UNWIND_JOB_ID);
+    const retry = stores.unwindJobs.attachAndEnqueue({
+      jobId: UNWIND_JOB_ID,
+      proof: UNWIND_PROOF,
+      expectation: CCTP_REVERSE_EXPECTATION,
+      relayExecId: `unwind:${UNWIND_JOB_ID}`,
+      now: CCTP_T0 + 999,
+    });
+
+    expect(first).toEqual({
+      duplicate: false,
+      record: { jobId: UNWIND_JOB_ID, status: 'relay_pending', unwindTxHash: UNWIND_TX_HASH },
+    });
+    expect(retry).toEqual({ duplicate: true, record: first.record });
+    expect(stores.db.prepare('SELECT * FROM unwind_jobs WHERE job_id=?').get(UNWIND_JOB_ID))
+      .toEqual(before);
+    expect(before).toMatchObject({
+      user_op_hash: UNWIND_USER_OP_HASH,
+      unwind_tx_hash: UNWIND_TX_HASH,
+      chain_id: 84532,
+      entry_point: UNWIND_ENTRY_POINT,
+      block_number: '12345678',
+      burned: '1234567',
+      proof_digest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      expectation_digest: CCTP_REVERSE_EXPECTATION_DIGEST,
+      relay_exec_id: `unwind:${UNWIND_JOB_ID}`,
+    });
+    expect(stores.cctpRelays.get(`unwind:${UNWIND_JOB_ID}`)).toMatchObject({
+      sourceDomain: 6,
+      burnTxHash: UNWIND_TX_HASH,
+      expectationDigest: CCTP_REVERSE_EXPECTATION_DIGEST,
+      state: 'attestation_pending',
+      attempts: 0,
+    });
+    expect(stores.db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n).toBe(1);
+    stores.db.close();
+  });
+
+  it.each(['relay_insert', 'unwind_update'])(
+    'rolls back both proof and Task8 enqueue when attach fails after %s',
+    (failureStage) => {
+      const stores = createSqliteStores(freshPath(), {
+        unwindFault(stage) {
+          if (stage === failureStage) throw new Error(`injected ${stage}`);
+        },
+      });
+      stores.unwindJobs.reserve({
+        jobId: UNWIND_JOB_ID,
+        capabilityHash: UNWIND_CAPABILITY_HASH,
+        kernelAddress: UNWIND_KERNEL,
+        recipientHint: UNWIND_RECIPIENT,
+        requestDigest: UNWIND_REQUEST_DIGEST,
+        expiresAt: CCTP_T0 + 3_600_000,
+        capabilityExpiresAt: CCTP_T0 + 4_200_000,
+        now: CCTP_T0,
+      });
+
+      expect(() => stores.unwindJobs.attachAndEnqueue({
+        jobId: UNWIND_JOB_ID,
+        proof: UNWIND_PROOF,
+        expectation: CCTP_REVERSE_EXPECTATION,
+        relayExecId: `unwind:${UNWIND_JOB_ID}`,
+        now: CCTP_T0 + 1,
+      })).toThrow(`injected ${failureStage}`);
+      expect(stores.db.prepare('SELECT proof_digest,state FROM unwind_jobs WHERE job_id=?')
+        .get(UNWIND_JOB_ID)).toEqual({ proof_digest: null, state: 'awaiting_burn' });
+      expect(stores.db.prepare('SELECT COUNT(*) AS n FROM cctp_relay_work').get().n).toBe(0);
+      stores.db.close();
+    },
+  );
 });

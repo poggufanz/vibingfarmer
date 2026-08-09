@@ -6,11 +6,15 @@
 
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { getAddress } from 'viem';
+import { StrKey } from '@stellar/stellar-sdk';
+import { getAddress, http } from 'viem';
+import { createBundlerClient } from 'viem/account-abstraction';
 import { createWatcher } from './cctp/watcher.mjs';
+import { BASE_SEPOLIA, CCTP_DOMAIN, STELLAR_TESTNET } from './cctp/constants.mjs';
 import { createOrchestrator } from './base/orchestrator.mjs';
 import { createFarmFlow } from './flows/farm.mjs';
 import { createRelayerRouter } from './httpRouter.mjs';
+import { readUnwindEvidence } from './unwindEvidence.mjs';
 import { createMandateStoresV3 } from './mandateStore.mjs';
 import { createSqliteStores } from './sqliteStores.mjs';
 import { startAssociationOutboxWorker } from './associationOutbox.mjs';
@@ -47,6 +51,9 @@ export async function verifyRelayerReadiness({
   if (requireBaseReadiness && local?.farmIntentDurable !== true) {
     throw new Error('relayer SQLite forward-farm intent store is not durable');
   }
+  if (requireBaseReadiness && local?.unwindDurable !== true) {
+    throw new Error('relayer SQLite unwind authority store is not durable');
+  }
   if (!Array.isArray(local.legacyMandateTables)) {
     throw new Error('relayer SQLite legacy mandate metadata is invalid');
   }
@@ -73,11 +80,59 @@ export async function verifyRelayerReadiness({
   return { writable: true, reporterSchema: remote.schemaVersion };
 }
 
+export function startUnwindRecoveryWorker({
+  reconcileCctpRelays,
+  resumeUnwindJobs,
+  recoveryLimit = 100,
+  intervalMs = 5_000,
+  schedule = setInterval,
+  cancel = clearInterval,
+  onError = () => {},
+}) {
+  if (typeof reconcileCctpRelays !== 'function' || typeof resumeUnwindJobs !== 'function'
+      || typeof schedule !== 'function' || typeof cancel !== 'function'
+      || typeof onError !== 'function') {
+    throw new Error('unwind recovery worker dependencies are invalid');
+  }
+  if (!Number.isSafeInteger(recoveryLimit) || recoveryLimit < 1 || recoveryLimit > 1_000
+      || !Number.isSafeInteger(intervalMs) || intervalMs < 1_000 || intervalMs > 300_000) {
+    throw new Error('unwind recovery worker bounds are invalid');
+  }
+  let running = false;
+  let stopped = false;
+  async function tick() {
+    if (stopped || running) return false;
+    running = true;
+    try {
+      await reconcileCctpRelays({ limit: recoveryLimit });
+      await resumeUnwindJobs({ limit: recoveryLimit });
+      return true;
+    } catch (error) {
+      try { onError(error); } catch {}
+      return false;
+    } finally {
+      running = false;
+    }
+  }
+  const timer = schedule(() => tick(), intervalMs);
+  timer?.unref?.();
+  return Object.freeze({
+    tick,
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      cancel(timer);
+    },
+  });
+}
+
 export async function startVerifiedRelayer({
   verifyReadiness,
   resumeMandateActivations,
   reconcileCctpRelays = async () => {},
+  resumeUnwindJobs = async () => {},
   resumeFarmJobs,
+  startUnwindRecoveryWorker: startUnwindWorker = null,
   startBaseEvidenceWorker = null,
   startAssociationWorker = null,
   startWorker = null,
@@ -86,12 +141,14 @@ export async function startVerifiedRelayer({
   await verifyReadiness();
   await resumeMandateActivations();
   await reconcileCctpRelays();
+  await resumeUnwindJobs();
   await resumeFarmJobs();
   const workers = [];
   const stopWorkers = () => {
     for (const worker of [...workers].reverse()) worker?.stop?.();
   };
   try {
+    if (startUnwindWorker) workers.push(startUnwindWorker());
     if (startBaseEvidenceWorker) workers.push(startBaseEvidenceWorker());
     if (startAssociationWorker) workers.push(startAssociationWorker());
     else if (startWorker) workers.push(startWorker());
@@ -103,6 +160,95 @@ export async function startVerifiedRelayer({
   }
 }
 
+const ENTRY_POINT_V07 = '0x0000000071727de22e5e9d8baf0edac6f37da032';
+const BYTES32_RE = /^0x[0-9a-f]{64}$/;
+
+function lowerAddress(value, label) {
+  try {
+    const address = getAddress(value);
+    if (/^0x0{40}$/i.test(address)) throw new Error('zero address');
+    return address.toLowerCase();
+  } catch {
+    throw new Error(`active unwind ${label} is invalid`);
+  }
+}
+
+function contractBytes32(value, label) {
+  try {
+    return `0x${Buffer.from(StrKey.decodeContract(value)).toString('hex')}`;
+  } catch {
+    throw new Error(`active unwind ${label} is invalid`);
+  }
+}
+
+function buildUnwindEvidenceFacts(config) {
+  const deployment = config?.base?.hardenedDeployment;
+  const route = deployment?.route;
+  const entryPointAddress = lowerAddress(
+    config?.base?.mandatePolicy?.entryPointAddress,
+    'EntryPoint',
+  );
+  const baseExitSweeperAddress = lowerAddress(
+    deployment?.baseExitSweeper?.address,
+    'BaseExitSweeper',
+  );
+  const usdcAddress = lowerAddress(route?.usdcAddress, 'USDC');
+  const tokenMessengerV2Address = lowerAddress(
+    route?.tokenMessengerAddress,
+    'TokenMessengerV2',
+  );
+  const messageTransmitterV2Address = lowerAddress(
+    config?.base?.messageTransmitterAddress,
+    'MessageTransmitterV2',
+  );
+  const stellarTokenMessenger = contractBytes32(
+    config?.stellar?.tokenMessengerMinter,
+    'Stellar TokenMessenger',
+  );
+  const cctpForwarder = contractBytes32(
+    config?.stellar?.forwarderAddress,
+    'Stellar forwarder',
+  );
+  if (deployment?.generation !== 'hardened-v2'
+      || deployment?.chainId !== 84532
+      || config?.base?.chain?.id !== 84532
+      || config?.base?.mandatePolicy?.entryPointVersion !== '0.7'
+      || entryPointAddress !== ENTRY_POINT_V07
+      || lowerAddress(config.base.baseExitSweeperAddress, 'configured BaseExitSweeper')
+        !== baseExitSweeperAddress
+      || lowerAddress(config.base.usdcAddress, 'configured USDC') !== usdcAddress
+      || lowerAddress(config.base.tokenMessengerV2Address, 'configured TokenMessengerV2')
+        !== tokenMessengerV2Address
+      || messageTransmitterV2Address !== BASE_SEPOLIA.messageTransmitterV2.toLowerCase()
+      || usdcAddress !== BASE_SEPOLIA.usdc.toLowerCase()
+      || tokenMessengerV2Address !== BASE_SEPOLIA.tokenMessengerV2.toLowerCase()
+      || config?.domains?.base !== CCTP_DOMAIN.BASE
+      || config?.domains?.stellar !== CCTP_DOMAIN.STELLAR
+      || config?.stellar?.tokenMessengerMinter !== STELLAR_TESTNET.tokenMessengerMinter
+      || config?.stellar?.forwarderAddress !== STELLAR_TESTNET.cctpForwarder
+      || route?.stellarDomain !== CCTP_DOMAIN.STELLAR
+      || route?.finalityThreshold !== 1000
+      || !BYTES32_RE.test(route?.mintRecipient)
+      || !BYTES32_RE.test(route?.destinationCaller)
+      || route.mintRecipient !== cctpForwarder
+      || route.destinationCaller !== cctpForwarder) {
+    throw new Error('active unwind deployment facts are invalid');
+  }
+  return Object.freeze({
+    generation: 'hardened-v2',
+    chainId: 84532,
+    entryPointAddress,
+    baseExitSweeperAddress,
+    usdcAddress,
+    tokenMessengerV2Address,
+    messageTransmitterV2Address,
+    stellarDomain: CCTP_DOMAIN.STELLAR,
+    stellarTokenMessenger,
+    cctpForwarder,
+    finalityThreshold: 1000,
+  });
+}
+
 /** Shared-secret gate between the Cloudflare proxy and this relayer. Empty key = open (local dev). */
 export function withProxyKeyAuth(handler, key) {
   return async function authed(req, res) {
@@ -112,6 +258,12 @@ export function withProxyKeyAuth(handler, key) {
       const b = Buffer.from(key);
       const ok = a.length === b.length && timingSafeEqual(a, b);
       if (!ok) {
+        const pathname = new URL(req.url, 'http://local').pathname;
+        if (['/unwind', '/unwind/attach', '/status'].some(
+          (path) => pathname === path || pathname.endsWith(`/api/vf-cross${path}`),
+        )) {
+          res.setHeader('Cache-Control', 'no-store');
+        }
         res.statusCode = 401;
         res.setHeader('Content-Type', 'application/json');
         return res.end(JSON.stringify({ error: 'unauthorized' }));
@@ -176,12 +328,20 @@ function deriveActivePoolTargets(
  */
 export function createRelayerServer(config, {
   openSqlite = createSqliteStores,
+  createWatcherFn = createWatcher,
   createRouter = createRelayerRouter,
   createReporter = createAgentIndexReporter,
   createHttpServer = createServer,
+  createUnwindBundlerClient = ({ chain, rpcUrl }) => createBundlerClient({
+    chain,
+    transport: http(rpcUrl),
+  }),
+  readUnwindEvidenceFn = readUnwindEvidence,
+  startUnwindRecoveryWorkerFn = startUnwindRecoveryWorker,
   poolTargetCatalog = BASE_SEPOLIA_POOL_TARGETS,
   recoveryLimit = 100,
   recoveryConcurrency = 4,
+  unwindRecoveryIntervalMs = 5_000,
 } = {}) {
   if (!Number.isSafeInteger(recoveryLimit) || recoveryLimit < 1 || recoveryLimit > 1_000) {
     throw new Error('recoveryLimit must be between 1 and 1000');
@@ -199,6 +359,7 @@ export function createRelayerServer(config, {
     throw new Error('private/public Base execution availability disagree');
   }
   const baseCrossChainAvailable = privateBaseAvailability === true;
+  const production = config.mode === 'production' || config.mode === 'staging';
   const poolTargets = deriveActivePoolTargets(
     baseCrossChainAvailable,
     config.base.allowedPools,
@@ -221,7 +382,35 @@ export function createRelayerServer(config, {
   // `cctpRelays`), never the generic relay_records KV.
   const sqlite = config.dbPath ? openSqlite(config.dbPath, { sessionKeyCipher }) : null;
   if (sqlite) config = { ...config, store: sqlite.cctpRelays };
-  const watcher = createWatcher(config);
+  let unwindPublicClient = null;
+  let unwindBundlerClient = null;
+  let unwindEvidenceFacts = null;
+  if (baseCrossChainAvailable) {
+    const durableAuthorityAvailable = Boolean(sqlite?.unwindJobs && sqlite?.cctpRelays);
+    const receiptReadersAvailable = typeof config.base?.publicClient?.getChainId === 'function'
+      && typeof config.base?.publicClient?.getTransactionReceipt === 'function'
+      && typeof config.base?.bundlerRpcUrl === 'string'
+      && Boolean(config.base.bundlerRpcUrl);
+    if (production && !durableAuthorityAvailable) {
+      throw new Error('active production unwind requires dedicated durable SQLite authority');
+    }
+    if (production && !receiptReadersAvailable) {
+      throw new Error('active production unwind receipt readers are unavailable');
+    }
+    if (durableAuthorityAvailable && receiptReadersAvailable) {
+      unwindEvidenceFacts = buildUnwindEvidenceFacts(config);
+      unwindPublicClient = config.base.publicClient;
+      unwindBundlerClient = createUnwindBundlerClient({
+        chain: config.base.chain,
+        rpcUrl: config.base.bundlerRpcUrl,
+      });
+      if (typeof unwindBundlerClient?.getUserOperation !== 'function'
+          || typeof unwindBundlerClient?.getUserOperationReceipt !== 'function') {
+        throw new Error('active production unwind bundler reader is unavailable');
+      }
+    }
+  }
+  const watcher = createWatcherFn(config);
   const jobs = sqlite ? sqlite.jobs : new Map();
   // Capability-bound encrypted mandate authority is the sole live registration/farm path.
   // Legacy approval-bearing stores remain migration artifacts and are never wired into HTTP.
@@ -268,19 +457,6 @@ export function createRelayerServer(config, {
     });
   }
 
-  // Reverse leg: relay ONLY the mint. `stellarRecipient` is already encoded in the burn's
-  // hookData (see cctp/reverse.mjs) — accepted here for logging/idempotency, not for routing.
-  // The withdraw+burn happens client-side via BaseExitSweeper.exitAllAndBurn; the relayer never
-  // constructs or dispatches a burn.
-  //
-  // Task 8 fail-closed note: relayMint now REQUIRES the immutable canonical expectation and the
-  // HTTP layer does not yet construct one from the request intent (Task 11 owns that wiring).
-  // Until then this call — like the /farm flow — rejects with RELAY_VALIDATION before any row,
-  // poll, or destination send. There is deliberately no bypass.
-  function relayUnwindMint({ unwindTxHash }) {
-    return watcher.relayMint({ sourceDomain: config.domains.base, burnTxHash: unwindTxHash, execId: unwindTxHash });
-  }
-
   // Sanitize client-facing error messages unless explicitly debugging (RELAYER_DEBUG_ERRORS=1),
   // so a public deploy never leaks internal error strings via protected POST /status. The smoke harness runs
   // localhost and sets the flag to keep full detail.
@@ -289,7 +465,6 @@ export function createRelayerServer(config, {
   // Empty key = local dev (no gate).
   const router = createRouter({
       buildFarm,
-      relayUnwindMint,
       jobs,
       mandatesV3,
       mandateActivations,
@@ -307,6 +482,15 @@ export function createRelayerServer(config, {
       farmIntents: sqlite?.farmIntents ?? null,
       cctpRelays: sqlite?.cctpRelays ?? null,
       relayForwardMint: (relayIntent) => watcher.relayMint(relayIntent),
+      unwindJobs: (!baseCrossChainAvailable || unwindEvidenceFacts)
+        ? sqlite?.unwindJobs ?? null
+        : null,
+      readUnwindEvidence: readUnwindEvidenceFn,
+      relayReverseMint: (relayIntent) => watcher.relayMint(relayIntent),
+      resumeExistingReverse: (execId) => watcher.resumeExisting(execId),
+      unwindPublicClient,
+      unwindBundlerClient,
+      unwindEvidenceFacts,
       recoveryLimit,
       recoveryConcurrency,
       forwardFarmDeployment: baseCrossChainAvailable
@@ -328,7 +512,14 @@ export function createRelayerServer(config, {
   );
 
   async function listen(port) {
-    const production = config.mode === 'production' || config.mode === 'staging';
+    const reconcileCctpRelays = ({ limit = recoveryLimit } = {}) => (
+      sqlite && baseCrossChainAvailable
+        ? watcher.sweepStuck({ limit })
+        : Promise.resolve({ redriven: [], held: [], blocked: [], uncertain: [] })
+    );
+    const resumeUnwindJobs = ({ limit = recoveryLimit } = {}) => (
+      router.resumeUnwindJobs({ limit })
+    );
     const started = await startVerifiedRelayer({
       verifyReadiness: production
         ? () => verifyRelayerReadiness({
@@ -338,10 +529,17 @@ export function createRelayerServer(config, {
         })
         : async () => ({ writable: Boolean(sqlite), reporterSchema: runtimeConfig.reporterSchema }),
       resumeMandateActivations: () => router.resumeMandateActivations(),
-      reconcileCctpRelays: () => (sqlite && baseCrossChainAvailable
-        ? watcher.sweepStuck({ limit: recoveryLimit })
-        : Promise.resolve({ redriven: [], held: [], blocked: [], uncertain: [] })),
+      reconcileCctpRelays,
+      resumeUnwindJobs,
       resumeFarmJobs: () => router.resumeFarmJobs(),
+      startUnwindRecoveryWorker: sqlite
+        ? () => startUnwindRecoveryWorkerFn({
+          reconcileCctpRelays,
+          resumeUnwindJobs,
+          recoveryLimit,
+          intervalMs: unwindRecoveryIntervalMs,
+        })
+        : null,
       startBaseEvidenceWorker: () => (baseCrossChainAvailable && sqlite?.baseEvidenceOutbox
         ? startBaseEvidenceOutboxWorker({
           outbox: sqlite.baseEvidenceOutbox,

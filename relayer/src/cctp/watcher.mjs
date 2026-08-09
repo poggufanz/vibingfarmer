@@ -301,6 +301,30 @@ export function createWatcher(config) {
     }
   }
 
+  // Recovery-only seam for Task 12. Unlike relayMint this can never create or adopt work:
+  // the exact durable row must already exist and must be a Base -> Stellar execution.
+  async function resumeExisting(execId) {
+    if (inFlight.has(execId)) return { status: 'in-progress' };
+    let record = store.get(execId);
+    if (!record || record.sourceDomain !== domains.base) {
+      throw new Error('existing reverse relay work is unavailable');
+    }
+    inFlight.add(execId);
+    try {
+      if (record.leaseToken !== null && record.leaseExpiresAt <= nowFn()) {
+        if (typeof store.reconcileOne !== 'function') {
+          throw new Error('existing reverse reconciliation is unavailable');
+        }
+        record = store.reconcileOne({ execId, now: nowFn() });
+      }
+      const terminal = terminalResult(record);
+      if (terminal) return terminal;
+      return await drive(execId);
+    } finally {
+      inFlight.delete(execId);
+    }
+  }
+
   /**
    * Bounded, deterministic startup/stuck recovery. First reconciles expired leases in one
    * store transaction (expired mint_submitting becomes durably uncertain and calls NO seam),
@@ -312,17 +336,21 @@ export function createWatcher(config) {
    */
   async function sweepStuck({ now = nowFn(), limit = 100 } = {}) {
     store.reconcileExpired({ now, limit });
-    const rows = store.listForSweep({ now, limit, includeTerminal: true });
+    // Reporting is a separate bounded page. Historical terminal/live-lease rows therefore
+    // remain observable without consuming any slot from the actionable recovery budget.
+    if (typeof store.listSweepSummary !== 'function') {
+      throw new Error('relay recovery summary authority is unavailable');
+    }
+    const summaryRows = store.listSweepSummary({ now, limit });
+    const rows = store.listForSweep({ now, limit, includeTerminal: false });
     const sweep = { redriven: [], held: [], blocked: [], uncertain: [] };
+    for (const row of summaryRows) {
+      if (row.state === 'blocked') sweep.blocked.push(row.execId);
+      else if (row.state === 'uncertain') sweep.uncertain.push(row.execId);
+      else if (row.leaseToken !== null || inFlight.has(row.execId)) sweep.held.push(row.execId);
+    }
     for (const row of rows) {
-      if (row.state === 'blocked') { sweep.blocked.push(row.execId); continue; }
-      if (row.state === 'uncertain') { sweep.uncertain.push(row.execId); continue; }
-      if (inFlight.has(row.execId)) { sweep.held.push(row.execId); continue; }
-      if (row.leaseToken !== null) {
-        // Still leased after reconciliation => the lease is active => held, never replayed.
-        sweep.held.push(row.execId);
-        continue;
-      }
+      if (inFlight.has(row.execId)) continue;
       try {
         await drive(row.execId);
         const after = store.get(row.execId);
@@ -346,5 +374,5 @@ export function createWatcher(config) {
     return recoveryEvidence(record);
   }
 
-  return { relayMint, sweepStuck, getRecoveryEvidence };
+  return { relayMint, resumeExisting, sweepStuck, getRecoveryEvidence };
 }

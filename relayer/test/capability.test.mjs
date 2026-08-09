@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as capabilityBoundary from '../src/capability.mjs';
 import {
   capabilityMatches,
   clearMandateCapabilityCookie,
@@ -13,6 +14,7 @@ import {
 const MANDATE_ID = '0123456789abcdef0123456789abcdef';
 const CAPABILITY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const CAPABILITY_HASH = 'a8ae6e6ee929abea3afcfc5258c8ccd6f85273e0d4626d26c7279f3250f77c8e';
+const UNWIND_JOB_ID = 'fedcba9876543210fedcba9876543210';
 
 function errorText(action) {
   try {
@@ -143,5 +145,28 @@ describe('mandate capability boundary', () => {
   it('clears the same host-only cookie with exactly Max-Age=0', () => {
     expect(clearMandateCapabilityCookie({ mandateId: MANDATE_ID }))
       .toBe(`__Host-vf-mandate-${MANDATE_ID}=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+  });
+});
+
+describe('unwind capability cookie boundary', () => {
+  // Catches reusing the mandate namespace or omitting any host-only credential attribute.
+  it('serializes the exact job-bound unwind capability cookie', () => {
+    expect(capabilityBoundary.serializeUnwindCapabilityCookie?.({
+      jobId: UNWIND_JOB_ID,
+      capability: CAPABILITY,
+      maxAgeSeconds: 4319,
+    })).toBe(`__Host-vf-unwind-${UNWIND_JOB_ID}=${CAPABILITY}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=4319`);
+  });
+
+  it.each([
+    ['uppercase job ID', { jobId: UNWIND_JOB_ID.toUpperCase(), capability: CAPABILITY, maxAgeSeconds: 60 }],
+    ['short job ID', { jobId: UNWIND_JOB_ID.slice(1), capability: CAPABILITY, maxAgeSeconds: 60 }],
+    ['uppercase capability', { jobId: UNWIND_JOB_ID, capability: CAPABILITY.toUpperCase(), maxAgeSeconds: 60 }],
+    ['short capability', { jobId: UNWIND_JOB_ID, capability: CAPABILITY.slice(1), maxAgeSeconds: 60 }],
+    ['zero Max-Age', { jobId: UNWIND_JOB_ID, capability: CAPABILITY, maxAgeSeconds: 0 }],
+    ['fractional Max-Age', { jobId: UNWIND_JOB_ID, capability: CAPABILITY, maxAgeSeconds: 1.5 }],
+  ])('rejects %s without reflecting the credential', (_label, input) => {
+    const message = errorText(() => capabilityBoundary.serializeUnwindCapabilityCookie(input));
+    expect(message).not.toContain(CAPABILITY);
   });
 });

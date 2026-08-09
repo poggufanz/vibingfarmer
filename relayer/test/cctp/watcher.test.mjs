@@ -1089,7 +1089,7 @@ describe('sweepStuck classification', () => {
     expect(realStore.get('submitted-safe').state).toBe('minted');
   });
 
-  it('sweepStuck honors a bounded limit deterministically', async () => {
+  it('bounds actionable and summary pages independently without charging history to work', async () => {
     const realStore = createMemoryStore();
     seedAll(realStore);
     const { watcher } = buildWatcher({
@@ -1097,9 +1097,150 @@ describe('sweepStuck classification', () => {
       fakes: { pollAttestationFn: async () => { throw codedError('CCTP_ATTESTATION_TIMEOUT'); } },
     });
     const sweep = await watcher.sweepStuck({ now: T0 + 1_000, limit: 1 });
-    expect(sweep.redriven.length + sweep.held.length + sweep.blocked.length + sweep.uncertain.length)
+    expect(sweep.redriven).toHaveLength(1);
+    expect(sweep.held.length + sweep.blocked.length + sweep.uncertain.length)
       .toBeLessThanOrEqual(1);
     expect(sweep.redriven).toEqual(['pending-safe']); // (createdAt, execId) order
+  });
+
+  it('does not let older terminal history consume the bounded actionable sweep page', async () => {
+    const realStore = createMemoryStore();
+    for (let index = 0; index < 3; index += 1) {
+      const execId = `old-blocked-${index}`;
+      const token = seedAttested(realStore, execId, {
+        now: T0 + index,
+        releaseLease: false,
+        args: forwardArgs(execId, { burnTxHash: `${index + 1}`.repeat(64) }),
+      });
+      realStore.finishBlocked({
+        execId, leaseToken: token, reasonCode: 'message_mismatch', now: T0 + index,
+      });
+    }
+    realStore.enqueue({
+      execId: 'later-actionable', sourceDomain: 27, burnTxHash: 'f1'.repeat(32),
+      expectation: FORWARD_EXPECTATION, now: T0 + 100,
+    });
+    const { watcher, calls } = buildWatcher({
+      store: realStore,
+      fakes: {
+        pollAttestationFn: async (args) => {
+          calls.poll.push(args);
+          throw codedError('CCTP_ATTESTATION_TIMEOUT');
+        },
+      },
+    });
+
+    const sweep = await watcher.sweepStuck({ now: T0 + 1_000, limit: 1 });
+    expect(sweep.redriven).toEqual(['later-actionable']);
+    expect(calls.poll).toHaveLength(1);
+    expect(calls.poll[0].txHash).toBe('f1'.repeat(32));
+  });
+
+  it('does not let older live leases consume the bounded actionable sweep page', async () => {
+    const realStore = createMemoryStore();
+    for (let index = 0; index < 3; index += 1) {
+      const execId = `old-held-${index}`;
+      realStore.enqueue({
+        execId, sourceDomain: 27, burnTxHash: `${index + 2}`.repeat(64),
+        expectation: FORWARD_EXPECTATION, now: T0 + index,
+      });
+      realStore.claim({ execId, now: T0 + index, leaseMs: 60_000 });
+    }
+    realStore.enqueue({
+      execId: 'later-actionable', sourceDomain: 27, burnTxHash: 'f2'.repeat(32),
+      expectation: FORWARD_EXPECTATION, now: T0 + 100,
+    });
+    const { watcher, calls } = buildWatcher({
+      store: realStore,
+      fakes: {
+        pollAttestationFn: async (args) => {
+          calls.poll.push(args);
+          throw codedError('CCTP_ATTESTATION_TIMEOUT');
+        },
+      },
+    });
+
+    const sweep = await watcher.sweepStuck({ now: T0 + 1_000, limit: 1 });
+    expect(sweep.redriven).toEqual(['later-actionable']);
+    expect(calls.poll).toHaveLength(1);
+  });
+
+  it('rotates a transiently released head behind later actionable work across bounded ticks', async () => {
+    let now = T0 + 1_000;
+    const realStore = createMemoryStore();
+    realStore.enqueue({
+      execId: 'transient-head', sourceDomain: 27, burnTxHash: 'f3'.repeat(32),
+      expectation: FORWARD_EXPECTATION, now: T0,
+    });
+    realStore.enqueue({
+      execId: 'later-work', sourceDomain: 27, burnTxHash: 'f4'.repeat(32),
+      expectation: FORWARD_EXPECTATION, now: T0 + 1,
+    });
+    const attempted = [];
+    const { watcher } = buildWatcher({
+      store: realStore,
+      config: { nowFn: () => now },
+      fakes: {
+        pollAttestationFn: async ({ txHash }) => {
+          attempted.push(txHash);
+          throw new Error('transient iris failure');
+        },
+      },
+    });
+
+    await watcher.sweepStuck({ now, limit: 1 });
+    now += 1;
+    await watcher.sweepStuck({ now, limit: 1 });
+    expect(attempted).toEqual(['f3'.repeat(32), 'f4'.repeat(32)]);
+  });
+
+  it('resumes only an existing reverse row and never adopts forward or missing work', async () => {
+    const realStore = createMemoryStore();
+    realStore.enqueue({ ...forwardArgs('forward-existing'), now: T0 });
+    realStore.enqueue({ ...reverseArgs('reverse-existing'), now: T0 + 1 });
+    const { watcher, calls } = buildWatcher({
+      store: realStore,
+      fakes: {
+        pollAttestationFn: async (args) => {
+          calls.poll.push(args);
+          return { message: REVERSE_MESSAGE, attestation: ATTESTATION };
+        },
+      },
+    });
+
+    await expect(watcher.resumeExisting('missing-reverse')).rejects.toThrow(/existing|reverse/i);
+    await expect(watcher.resumeExisting('forward-existing')).rejects.toThrow(/existing|reverse/i);
+    await expect(watcher.resumeExisting('reverse-existing')).resolves.toMatchObject({
+      status: 'minted', mintTxHash: MINT_STELLAR,
+    });
+    expect(calls.submitStellar).toHaveLength(1);
+    expect(calls.submitBase).toHaveLength(0);
+    expect(realStore.get('missing-reverse')).toBeNull();
+    expect(realStore.get('forward-existing').state).toBe('attestation_pending');
+  });
+
+  it('reconciles an expired reverse submit fence before existing-only recovery', async () => {
+    const realStore = createMemoryStore();
+    const args = reverseArgs('reverse-expired');
+    const leaseToken = seedAttested(realStore, 'reverse-expired', {
+      now: T0, leaseMs: 10, releaseLease: false,
+      message: REVERSE_MESSAGE, args,
+    });
+    realStore.markMintSubmitting({ execId: 'reverse-expired', leaseToken, now: T0 });
+    const { watcher, calls } = buildWatcher({
+      store: realStore,
+      config: { nowFn: () => T0 + 100 },
+    });
+
+    await expect(watcher.resumeExisting('reverse-expired')).resolves.toEqual({
+      status: 'uncertain', reasonCode: 'submission_lease_expired',
+    });
+    expect(realStore.get('reverse-expired')).toMatchObject({
+      state: 'uncertain', leaseToken: null, reasonCode: 'submission_lease_expired',
+    });
+    expect(calls.poll).toHaveLength(0);
+    expect(calls.submitStellar).toHaveLength(0);
+    expect(calls.confirmStellar).toHaveLength(0);
   });
 });
 

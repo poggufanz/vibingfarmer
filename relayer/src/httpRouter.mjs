@@ -5,16 +5,15 @@
 // frontend/api/vf/_router.js so a raw node:http request behaves the same as a pre-parsed one
 // under test.
 //
-// Non-custodial invariant: the `/unwind` handler ONLY relays the reverse CCTP mint via the
-// injected `relayUnwindMint` — it never dispatches a withdraw. The withdraw + burn are
-// owner-signed client-side via BaseExitSweeper.exitAllAndBurn (see
-// frontend/src/base/withdrawBatch.js), so no relayer-side burn construction is imported or
-// called from here.
+// Non-custodial invariant: the `/unwind` handler reserves and verifies owner-signed Base
+// evidence; only the Task 8 reverse-mint state machine may later submit on Stellar. No
+// relayer-side Base burn construction is imported or called from here.
 //
 // Mandates use only the capability-bound v3 authority and activation stores. Legacy approval-
 // bearing v2 routes are deliberately absent from this surface.
 
 import { createHash } from 'node:crypto';
+import { StrKey } from '@stellar/stellar-sdk';
 import { validateMandateBinding, MAX_CALL_CAP_UNITS } from './base/session.mjs';
 import {
   canonicalTxHash,
@@ -28,6 +27,8 @@ import {
   requireCapability,
   requireMandateId,
   serializeMandateCapabilityCookie,
+  requireUnwindJobId,
+  serializeUnwindCapabilityCookie,
 } from './capability.mjs';
 import { evaluateBaseMandateStatus } from './mandateStatus.mjs';
 import { buildForwardFarmIntent } from './farmIntent.mjs';
@@ -74,13 +75,47 @@ const FARM_V2_FIELDS = new Set([
 const FARM_ATTACH_V2_FIELDS = new Set(['jobId', 'burnTxHash', 'mandateId']);
 const MANDATE_STATUS_FIELDS = new Set(['mandateId', 'stellarOwner', 'kernelAddress']);
 const FARM_STATUS_FIELDS = new Set(['mandateId', 'jobId']);
-const UNWIND_FIELDS = new Set(['unwindTxHash', 'stellarRecipient']);
+const UNWIND_RESERVE_FIELDS = new Set(['jobId', 'capability', 'kernelAddress', 'recipientHint']);
+const UNWIND_ATTACH_FIELDS = new Set(['jobId', 'userOpHash', 'unwindTxHash']);
 const JOB_ID_PATTERN = /^[0-9a-f]{32}$/;
 const FARM_LEASE_MS = 30_000;
 const FARM_HEARTBEAT_MS = 10_000;
 const MANDATE_ACTIVATION_LEASE_SECONDS = 30;
 const MANDATE_ACTIVATION_HEARTBEAT_MS = 10_000;
 const CAPABILITY_HASH_PATTERN = /^[0-9a-f]{64}$/;
+const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+const ZERO_EVM_ADDRESS = `0x${'00'.repeat(20)}`;
+const MAX_UNWIND_COOKIE_AGE_SECONDS = 24 * 60 * 60;
+const UNWIND_EVIDENCE_LEASE_MS = 30_000;
+const UNWIND_EVIDENCE_HEARTBEAT_MS = 10_000;
+const UNWIND_FACT_FIELDS = Object.freeze([
+  'generation', 'chainId', 'entryPointAddress', 'baseExitSweeperAddress', 'usdcAddress',
+  'tokenMessengerV2Address', 'messageTransmitterV2Address', 'stellarDomain',
+  'stellarTokenMessenger', 'cctpForwarder', 'finalityThreshold',
+]);
+const UNWIND_STORE_METHODS = Object.freeze([
+  'reserve', 'getAuthority', 'status', 'claimEvidence', 'renewEvidence', 'releaseEvidence',
+  'attachAndEnqueue', 'finishBlocked', 'finishUncertain', 'reconcileFromCctp',
+  'reconcileExpired', 'listForResume',
+]);
+const BYTES32_PATTERN = /^0x[0-9a-f]{64}$/;
+
+function unwindFactsReady(facts) {
+  return facts && typeof facts === 'object' && !Array.isArray(facts)
+    && Object.keys(facts).length === UNWIND_FACT_FIELDS.length
+    && UNWIND_FACT_FIELDS.every((field) => Object.hasOwn(facts, field))
+    && facts.generation === 'hardened-v2'
+    && facts.chainId === 84532
+    && facts.stellarDomain === 27
+    && facts.finalityThreshold === 1000
+    && [
+      facts.entryPointAddress, facts.baseExitSweeperAddress, facts.usdcAddress,
+      facts.tokenMessengerV2Address, facts.messageTransmitterV2Address,
+    ].every((value) => EVM_ADDRESS_PATTERN.test(value) && value === value.toLowerCase()
+      && value !== ZERO_EVM_ADDRESS)
+    && [facts.stellarTokenMessenger, facts.cctpForwarder]
+      .every((value) => BYTES32_PATTERN.test(value) && !/^0x0{64}$/.test(value));
+}
 
 function requireExactFields(value, allowed, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -129,7 +164,6 @@ const REVOKE_NOTE = 'This relayer deleted its own copy of the session key. The s
  * @param {Object} deps
  * @param {(sessionPrivateKey: string) => { farm: Function }} deps.buildFarm - per-request farm
  *   flow factory (constructs orchestrator + createFarmFlow); never persists the key it's given.
- * @param {(params: { unwindTxHash: string, stellarRecipient: string }) => Promise<{status:string, mintTxHash?:string}>} deps.relayUnwindMint
  * @param {Map<string, {status:string, steps:Array<object>}>} deps.jobs - jobId -> job record
  * @param {object} deps.mandatesV3 - encrypted mandate authority store.
  * @param {object} deps.mandateActivations - paired activation work/CAS store.
@@ -148,7 +182,7 @@ const REVOKE_NOTE = 'This relayer deleted its own copy of the session key. The s
  *   strings (RPC URLs, addresses) to whoever holds a jobId.
  */
 export function createRelayerRouter({
-  buildFarm, relayUnwindMint, jobs, genId,
+  buildFarm, jobs, genId,
   mandatesV3 = null, mandateActivations = null, buildMandateActivator = null,
   relayerOrigin = null, sanitizeErrors = false, networkId = 'stellar-testnet',
   publicRuntime = null,
@@ -159,15 +193,33 @@ export function createRelayerRouter({
   baseEvidenceOutbox = null, farmIntents = null, cctpRelays = null,
   relayForwardMint = null, recoveryLimit = 100, recoveryConcurrency = 4,
   forwardFarmDeployment = null,
+  unwindJobs = null, readUnwindEvidence = null, relayReverseMint = null,
+  resumeExistingReverse = null,
+  unwindPublicClient = null, unwindBundlerClient = null, unwindEvidenceFacts = null,
+  unwindCookieMaxAgeSeconds = 3600,
+  unwindBurnMaxAgeSeconds = unwindCookieMaxAgeSeconds - 300,
+  unwindEvidenceRetryMs = 300_000,
+  nowMs = () => Date.now(),
 }) {
   const baseExecutionAvailable = publicRuntime?.baseCrossChainAvailable === true;
   const activeMandateActivations = new Map();
   const activeMandateRegistrations = new Map();
   const activeIntentDeliveries = new Map();
   let activeFarmResumeV2 = null;
+  let activeUnwindResume = null;
   const baseUnavailable = (res) => sendJson(
     res, 503, { error: 'Base cross-chain execution is unavailable' },
   );
+  const unwindAttachStackReady = () => UNWIND_STORE_METHODS.every(
+    (method) => typeof unwindJobs?.[method] === 'function',
+  )
+    && typeof readUnwindEvidence === 'function'
+    && typeof relayReverseMint === 'function'
+    && typeof unwindPublicClient?.getChainId === 'function'
+    && typeof unwindPublicClient?.getTransactionReceipt === 'function'
+    && typeof unwindBundlerClient?.getUserOperation === 'function'
+    && typeof unwindBundlerClient?.getUserOperationReceipt === 'function'
+    && unwindFactsReady(unwindEvidenceFacts);
   // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
   // error is always available server-side (console.error) for debugging. Never stores the key.
   // `context` (runId/bridgeAgent/grantTxHash for a farm job; omitted for unwind, which has none)
@@ -1640,8 +1692,11 @@ export function createRelayerRouter({
   async function handleStatus(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     const body = req.body || {};
-    if (Object.keys(body).length === 1 && Object.hasOwn(body, 'jobId')) {
-      return sendJson(res, 400, { error: 'unsupported status identity' });
+    if (Object.hasOwn(body, 'jobId') && !Object.hasOwn(body, 'mandateId')) {
+      if (Object.keys(body).length !== 1) {
+        return sendJson(res, 400, { error: 'invalid status request' });
+      }
+      return handleUnwindStatus(req, res);
     }
 
     let mandateId;
@@ -1685,42 +1740,370 @@ export function createRelayerRouter({
 
   }
 
-  async function runUnwindJob(jobId, unwindTxHash, stellarRecipient) {
+  function authenticateUnwindAuthority(req, jobId, at) {
+    let canonicalJobId;
     try {
-      const mintResult = await relayUnwindMint({ unwindTxHash, stellarRecipient });
-      jobs.set(jobId, {
-        status: 'done',
-        steps: [{ step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash }],
-      });
-    } catch (err) {
-      recordError(jobId, 'mint', err);
+      canonicalJobId = requireUnwindJobId(jobId);
+    } catch {
+      return null;
+    }
+    const capability = parseBearerCapability(req?.headers?.authorization);
+    if (!Number.isSafeInteger(at) || at < 0 || !capability
+        || typeof req?.headers?.cookie === 'string'
+        || !unwindJobs || typeof unwindJobs.getAuthority !== 'function') return null;
+    let authority;
+    try {
+      authority = unwindJobs.getAuthority(canonicalJobId);
+    } catch {
+      return null;
+    }
+    if (!authority || !Number.isSafeInteger(authority.capabilityExpiresAt)
+        || authority.capabilityExpiresAt <= at
+        || !capabilityMatches(capability, authority.capabilityHash)) return null;
+    // The raw bearer is authentication input only. Do not retain or forward it past the
+    // timing-safe comparison seam; every downstream RPC/store call receives authority facts.
+    return { authority };
+  }
+
+  function handleUnwindStatus(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    const body = req.body || {};
+    const at = nowMs();
+    const authenticated = authenticateUnwindAuthority(req, body.jobId, at);
+    if (!authenticated) return unauthorized(res);
+    if (typeof unwindJobs.reconcileFromCctp !== 'function') {
+      return sendJson(res, 503, { error: 'unwind relay is unavailable' });
+    }
+    try {
+      const projection = unwindJobs.reconcileFromCctp({ jobId: body.jobId, now: at });
+      if (!projection) return unauthorized(res);
+      return sendJson(res, 200, projection);
+    } catch {
+      return sendJson(res, 503, { error: 'unwind relay is unavailable' });
     }
   }
 
   function handleUnwind(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
     if (!baseExecutionAvailable) return baseUnavailable(res);
+    if (!unwindAttachStackReady()) {
+      return sendJson(res, 503, { error: 'unwind relay is unavailable' });
+    }
     try {
-      requireExactFields(req.body || {}, UNWIND_FIELDS, 'unwind');
-    } catch (err) {
-      return sendJson(res, 400, { error: errorMessage(err) });
+      requireExactFields(req.body || {}, UNWIND_RESERVE_FIELDS, 'unwind reserve');
+      const { jobId, capability, kernelAddress, recipientHint } = req.body;
+      requireUnwindJobId(jobId);
+      requireCapability(capability);
+      if (typeof kernelAddress !== 'string' || !EVM_ADDRESS_PATTERN.test(kernelAddress)) {
+        throw new Error('invalid unwind reserve');
+      }
+      const normalizedKernel = kernelAddress.toLowerCase();
+      if (normalizedKernel === ZERO_EVM_ADDRESS
+          || (typeof recipientHint !== 'string'
+            || (!StrKey.isValidEd25519PublicKey(recipientHint)
+              && !StrKey.isValidContract(recipientHint)))) {
+        throw new Error('invalid unwind reserve');
+      }
+      if (!Number.isSafeInteger(unwindCookieMaxAgeSeconds)
+          || unwindCookieMaxAgeSeconds <= 0
+          || unwindCookieMaxAgeSeconds > MAX_UNWIND_COOKIE_AGE_SECONDS
+          || !Number.isSafeInteger(unwindBurnMaxAgeSeconds)
+          || unwindBurnMaxAgeSeconds <= 0
+          || !Number.isSafeInteger(unwindEvidenceRetryMs)
+          || unwindEvidenceRetryMs <= 0
+          || unwindBurnMaxAgeSeconds * 1000 + unwindEvidenceRetryMs
+            > unwindCookieMaxAgeSeconds * 1000) {
+        return sendJson(res, 503, { error: 'unwind relay is unavailable' });
+      }
+      const at = nowMs();
+      const expiresAt = at + unwindBurnMaxAgeSeconds * 1000;
+      const capabilityExpiresAt = at + unwindCookieMaxAgeSeconds * 1000;
+      if (!Number.isSafeInteger(at) || at < 0 || !Number.isSafeInteger(expiresAt)
+          || !Number.isSafeInteger(capabilityExpiresAt)) {
+        return sendJson(res, 503, { error: 'unwind relay is unavailable' });
+      }
+      const reserveJson = JSON.stringify({
+        jobId,
+        kernelAddress: normalizedKernel,
+        recipientHint,
+      });
+      const requestDigest = createHash('sha256')
+        .update(`vf-unwind-reserve-v1\0${reserveJson}`, 'utf8').digest('hex');
+      const reserved = unwindJobs.reserve({
+        jobId,
+        capabilityHash: hashCapability(capability),
+        kernelAddress: normalizedKernel,
+        recipientHint,
+        requestDigest,
+        expiresAt,
+        capabilityExpiresAt,
+        now: at,
+      });
+      const remainingCookieSeconds = Math.floor((reserved?.capabilityExpiresAt - at) / 1000);
+      if (!Number.isSafeInteger(remainingCookieSeconds)
+          || remainingCookieSeconds <= 0
+          || remainingCookieSeconds > unwindCookieMaxAgeSeconds) {
+        return sendJson(res, 503, { error: 'unwind relay is unavailable' });
+      }
+      res.setHeader('Set-Cookie', serializeUnwindCapabilityCookie({
+        jobId, capability, maxAgeSeconds: remainingCookieSeconds,
+      }));
+      return sendJson(res, 202, { jobId: reserved.jobId, status: 'awaiting_burn' });
+    } catch (error) {
+      if (error?.code === 'UNWIND_UNAUTHORIZED') return unauthorized(res);
+      if (['UNWIND_CONFLICT', 'UNWIND_CAS_CONFLICT'].includes(error?.code)) {
+        return sendJson(res, 409, { error: 'unwind reservation conflict' });
+      }
+      if (error?.code === 'UNWIND_VALIDATION'
+          || /invalid unwind|unexpected unwind/i.test(errorMessage(error))) {
+        return sendJson(res, 400, { error: 'invalid unwind reserve' });
+      }
+      return sendJson(res, 503, { error: 'unwind relay is unavailable' });
     }
-    const { unwindTxHash, stellarRecipient } = req.body || {};
-    if (!isValidBurnTxHash(unwindTxHash)
-      || typeof stellarRecipient !== 'string' || !stellarRecipient) {
-      return sendJson(res, 400, { error: 'unwindTxHash and stellarRecipient are required' });
+  }
+
+  async function handleUnwindAttach(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    let jobId;
+    let userOpHash;
+    let unwindTxHash;
+    try {
+      requireExactFields(req.body || {}, UNWIND_ATTACH_FIELDS, 'unwind attach');
+      jobId = requireUnwindJobId(req.body.jobId);
+      userOpHash = canonicalUserOpHash(req.body.userOpHash);
+      unwindTxHash = canonicalTxHash(req.body.unwindTxHash);
+      if (!userOpHash || !unwindTxHash) throw new Error('invalid unwind attach');
+    } catch {
+      return sendJson(res, 400, { error: 'invalid unwind attach' });
     }
 
-    const jobId = genId();
-    if (!JOB_ID_PATTERN.test(jobId)) return sendJson(res, 503, { error: 'unwind relay is unavailable' });
-    jobs.set(jobId, { status: 'pending', steps: [] });
-    sendJson(res, 200, { jobId });
+    const at = nowMs();
+    const authenticated = authenticateUnwindAuthority(req, jobId, at);
+    if (!authenticated) return unauthorized(res);
+    if (!baseExecutionAvailable) return baseUnavailable(res);
+    if (!unwindAttachStackReady()) {
+      return sendJson(res, 503, { error: 'unwind relay is unavailable' });
+    }
 
-    // Non-custodial invariant: relay ONLY the reverse CCTP mint. Never dispatch a withdraw here.
-    void runUnwindJob(jobId, unwindTxHash, stellarRecipient);
+    const authority = authenticated.authority;
+    if (authority.userOpHash !== null || authority.unwindTxHash !== null) {
+      if (authority.userOpHash !== userOpHash || authority.unwindTxHash !== unwindTxHash) {
+        return sendJson(res, 409, { error: 'unwind attachment conflict' });
+      }
+      try {
+        const projection = typeof unwindJobs.reconcileFromCctp === 'function'
+          ? unwindJobs.reconcileFromCctp({ jobId, now: at })
+          : unwindJobs.status(jobId);
+        if (!projection) return unauthorized(res);
+        return sendJson(res, 202, projection);
+      } catch {
+        return sendJson(res, 503, { error: 'unwind relay is unavailable' });
+      }
+    }
+
+    let claimed;
+    try {
+      claimed = unwindJobs.claimEvidence({
+        jobId,
+        userOpHash,
+        unwindTxHash,
+        now: at,
+        leaseMs: UNWIND_EVIDENCE_LEASE_MS,
+        retryMs: unwindEvidenceRetryMs,
+      });
+    } catch (error) {
+      if (['UNWIND_CONFLICT', 'UNWIND_CAS_CONFLICT'].includes(error?.code)) {
+        return sendJson(res, 409, { error: 'unwind attachment conflict' });
+      }
+      return sendJson(res, 503, { error: 'unwind relay is unavailable' });
+    }
+    if (!claimed) return sendJson(res, 409, { error: 'unwind attachment conflict' });
+
+    let stopped = false;
+    const heartbeat = setInterval(() => {
+      if (stopped) return;
+      try {
+        unwindJobs.renewEvidence({
+          jobId,
+          leaseToken: claimed.leaseToken,
+          now: nowMs(),
+          leaseMs: UNWIND_EVIDENCE_LEASE_MS,
+        });
+      } catch {
+        // The final fenced attach observes the durable lease loss.
+      }
+    }, UNWIND_EVIDENCE_HEARTBEAT_MS);
+    heartbeat.unref?.();
+    const stopHeartbeat = () => {
+      stopped = true;
+      clearInterval(heartbeat);
+    };
+
+    try {
+      const { proof, expectation } = await readUnwindEvidence({
+        publicClient: unwindPublicClient,
+        bundlerClient: unwindBundlerClient,
+        jobId,
+        userOpHash,
+        unwindTxHash,
+        kernelAddress: authority.kernelAddress,
+        recipientHint: authority.recipientHint,
+        facts: unwindEvidenceFacts,
+      });
+      if (proof?.userOpHash !== userOpHash || proof?.unwindTxHash !== unwindTxHash) {
+        const mismatch = new Error('unwind evidence identity mismatch');
+        mismatch.code = 'UNWIND_EVIDENCE_MISMATCH';
+        throw mismatch;
+      }
+      unwindJobs.renewEvidence({
+        jobId,
+        leaseToken: claimed.leaseToken,
+        now: nowMs(),
+        leaseMs: UNWIND_EVIDENCE_LEASE_MS,
+      });
+      const attached = unwindJobs.attachAndEnqueue({
+        jobId,
+        proof,
+        expectation,
+        relayExecId: `unwind:${jobId}`,
+        leaseToken: claimed.leaseToken,
+        now: nowMs(),
+      });
+      stopHeartbeat();
+      if (!attached.duplicate) {
+        queueMicrotask(() => {
+          void Promise.resolve(relayReverseMint({
+            execId: `unwind:${jobId}`,
+            sourceDomain: 6,
+            burnTxHash: unwindTxHash,
+            expectation,
+          })).catch(() => {});
+        });
+      }
+      return sendJson(res, 202, attached.record);
+    } catch (error) {
+      stopHeartbeat();
+      const terminalReason = {
+        UNWIND_EVIDENCE_REVERTED: 'destination_reverted',
+        UNWIND_EVIDENCE_MISMATCH: 'message_mismatch',
+        UNWIND_EVIDENCE_AMBIGUOUS: 'message_ambiguous',
+      }[error?.code];
+      if (terminalReason && typeof unwindJobs.finishBlocked === 'function') {
+        try {
+          unwindJobs.finishBlocked({
+            jobId,
+            leaseToken: claimed.leaseToken,
+            reasonCode: terminalReason,
+            now: nowMs(),
+          });
+          return sendJson(res, 409, { error: 'unwind evidence was rejected' });
+        } catch {
+          return sendJson(res, 503, { error: 'unwind relay is unavailable' });
+        }
+      }
+      try {
+        unwindJobs.releaseEvidence({
+          jobId,
+          leaseToken: claimed.leaseToken,
+          now: nowMs(),
+        });
+      } catch {
+        // A stale lease or concurrent terminal transition owns the durable truth.
+      }
+      if (error?.code === 'UNWIND_EVIDENCE_RETRYABLE') {
+        return sendJson(res, 503, { error: 'unwind evidence is not available' });
+      }
+      if (['UNWIND_CONFLICT', 'UNWIND_CAS_CONFLICT'].includes(error?.code)) {
+        return sendJson(res, 409, { error: 'unwind evidence was rejected' });
+      }
+      return sendJson(res, 503, { error: 'unwind relay is unavailable' });
+    }
+  }
+
+  async function resumeUnwindJobs({ limit = recoveryLimit } = {}) {
+    if (!baseExecutionAvailable && !unwindJobs) {
+      return { resumed: [], held: [], blocked: [], uncertain: [], expired: [] };
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > recoveryLimit
+        || !Number.isSafeInteger(recoveryConcurrency)
+        || recoveryConcurrency < 1 || recoveryConcurrency > 32) {
+      throw new Error('unwind recovery bounds are invalid');
+    }
+    if (!unwindJobs
+        || typeof unwindJobs.reconcileExpired !== 'function'
+        || typeof unwindJobs.listForResume !== 'function'
+        || typeof unwindJobs.reconcileFromCctp !== 'function') {
+      throw new Error('durable unwind authority store is unavailable');
+    }
+    if (!baseExecutionAvailable && typeof resumeExistingReverse !== 'function') {
+      throw new Error('existing reverse recovery is unavailable');
+    }
+    if (activeUnwindResume) return activeUnwindResume;
+    activeUnwindResume = (async () => {
+      const at = nowMs();
+      if (!Number.isSafeInteger(at) || at < 0) throw new Error('unwind recovery time is invalid');
+      const expiredRows = unwindJobs.reconcileExpired({ now: at, limit });
+      const work = unwindJobs.listForResume({ now: at, limit });
+      if (!Array.isArray(expiredRows) || !Array.isArray(work) || work.length > limit) {
+        throw new Error('unwind recovery listing is invalid');
+      }
+      const result = {
+        resumed: [], held: [], blocked: [], uncertain: [],
+        expired: expiredRows
+          .filter(({ status }) => status === 'expired')
+          .map(({ jobId }) => jobId),
+      };
+      let cursor = 0;
+      const failures = [];
+      const process = async ({ jobId, relayExecId }) => {
+        // When Task 17 availability is false, this is the only permitted recovery seam. The
+        // store's JOIN has already proved an existing source-domain-6 Task8 row; this call can
+        // neither enqueue work nor read Base evidence. Active mode was globally swept first.
+        if (!baseExecutionAvailable) await resumeExistingReverse(relayExecId);
+        const projection = await unwindJobs.reconcileFromCctp({ jobId, now: at });
+        if (!projection || projection.jobId !== jobId) {
+          throw new Error('unwind recovery projection is invalid');
+        }
+        if (projection.status === 'done') result.resumed.push(jobId);
+        else if (projection.status === 'blocked') result.blocked.push(jobId);
+        else if (projection.status === 'uncertain') result.uncertain.push(jobId);
+        else if (projection.status === 'relay_pending' || projection.status === 'relay_running') {
+          result.held.push(jobId);
+        } else {
+          throw new Error('unwind recovery state is invalid');
+        }
+      };
+      const workers = Array.from(
+        { length: Math.min(recoveryConcurrency, work.length) },
+        async () => {
+          while (cursor < work.length) {
+            const index = cursor;
+            cursor += 1;
+            try {
+              await process(work[index]);
+            } catch (error) {
+              // One corrupt/temporarily unavailable projection must not abandon siblings or
+              // clear the global non-overlap guard while another bounded worker is still live.
+              failures.push({ index, error });
+            }
+          }
+        },
+      );
+      await Promise.allSettled(workers);
+      if (failures.length > 0) {
+        failures.sort((left, right) => left.index - right.index);
+        throw failures[0].error;
+      }
+      const order = new Map(work.map(({ jobId }, index) => [jobId, index]));
+      for (const key of ['resumed', 'held', 'blocked', 'uncertain']) {
+        result[key].sort((left, right) => order.get(left) - order.get(right));
+      }
+      return result;
+    })().finally(() => { activeUnwindResume = null; });
+    return activeUnwindResume;
   }
 
   const relayerRouter = async function relayerRouter(req, res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     if (req.method === 'OPTIONS') {
@@ -1728,8 +2111,15 @@ export function createRelayerRouter({
       return res.end('');
     }
 
-    await ensureBody(req);
     const path = subPath(req);
+    const parsedUrl = new URL(req.url, 'http://local');
+    if (req.method === 'POST'
+        && ['/unwind', '/unwind/attach', '/status'].includes(path)
+        && parsedUrl.search.length > 0) {
+      res.setHeader('Cache-Control', 'no-store');
+      return sendJson(res, 400, { error: 'invalid request' });
+    }
+    await ensureBody(req);
 
     if (req.method === 'POST' && path === '/mandate') return handleMandate(req, res);
     if (req.method === 'POST' && path === '/mandate/status') return handleMandateStatus(req, res);
@@ -1738,6 +2128,7 @@ export function createRelayerRouter({
     if (req.method === 'POST' && path === '/farm/attach') return handleFarmAttach(req, res);
     if (req.method === 'POST' && path === '/status') return handleStatus(req, res);
     if (req.method === 'POST' && path === '/unwind') return handleUnwind(req, res);
+    if (req.method === 'POST' && path === '/unwind/attach') return handleUnwindAttach(req, res);
     if (req.method === 'GET') {
       if (path === '/config') {
         return sendJson(res, 200, publicRuntime ?? { networkId, readiness: { ready: false } });
@@ -1748,5 +2139,6 @@ export function createRelayerRouter({
   };
   relayerRouter.resumeMandateActivations = resumeMandateActivations;
   relayerRouter.resumeFarmJobs = resumeFarmJobs;
+  relayerRouter.resumeUnwindJobs = resumeUnwindJobs;
   return relayerRouter;
 }
