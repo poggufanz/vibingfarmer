@@ -20,6 +20,7 @@ import {
   toBaseChildRow,
   parseBaseChildRow,
   baseChildBatchDigest,
+  baseChildEvidenceReportDigest,
   baseChildRecoveryIdentity,
   toBaseChildPhaseEventRow,
   parseBaseChildPhaseEventRow,
@@ -777,7 +778,14 @@ export function createAgentIndexStore(db, { enableLegacyBaseChildWrites = false 
       if (!exactBatch(existing, { batch, requestDigest, idempotencyKey })) {
         throw new AgentIndexConflictError('Base child batch idempotency conflict')
       }
-      return { written: 0, duplicates: batch.children.length }
+      const children = await Promise.all(
+        batch.children.map(async (child) => {
+          const identity = baseChildRecoveryIdentity(child)
+          const bundle = await readBaseChildRecoveryBundle(identity)
+          return { identity, recoveryVersion: bundle.recoveryVersion }
+        })
+      )
+      return { written: 0, duplicates: batch.children.length, children }
     }
 
     const rows = batch.children.map((child) =>
@@ -883,11 +891,25 @@ export function createAgentIndexStore(db, { enableLegacyBaseChildWrites = false 
     })
     try {
       await db.batch(statements)
-      return { written: rows.length, duplicates: 0 }
+      return {
+        written: rows.length,
+        duplicates: 0,
+        children: batch.children.map((child) => ({
+          identity: baseChildRecoveryIdentity(child),
+          recoveryVersion: 0,
+        })),
+      }
     } catch (error) {
       const raced = await readBaseChildIntentBatch(idempotencyKey)
       if (exactBatch(raced, { batch, requestDigest, idempotencyKey })) {
-        return { written: 0, duplicates: rows.length }
+        const children = await Promise.all(
+          batch.children.map(async (child) => {
+            const identity = baseChildRecoveryIdentity(child)
+            const bundle = await readBaseChildRecoveryBundle(identity)
+            return { identity, recoveryVersion: bundle.recoveryVersion }
+          })
+        )
+        return { written: 0, duplicates: rows.length, children }
       }
       const message = String(error?.message ?? error)
       if (/constraint|unique|immutable|conflict/i.test(message)) {
@@ -1017,6 +1039,9 @@ export function createAgentIndexStore(db, { enableLegacyBaseChildWrites = false 
         { owner: bundle.intent.owner, agent: bundle.intent.agent }
       )
     } catch (error) {
+      if (existingEvent) {
+        throw new AgentIndexConflictError('Base child phase event conflict', { cause: error })
+      }
       throw new AgentIndexValidationError('Invalid Base child phase evidence', { cause: error })
     }
     if (existingEvent) {
@@ -1028,6 +1053,8 @@ export function createAgentIndexStore(db, { enableLegacyBaseChildWrites = false 
         duplicates: 1,
         eventId: eventRow.event_id,
         recoveryVersion: eventRow.recovery_version,
+        evidenceDigest: eventRow.evidence_digest,
+        reportDigest: baseChildEvidenceReportDigest({ identity, expectedRecoveryVersion, event }),
       }
     }
     if (
@@ -1108,6 +1135,8 @@ export function createAgentIndexStore(db, { enableLegacyBaseChildWrites = false 
         duplicates: 0,
         eventId: eventRow.event_id,
         recoveryVersion: eventRow.recovery_version,
+        evidenceDigest: eventRow.evidence_digest,
+        reportDigest: baseChildEvidenceReportDigest({ identity, expectedRecoveryVersion, event }),
       }
     } catch (error) {
       const raced = await db
@@ -1120,6 +1149,8 @@ export function createAgentIndexStore(db, { enableLegacyBaseChildWrites = false 
           duplicates: 1,
           eventId: eventRow.event_id,
           recoveryVersion: eventRow.recovery_version,
+          evidenceDigest: eventRow.evidence_digest,
+          reportDigest: baseChildEvidenceReportDigest({ identity, expectedRecoveryVersion, event }),
         }
       }
       const message = String(error?.message ?? error)

@@ -952,6 +952,56 @@ export function createRelayerRouter({
     return identity;
   }
 
+  function executionAllocations(context, allocations) {
+    const associations = Array.isArray(context?.associations) ? context.associations : [];
+    if (associations.length !== allocations.length) {
+      throw new Error('persisted child associations do not match farm allocations');
+    }
+    return allocations.map((allocation) => {
+      const matches = associations.filter(({ allocationId }) => (
+        allocationId === allocation.allocationId
+      ));
+      const expected = recoveryIdentity(context, allocation.allocationId);
+      const durable = matches[0]?.recoveryIdentity;
+      if (matches.length !== 1 || !durable
+          || Object.keys(expected).some((field) => durable[field] !== expected[field])
+          || Object.keys(durable).length !== Object.keys(expected).length) {
+        throw new Error('persisted child association identity is invalid');
+      }
+      return {
+        ...allocation,
+        identity: { ...durable },
+        caller: context.kernelAddress,
+      };
+    });
+  }
+
+  function acknowledgedRecoveryVersions(acknowledgement, intents) {
+    if (!Array.isArray(acknowledgement?.children)
+        || acknowledgement.children.length !== intents.length) {
+      throw new Error('Base child acknowledgement is incomplete');
+    }
+    return acknowledgement.children.map((entry, ordinal) => {
+      const child = intents[ordinal];
+      const expected = {
+        networkId: child.networkId,
+        bindingId: child.bindingId,
+        executionId: child.executionId,
+        allocationId: child.allocationId,
+        childId: child.childId,
+      };
+      const actual = entry?.identity;
+      if (!actual || Object.keys(actual).length !== Object.keys(expected).length
+          || Object.keys(expected).some((field) => actual[field] !== expected[field])
+          || !Number.isSafeInteger(entry.recoveryVersion)
+          || entry.recoveryVersion < 0
+          || Object.keys(entry).length !== 2) {
+        throw new Error('Base child acknowledgement is invalid');
+      }
+      return entry.recoveryVersion;
+    });
+  }
+
   function childIntent({ jobId, record, stellarOwner, bridgeAgent, runId, grantTxHash, kernelAddress, allocation }) {
     return {
       version: 1,
@@ -1010,13 +1060,11 @@ export function createRelayerRouter({
 
   function publicJob(job, jobId) {
     if (!job) return job;
-    const {
-      _attach, associationUncertain = false, evidenceConflict: _evidenceConflict = false, ...safe
-    } = job;
+    const { _attach, associationUncertain = false } = job;
     const expected = Array.isArray(_attach?.associations) ? _attach.associations : [];
     const delivery = associationOutbox?.status
       ? expected.flatMap((association) => {
-          try { return associationOutbox.status(association.identity); } catch { return []; }
+          try { return associationOutbox.status(association.recoveryIdentity); } catch { return []; }
         })
       : [];
     const contiguous = [];
@@ -1046,7 +1094,15 @@ export function createRelayerRouter({
       || delivery.some(({ status }) => status === 'dead')
     );
     return {
-      ...safe,
+      jobId,
+      status: job.status,
+      ...(typeof job.runId === 'string' ? { runId: job.runId } : {}),
+      ...(typeof job.bridgeAgent === 'string' ? { bridgeAgent: job.bridgeAgent } : {}),
+      ...(typeof job.grantTxHash === 'string' ? { grantTxHash: job.grantTxHash } : {}),
+      ...(typeof job.executionStatus === 'string'
+        ? { executionStatus: job.executionStatus } : {}),
+      ...(typeof job.custodyLocation === 'string'
+        ? { custodyLocation: job.custodyLocation } : {}),
       associationDelivery: {
         complete,
         uncertain,
@@ -1160,17 +1216,19 @@ export function createRelayerRouter({
     jobs.set(jobId, job);
   }
 
-  function finishWork({ jobId, leaseToken, job, reports = [], baseEvidenceReports = [] }) {
+  function finishWork({
+    jobId, leaseToken, job, reports = [], baseEvidenceReports = [], status = 'done',
+  }) {
     if (farmExecutions?.finish) {
       return farmExecutions.finish({
-        jobId, leaseToken, job, reports, baseEvidenceReports, status: 'done',
+        jobId, leaseToken, job, reports, baseEvidenceReports, status,
       });
     }
     associationOutbox.enqueue(reports);
     for (const report of baseEvidenceReports) baseEvidenceOutbox.enqueue(report);
     jobs.set(jobId, job);
     const work = memoryFarmWork.get(jobId);
-    if (work) memoryFarmWork.set(jobId, { ...work, status: 'done', leaseToken: null });
+    if (work) memoryFarmWork.set(jobId, { ...work, status, leaseToken: null });
   }
 
   function startFarmLeaseHeartbeat(jobId, leaseToken) {
@@ -1429,6 +1487,26 @@ export function createRelayerRouter({
             'agent',
             observedMintTxHash,
           );
+          const blockedAt = Date.now();
+          const blockedBaseReports = farmParams.allocations.map((allocation) => ({
+            identity: allocation.identity,
+            phase: 'base_deposit',
+            status: 'blocked',
+            observedAt: blockedAt,
+            evidence: {
+              chainId: String(mandateStatusConfig?.base?.chain?.id),
+              yieldRouterAddress: String(
+                mandateStatusConfig?.base?.mandatePolicy?.yieldRouterAddress,
+              ).toLowerCase(),
+              caller: String(attachContext.kernelAddress).toLowerCase(),
+              poolAddress: String(allocation.pool).toLowerCase(),
+              assets: allocation.amount.toString(10),
+              minShares: allocation.minShares.toString(10),
+              userOpHash: null,
+              transactionHash: null,
+              reasonCode: 'mandate_held_after_mint',
+            },
+          }));
           finishWork({
             jobId,
             leaseToken,
@@ -1436,6 +1514,7 @@ export function createRelayerRouter({
             reports: mintCheckpointed
               ? heldReports
               : [...(observedMintReports ?? []), ...heldReports],
+            baseEvidenceReports: blockedBaseReports,
           });
         } catch (finishError) {
           persistenceUncertain(jobId, heldJob, finishError);
@@ -1528,10 +1607,16 @@ export function createRelayerRouter({
       ...attachContext,
       associations: associationsWithTerminal(attachContext, 3),
     };
+    const terminalUncertain = farmParams.allocations.some((allocation) => {
+      const deposit = results.get(allocation.allocationId);
+      return !deposit || deposit.executionStatus === 'unknown'
+        || deposit.reasonCode === 'not_dispatched_after_unknown';
+    });
     const durableProgress = jobs.get(jobId) || {};
     const doneJob = {
         ...durableProgress,
-        status: 'done',
+        status: terminalUncertain ? 'uncertain' : 'done',
+        executionStatus: terminalUncertain ? 'unknown' : 'confirmed',
         runId, bridgeAgent, grantTxHash,
         _attach: terminalContext,
         steps: [
@@ -1540,7 +1625,10 @@ export function createRelayerRouter({
         ],
     };
     try {
-      finishWork({ jobId, leaseToken, job: doneJob, reports: terminalReports });
+      finishWork({
+        jobId, leaseToken, job: doneJob, reports: terminalReports,
+        status: terminalUncertain ? 'uncertain' : 'done',
+      });
     } catch (err) {
       persistenceUncertain(jobId, doneJob, err);
     }
@@ -1558,7 +1646,10 @@ export function createRelayerRouter({
     void (async () => {
       let parsedAllocations;
       try {
-        parsedAllocations = parseWireAllocations(attachContext.allocations, job.runId);
+        parsedAllocations = executionAllocations(
+          attachContext,
+          parseWireAllocations(attachContext.allocations, job.runId),
+        );
       } catch (error) {
         finishFarmAuthorityFailure({
           jobId,
@@ -1702,6 +1793,7 @@ export function createRelayerRouter({
       jobId, record, stellarOwner, bridgeAgent, runId, grantTxHash, kernelAddress, allocation,
     }));
     let acknowledgement;
+    let startingRecoveryVersions;
     try {
       const burnUnits7 = (parsedAllocations.reduce((sum, allocation) => (
         sum + allocation.amount
@@ -1713,6 +1805,7 @@ export function createRelayerRouter({
       acknowledgement = await agentIndexReporter.commitIntentBatch({
         idempotencyKey, burnUnits7, children: intents,
       });
+      startingRecoveryVersions = acknowledgedRecoveryVersions(acknowledgement, intents);
     } catch {
       return sendJson(res, 503, { error: 'Base child intent is unavailable' });
     }
@@ -1732,7 +1825,7 @@ export function createRelayerRouter({
         runId,
         jobId,
         allocations: storedWireAllocations(parsedAllocations),
-        associations: parsedAllocations.map(({ allocationId }) => ({
+        associations: parsedAllocations.map(({ allocationId }, ordinal) => ({
           allocationId,
           identity: childIdentity({
             networkId, stellarOwner, bindingId: record.bindingId, runId, jobId,
@@ -1740,7 +1833,7 @@ export function createRelayerRouter({
           recoveryIdentity: recoveryIdentity({
             networkId, stellarOwner, bindingId: record.bindingId, runId, jobId,
           }, allocationId),
-          startingRecoveryVersion: 0,
+          startingRecoveryVersion: startingRecoveryVersions[ordinal],
           terminalSequence: null,
         })),
         attachedBurnTxHash: null,

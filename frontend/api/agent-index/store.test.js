@@ -83,6 +83,11 @@ function fakeD1() {
 const NETWORK = 'stellar-testnet'
 const CREATOR = 'CROUTER1'
 const SOURCE_ID = sourceIdFor({ networkId: NETWORK, creatorAddress: CREATOR })
+const confirmedBurnEvidence = (burnUnits7 = '10000000') => ({
+  burnTxHash: 'a'.repeat(64),
+  expectationDigest: 'b'.repeat(64),
+  burnUnits7,
+})
 
 const membership = (over = {}) => ({
   networkId: NETWORK,
@@ -1385,8 +1390,8 @@ describe('migration 0008 Base recovery schema', () => {
       event: {
         eventId: '8'.repeat(64),
         phase: 'cctp_burn',
-        state: 'submitting',
-        evidence: {},
+        state: 'confirmed',
+        evidence: confirmedBurnEvidence('10000000'),
         observedAt: 21,
       },
     })
@@ -1561,7 +1566,7 @@ describe('Task 9 authoritative Base child recovery store', () => {
         requestDigest: '1'.repeat(64),
         idempotencyKey: input.idempotencyKey,
       })
-    ).resolves.toEqual({ written: 3, duplicates: 0 })
+    ).resolves.toMatchObject({ written: 3, duplicates: 0 })
     expect(
       db._raw.prepare('SELECT COUNT(*) count FROM base_child_intent_batches').get().count
     ).toBe(1)
@@ -1578,7 +1583,7 @@ describe('Task 9 authoritative Base child recovery store', () => {
         requestDigest: '1'.repeat(64),
         idempotencyKey: input.idempotencyKey,
       })
-    ).resolves.toEqual({ written: 0, duplicates: 3 })
+    ).resolves.toMatchObject({ written: 0, duplicates: 3 })
     expect(
       db._raw.prepare('SELECT COUNT(*) count FROM base_child_lifecycle_events').get().count
     ).toBe(3)
@@ -1609,8 +1614,8 @@ describe('Task 9 authoritative Base child recovery store', () => {
 
       expect(outcomes).toEqual(
         expect.arrayContaining([
-          { written: 3, duplicates: 0 },
-          { written: 0, duplicates: 3 },
+          expect.objectContaining({ written: 3, duplicates: 0 }),
+          expect.objectContaining({ written: 0, duplicates: 3 }),
         ])
       )
       expect(
@@ -1661,7 +1666,7 @@ describe('Task 9 authoritative Base child recovery store', () => {
 
       expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
       expect(outcomes.filter(({ status }) => status === 'rejected')).toHaveLength(1)
-      expect(outcomes.find(({ status }) => status === 'fulfilled').value).toEqual({
+      expect(outcomes.find(({ status }) => status === 'fulfilled').value).toMatchObject({
         written: 3,
         duplicates: 0,
       })
@@ -1797,7 +1802,7 @@ describe('Task 9 authoritative Base child recovery store', () => {
         requestDigest: 'a'.repeat(64),
         idempotencyKey: input.idempotencyKey,
       })
-    ).resolves.toEqual({ written: 0, duplicates: 3 })
+    ).resolves.toMatchObject({ written: 0, duplicates: 3 })
   })
 
   it('rejects a batch item whose child facts do not match its parent batch context', async () => {
@@ -1913,8 +1918,8 @@ describe('Task 9 authoritative Base child recovery store', () => {
       event: {
         eventId: 'a'.repeat(64),
         phase: 'cctp_burn',
-        state: 'submitting',
-        evidence: { burnUnits7: '10000000' },
+        state: 'confirmed',
+        evidence: confirmedBurnEvidence('10000000'),
         observedAt: 2100,
       },
     }
@@ -1932,13 +1937,17 @@ describe('Task 9 authoritative Base child recovery store', () => {
     await expect(
       store.advanceBaseChildPhase({
         ...request,
-        event: { ...request.event, evidence: { burnUnits7: '10000001' } },
+        event: { ...request.event, evidence: confirmedBurnEvidence('10000001') },
       })
     ).rejects.toBeInstanceOf(AgentIndexConflictError)
     await expect(
       store.advanceBaseChildPhase({
         ...request,
-        event: { ...request.event, eventId: 'b'.repeat(64), evidence: { burnUnits7: '10000001' } },
+        event: {
+          ...request.event,
+          eventId: 'b'.repeat(64),
+          evidence: confirmedBurnEvidence('10000001'),
+        },
       })
     ).rejects.toBeInstanceOf(AgentIndexConflictError)
     await expect(
@@ -1964,7 +1973,7 @@ describe('Task 9 authoritative Base child recovery store', () => {
       'evidence',
       (request) => ({
         ...request,
-        event: { ...request.event, evidence: { burnUnits7: '10000001' } },
+        event: { ...request.event, evidence: confirmedBurnEvidence('10000001') },
       }),
     ],
     [
@@ -2010,8 +2019,8 @@ describe('Task 9 authoritative Base child recovery store', () => {
       event: {
         eventId: '9'.repeat(64),
         phase: 'cctp_burn',
-        state: 'submitting',
-        evidence: { burnUnits7: '10000000' },
+        state: 'confirmed',
+        evidence: confirmedBurnEvidence('10000000'),
         observedAt: 2100,
       },
     }
@@ -2050,8 +2059,8 @@ describe('Task 9 authoritative Base child recovery store', () => {
         event: {
           eventId: 'b'.repeat(64),
           phase: 'cctp_burn',
-          state: 'submitting',
-          evidence: { burnUnits7: '10000000' },
+          state: 'confirmed',
+          evidence: confirmedBurnEvidence('10000000'),
           observedAt: 2100,
         },
       }
@@ -2177,7 +2186,14 @@ describe('Task 9 authoritative Base child recovery store', () => {
           eventId: '1'.repeat(64),
           phase: 'cctp_mint',
           state: 'submitted',
-          evidence: {},
+          evidence: {
+            burnTxHash: 'a'.repeat(64),
+            expectationDigest: 'b'.repeat(64),
+            messageDigest: 'c'.repeat(64),
+            attestationDigest: 'd'.repeat(64),
+            evidenceVersion: '1',
+            mintTxHash: `0x${'e'.repeat(64)}`,
+          },
           observedAt: 2200,
         },
       })
@@ -2189,7 +2205,7 @@ describe('Task 9 authoritative Base child recovery store', () => {
         eventId: '2'.repeat(64),
         phase: 'cctp_burn',
         state: 'confirmed',
-        evidence: { burnTxHash: '0xburn' },
+        evidence: confirmedBurnEvidence('10000000'),
         observedAt: 2201,
       },
     })
@@ -2201,7 +2217,10 @@ describe('Task 9 authoritative Base child recovery store', () => {
           eventId: '3'.repeat(64),
           phase: 'cctp_burn',
           state: 'unknown',
-          evidence: { burnTxHash: '0xburn' },
+          evidence: {
+            ...confirmedBurnEvidence('10000000'),
+            reasonCode: 'observation_ambiguous',
+          },
           observedAt: 2202,
         },
       })
@@ -2234,8 +2253,8 @@ describe('Task 9 authoritative Base child recovery store', () => {
         event: {
           eventId: '6'.repeat(64),
           phase: 'cctp_burn',
-          state: 'submitting',
-          evidence: {},
+          state: 'confirmed',
+          evidence: confirmedBurnEvidence('10000000'),
           observedAt: 2300,
         },
       })
@@ -2293,8 +2312,8 @@ describe('Task 9 authoritative Base child recovery store', () => {
       event: {
         eventId: 'a'.repeat(64),
         phase: 'cctp_burn',
-        state: 'submitting',
-        evidence: { amount: '9007199254740993000000' },
+        state: 'confirmed',
+        evidence: confirmedBurnEvidence('9007199254740993000000'),
         observedAt: 2100,
       },
     })
@@ -2302,7 +2321,12 @@ describe('Task 9 authoritative Base child recovery store', () => {
       identity,
       recoverable: true,
       recoveryVersion: 1,
-      events: [{ eventId: 'a'.repeat(64), evidence: { amount: '9007199254740993000000' } }],
+      events: [
+        {
+          eventId: 'a'.repeat(64),
+          evidence: confirmedBurnEvidence('9007199254740993000000'),
+        },
+      ],
     })
     for (const [field, value] of [
       ['networkId', 'other-network'],

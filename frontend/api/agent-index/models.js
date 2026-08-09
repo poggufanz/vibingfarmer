@@ -140,6 +140,63 @@ const BASE_DEPOSIT_EVENT_FIELDS = new Set([
   'assets',
   'shares',
 ])
+const BASE_COMMON_FIELDS = [
+  'chainId',
+  'yieldRouterAddress',
+  'caller',
+  'poolAddress',
+  'assets',
+  'minShares',
+]
+const BASE_CHILD_PHASE_STATE_FIELDS = new Map([
+  ['cctp_burn:confirmed', new Set(['burnTxHash', 'expectationDigest', 'burnUnits7'])],
+  ['cctp_burn:unknown', new Set(['burnTxHash', 'expectationDigest', 'burnUnits7', 'reasonCode'])],
+  [
+    'cctp_attestation:confirmed',
+    new Set([
+      'burnTxHash',
+      'expectationDigest',
+      'messageDigest',
+      'attestationDigest',
+      'evidenceVersion',
+    ]),
+  ],
+  [
+    'cctp_mint:confirmed',
+    new Set([
+      'burnTxHash',
+      'expectationDigest',
+      'messageDigest',
+      'attestationDigest',
+      'evidenceVersion',
+      'mintTxHash',
+    ]),
+  ],
+  [
+    'cctp_mint:submitted',
+    new Set([
+      'burnTxHash',
+      'expectationDigest',
+      'messageDigest',
+      'attestationDigest',
+      'evidenceVersion',
+      'mintTxHash',
+    ]),
+  ],
+  ['base_deposit:submitting', new Set(BASE_COMMON_FIELDS)],
+  ['base_deposit:submitted', new Set([...BASE_COMMON_FIELDS, 'userOpHash'])],
+  [
+    'base_deposit:confirmed',
+    new Set([...BASE_COMMON_FIELDS, 'userOpHash', 'transactionHash', 'event']),
+  ],
+  ...['failed', 'unknown', 'blocked'].map((state) => [
+    `base_deposit:${state}`,
+    new Set([...BASE_COMMON_FIELDS, 'userOpHash', 'transactionHash', 'reasonCode']),
+  ]),
+])
+const LOWER_ADDRESS_RE = /^0x[0-9a-f]{40}$/
+const LOWER_EVM_HASH_RE = /^0x[0-9a-f]{64}$/
+const LOWER_DIGEST_RE = /^[0-9a-f]{64}$/
 const EXACT_EVIDENCE_INTEGER_FIELDS = new Set([
   'burnUnits7',
   'amount',
@@ -297,7 +354,7 @@ export function canonicalJson(value) {
   return JSON.stringify(canonicalize(value))
 }
 
-function exactEvidenceObject(value, allowed, path) {
+function exactEvidenceObject(value, allowed, path, { requireAll = false } = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${path} must be an evidence object`)
   }
@@ -308,12 +365,16 @@ function exactEvidenceObject(value, allowed, path) {
       continue
     }
     if (key === 'event') {
-      exactEvidenceObject(entry, BASE_DEPOSIT_EVENT_FIELDS, `${path}.event`)
+      exactEvidenceObject(entry, BASE_DEPOSIT_EVENT_FIELDS, `${path}.event`, { requireAll: true })
       continue
     }
     if (entry !== null && typeof entry !== 'string' && typeof entry !== 'boolean') {
       throw new Error(`${path}.${key} must be a bounded JSON scalar`)
     }
+  }
+  if (requireAll) {
+    const missing = [...allowed].find((key) => !Object.prototype.hasOwnProperty.call(value, key))
+    if (missing) throw new Error(`${path}.${missing} is required evidence`)
   }
 }
 
@@ -328,12 +389,49 @@ function assertEvidenceDepth(value, depth = 1, seen = new WeakSet()) {
   seen.delete(value)
 }
 
-export function validateBaseChildPhaseEvidence({ phase, evidence }) {
+export function validateBaseChildPhaseEvidence({ phase, state, evidence }) {
   const allowed = BASE_CHILD_PHASE_EVIDENCE_FIELDS.get(phase)
   if (!allowed) throw new Error('Base child evidence phase is unsupported')
+  const required = BASE_CHILD_PHASE_STATE_FIELDS.get(`${phase}:${state}`)
+  if (!required) throw new Error('Base child evidence phase/state is unsupported')
   assertNoSensitiveProperties(evidence)
   assertEvidenceDepth(evidence)
-  exactEvidenceObject(evidence, allowed, 'event.evidence')
+  exactEvidenceObject(evidence, required, 'event.evidence', { requireAll: true })
+  for (const field of ['yieldRouterAddress', 'caller', 'poolAddress']) {
+    if (
+      Object.prototype.hasOwnProperty.call(evidence, field) &&
+      !LOWER_ADDRESS_RE.test(evidence[field])
+    ) {
+      throw new Error(`event.evidence.${field} must be a canonical address`)
+    }
+  }
+  for (const field of ['userOpHash', 'transactionHash', 'mintTxHash']) {
+    if (
+      evidence[field] !== null &&
+      Object.prototype.hasOwnProperty.call(evidence, field) &&
+      !LOWER_EVM_HASH_RE.test(evidence[field])
+    ) {
+      throw new Error(`event.evidence.${field} must be a canonical hash`)
+    }
+  }
+  for (const field of ['burnTxHash', 'expectationDigest', 'messageDigest', 'attestationDigest']) {
+    if (
+      Object.prototype.hasOwnProperty.call(evidence, field) &&
+      !LOWER_DIGEST_RE.test(evidence[field])
+    ) {
+      throw new Error(`event.evidence.${field} must be a canonical digest`)
+    }
+  }
+  if (evidence.event) {
+    for (const field of ['address', 'caller', 'poolAddress']) {
+      if (!LOWER_ADDRESS_RE.test(evidence.event[field])) {
+        throw new Error(`event.evidence.event.${field} must be a canonical address`)
+      }
+    }
+    if (!LOWER_EVM_HASH_RE.test(evidence.event.topic0)) {
+      throw new Error('event.evidence.event.topic0 must be a canonical hash')
+    }
+  }
   const evidenceJson = canonicalJson(evidence)
   if (new TextEncoder().encode(evidenceJson).byteLength > MAX_BASE_CHILD_EVIDENCE_BYTES) {
     throw new Error('Base child evidence exceeds the payload size limit')
@@ -568,6 +666,16 @@ export function baseChildBatchDigest(batch) {
   return createHash('sha256').update(canonicalJson(batch)).digest('hex')
 }
 
+export function baseChildEvidenceDigest(evidence) {
+  assertNoSensitiveProperties(evidence)
+  return createHash('sha256').update(canonicalJson(evidence)).digest('hex')
+}
+
+export function baseChildEvidenceReportDigest(report) {
+  assertNoSensitiveProperties(report)
+  return createHash('sha256').update(canonicalJson(report)).digest('hex')
+}
+
 export function toBaseChildPhaseEventRow(report, subjects) {
   const identity = baseChildRecoveryIdentity(report?.identity)
   const expectedRecoveryVersion = report?.expectedRecoveryVersion
@@ -598,7 +706,7 @@ export function toBaseChildPhaseEventRow(report, subjects) {
     recovery_version: expectedRecoveryVersion + 1,
     phase: requireOneOf(event.phase, BASE_CHILD_RECOVERY_PHASES, 'event.phase'),
     state: requireOneOf(event.state, BASE_CHILD_RECOVERY_STATES, 'event.state'),
-    evidence_digest: createHash('sha256').update(evidenceJson).digest('hex'),
+    evidence_digest: baseChildEvidenceDigest(event.evidence ?? {}),
     evidence_json: evidenceJson,
     observed_at: observedAt,
   }

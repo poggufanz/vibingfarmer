@@ -384,6 +384,17 @@ export function createOrchestrator(config) {
         try {
           await checkpoint('submitting', commonEvidence);
         } catch (reason) {
+          if (reason?.checkpointOutcome !== 'not_committed') {
+            stopAfterUnknown = true;
+            results.push({
+              identity: allocation.identity, allocationId: allocation.identity.allocationId,
+              pool: allocation.pool, status: 'uncertain', reason,
+              reasonCode: 'submitting_checkpoint_ambiguous', executionStatus: 'unknown',
+              custody: { location: 'agent' }, userOpHash: null,
+              transactionHash: null, txHash: null,
+            });
+            continue;
+          }
           results.push({
             identity: allocation.identity, allocationId: allocation.identity.allocationId,
             pool: allocation.pool, status: 'rejected', reason,
@@ -392,17 +403,33 @@ export function createOrchestrator(config) {
           });
           continue;
         }
-        const approveData = encodeFunctionData({
-          abi: APPROVE_ABI, functionName: 'approve', args: [yieldRouterAddress, allocation.amount],
-        });
-        const depositData = encodeFunctionData({
-          abi: YIELD_ROUTER_ABI, functionName: 'deposit',
-          args: [allocation.pool, allocation.amount, allocation.minShares],
-        });
-        const callData = await kernelClient.account.encodeCalls([
-          { to: usdcAddress, value: 0n, data: approveData },
-          { to: yieldRouterAddress, value: 0n, data: depositData },
-        ]);
+        let callData;
+        try {
+          const approveData = encodeFunctionData({
+            abi: APPROVE_ABI, functionName: 'approve', args: [yieldRouterAddress, allocation.amount],
+          });
+          const depositData = encodeFunctionData({
+            abi: YIELD_ROUTER_ABI, functionName: 'deposit',
+            args: [allocation.pool, allocation.amount, allocation.minShares],
+          });
+          callData = await kernelClient.account.encodeCalls([
+            { to: usdcAddress, value: 0n, data: approveData },
+            { to: yieldRouterAddress, value: 0n, data: depositData },
+          ]);
+        } catch (reason) {
+          await checkpoint('failed', {
+            ...commonEvidence, userOpHash: null, transactionHash: null,
+            reasonCode: 'pre_submit_validation',
+          });
+          results.push({
+            identity: allocation.identity, allocationId: allocation.identity.allocationId,
+            pool: allocation.pool, status: 'rejected', reason,
+            reasonCode: 'pre_submit_validation', executionStatus: 'held',
+            custody: { location: 'agent' }, userOpHash: null,
+            transactionHash: null, txHash: null,
+          });
+          continue;
+        }
         try {
           userOpHash = requireCanonicalUserOperationHash(
             await kernelClient.sendUserOperation({ callData }),

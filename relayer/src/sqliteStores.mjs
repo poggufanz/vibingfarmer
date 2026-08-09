@@ -679,13 +679,17 @@ export function createSqliteStores(path, {
     throw error;
   }
 
+  let enqueueAssociationInTransaction;
+  let enqueueBaseEvidenceInTransaction;
   const associationOutbox = createAssociationOutbox(db, {
     maxAttempts: outboxMaxAttempts,
     now,
+    registerTransactionEnqueue: (enqueue) => { enqueueAssociationInTransaction = enqueue; },
   });
   const baseEvidenceOutbox = createBaseEvidenceOutbox(db, {
     maxAttempts: outboxMaxAttempts,
     now,
+    registerTransactionEnqueue: (enqueue) => { enqueueBaseEvidenceInTransaction = enqueue; },
   });
 
   const store = {
@@ -833,7 +837,7 @@ export function createSqliteStores(path, {
         if (!db.prepare('SELECT 1 FROM jobs WHERE job_id = ?').get(jobId)) {
           throw new Error('farm execution job is missing');
         }
-        associationOutbox.enqueue(reports, { transaction: false });
+        enqueueAssociationInTransaction(reports);
         for (const head of evidenceHeads) {
           baseEvidenceOutbox.seed(head.identity, head.recoveryVersion, { jobId });
         }
@@ -894,11 +898,11 @@ export function createSqliteStores(path, {
     }) {
       return transaction(() => {
         checkedWork(jobId, 'running', leaseToken);
-        if (reports.length > 0) associationOutbox.enqueue(reports, { transaction: false });
+        if (reports.length > 0) enqueueAssociationInTransaction(reports);
         if (baseEvidenceReports.length > 0) {
-          baseEvidenceOutbox.enqueue(baseEvidenceReports[0], { transaction: false });
+          enqueueBaseEvidenceInTransaction(baseEvidenceReports[0]);
           for (const report of baseEvidenceReports.slice(1)) {
-            baseEvidenceOutbox.enqueue(report, { transaction: false });
+            enqueueBaseEvidenceInTransaction(report);
           }
         }
         writeJob(jobId, job);
@@ -914,9 +918,9 @@ export function createSqliteStores(path, {
       if (!['done', 'uncertain'].includes(status)) throw new Error('invalid farm execution terminal status');
       return transaction(() => {
         checkedWork(jobId, 'running', leaseToken);
-        if (reports.length > 0) associationOutbox.enqueue(reports, { transaction: false });
+        if (reports.length > 0) enqueueAssociationInTransaction(reports);
         for (const report of baseEvidenceReports) {
-          baseEvidenceOutbox.enqueue(report, { transaction: false });
+          enqueueBaseEvidenceInTransaction(report);
         }
         writeJob(jobId, job);
         db.prepare(`
@@ -933,7 +937,7 @@ export function createSqliteStores(path, {
         if (row.lease_expires_at == null || row.lease_expires_at > reconcileNow) {
           throw new Error('farm execution lease has not expired');
         }
-        if (reports.length > 0) associationOutbox.enqueue(reports, { transaction: false });
+        if (reports.length > 0) enqueueAssociationInTransaction(reports);
         writeJob(jobId, job);
         db.prepare(`
           UPDATE farm_execution_work

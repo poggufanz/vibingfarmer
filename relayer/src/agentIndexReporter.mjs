@@ -16,6 +16,15 @@ const LIFECYCLE_REQUEST_FIELDS = new Set(['identity', 'expectedSequence', 'lifec
 const BATCH_FIELDS = new Set(['idempotencyKey', 'burnUnits7', 'children']);
 const EVIDENCE_REQUEST_FIELDS = new Set(['schemaVersion', 'identity', 'expectedRecoveryVersion', 'event']);
 const EVIDENCE_EVENT_FIELDS = new Set(['eventId', 'phase', 'state', 'evidence', 'observedAt']);
+const BATCH_ACK_FIELDS = new Set([
+  'acknowledged', 'schemaVersion', 'idempotencyKey', 'requestDigest', 'children',
+  'written', 'duplicates',
+]);
+const BATCH_CHILD_ACK_FIELDS = new Set(['identity', 'recoveryVersion']);
+const EVIDENCE_ACK_FIELDS = new Set([
+  'acknowledged', 'schemaVersion', 'identity', 'eventId', 'phase', 'state',
+  'recoveryVersion', 'evidenceDigest', 'reportDigest', 'written', 'duplicates',
+]);
 const RECOVERY_IDENTITY_FIELD_SET = new Set(RECOVERY_IDENTITY_FIELDS);
 const EVIDENCE_PHASES = new Set(['cctp_burn', 'cctp_attestation', 'cctp_mint', 'base_deposit']);
 const EVIDENCE_STATES = new Set(['submitting', 'submitted', 'confirmed', 'failed', 'unknown', 'blocked']);
@@ -33,6 +42,38 @@ const UNSIGNED_FIELDS = new Set([
   'burnUnits7', 'amount', 'units', 'decimals', 'destinationDomain', 'evidenceVersion', 'nonce',
   'blockNumber', 'chainId', 'assets', 'minShares', 'shares', 'logIndex',
 ]);
+const BASE_COMMON_FIELDS = [
+  'chainId', 'yieldRouterAddress', 'caller', 'poolAddress', 'assets', 'minShares',
+];
+const EVIDENCE_SCHEMAS = new Map([
+  ['cctp_burn:confirmed', new Set(['burnTxHash', 'expectationDigest', 'burnUnits7'])],
+  ['cctp_burn:unknown', new Set([
+    'burnTxHash', 'expectationDigest', 'burnUnits7', 'reasonCode',
+  ])],
+  ['cctp_attestation:confirmed', new Set([
+    'burnTxHash', 'expectationDigest', 'messageDigest', 'attestationDigest', 'evidenceVersion',
+  ])],
+  ['cctp_mint:confirmed', new Set([
+    'burnTxHash', 'expectationDigest', 'messageDigest', 'attestationDigest',
+    'evidenceVersion', 'mintTxHash',
+  ])],
+  ['cctp_mint:submitted', new Set([
+    'burnTxHash', 'expectationDigest', 'messageDigest', 'attestationDigest',
+    'evidenceVersion', 'mintTxHash',
+  ])],
+  ['base_deposit:submitting', new Set(BASE_COMMON_FIELDS)],
+  ['base_deposit:submitted', new Set([...BASE_COMMON_FIELDS, 'userOpHash'])],
+  ['base_deposit:confirmed', new Set([
+    ...BASE_COMMON_FIELDS, 'userOpHash', 'transactionHash', 'event',
+  ])],
+  ...['failed', 'unknown', 'blocked'].map((state) => [
+    `base_deposit:${state}`,
+    new Set([...BASE_COMMON_FIELDS, 'userOpHash', 'transactionHash', 'reasonCode']),
+  ]),
+]);
+const LOWER_ADDRESS_RE = /^0x[0-9a-f]{40}$/;
+const LOWER_EVM_HASH_RE = /^0x[0-9a-f]{64}$/;
+const LOWER_DIGEST_RE = /^[0-9a-f]{64}$/;
 
 export class AgentIndexReporterError extends Error {
   constructor(message, { status = null, code = 'REPORTER_PERMANENT', cause } = {}) {
@@ -115,17 +156,53 @@ function sameRecoveryIdentity(actual, expected) {
   return RECOVERY_IDENTITY_FIELDS.every((field) => actual?.[field] === expected?.[field]);
 }
 
-function validateEvidenceObject(value, allowed = EVIDENCE_FIELDS, label = 'evidence') {
+function validateEvidenceObject(value, allowed = EVIDENCE_FIELDS, label = 'evidence', requireAll = false) {
   exactObject(value, allowed, label);
   for (const [key, entry] of Object.entries(value)) {
     if (key === 'event') {
-      validateEvidenceObject(entry, DEPOSIT_EVENT_FIELDS, 'deposit event');
+      validateEvidenceObject(entry, DEPOSIT_EVENT_FIELDS, 'deposit event', true);
     } else if (UNSIGNED_FIELDS.has(key)) {
       if (typeof entry !== 'string' || !/^(0|[1-9]\d*)$/.test(entry)) {
         throw new Error(`${label}.${key} must be an unsigned decimal string`);
       }
     } else if (entry !== null && !['string', 'boolean'].includes(typeof entry)) {
       throw new Error(`${label}.${key} must be a bounded scalar`);
+    }
+  }
+  if (requireAll) {
+    const missing = [...allowed].find((field) => !Object.prototype.hasOwnProperty.call(value, field));
+    if (missing) throw new Error(`${label}.${missing} is required`);
+  }
+}
+
+function validatePhaseStateEvidence(phase, state, evidence) {
+  const required = EVIDENCE_SCHEMAS.get(`${phase}:${state}`);
+  if (!required) throw new Error('evidence phase/state schema is invalid');
+  validateEvidenceObject(evidence, required, 'evidence', true);
+  for (const field of ['yieldRouterAddress', 'caller', 'poolAddress']) {
+    if (Object.prototype.hasOwnProperty.call(evidence, field) && !LOWER_ADDRESS_RE.test(evidence[field])) {
+      throw new Error(`evidence.${field} must be a canonical address`);
+    }
+  }
+  for (const field of ['userOpHash', 'transactionHash', 'mintTxHash']) {
+    if (evidence[field] !== null && Object.prototype.hasOwnProperty.call(evidence, field)
+        && !LOWER_EVM_HASH_RE.test(evidence[field])) {
+      throw new Error(`evidence.${field} must be a canonical hash`);
+    }
+  }
+  for (const field of ['burnTxHash', 'expectationDigest', 'messageDigest', 'attestationDigest']) {
+    if (Object.prototype.hasOwnProperty.call(evidence, field) && !LOWER_DIGEST_RE.test(evidence[field])) {
+      throw new Error(`evidence.${field} must be a canonical digest`);
+    }
+  }
+  if (evidence.event) {
+    for (const field of ['address', 'caller', 'poolAddress']) {
+      if (!LOWER_ADDRESS_RE.test(evidence.event[field])) {
+        throw new Error(`deposit event.${field} must be a canonical address`);
+      }
+    }
+    if (!LOWER_EVM_HASH_RE.test(evidence.event.topic0)) {
+      throw new Error('deposit event.topic0 must be a canonical hash');
     }
   }
 }
@@ -147,7 +224,7 @@ function validateEvidenceReport(request, schemaVersion) {
   if (!Number.isSafeInteger(request.event.observedAt) || request.event.observedAt < 0) {
     throw new Error('observedAt must be a non-negative safe integer');
   }
-  validateEvidenceObject(request.event.evidence);
+  validatePhaseStateEvidence(request.event.phase, request.event.state, request.event.evidence);
   rejectSensitive(request);
 }
 
@@ -312,16 +389,26 @@ export function createAgentIndexReporter({
     try { acknowledgement = await response.json(); } catch (error) {
       throw new Error('agent index reporter acknowledgement is malformed', { cause: error });
     }
-    if (acknowledgement?.acknowledged !== true
+    let exactAcknowledgement = true;
+    try {
+      exactObject(acknowledgement, BATCH_ACK_FIELDS, 'batch acknowledgement');
+    } catch { exactAcknowledgement = false; }
+    if (!exactAcknowledgement
+      || acknowledgement?.acknowledged !== true
       || acknowledgement.schemaVersion !== schemaVersion
       || acknowledgement.idempotencyKey !== batch.idempotencyKey
       || acknowledgement.requestDigest !== requestDigest
-      || !Array.isArray(acknowledgement.identities)
-      || acknowledgement.identities.length !== identities.length
-      || acknowledgement.identities.some((entry, index) => {
+      || !Array.isArray(acknowledgement.children)
+      || acknowledgement.children.length !== identities.length
+      || !Number.isSafeInteger(acknowledgement.written)
+      || !Number.isSafeInteger(acknowledgement.duplicates)
+      || acknowledgement.children.some((entry, index) => {
         try {
-          exactObject(entry, RECOVERY_IDENTITY_FIELD_SET, 'batch acknowledgement identity');
-          return !sameRecoveryIdentity(entry, identities[index]);
+          exactObject(entry, BATCH_CHILD_ACK_FIELDS, 'batch child acknowledgement');
+          exactObject(entry.identity, RECOVERY_IDENTITY_FIELD_SET, 'batch acknowledgement identity');
+          return !sameRecoveryIdentity(entry.identity, identities[index])
+            || !Number.isSafeInteger(entry.recoveryVersion)
+            || entry.recoveryVersion < 0;
         } catch { return true; }
       })) {
       throw new Error('agent index reporter batch acknowledgement is malformed');
@@ -365,13 +452,25 @@ export function createAgentIndexReporter({
       });
     }
     const expectedVersion = request.expectedRecoveryVersion + 1;
-    if (acknowledgement?.acknowledged !== true
+    const evidenceDigest = createHash('sha256')
+      .update(canonicalJson(request.event.evidence)).digest('hex');
+    const reportDigest = createHash('sha256').update(canonicalJson(request)).digest('hex');
+    let exactAcknowledgement = true;
+    try {
+      exactObject(acknowledgement, EVIDENCE_ACK_FIELDS, 'evidence acknowledgement');
+    } catch { exactAcknowledgement = false; }
+    if (!exactAcknowledgement
+      || acknowledgement?.acknowledged !== true
       || acknowledgement.schemaVersion !== schemaVersion
       || !sameRecoveryIdentity(acknowledgement.identity, request.identity)
       || acknowledgement.eventId !== request.event.eventId
       || acknowledgement.phase !== request.event.phase
       || acknowledgement.state !== request.event.state
-      || acknowledgement.recoveryVersion !== expectedVersion) {
+      || acknowledgement.recoveryVersion !== expectedVersion
+      || acknowledgement.evidenceDigest !== evidenceDigest
+      || acknowledgement.reportDigest !== reportDigest
+      || !Number.isSafeInteger(acknowledgement.written)
+      || !Number.isSafeInteger(acknowledgement.duplicates)) {
       throw new AgentIndexReporterError('agent index evidence acknowledgement is malformed');
     }
     try {

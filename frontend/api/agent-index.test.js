@@ -193,11 +193,23 @@ function fakeStore(overrides = {}) {
     reserveBaseChildIntentBatch: vi.fn(async ({ batch }) => ({
       written: batch.children.length,
       duplicates: 0,
+      children: batch.children.map((child) => ({
+        identity: {
+          networkId: child.networkId,
+          bindingId: child.bindingId,
+          executionId: child.executionId,
+          allocationId: child.allocationId,
+          childId: child.childId,
+        },
+        recoveryVersion: 0,
+      })),
     })),
     advanceBaseChildPhase: vi.fn(async () => ({
       written: 1,
       duplicates: 0,
       recoveryVersion: 1,
+      evidenceDigest: 'd'.repeat(64),
+      reportDigest: 'e'.repeat(64),
     })),
     readPublicBaseChildEvidence: vi.fn(async (identity) => ({
       identity,
@@ -917,13 +929,10 @@ describe('/api/agent-index operational evidence routes', () => {
       expect(out.body).toMatchObject({
         acknowledged: true,
         idempotencyKey: 'route-batch-key-1',
-        identities: batch.children.map(
+        children: batch.children.map(
           ({ networkId, bindingId, executionId, allocationId, childId }) => ({
-            networkId,
-            bindingId,
-            executionId,
-            allocationId,
-            childId,
+            identity: { networkId, bindingId, executionId, allocationId, childId },
+            recoveryVersion: 0,
           })
         ),
       })
@@ -955,8 +964,12 @@ describe('/api/agent-index operational evidence routes', () => {
           event: {
             eventId: 'a'.repeat(64),
             phase: 'cctp_burn',
-            state: 'submitting',
-            evidence: {},
+            state: 'confirmed',
+            evidence: {
+              burnTxHash: 'a'.repeat(64),
+              expectationDigest: 'b'.repeat(64),
+              burnUnits7: '10000000',
+            },
             observedAt: 2_000_000_000_100,
           },
         },
@@ -1056,8 +1069,12 @@ describe('/api/agent-index operational evidence routes', () => {
         event: {
           eventId: 'b'.repeat(64),
           phase: 'cctp_burn',
-          state: 'submitting',
-          evidence: {},
+          state: 'confirmed',
+          evidence: {
+            burnTxHash: 'a'.repeat(64),
+            expectationDigest: 'b'.repeat(64),
+            burnUnits7: '10000000',
+          },
           observedAt: 2_000_000_000_200,
         },
       }

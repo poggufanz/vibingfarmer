@@ -1051,7 +1051,7 @@ describe('sqliteStores', () => {
       expect(second.farmExecutions.get('job-1')).toMatchObject({
         jobId: 'job-1', burnTxHash: 'burn-1', status: 'pending', attempts: 0,
       });
-      expect(second.associationOutbox.status(executionIdentity)).toEqual([{
+      expect(second.associationOutbox.status(recoveryIdentity)).toEqual([{
         allocationId: executionIdentity.allocationId,
         executionId: executionIdentity.executionId,
         sequence: 1,
@@ -1072,7 +1072,7 @@ describe('sqliteStores', () => {
       })).toThrow(/sequence|order/i);
       expect(stores.jobs.get('job-1')).toEqual(queuedJob);
       expect(stores.farmExecutions.get('job-1')).toBeNull();
-      expect(stores.associationOutbox.status(executionIdentity)).toEqual([]);
+      expect(stores.associationOutbox.status(recoveryIdentity)).toEqual([]);
     });
 
     // Defect caught: restart had no durable dispatcher-owned claim, while same-hash retries either
@@ -1103,7 +1103,7 @@ describe('sqliteStores', () => {
       expect(third.farmExecutions.attach({
         jobId: 'job-1', burnTxHash: 'burn-1', job: attachedJob, reports: [executionReport(1)],
       })).toMatchObject({ duplicate: true, work: { status: 'running', attempts: 1 } });
-      expect(third.associationOutbox.status(executionIdentity)).toHaveLength(1);
+      expect(third.associationOutbox.status(recoveryIdentity)).toHaveLength(1);
     });
   });
 

@@ -273,6 +273,81 @@ describe('dispatchDeposits', () => {
     })).rejects.toThrow();
     expect(reconstructSessionClientFn).not.toHaveBeenCalled();
   });
+
+  it('stops the batch when the submitting durability callback outcome is ambiguous', async () => {
+    const allocations = [task10Allocation(1), task10Allocation(2)];
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const results = await orchestrator.dispatchDeposits('approval', allocations, {
+      onCheckpoint: vi.fn(async () => { throw new Error('commit response lost'); }),
+    });
+
+    expect(results).toMatchObject([
+      { executionStatus: 'unknown', reasonCode: 'submitting_checkpoint_ambiguous' },
+      { executionStatus: 'held', reasonCode: 'not_dispatched_after_unknown' },
+    ]);
+    expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it('continues only when a submitting callback explicitly proves it was not committed', async () => {
+    const allocations = [task10Allocation(1), task10Allocation(2)];
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    const error = new Error('validation rejected');
+    error.checkpointOutcome = 'not_committed';
+    let submitting = 0;
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const results = await orchestrator.dispatchDeposits('approval', allocations, {
+      onCheckpoint: vi.fn(async ({ status }) => {
+        if (status === 'submitting' && submitting++ === 0) throw error;
+      }),
+    });
+
+    expect(results[0]).toMatchObject({
+      executionStatus: 'held', reasonCode: 'pre_submit_validation',
+    });
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies deterministic call encoding failure as pre-submit validation without sending it', async () => {
+    const allocations = [task10Allocation(1), task10Allocation(2)];
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.account.encodeCalls
+      .mockRejectedValueOnce(new Error('cannot encode deterministic call'))
+      .mockResolvedValueOnce('0xencoded');
+    const checkpoints = [];
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const results = await orchestrator.dispatchDeposits('approval', allocations, {
+      onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint),
+    });
+
+    expect(results[0]).toMatchObject({
+      executionStatus: 'held', reasonCode: 'pre_submit_validation',
+    });
+    expect(checkpoints).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'failed', evidence: expect.objectContaining({
+        reasonCode: 'pre_submit_validation', userOpHash: null, transactionHash: null,
+      }) }),
+    ]));
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1);
+  });
   it('returns 3 settled results (all fulfilled) for 3 allocations', async () => {
     const kernelClient = buildMockKernelClient();
     const reconstructSessionClientFn = vi.fn().mockResolvedValue(kernelClient);

@@ -218,4 +218,33 @@ describe('SQLite Base evidence outbox', () => {
     baseEvidenceOutbox.markDelivered({ id: terminal.id, leaseToken: terminal.leaseToken, now: 1002 });
     expect(baseEvidenceOutbox.status(identity)).toMatchObject({ complete: true, blocked: false });
   });
+
+  it('never reports evidence complete before the latest delivered phase is base_deposit', () => {
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
+    baseEvidenceOutbox.seed(identity, 0);
+    baseEvidenceOutbox.enqueue({
+      identity, phase: 'cctp_burn', status: 'confirmed', observedAt: 1000,
+      evidence: {
+        burnTxHash: 'a'.repeat(64), expectationDigest: 'b'.repeat(64), burnUnits7: '1000',
+      },
+    });
+    const leased = baseEvidenceOutbox.leaseNext({ now: 1000, leaseMs: 100 });
+    baseEvidenceOutbox.markDelivered({ id: leased.id, leaseToken: leased.leaseToken, now: 1001 });
+    expect(baseEvidenceOutbox.status(identity)).toMatchObject({
+      complete: false, latestPhase: 'cctp_burn', latestState: 'confirmed',
+    });
+  });
+
+  it('does not let public callers forge a non-owning enqueue transaction', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 1000 });
+    stores.baseEvidenceOutbox.seed(identity, 0);
+    stores.db.exec('BEGIN IMMEDIATE');
+    expect(() => stores.baseEvidenceOutbox.enqueue(
+      checkpoint('submitting'), { transaction: false },
+    )).toThrow(/transaction/i);
+    stores.db.exec('ROLLBACK');
+    expect(stores.baseEvidenceOutbox.status(identity)).toMatchObject({
+      recoveryVersion: 0, events: [],
+    });
+  });
 });

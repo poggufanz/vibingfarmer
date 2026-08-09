@@ -133,6 +133,7 @@ export function createBaseEvidenceOutbox(db, {
   maxAttempts = 5,
   now = () => Date.now(),
   leaseToken = randomUUID,
+  registerTransactionEnqueue = null,
 } = {}) {
   if (!Number.isSafeInteger(maxAttempts) || maxAttempts <= 0) {
     throw new Error('Base evidence maxAttempts must be positive');
@@ -163,7 +164,7 @@ export function createBaseEvidenceOutbox(db, {
     return { duplicate: false, recoveryVersion };
   }
 
-  function enqueue(input, { transaction = true } = {}) {
+  function enqueueInternal(input, { transaction = true } = {}) {
     const checkpoint = validateCheckpoint(input);
     const values = identityValues(checkpoint.identity);
     if (transaction) db.exec('BEGIN IMMEDIATE');
@@ -264,6 +265,17 @@ export function createBaseEvidenceOutbox(db, {
     }
   }
 
+  function enqueue(input) {
+    return enqueueInternal(input, { transaction: true });
+  }
+
+  if (registerTransactionEnqueue != null) {
+    if (typeof registerTransactionEnqueue !== 'function') {
+      throw new Error('Base evidence transaction registration is invalid');
+    }
+    registerTransactionEnqueue((input) => enqueueInternal(input, { transaction: false }));
+  }
+
   function leaseNext({ now: at = now(), leaseMs = 30_000 } = {}) {
     const token = leaseToken();
     db.exec('BEGIN IMMEDIATE');
@@ -354,8 +366,8 @@ export function createBaseEvidenceOutbox(db, {
       WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?
       ORDER BY expected_recovery_version`).all(...values);
     const blocked = rows.some((row) => row.delivery_status === 'conflict');
-    const terminal = ['confirmed', 'failed'].includes(head.latest_state);
-    const complete = !blocked && terminal && rows.length > 0
+    const terminal = ['confirmed', 'failed', 'blocked'].includes(head.latest_state);
+    const complete = !blocked && head.latest_phase === 'base_deposit' && terminal && rows.length > 0
       && rows.every((row) => row.delivery_status === 'delivered');
     return {
       complete,

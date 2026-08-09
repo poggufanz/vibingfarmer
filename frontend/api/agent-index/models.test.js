@@ -169,8 +169,12 @@ describe('Task 9 Base child recovery models', () => {
       event: {
         eventId: 'a'.repeat(64),
         phase: 'cctp_burn',
-        state: 'submitting',
-        evidence: { burnUnits7: '90071992547409930000000' },
+        state: 'confirmed',
+        evidence: {
+          burnTxHash: 'a'.repeat(64),
+          expectationDigest: 'b'.repeat(64),
+          burnUnits7: '90071992547409930000000',
+        },
         observedAt: 2_000_000_000_001,
       },
     }
@@ -180,8 +184,8 @@ describe('Task 9 Base child recovery models', () => {
       execution_id: 'run-1:exec:allocation-1',
       recovery_version: 1,
       phase: 'cctp_burn',
-      state: 'submitting',
-      evidence_json: '{"burnUnits7":"90071992547409930000000"}',
+      state: 'confirmed',
+      evidence_json: `{"burnTxHash":"${'a'.repeat(64)}","burnUnits7":"90071992547409930000000","expectationDigest":"${'b'.repeat(64)}"}`,
     })
     expect(
       parseBaseChildPhaseProjectionRow({
@@ -191,7 +195,11 @@ describe('Task 9 Base child recovery models', () => {
     ).toMatchObject({
       eventId: 'a'.repeat(64),
       recoveryVersion: 1,
-      evidence: { burnUnits7: '90071992547409930000000' },
+      evidence: {
+        burnTxHash: 'a'.repeat(64),
+        expectationDigest: 'b'.repeat(64),
+        burnUnits7: '90071992547409930000000',
+      },
     })
   })
 
@@ -208,7 +216,7 @@ describe('Task 9 Base child recovery models', () => {
       event: {
         eventId: 'a'.repeat(64),
         phase: 'cctp_burn',
-        state: 'submitting',
+        state: 'confirmed',
         evidence: { [field]: value },
         observedAt: 2_000_000_000_001,
       },
@@ -225,8 +233,12 @@ describe('Task 9 Base child recovery models', () => {
       event: {
         eventId: 'a'.repeat(64),
         phase: 'cctp_burn',
-        state: 'submitting',
-        evidence: { amount: 9_007_199_254_740_992 },
+        state: 'confirmed',
+        evidence: {
+          burnTxHash: 'a'.repeat(64),
+          expectationDigest: 'b'.repeat(64),
+          burnUnits7: 9_007_199_254_740_992,
+        },
         observedAt: 2_000_000_000_001,
       },
     }
@@ -357,6 +369,70 @@ describe('Task 9 Base child recovery models', () => {
       userOpHash: `0x${'44'.repeat(32)}`,
       yieldRouterAddress: `0x${'11'.repeat(20)}`,
     })
+  })
+
+  it.each([
+    [
+      'missing caller',
+      (evidence) => {
+        delete evidence.caller
+      },
+    ],
+    [
+      'uppercase address',
+      (evidence) => {
+        evidence.poolAddress = `0x${'AA'.repeat(20)}`
+      },
+    ],
+    [
+      'missing confirmed event',
+      (evidence) => {
+        delete evidence.event
+      },
+    ],
+    [
+      'field from another state',
+      (evidence) => {
+        evidence.reasonCode = 'not_allowed_for_confirmed'
+      },
+    ],
+  ])('rejects closed confirmed evidence with %s', (_label, mutate) => {
+    const evidence = {
+      chainId: '84532',
+      yieldRouterAddress: `0x${'11'.repeat(20)}`,
+      caller: `0x${'22'.repeat(20)}`,
+      poolAddress: `0x${'33'.repeat(20)}`,
+      assets: '100',
+      minShares: '90',
+      userOpHash: `0x${'44'.repeat(32)}`,
+      transactionHash: `0x${'55'.repeat(32)}`,
+      event: {
+        address: `0x${'11'.repeat(20)}`,
+        topic0: `0x${'66'.repeat(32)}`,
+        logIndex: '0',
+        caller: `0x${'22'.repeat(20)}`,
+        poolAddress: `0x${'33'.repeat(20)}`,
+        assets: '100',
+        shares: '91',
+      },
+    }
+    mutate(evidence)
+    expect(() =>
+      toBaseChildPhaseEventRow(
+        {
+          identity: baseChildRecoveryIdentity(baseChild()),
+          expectedRecoveryVersion: 0,
+          event: {
+            eventId: 'e'.repeat(64),
+            phase: 'base_deposit',
+            state: 'confirmed',
+            evidence,
+            observedAt: 2_000_000_000_001,
+          },
+        },
+        { owner: 'GOWNER1', agent: 'CAGENT1' }
+      )
+    ).toThrow(/evidence|address|field/i)
   })
 })
 

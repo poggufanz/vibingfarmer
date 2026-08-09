@@ -12,6 +12,11 @@ import {
   ParamCondition,
 } from "@zerodev/permissions/policies";
 import { createRelayerRouter } from "../src/httpRouter.mjs";
+import {
+  DEPOSITED_TOPIC0,
+  createOrchestrator,
+} from "../src/base/orchestrator.mjs";
+import { createFarmFlow } from "../src/flows/farm.mjs";
 import { createMandateStoresV3 } from "../src/mandateStore.mjs";
 import {
   MAX_CALL_CAP_UNITS,
@@ -227,7 +232,9 @@ function identityOf(body) {
 
 function associationRows(stores, jobId) {
   const associations = stores.jobs.get(jobId)?._attach?.associations ?? [];
-  return associations.flatMap(({ identity }) => stores.associationOutbox.status(identity));
+  return associations.flatMap(({ recoveryIdentity }) => (
+    stores.associationOutbox.status(recoveryIdentity)
+  ));
 }
 
 function mintedResult(mintTxHash) {
@@ -1465,6 +1472,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     evidenceSequence = [],
     transformMandateGet,
     farmImplementation,
+    buildFarmImplementation,
     reporterImplementation,
     associationOutbox: providedOutbox = null,
     baseEvidenceOutbox: providedEvidenceOutbox = null,
@@ -1527,12 +1535,15 @@ describe("v3 mandate route authorization and execution gates", () => {
         if (reporterImplementation) return reporterImplementation(batch);
         return {
           acknowledged: true,
-          identities: batch.children.map((child) => ({
-            networkId: child.networkId,
-            bindingId: child.bindingId,
-            executionId: child.executionId,
-            allocationId: child.allocationId,
-            childId: child.childId,
+          children: batch.children.map((child) => ({
+            identity: {
+              networkId: child.networkId,
+              bindingId: child.bindingId,
+              executionId: child.executionId,
+              allocationId: child.allocationId,
+              childId: child.childId,
+            },
+            recoveryVersion: 0,
           })),
           schemaVersion: 1,
         };
@@ -1598,8 +1609,9 @@ describe("v3 mandate route authorization and execution gates", () => {
         grantTxHash: params.grantTxHash,
       };
     });
-    const buildFarm = vi.fn((_sessionPrivateKey) => {
+    const buildFarm = vi.fn((sessionPrivateKey) => {
       events.push("buildFarm");
+      if (buildFarmImplementation) return buildFarmImplementation(sessionPrivateKey);
       return { farm: (params) => farmFn(params) };
     });
     const farmExecutions =
@@ -2532,18 +2544,21 @@ describe("v3 mandate route authorization and execution gates", () => {
     let acknowledge;
     const harness = makeRouteHarness({
       claimEnabled: false,
-      reporterImplementation: (child) =>
+      reporterImplementation: (batch) =>
         new Promise((resolve) => {
           acknowledge = () =>
             resolve({
               acknowledged: true,
-              identity: {
-                networkId: child.networkId,
-                owner: child.owner,
-                bindingId: child.bindingId,
-                allocationId: child.allocationId,
-                childId: child.childId,
-              },
+              children: batch.children.map((child) => ({
+                identity: {
+                  networkId: child.networkId,
+                  bindingId: child.bindingId,
+                  executionId: child.executionId,
+                  allocationId: child.allocationId,
+                  childId: child.childId,
+                },
+                recoveryVersion: 0,
+              })),
               schemaVersion: 1,
             });
         }),
@@ -2571,6 +2586,36 @@ describe("v3 mandate route authorization and execution gates", () => {
       status: "queued",
     });
     expect(harness.buildFarm).not.toHaveBeenCalled();
+  });
+
+  it("seeds each local evidence head from the exact ordered Agent Index recovery version", async () => {
+    const allocations = routeAllocations();
+    const harness = makeRouteHarness({
+      claimEnabled: false,
+      reporterImplementation: async (batch) => ({
+        acknowledged: true,
+        schemaVersion: 1,
+        children: batch.children.map((child, ordinal) => ({
+          identity: {
+            networkId: child.networkId,
+            bindingId: child.bindingId,
+            executionId: child.executionId,
+            allocationId: child.allocationId,
+            childId: child.childId,
+          },
+          recoveryVersion: 7 + ordinal,
+        })),
+      }),
+    });
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+
+    const jobId = await queueIntent(harness, body, { allocations });
+
+    expect(harness.jobs.get(jobId)._attach.associations.map((entry) => (
+      entry.startingRecoveryVersion
+    ))).toEqual([7, 8]);
+    expect(harness.evidenceRows).toEqual([]);
   });
 
   it.each([
@@ -2735,7 +2780,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       grantTxHash: "grant-1",
       onMintConfirmed: expect.any(Function),
     });
-    expect(dispatch.allocations).toEqual([
+    expect(dispatch.allocations).toMatchObject([
       {
         allocationId: "run-42:bridge:blend-v2",
         pool: SECOND_POOL,
@@ -2844,7 +2889,8 @@ describe("v3 mandate route authorization and execution gates", () => {
     seedActiveMandate(harness, body);
     const jobId = await queueIntent(harness, body, { allocations: [routeAllocations()[0]] });
     await postProtected(harness, '/farm/attach', attachBody(jobId, body, 'burn-evidence-order'));
-    await vi.waitFor(() => expect(harness.jobs.get(jobId)?.status).toBe('done'));
+    await vi.waitFor(() => expect(harness.jobs.get(jobId)?.status).toBe('uncertain'));
+    expect(harness.farmExecutions.get(jobId)).toMatchObject({ status: 'uncertain' });
     expect(order).toEqual(['mint-persisted', 'send']);
     expect(harness.jobs.get(jobId).depositProgress).toMatchObject({
       'run-42:bridge:aave-v3': { state: 'submitting' },
@@ -2916,6 +2962,8 @@ describe("v3 mandate route authorization and execution gates", () => {
         terminalSequence: 3,
       },
     ]);
+    expect(harness.jobs.get(jobId)).toMatchObject({ status: 'uncertain' });
+    expect(harness.farmExecutions.get(jobId)).toMatchObject({ status: 'uncertain' });
   });
 
   it("surfaces a terminal lifecycle outbox failure as association uncertainty instead of complete success", async () => {
@@ -3281,6 +3329,106 @@ describe("v3 mandate route authorization and execution gates", () => {
     return response.json.jobId;
   }
 
+  it("joins durable child identity and immutable caller before the real farm orchestrator sends", async () => {
+    const path = join(
+      mkdtempSync(join(tmpdir(), "vf-route-real-orchestrator-")),
+      "relayer.db",
+    );
+    const stores = createSqliteStores(path, {
+      sessionKeyCipher: routeCipher(),
+      nowSeconds: () => NOW_SECONDS,
+    });
+    let jobId;
+    const allocation = routeAllocations()[0];
+    const transactionHash = `0x${"ab".repeat(32)}`;
+    const userOpHash = `0x${"cd".repeat(32)}`;
+    const word = (value) => BigInt(value).toString(16).padStart(64, "0");
+    const kernelClient = {
+      account: {
+        address: KERNEL,
+        encodeCalls: vi.fn().mockResolvedValue("0xencoded"),
+      },
+      sendUserOperation: vi.fn(async () => {
+        const association = stores.jobs.get(jobId)._attach.associations[0];
+        expect(stores.baseEvidenceOutbox.status(association.recoveryIdentity)).toMatchObject({
+          recoveryVersion: 4,
+          events: expect.arrayContaining([
+            expect.objectContaining({ phase: "base_deposit", state: "submitting" }),
+          ]),
+        });
+        return userOpHash;
+      }),
+      waitForUserOperationReceipt: vi.fn(async () => ({
+        userOpHash,
+        sender: KERNEL,
+        success: true,
+        logs: [{
+          address: CANONICAL_ROUTER,
+          topics: [
+            DEPOSITED_TOPIC0,
+            `0x${KERNEL.slice(2).padStart(64, "0")}`,
+            `0x${allocation.poolAddress.slice(2).padStart(64, "0")}`,
+          ],
+          data: `0x${word(allocation.amount.units)}${word(allocation.minShares)}`,
+          logIndex: 1,
+          transactionHash,
+        }],
+        receipt: { status: "success", transactionHash, logs: [] },
+      })),
+    };
+    const watcher = {
+      relayMint: vi.fn(async () => mintedResult("0xmint-real-path")),
+      getRecoveryEvidence: vi.fn(() => mintedResult("0xmint-real-path").evidence),
+    };
+    const harness = makeRouteHarness({
+      realStores: stores,
+      jobs: stores.jobs,
+      associationOutbox: stores.associationOutbox,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      farmExecutions: stores.farmExecutions,
+      buildFarmImplementation: (sessionPrivateKey) => {
+        const flow = createFarmFlow({
+          watcher,
+          orchestrator: createOrchestrator({
+          chain: { id: 84532 },
+          rpcUrl: "https://base.invalid",
+          bundlerRpcUrl: "https://bundler.invalid",
+          yieldRouterAddress: CANONICAL_ROUTER,
+          usdcAddress: CANONICAL_USDC,
+          sessionPrivateKey,
+          reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+          now: () => 2_000_000_000_000,
+          }),
+          domains: { stellar: 27, base: 6 },
+        });
+        return {
+          farm: (params) => flow.farm({
+            ...params,
+            // Task 11 owns persisting/wiring this pre-D1 expectation. This test isolates the
+            // Task 10 post-mint production seam while still exercising the real farm flow.
+            expectation: { testOnlyStableBurnIntent: true },
+          }),
+        };
+      },
+    });
+    const body = routeBody();
+    try {
+      seedActiveMandate(harness, body);
+      jobId = await queueIntent(harness, body, { allocations: [allocation] });
+      const attached = await postProtected(
+        harness,
+        "/farm/attach",
+        attachBody(jobId, body, "burn-real-path"),
+      );
+      expect(attached.res.statusCode).toBe(200);
+      await flushMicrotasks(50);
+      expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1);
+      expect(stores.farmExecutions.get(jobId)).toMatchObject({ status: "done" });
+    } finally {
+      stores.db.close();
+    }
+  });
+
   it.each([
     [
       "mandate revoke",
@@ -3409,7 +3557,6 @@ describe("v3 mandate route authorization and execution gates", () => {
         }),
       ]),
     );
-
     const repeated = await postProtected(
       harness,
       "/farm/attach",
@@ -3982,6 +4129,15 @@ describe("v3 mandate route authorization and execution gates", () => {
         }),
       ]),
     );
+    expect(harness.evidenceRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        phase: 'base_deposit', status: 'blocked',
+        evidence: expect.objectContaining({
+          caller: KERNEL.toLowerCase(), reasonCode: 'mandate_held_after_mint',
+          userOpHash: null, transactionHash: null,
+        }),
+      }),
+    ]));
 
     const publicStatus = await postProtected(harness, "/status", {
       mandateId: MANDATE_ID,
@@ -3992,8 +4148,8 @@ describe("v3 mandate route authorization and execution gates", () => {
       status: "error",
       executionStatus: "held",
       custodyLocation: "agent",
-      steps: [{ step: "mint", status: "minted", mintTxHash: "0xmint" }],
     });
+    expect(publicStatus.json).not.toHaveProperty('steps');
     expectPrivateMaterialAbsent(publicStatus.res.body, body);
     expect(publicStatus.res.body).not.toContain("0xdeposit-must-not-happen");
 
@@ -4100,9 +4256,13 @@ describe("v3 mandate route authorization and execution gates", () => {
       status: "done",
       executionStatus: "deposited",
       custodyLocation: "base-proxy",
+      depositProgress: { privateAllocation: { bearer: 'progress-bearer-sentinel' } },
+      results: [{ endpoint: 'results-endpoint-sentinel' }],
+      rawError: { capability: 'raw-capability-sentinel' },
+      leaseToken: 'lease-token-sentinel',
       steps: [
-        { step: "mint", status: "minted", mintTxHash: "0xmint-status" },
-        { step: "deposits", results: [] },
+        { step: "mint", status: "minted", mintTxHash: "0xmint-status", approval: 'approval-sentinel' },
+        { step: "deposits", results: [{ sessionKey: 'session-key-sentinel' }] },
       ],
       _attach: {
         mandateId: MANDATE_ID,
@@ -4118,12 +4278,22 @@ describe("v3 mandate route authorization and execution gates", () => {
               executionId: 'run-42:exec:run-42:bridge:aave-v3',
               allocationId: 'run-42:bridge:aave-v3', childId: jobId,
             },
+            recoveryIdentity: {
+              networkId: 'stellar-testnet', bindingId: activeA.bindingId,
+              executionId: 'run-42:exec:run-42:bridge:aave-v3',
+              allocationId: 'run-42:bridge:aave-v3', childId: jobId,
+            },
             terminalSequence: 2,
           },
           {
             allocationId: "run-42:bridge:blend-v2",
             identity: {
               networkId: 'stellar-testnet', owner: OWNER, bindingId: activeA.bindingId,
+              executionId: 'run-42:exec:run-42:bridge:blend-v2',
+              allocationId: 'run-42:bridge:blend-v2', childId: jobId,
+            },
+            recoveryIdentity: {
+              networkId: 'stellar-testnet', bindingId: activeA.bindingId,
               executionId: 'run-42:exec:run-42:bridge:blend-v2',
               allocationId: 'run-42:bridge:blend-v2', childId: jobId,
             },
@@ -4146,6 +4316,14 @@ describe("v3 mandate route authorization and execution gates", () => {
         events: [],
       },
     });
+    expect(Object.keys(empty.json).sort()).toEqual([
+      'associationDelivery', 'custodyLocation', 'evidenceDelivery', 'executionStatus',
+      'jobId', 'status',
+    ]);
+    for (const sentinel of [
+      'progress-bearer-sentinel', 'results-endpoint-sentinel', 'raw-capability-sentinel',
+      'lease-token-sentinel', 'approval-sentinel', 'session-key-sentinel',
+    ]) expect(empty.res.body).not.toContain(sentinel);
     expectPrivateMaterialAbsent(empty.res.body, bodyA);
 
     harness.delivery.push(
@@ -4307,7 +4485,7 @@ describe("v3 mandate route authorization and execution gates", () => {
 
     expect(status.json.associationDelivery).toMatchObject({ complete: true, uncertain: false });
     expect(status.json.evidenceDelivery).toMatchObject({ complete: false, blocked: false, uncertain: true });
-    expect(associationOutbox.status).toHaveBeenCalledWith(associationIdentity);
+    expect(associationOutbox.status).toHaveBeenCalledWith(recoveryIdentity);
     expect(baseEvidenceOutbox.status).toHaveBeenCalledWith(recoveryIdentity);
   });
 
@@ -5524,14 +5702,9 @@ describe("v3 mandate route authorization and execution gates", () => {
         runId: "run-42",
         bridgeAgent: "bridge-agent-1",
         grantTxHash: "grant-1",
-        steps: [
-          expect.objectContaining({
-            step: "farm",
-            status: "error",
-            message: "internal error",
-          }),
-        ],
       });
+      expect(status.json).not.toHaveProperty('steps');
+      expect(status.res.body).not.toContain('internal error');
       expect(status.res.body).not.toContain(rawFailure);
       expect(status.res.body).not.toContain("internal.example");
       expectPrivateMaterialAbsent(status.res.body, body);

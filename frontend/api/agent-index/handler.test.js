@@ -503,12 +503,15 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
         schemaVersion: 1,
         idempotencyKey: 'batch-key-42',
         requestDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
-        identities: [
-          identity,
+        children: [
+          { identity, recoveryVersion: 0 },
           {
-            ...identity,
-            executionId: 'run-batch-42:exec:allocation-2',
-            allocationId: 'allocation-2',
+            identity: {
+              ...identity,
+              executionId: 'run-batch-42:exec:allocation-2',
+              allocationId: 'allocation-2',
+            },
+            recoveryVersion: 0,
           },
         ],
         written: 2,
@@ -879,10 +882,11 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
       event: {
         eventId: 'a'.repeat(64),
         phase: 'cctp_burn',
-        state: 'submitting',
+        state: 'confirmed',
         evidence: {
-          burnTxHash: `0x${'ab'.repeat(32)}`,
-          amount: '9007199254740993000000',
+          burnTxHash: 'a'.repeat(64),
+          expectationDigest: 'b'.repeat(64),
+          burnUnits7: '9007199254740993000000',
         },
         observedAt: 2_000_000_000_100,
       },
@@ -891,7 +895,14 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
       handleBaseChildEvidenceWrite({ request: report, store, ...deps() })
     ).resolves.toMatchObject({
       status: 201,
-      body: { acknowledged: true, identity, eventId: 'a'.repeat(64), recoveryVersion: 1 },
+      body: {
+        acknowledged: true,
+        identity,
+        eventId: 'a'.repeat(64),
+        recoveryVersion: 1,
+        evidenceDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+        reportDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
     })
     const bundle = await store.readBaseChildRecoveryBundle(identity)
     bundle.intent.internalDiagnostic = 'database-secret'
@@ -912,8 +923,8 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
         phases: [
           {
             phase: 'cctp_burn',
-            state: 'submitting',
-            evidence: { burnTxHash: `0x${'ab'.repeat(32)}` },
+            state: 'confirmed',
+            evidence: { burnTxHash: 'a'.repeat(64) },
           },
         ],
       },

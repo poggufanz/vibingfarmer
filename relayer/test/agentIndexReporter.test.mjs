@@ -58,14 +58,19 @@ describe('durable Base child reporter protocol', () => {
       status: 201,
       json: async () => ({
         acknowledged: true, schemaVersion: 1, idempotencyKey: batch.idempotencyKey,
-        requestDigest, identities: [recoveryIdentity], written: 1, duplicates: 0,
+        requestDigest,
+        children: [{ identity: recoveryIdentity, recoveryVersion: 7 }],
+        written: 1, duplicates: 0,
       }),
     }));
     const reporter = createAgentIndexReporter({
       endpoint: 'https://index.example/api/agent-index', secret: SECRET, fetchImpl,
     });
 
-    await expect(reporter.commitIntentBatch(batch)).resolves.toMatchObject({ requestDigest });
+    await expect(reporter.commitIntentBatch(batch)).resolves.toMatchObject({
+      requestDigest,
+      children: [{ identity: recoveryIdentity, recoveryVersion: 7 }],
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl.mock.calls[0][0]).toBe(
       'https://index.example/api/agent-index?action=base-child-intent-batch'
@@ -88,11 +93,15 @@ describe('durable Base child reporter protocol', () => {
         observedAt: 2_000_000_000_000,
       },
     };
+    const evidenceDigest = createHash('sha256')
+      .update(canonicalJson(evidence.event.evidence)).digest('hex');
+    const reportDigest = createHash('sha256').update(canonicalJson(evidence)).digest('hex');
     const success = vi.fn(async () => ({
       ok: true, status: 201,
       json: async () => ({
         acknowledged: true, schemaVersion: 1, identity: recoveryIdentity, eventId: evidence.event.eventId,
         phase: 'base_deposit', state: 'submitting', recoveryVersion: 1,
+        evidenceDigest, reportDigest,
         written: 1, duplicates: 0,
       }),
     }));
@@ -114,6 +123,87 @@ describe('durable Base child reporter protocol', () => {
       fetchImpl: vi.fn(async () => ({ ok: false, status: 503 })),
     });
     await expect(unavailable.reportBaseEvidence(evidence)).rejects.toBeInstanceOf(AgentIndexReporterRetryableError);
+  });
+
+  it.each([
+    ['batch recovery version', (ack) => { delete ack.children[0].recoveryVersion; }],
+    ['batch extra field', (ack) => { ack.internal = true; }],
+  ])('rejects a non-exact %s acknowledgement', async (_label, mutate) => {
+    const batch = { idempotencyKey: 'burn-intent-42', burnUnits7: '10000000', children: [child] };
+    const acknowledgement = {
+      acknowledged: true, schemaVersion: 1, idempotencyKey: batch.idempotencyKey,
+      requestDigest: createHash('sha256').update(canonicalJson(batch)).digest('hex'),
+      children: [{ identity: recoveryIdentity, recoveryVersion: 0 }],
+      written: 1, duplicates: 0,
+    };
+    mutate(acknowledgement);
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET,
+      fetchImpl: vi.fn(async () => ({ ok: true, status: 201, json: async () => acknowledgement })),
+    });
+    await expect(reporter.commitIntentBatch(batch)).rejects.toThrow(/acknowledgement/i);
+  });
+
+  it.each([
+    ['missing report digest', (ack) => { delete ack.reportDigest; }],
+    ['changed evidence digest', (ack) => { ack.evidenceDigest = 'f'.repeat(64); }],
+    ['extra field', (ack) => { ack.internal = true; }],
+  ])('rejects an evidence 201 with %s', async (_label, mutate) => {
+    const request = {
+      schemaVersion: 1, identity: recoveryIdentity, expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'b'.repeat(64), phase: 'base_deposit', state: 'submitting',
+        evidence: {
+          chainId: '84532', yieldRouterAddress: `0x${'11'.repeat(20)}`,
+          caller: `0x${'22'.repeat(20)}`, poolAddress: `0x${'33'.repeat(20)}`,
+          assets: '1000000', minShares: '900000',
+        }, observedAt: 2_000_000_000_000,
+      },
+    };
+    const acknowledgement = {
+      acknowledged: true, schemaVersion: 1, identity: recoveryIdentity,
+      eventId: request.event.eventId, phase: request.event.phase, state: request.event.state,
+      recoveryVersion: 1,
+      evidenceDigest: createHash('sha256').update(canonicalJson(request.event.evidence)).digest('hex'),
+      reportDigest: createHash('sha256').update(canonicalJson(request)).digest('hex'),
+      written: 1, duplicates: 0,
+    };
+    mutate(acknowledgement);
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET,
+      fetchImpl: vi.fn(async () => ({ ok: true, status: 201, json: async () => acknowledgement })),
+    });
+    await expect(reporter.reportBaseEvidence(request)).rejects.toThrow(/acknowledgement/i);
+  });
+
+  it.each([
+    ['missing mandatory caller', (request) => { delete request.event.evidence.caller; }],
+    ['noncanonical router address', (request) => {
+      request.event.evidence.yieldRouterAddress = `0x${'AA'.repeat(20)}`;
+    }],
+    ['wrong phase/state schema', (request) => { request.event.phase = 'cctp_mint'; }],
+    ['field from another state', (request) => {
+      request.event.evidence.transactionHash = `0x${'44'.repeat(32)}`;
+    }],
+  ])('rejects closed phase/state evidence with %s before fetch', async (_label, mutate) => {
+    const request = {
+      schemaVersion: 1, identity: recoveryIdentity, expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'c'.repeat(64), phase: 'base_deposit', state: 'submitting',
+        evidence: {
+          chainId: '84532', yieldRouterAddress: `0x${'11'.repeat(20)}`,
+          caller: `0x${'22'.repeat(20)}`, poolAddress: `0x${'33'.repeat(20)}`,
+          assets: '1000000', minShares: '900000',
+        }, observedAt: 2_000_000_000_000,
+      },
+    };
+    mutate(request);
+    const fetchImpl = vi.fn();
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET, fetchImpl,
+    });
+    await expect(reporter.reportBaseEvidence(request)).rejects.toThrow(/evidence|address|field/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   // Defect caught: the old reporter treated every response as optional analytics instead of a custody gate.

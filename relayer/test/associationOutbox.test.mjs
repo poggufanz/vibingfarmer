@@ -14,6 +14,9 @@ const identity = {
   allocationId: 'run-42:bridge:aave-v3',
   childId: 'job-42',
 };
+const recoveryIdentity = Object.fromEntries(
+  Object.entries(identity).filter(([field]) => field !== 'owner'),
+);
 const lifecycle = (sequence, executionStatus = 'accepted') => ({
   identity,
   expectedSequence: sequence - 1,
@@ -91,7 +94,7 @@ describe('SQLite association lifecycle outbox', () => {
       id: second.id, leaseToken: second.leaseToken, error: 'HTTP 503', now: 1003, retryAt: 1004,
     })).toMatchObject({ status: 'dead', attempts: 2 });
     expect(associationOutbox.leaseNext({ now: 9999, leaseMs: 100 })).toBeNull();
-    expect(associationOutbox.status(identity)).toEqual([
+    expect(associationOutbox.status(recoveryIdentity)).toEqual([
       { allocationId: identity.allocationId, executionId: identity.executionId, sequence: 1, status: 'dead', attempts: 2 },
     ]);
   });
@@ -111,7 +114,7 @@ describe('SQLite association lifecycle outbox', () => {
     expect(associationOutbox.leaseNext({ now: 1002, leaseMs: 10 })).toMatchObject({ attempts: 2 });
 
     expect(associationOutbox.leaseNext({ now: 1012, leaseMs: 10 })).toBeNull();
-    expect(associationOutbox.status(identity)).toEqual([{
+    expect(associationOutbox.status(recoveryIdentity)).toEqual([{
       allocationId: identity.allocationId,
       executionId: identity.executionId,
       sequence: 1,
@@ -130,7 +133,7 @@ describe('SQLite association lifecycle outbox', () => {
       intervalMs: 60_000,
       now: () => 1000,
     });
-    await vi.waitFor(() => expect(associationOutbox.status(identity)).toEqual([
+    await vi.waitFor(() => expect(associationOutbox.status(recoveryIdentity)).toEqual([
       { allocationId: identity.allocationId, executionId: identity.executionId, sequence: 1, status: 'pending', attempts: 1 },
     ]));
     worker.stop();
@@ -173,5 +176,28 @@ describe('SQLite association lifecycle outbox', () => {
       .toThrow(/lease/i);
     expect(associationOutbox.markDelivered({ id: lease.id, leaseToken: lease.leaseToken, now: 1001 }))
       .toMatchObject({ status: 'delivered', attempts: 1 });
+  });
+
+  it('keys lifecycle ordering by exactly five recovery fields while owner remains immutable payload', () => {
+    const { associationOutbox } = createSqliteStores(freshPath());
+    associationOutbox.enqueue(lifecycle(1));
+    expect(() => associationOutbox.enqueue({
+      ...lifecycle(1),
+      identity: { ...identity, owner: `G${'B'.repeat(55)}` },
+    })).toThrow(/conflict|immutable/i);
+    expect(associationOutbox.status(recoveryIdentity)).toHaveLength(1);
+    expect(() => associationOutbox.status(identity)).toThrow(/identity|field/i);
+  });
+
+  it('reopens an owner-bearing legacy identity key under the exact five-field lookup', () => {
+    const path = freshPath();
+    const first = createSqliteStores(path);
+    first.associationOutbox.enqueue(lifecycle(1));
+    first.db.prepare('UPDATE association_outbox SET identity_key=?').run(JSON.stringify(identity));
+    first.db.close();
+
+    const second = createSqliteStores(path);
+    expect(second.associationOutbox.status(recoveryIdentity)).toHaveLength(1);
+    second.db.close();
   });
 });
