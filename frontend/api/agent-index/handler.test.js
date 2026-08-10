@@ -1982,12 +1982,14 @@ describe('handleAssociationReport — server-only authentication', () => {
     const pool = BASE_POOL_CATALOG[0]
     const report = {
       ...association,
-      allocations: [{
-        ...association.allocations[0],
-        poolAddress: pool.address,
-        proxyTarget: pool.proxyTarget,
-        custody: { location: 'unknown' },
-      }],
+      allocations: [
+        {
+          ...association.allocations[0],
+          poolAddress: pool.address,
+          proxyTarget: pool.proxyTarget,
+          custody: { location: 'unknown' },
+        },
+      ],
     }
     const existing = {
       ownerAddress: report.owner,

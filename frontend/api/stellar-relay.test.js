@@ -430,7 +430,7 @@ describe('feeBumpAndSubmit', () => {
           error: poison,
           details: poison,
         },
-      }),
+      })
     )
 
     expect(JSON.stringify(response)).not.toContain(poison)
@@ -444,7 +444,11 @@ describe('feeBumpAndSubmit', () => {
   })
 
   it('does not classify a noncanonical provider hash as terminal success', () => {
-    for (const hash of ['T16_PROVIDER_SECRET_HASH_BODY', `0x${OUTER_HASH}`, OUTER_HASH.toUpperCase()]) {
+    for (const hash of [
+      'T16_PROVIDER_SECRET_HASH_BODY',
+      `0x${OUTER_HASH}`,
+      OUTER_HASH.toUpperCase(),
+    ]) {
       const response = relayApi.relayResultHttpResponse({ hash, status: 'SUCCESS' })
       expect(response.status).toBe(502)
       expect(JSON.stringify(response)).not.toContain(hash)

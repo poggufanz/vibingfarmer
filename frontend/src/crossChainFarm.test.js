@@ -27,12 +27,24 @@ const AAVE_POOL = BASE_POOL_CATALOG.find((p) => p.proxyTarget === 'aave-v3').add
 function makeStorage({ write } = {}) {
   const values = new Map()
   return {
-    get length() { return values.size },
-    key(index) { return [...values.keys()][index] ?? null },
-    getItem(key) { return values.get(key) ?? null },
-    setItem(key, value) { write ? write(values, key, value) : values.set(key, value) },
-    removeItem(key) { values.delete(key) },
-    dump() { return [...values.entries()] },
+    get length() {
+      return values.size
+    },
+    key(index) {
+      return [...values.keys()][index] ?? null
+    },
+    getItem(key) {
+      return values.get(key) ?? null
+    },
+    setItem(key, value) {
+      write ? write(values, key, value) : values.set(key, value)
+    },
+    removeItem(key) {
+      values.delete(key)
+    },
+    dump() {
+      return [...values.entries()]
+    },
   }
 }
 
@@ -72,7 +84,9 @@ function status({ status = 'done', jobId = JOB_ID, mandateId = MANDATE_ID, alloc
           evidenceDelivery: { complete: true, blocked: false },
           allocations: allocations ?? [completeChild()],
         }
-      : allocations === undefined ? {} : { allocations }),
+      : allocations === undefined
+        ? {}
+        : { allocations }),
   }
 }
 
@@ -84,7 +98,11 @@ function farmParams(overrides = {}) {
     requestId: REQUEST_ID,
     burn: vi.fn(async () => ({ approveHash: 'a', burnHash: BURN_TX_HASH })),
     postFarm: vi.fn(async () => ({ jobId: JOB_ID, acknowledged: true, schemaVersion: 1 })),
-    postFarmAttach: vi.fn(async () => ({ jobId: JOB_ID, attached: true, burnTxHash: BURN_TX_HASH })),
+    postFarmAttach: vi.fn(async () => ({
+      jobId: JOB_ID,
+      attached: true,
+      burnTxHash: BURN_TX_HASH,
+    })),
     pollFarmStatus: vi.fn(async () => status()),
     ...depOverrides,
   }
@@ -158,9 +176,17 @@ describe('runFarmFlow browser journal boundaries', () => {
     const result = await runFarmFlow(params)
 
     expect(trace).toEqual([
-      'journal:intent_creating', 'intent', 'journal:intent_acked',
-      'journal:burn_submitting', 'burn', 'journal:burn_confirmed',
-      'journal:attach_pending', 'attach', 'journal:settling', 'poll', 'journal:done',
+      'journal:intent_creating',
+      'intent',
+      'journal:intent_acked',
+      'journal:burn_submitting',
+      'burn',
+      'journal:burn_confirmed',
+      'journal:attach_pending',
+      'attach',
+      'journal:settling',
+      'poll',
+      'journal:done',
     ])
     expect(params.deps.burn).toHaveBeenCalledTimes(1)
     expect(result).toEqual({
@@ -191,7 +217,11 @@ describe('runFarmFlow browser journal boundaries', () => {
   })
 
   test('does not post an intent when the initial durable journal write fails', async () => {
-    const local = makeStorage({ write() { throw new Error('quota') } })
+    const local = makeStorage({
+      write() {
+        throw new Error('quota')
+      },
+    })
     const params = farmParams({ local })
     await expect(runFarmFlow(params)).rejects.toMatchObject({ code: 'journal_unavailable' })
     expect(params.deps.postFarm).not.toHaveBeenCalled()
@@ -227,22 +257,30 @@ describe('runFarmFlow browser journal boundaries', () => {
     await expect(runFarmFlow(params)).rejects.toMatchObject({ code: 'journal_unavailable' })
     expect(params.deps.burn).toHaveBeenCalledTimes(1)
     expect(params.deps.postFarmAttach).not.toHaveBeenCalled()
-    expect(events).toContainEqual(expect.objectContaining({
-      name: 'farm-failed', data: expect.objectContaining({ stage: 'attach', jobId: JOB_ID, burnHash: BURN_TX_HASH }),
-    }))
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        name: 'farm-failed',
+        data: expect.objectContaining({ stage: 'attach', jobId: JOB_ID, burnHash: BURN_TX_HASH }),
+      })
+    )
   })
 
   test('keeps a response-loss attach journal row with the exact job and burn, without a second burn', async () => {
     const local = makeStorage()
     const params = farmParams({
       local,
-      deps: { postFarmAttach: vi.fn(async () => { throw new Error('response lost') }) },
+      deps: {
+        postFarmAttach: vi.fn(async () => {
+          throw new Error('response lost')
+        }),
+      },
     })
     await expect(runFarmFlow(params)).rejects.toThrow('response lost')
     expect(params.deps.burn).toHaveBeenCalledTimes(1)
     expect(params.deps.postFarmAttach).toHaveBeenCalledTimes(1)
     expect(record(local)).toMatchObject({
-      state: 'attach_pending', transfer: { jobId: JOB_ID, burnTxHash: BURN_TX_HASH },
+      state: 'attach_pending',
+      transfer: { jobId: JOB_ID, burnTxHash: BURN_TX_HASH },
     })
   })
 
@@ -254,24 +292,44 @@ describe('runFarmFlow browser journal boundaries', () => {
     const local = makeStorage()
     const params = farmParams({ local, deps: { pollFarmStatus: vi.fn(async () => response) } })
     await expect(runFarmFlow(params)).rejects.toThrow(error)
-    expect(record(local)).toMatchObject({ state: 'settling', transfer: { jobId: JOB_ID, burnTxHash: BURN_TX_HASH } })
+    expect(record(local)).toMatchObject({
+      state: 'settling',
+      transfer: { jobId: JOB_ID, burnTxHash: BURN_TX_HASH },
+    })
   })
 
   test('rejects a done status whose complete-looking child evidence belongs to a different reviewed allocation', async () => {
     const local = makeStorage()
     const forgedChild = { ...completeChild(), allocationId: `${RUN_ID}:bridge:moonwell` }
-    const params = farmParams({ local, deps: { pollFarmStatus: vi.fn(async () => status({ allocations: [forgedChild] })) } })
+    const params = farmParams({
+      local,
+      deps: { pollFarmStatus: vi.fn(async () => status({ allocations: [forgedChild] })) },
+    })
     await expect(runFarmFlow(params)).rejects.toThrow(/allocation evidence|identity/i)
-    expect(record(local)).toMatchObject({ state: 'settling', transfer: { jobId: JOB_ID, burnTxHash: BURN_TX_HASH } })
+    expect(record(local)).toMatchObject({
+      state: 'settling',
+      transfer: { jobId: JOB_ID, burnTxHash: BURN_TX_HASH },
+    })
   })
 
-  test.each(['error', 'uncertain', 'blocked'])('preserves strict public terminal %s status without inventing allocation evidence', async (terminal) => {
-    const local = makeStorage()
-    const params = farmParams({ local, deps: { pollFarmStatus: vi.fn(async () => status({ status: terminal })) } })
-    const result = await runFarmFlow(params)
-    expect(result).toEqual({ burnHash: BURN_TX_HASH, jobId: JOB_ID, finalStatus: terminal, status: terminal })
-    expect(record(local)).toMatchObject({ state: terminal, terminalFrom: 'settling' })
-  })
+  test.each(['error', 'uncertain', 'blocked'])(
+    'preserves strict public terminal %s status without inventing allocation evidence',
+    async (terminal) => {
+      const local = makeStorage()
+      const params = farmParams({
+        local,
+        deps: { pollFarmStatus: vi.fn(async () => status({ status: terminal })) },
+      })
+      const result = await runFarmFlow(params)
+      expect(result).toEqual({
+        burnHash: BURN_TX_HASH,
+        jobId: JOB_ID,
+        finalStatus: terminal,
+        status: terminal,
+      })
+      expect(record(local)).toMatchObject({ state: terminal, terminalFrom: 'settling' })
+    }
+  )
 })
 
 describe('runFarmFlow protected wire POST migration', () => {
@@ -279,16 +337,18 @@ describe('runFarmFlow protected wire POST migration', () => {
     const local = makeStorage()
     const params = farmParams({ local })
     await runFarmFlow(params)
-    expect(params.deps.postFarm).toHaveBeenCalledWith(expect.objectContaining({
-      requestId: REQUEST_ID,
-      sourceDomain: 27,
-      mandateId: MANDATE_ID,
-      stellarOwner: OWNER,
-      kernelAddress: KERNEL,
-      bridgeAgent: BRIDGE_AGENT,
-      runId: RUN_ID,
-      grantTxHash: GRANT_TX_HASH,
-    }))
+    expect(params.deps.postFarm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: REQUEST_ID,
+        sourceDomain: 27,
+        mandateId: MANDATE_ID,
+        stellarOwner: OWNER,
+        kernelAddress: KERNEL,
+        bridgeAgent: BRIDGE_AGENT,
+        runId: RUN_ID,
+        grantTxHash: GRANT_TX_HASH,
+      })
+    )
   })
 
   test.each([
@@ -324,25 +384,62 @@ describe('runFarmFlow pre-validation guards', () => {
 
   test('rejects a non-six-decimal Stellar burn before Storage, intent, or burn', async () => {
     const local = makeStorage()
-    const params = farmParams({ local, burnUnits7: 1_234_567n, allocations: [allocation({ amountBaseUnits: 123_456n })] })
+    const params = farmParams({
+      local,
+      burnUnits7: 1_234_567n,
+      allocations: [allocation({ amountBaseUnits: 123_456n })],
+    })
     await expect(runFarmFlow(params)).rejects.toThrow(/burnUnits7.*divisible by 10/i)
     assertNoBoundaryEffects(local, params.deps)
   })
 
   test.each([
     ['an empty allocation list', [], 10n, /non-empty/i],
-    ['an allocation without exact bigint units', [allocation({ amountBaseUnits: 1 })], 10n, /positive bigint/i],
-    ['a non-positive exact allocation', [allocation({ amountBaseUnits: 0n })], 10n, /positive bigint/i],
-    ['an exact allocation total that differs from the CCTP mint', [allocation({ amountBaseUnits: 2n })], 10n, /sum.*expected 1/i],
-    ['a missing canonical allocation ID', [allocation({ allocationId: undefined })], 10_000_000n, /allocationId/i],
-    ['a foreign allocation ID', [allocation({ allocationId: 'other:bridge:aave-v3' })], 10_000_000n, /allocationId|canonical/i],
-    ['a duplicate canonical allocation ID', [allocation({ amountBaseUnits: 500_000n }), allocation({ amountBaseUnits: 500_000n })], 10_000_000n, /duplicate|allocationId/i],
-  ])('rejects %s before Storage, intent, or burn', async (_label, allocations, burnUnits7, error) => {
-    const local = makeStorage()
-    const params = farmParams({ local, allocations, burnUnits7 })
-    await expect(runFarmFlow(params)).rejects.toThrow(error)
-    assertNoBoundaryEffects(local, params.deps)
-  })
+    [
+      'an allocation without exact bigint units',
+      [allocation({ amountBaseUnits: 1 })],
+      10n,
+      /positive bigint/i,
+    ],
+    [
+      'a non-positive exact allocation',
+      [allocation({ amountBaseUnits: 0n })],
+      10n,
+      /positive bigint/i,
+    ],
+    [
+      'an exact allocation total that differs from the CCTP mint',
+      [allocation({ amountBaseUnits: 2n })],
+      10n,
+      /sum.*expected 1/i,
+    ],
+    [
+      'a missing canonical allocation ID',
+      [allocation({ allocationId: undefined })],
+      10_000_000n,
+      /allocationId/i,
+    ],
+    [
+      'a foreign allocation ID',
+      [allocation({ allocationId: 'other:bridge:aave-v3' })],
+      10_000_000n,
+      /allocationId|canonical/i,
+    ],
+    [
+      'a duplicate canonical allocation ID',
+      [allocation({ amountBaseUnits: 500_000n }), allocation({ amountBaseUnits: 500_000n })],
+      10_000_000n,
+      /duplicate|allocationId/i,
+    ],
+  ])(
+    'rejects %s before Storage, intent, or burn',
+    async (_label, allocations, burnUnits7, error) => {
+      const local = makeStorage()
+      const params = farmParams({ local, allocations, burnUnits7 })
+      await expect(runFarmFlow(params)).rejects.toThrow(error)
+      assertNoBoundaryEffects(local, params.deps)
+    }
+  )
 
   test('rejects an invalid request identity before it writes a journal row or crosses the wire', async () => {
     const local = makeStorage()

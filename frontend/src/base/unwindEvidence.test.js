@@ -29,17 +29,44 @@ describe('reconcileUnwindUserOperation', () => {
   it.each([
     ['pending', { status: 'pending' }, { status: 'pending', evidenceStatus: 'needs_reconcile' }],
     ['reverted', { status: 'reverted' }, { status: 'reverted' }],
-  ])('returns the strict %s receipt result without an attach-ready hash', async (_name, receipt, expected) => {
-    const readReceipt = vi.fn(async () => receipt)
+  ])(
+    'returns the strict %s receipt result without an attach-ready hash',
+    async (_name, receipt, expected) => {
+      const readReceipt = vi.fn(async () => receipt)
 
-    await expect(reconcile(readReceipt)).resolves.toEqual(expected)
-    expect(readReceipt).toHaveBeenCalledWith({ userOpHash: USER_OP_HASH })
-  })
+      await expect(reconcile(readReceipt)).resolves.toEqual(expected)
+      expect(readReceipt).toHaveBeenCalledWith({ userOpHash: USER_OP_HASH })
+    }
+  )
 
   it.each([
-    ['changed UserOperation', { userOpHash: `0x${'79'.repeat(32)}`, kernelAddress: KERNEL, unwindTxHash: UNWIND_TX_HASH, evidenceStatus: 'verified' }],
-    ['changed Kernel', { userOpHash: USER_OP_HASH, kernelAddress: `0x${'90'.repeat(20)}`, unwindTxHash: UNWIND_TX_HASH, evidenceStatus: 'verified' }],
-    ['missing verified evidence', { userOpHash: USER_OP_HASH, kernelAddress: KERNEL, unwindTxHash: UNWIND_TX_HASH, evidenceStatus: 'needs_reconcile' }],
+    [
+      'changed UserOperation',
+      {
+        userOpHash: `0x${'79'.repeat(32)}`,
+        kernelAddress: KERNEL,
+        unwindTxHash: UNWIND_TX_HASH,
+        evidenceStatus: 'verified',
+      },
+    ],
+    [
+      'changed Kernel',
+      {
+        userOpHash: USER_OP_HASH,
+        kernelAddress: `0x${'90'.repeat(20)}`,
+        unwindTxHash: UNWIND_TX_HASH,
+        evidenceStatus: 'verified',
+      },
+    ],
+    [
+      'missing verified evidence',
+      {
+        userOpHash: USER_OP_HASH,
+        kernelAddress: KERNEL,
+        unwindTxHash: UNWIND_TX_HASH,
+        evidenceStatus: 'needs_reconcile',
+      },
+    ],
   ])('rejects a %s receipt as a non-attachable mismatch', async (_name, receipt) => {
     await expect(reconcile(async () => receipt)).resolves.toEqual({ status: 'mismatch' })
   })
@@ -153,10 +180,16 @@ describe('readKnownUnwindUserOperation', () => {
   })
 
   it.each([
-    ['wrong UserOperation', knownReceipt({ userOpHash: `0x${'79'.repeat(32)}`, logs: [sweptLog()] })],
+    [
+      'wrong UserOperation',
+      knownReceipt({ userOpHash: `0x${'79'.repeat(32)}`, logs: [sweptLog()] }),
+    ],
     ['wrong sender', knownReceipt({ sender: `0x${'90'.repeat(20)}`, logs: [sweptLog()] })],
     ['nested-only Swept', knownReceipt({ nestedLogs: [sweptLog()] })],
-    ['wrong Swept address', knownReceipt({ logs: [sweptLog({ address: `0x${'91'.repeat(20)}` })] })],
+    [
+      'wrong Swept address',
+      knownReceipt({ logs: [sweptLog({ address: `0x${'91'.repeat(20)}` })] }),
+    ],
     ['wrong Swept topic', knownReceipt({ logs: [sweptLog({ topic: `0x${'01'.repeat(32)}` })] })],
     ['duplicate Swept', knownReceipt({ logs: [sweptLog(), sweptLog()] })],
     ['malformed Swept decode', knownReceipt({ logs: [sweptLog({ data: '0x01' })] })],

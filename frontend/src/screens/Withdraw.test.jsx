@@ -318,15 +318,17 @@ describe('Withdraw (Base full exit)', () => {
     const nativeSetItem = Storage.prototype.setItem
     const checkpointFailure = new DOMException('quota exhausted', 'QuotaExceededError')
     const submitted = []
-    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
-      if (
-        String(key).startsWith('vf.cctpTransfer.v1:') &&
-        String(value).includes('"state":"userop_submitted"')
-      ) {
-        throw checkpointFailure
-      }
-      return nativeSetItem.call(this, key, value)
-    })
+    const setItem = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(function (key, value) {
+        if (
+          String(key).startsWith('vf.cctpTransfer.v1:') &&
+          String(value).includes('"state":"userop_submitted"')
+        ) {
+          throw checkpointFailure
+        }
+        return nativeSetItem.call(this, key, value)
+      })
     signAndSubmitUnwind.mockImplementation(async ({ onSubmitted }) => {
       try {
         await onSubmitted(USER_OP_HASH)
@@ -347,7 +349,10 @@ describe('Withdraw (Base full exit)', () => {
       await waitFor(() => expect(screen.getByTestId('base-withdraw-reconcile')).toBeTruthy())
 
       expect(submitted).toEqual([
-        expect.objectContaining({ code: 'submitted-but-checkpoint-failed', userOpHash: USER_OP_HASH }),
+        expect.objectContaining({
+          code: 'submitted-but-checkpoint-failed',
+          userOpHash: USER_OP_HASH,
+        }),
       ])
       const journalKey = Object.keys(window.localStorage).find((key) =>
         key.startsWith('vf.cctpTransfer.v1:')

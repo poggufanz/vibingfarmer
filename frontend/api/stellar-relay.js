@@ -56,8 +56,7 @@ export class RelaySubmissionUnknownError extends RelayError {
 }
 
 const RELAY_RESULT_STATUSES = new Set(['SUCCESS', 'FAILED', 'PENDING', 'NOT_FOUND', 'ERROR'])
-const isCanonicalRelayHash = (value) =>
-  typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
+const isCanonicalRelayHash = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
 
 function safeRelayResult(result) {
   if (!result || typeof result !== 'object') return {}
