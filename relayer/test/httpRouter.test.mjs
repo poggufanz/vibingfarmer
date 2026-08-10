@@ -72,6 +72,13 @@ const UNWIND_PUBLIC_CLIENT = Object.freeze({
 });
 
 describe('Task 14 Base recovery HTTP boundary', () => {
+  const BASE_RECOVERY_ACTIONS = [
+    'poll-attestation',
+    'submit-mint',
+    'poll-mint',
+    'submit-base-deposit',
+    'poll-base-deposit',
+  ];
   const RECOVERY_IDENTITY = Object.freeze({
     networkId: 'stellar-testnet',
     bindingId: '0123456789abcdef0123456789abcdef',
@@ -327,19 +334,44 @@ describe('Task 14 Base recovery HTTP boundary', () => {
     expect(reporter.readBaseRecoveryClaim).not.toHaveBeenCalled();
   });
 
-  it.each([false, 'false', {}])(
-    'does not schedule send-capable recovery when Base availability is not exactly true: %p',
-    async (baseAvailable) => {
+  it.each(BASE_RECOVERY_ACTIONS)(
+    'rejects every recovery action before claim/work execution when Base is closed: %s',
+    async (action) => {
       const reporter = { readBaseRecoveryClaim: vi.fn() };
       const works = { enqueue: vi.fn() };
-      const { router } = harness({ reporter, works, baseAvailable });
+      const executor = { run: vi.fn() };
+      const { router } = harness({ reporter, works, executor, baseAvailable: false });
       const response = mockRes();
-      await router(requestFor(), response);
+      await router(requestFor({ action }), response);
       expect(response.statusCode).toBe(503);
+      expect(jsonOf(response)).toEqual({ error: 'Base cross-chain execution is unavailable' });
       expect(reporter.readBaseRecoveryClaim).not.toHaveBeenCalled();
       expect(works.enqueue).not.toHaveBeenCalled();
+      expect(executor.run).not.toHaveBeenCalled();
     },
   );
+
+  it('authenticates before the closed-Base recovery gate', async () => {
+    const reporter = { readBaseRecoveryClaim: vi.fn() };
+    const works = { enqueue: vi.fn() };
+    const executor = { run: vi.fn() };
+    const { router } = harness({
+      reporter,
+      works,
+      executor,
+      baseAvailable: false,
+      authority: { ...RECOVERY_AUTHORITY, capabilityHash: '00'.repeat(32) },
+    });
+    const response = mockRes();
+
+    await router(requestFor({ action: 'poll-mint' }), response);
+
+    expect(response.statusCode).toBe(401);
+    expect(jsonOf(response)).toEqual({ error: 'unauthorized' });
+    expect(reporter.readBaseRecoveryClaim).not.toHaveBeenCalled();
+    expect(works.enqueue).not.toHaveBeenCalled();
+    expect(executor.run).not.toHaveBeenCalled();
+  });
 
   it('re-fetches the exact claim, durably enqueues before 202, and supports revoked post-burn CCTP work', async () => {
     const { router, calls } = harness();

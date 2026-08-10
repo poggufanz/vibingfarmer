@@ -623,7 +623,7 @@ export function createConcreteBaseRecoveryOperations({
   override = {},
 }) {
   const now = () => Date.now();
-  const baseExecutionAvailable = config?.base?.baseCrossChainAvailable === true;
+  const baseExecutionAvailable = config?.base?.baseCrossChainAvailable !== false;
   const baseExecutionUnavailable = async () => recoveryOperationResult('held', 'base-execution-unavailable');
 
   async function withCctpLease(context, action) {
@@ -1331,14 +1331,20 @@ export function createConcreteBaseRecoveryOperations({
   }
 
   return {
-    pollAttestation: override.pollAttestation ?? pollAttestationOperation,
+    pollAttestation: baseExecutionAvailable
+      ? (override.pollAttestation ?? pollAttestationOperation)
+      : baseExecutionUnavailable,
     submitMint: baseExecutionAvailable ? (override.submitMint ?? submitMintOperation) : baseExecutionUnavailable,
-    pollMint: override.pollMint ?? pollMintOperation,
+    pollMint: baseExecutionAvailable
+      ? (override.pollMint ?? pollMintOperation)
+      : baseExecutionUnavailable,
     submitBaseDeposit: baseExecutionAvailable
       ? (override.submitBaseDeposit ?? submitBaseDepositOperation)
       : baseExecutionUnavailable,
     projectBaseDepositOwnerAction,
-    pollBaseDeposit: override.pollBaseDeposit ?? pollBaseDepositOperation,
+    pollBaseDeposit: baseExecutionAvailable
+      ? (override.pollBaseDeposit ?? pollBaseDepositOperation)
+      : baseExecutionUnavailable,
   };
 }
 
@@ -1507,6 +1513,7 @@ export function createRelayerServer(
       })
     : baseRecoveryOperations;
   const baseRecoveryExecutor =
+    baseCrossChainAvailable &&
     baseRecoveryWorks && agentIndexReporter?.readBaseRecoveryClaim && agentIndexReporter?.renewBaseRecoveryClaim
       ? createBaseRecoveryExecutor({
           workStore: baseRecoveryWorks,

@@ -325,7 +325,6 @@ export function createRelayerRouter({
   const baseUnavailable = (res) => sendJson(
     res, 503, { error: 'Base cross-chain execution is unavailable' },
   );
-  const BASE_SEND_RECOVERY_ACTIONS = new Set(['submit-mint', 'submit-base-deposit']);
   const unwindAttachStackReady = () => UNWIND_STORE_METHODS.every(
     (method) => typeof unwindJobs?.[method] === 'function',
   )
@@ -1829,6 +1828,7 @@ export function createRelayerRouter({
       { activeOnly: false },
     );
     if (!authenticated) return unauthorized(res);
+    if (!baseExecutionAvailable) return baseUnavailable(res);
     let request;
     try {
       request = validateBaseRecoveryRequest(body);
@@ -1837,9 +1837,6 @@ export function createRelayerRouter({
     }
     if (request.identity.networkId !== networkId) {
       return sendJson(res, 400, { error: 'invalid Base recovery request' });
-    }
-    if (BASE_SEND_RECOVERY_ACTIONS.has(request.action) && !baseExecutionAvailable) {
-      return baseUnavailable(res);
     }
     if (!baseRecoveryWorks || typeof baseRecoveryWorks.enqueue !== 'function'
         || !agentIndexReporter?.readBaseRecoveryClaim) {

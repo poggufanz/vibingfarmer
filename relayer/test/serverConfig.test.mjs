@@ -1358,7 +1358,7 @@ describe('runtimeServerConfig', () => {
 
   it('does not compose the periodic Base recovery worker while Base execution is closed', async () => {
     const recoveryWorkers = [];
-    const { relayer, httpServer } = productionListenHarness({
+    const { relayer, state, httpServer } = productionListenHarness({
       baseCrossChainAvailable: false,
       includeRecovery: true,
       startBaseRecoveryWorkerFn: (options) => {
@@ -1379,6 +1379,7 @@ describe('runtimeServerConfig', () => {
 
     await expect(relayer.listen(8788)).resolves.toBe(httpServer);
     expect(recoveryWorkers).toHaveLength(0);
+    expect(state.routerDeps.baseRecoveryExecutor).toBeNull();
   });
 
   it('keeps the actual production listener closed when active Base durability is absent', async () => {
@@ -1866,24 +1867,29 @@ describe('Task 14 bounded Base recovery startup composition', () => {
     );
   });
 
-  it('default-denies send-capable concrete recovery seams when Base availability is closed', async () => {
-    const sendMint = vi.fn(async () => ({ state: 'done' }));
-    const sendDeposit = vi.fn(async () => ({ state: 'done' }));
-    const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: { base: { baseCrossChainAvailable: false } },
-      watcher: { submitMint: sendMint, submitBaseDeposit: sendDeposit },
-    });
-    await expect(operations.submitMint({})).resolves.toMatchObject({
-      state: 'held',
-      reasonCode: 'base-execution-unavailable',
-    });
-    await expect(operations.submitBaseDeposit({})).resolves.toMatchObject({
-      state: 'held',
-      reasonCode: 'base-execution-unavailable',
-    });
-    expect(sendMint).not.toHaveBeenCalled();
-    expect(sendDeposit).not.toHaveBeenCalled();
-  });
+  it.each([
+    ['pollAttestation', 'poll-attestation'],
+    ['submitMint', 'submit-mint'],
+    ['pollMint', 'poll-mint'],
+    ['submitBaseDeposit', 'submit-base-deposit'],
+    ['pollBaseDeposit', 'poll-base-deposit'],
+  ])(
+    'default-denies concrete %s recovery when Base availability is closed',
+    async (operationName, action) => {
+      const injected = vi.fn(async () => ({ state: 'done' }));
+      const operations = serverModule.createConcreteBaseRecoveryOperations({
+        config: { base: { baseCrossChainAvailable: false } },
+        watcher: { [operationName]: injected },
+        override: { [operationName]: injected },
+      });
+
+      await expect(operations[operationName]({ action })).resolves.toMatchObject({
+        state: 'held',
+        reasonCode: 'base-execution-unavailable',
+      });
+      expect(injected).not.toHaveBeenCalled();
+    },
+  );
 
   it('projects a revoked mandate after confirmed mint as public Kernel-custody owner action without inventing deposit hashes', async () => {
     const enqueue = vi.fn();
