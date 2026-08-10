@@ -327,7 +327,8 @@ function buildUnwindEvidenceFacts(config) {
 
 /** Shared-secret gate between the Cloudflare proxy and this relayer. Empty key = open only when
  * the caller has explicitly opted into non-production open mode in configuration. */
-export function withProxyKeyAuth(handler, key) {
+export function withProxyKeyAuth(handler, key, { compare = timingSafeEqual } = {}) {
+  if (typeof compare !== 'function') throw new Error('proxy-key comparison seam is invalid');
   const current = typeof key === 'string' ? key : key?.current ?? key?.proxyKey ?? '';
   const previous = typeof key === 'string' ? '' : key?.previous ?? key?.proxyKeyPrevious ?? '';
   const candidates = [current, previous].filter((candidate) => typeof candidate === 'string' && candidate);
@@ -344,9 +345,9 @@ export function withProxyKeyAuth(handler, key) {
         const expectedPadded = Buffer.alloc(width);
         actual.copy(actualPadded);
         expected.copy(expectedPadded);
-        const compared = timingSafeEqual(actualPadded, expectedPadded)
-          && actual.length === expected.length;
-        ok = ok || compared;
+        const compared = compare(actualPadded, expectedPadded);
+        const sameLength = actual.length === expected.length;
+        if (compared && sameLength) ok = true;
       }
       if (!ok) {
         const pathname = new URL(req.url, 'http://local').pathname;
@@ -1419,6 +1420,7 @@ export function createRelayerServer(
   // `cctpRelays`), never the generic relay_records KV.
   const sqlite = config.dbPath ? openSqlite(config.dbPath, { sessionKeyCipher }) : null;
   if (sqlite) config = { ...config, store: sqlite.cctpRelays };
+  try {
   let unwindPublicClient = null;
   let unwindBundlerClient = null;
   let unwindEvidenceFacts = null;
@@ -1674,7 +1676,7 @@ export function createRelayerServer(
               intervalMs: unwindRecoveryIntervalMs,
             })
         : null,
-      startBaseRecoveryWorker: sqlite?.baseRecoveryWorks
+      startBaseRecoveryWorker: sqlite?.baseRecoveryWorks && baseCrossChainAvailable
         ? () =>
             startBaseRecoveryWorkerFn({
               resumeBaseRecovery: (options) => router.resumeBaseRecoveryJobs(options),
@@ -1771,4 +1773,8 @@ export function createRelayerServer(
   };
 
   return { handler, listen, preflightDependencies, close };
+  } catch (error) {
+    try { sqlite?.db?.close?.(); } catch {}
+    throw error;
+  }
 }

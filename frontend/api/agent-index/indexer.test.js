@@ -589,7 +589,7 @@ describe('ingestAgentIndexPage — canonical router deployment order', () => {
       {
         status: 'error',
         indexedThroughLedger: start - 1,
-        lastErrorMessage: expect.stringMatching(/paging token/i),
+        lastErrorMessage: 'AGENT_INDEX_PAGING_TOKEN_INVALID',
       },
     ])
     expect(
@@ -760,7 +760,7 @@ describe('ingestAgentIndexPage — duplicate/replay safety', () => {
       status: 'error',
       indexedThroughLedger: start + 5,
       cursor: null,
-      lastErrorMessage: expect.stringMatching(/immutable agent membership identity conflict/i),
+      lastErrorMessage: 'AGENT_INDEX_MEMBERSHIP_CONFLICT',
     })
   })
 
@@ -822,11 +822,12 @@ describe('ingestAgentIndexPage — decode failure fails closed (Important 4)', (
   it('a matching-topic record that fails to decode aborts the whole page — never commits, marks the source error, next tick can retry', async () => {
     const store = freshStore()
     const start = ROUTER_V1.coverageStartLedger
+    const poison = 'T16_PROVIDER_SECRET_INDEXER_RPC_BODY'
     // topic matches 'deployed' but the value body is missing `cap` — schema drift.
     const bad = {
       ledger: start + 1,
       txHash: 'TX-BAD',
-      pagingToken: `${start + 1}-TX-BAD`,
+      pagingToken: poison,
       topic: [symbolScVal('deployed'), addrScVal(OWNER_A), addrScVal(AGENT_A)],
       value: nativeToScVal({}),
     }
@@ -844,7 +845,8 @@ describe('ingestAgentIndexPage — decode failure fails closed (Important 4)', (
     expect(sources).toHaveLength(1)
     expect(sources[0].status).toBe('error')
     expect(sources[0].indexedThroughLedger).toBe(start - 1) // cursor never advanced past the bad page
-    expect(sources[0].lastErrorMessage).toMatch(/schema drift|failed to decode/)
+    expect(sources[0].lastErrorMessage).toBe('AGENT_INDEX_EVENT_SCHEMA_INVALID')
+    expect(JSON.stringify(sources)).not.toContain(poison)
 
     // Next tick retries the exact same range — no membership was ever written.
     const owned = await store.readOwnerMemberships({
@@ -912,7 +914,7 @@ describe('ingestAgentIndexPage — immutable membership conflict diagnostics', (
       status: 'error',
       indexedThroughLedger: start - 1,
       cursor: null,
-      lastErrorMessage: expect.stringMatching(/immutable agent membership identity conflict/i),
+      lastErrorMessage: 'AGENT_INDEX_MEMBERSHIP_CONFLICT',
     })
   })
 
@@ -979,7 +981,7 @@ describe('ingestAgentIndexPage — immutable membership conflict diagnostics', (
       status: 'error',
       indexedThroughLedger: ledger,
       cursor: 'page-1',
-      lastErrorMessage: expect.stringMatching(/immutable agent membership identity conflict/i),
+      lastErrorMessage: 'AGENT_INDEX_MEMBERSHIP_CONFLICT',
     })
   })
 
@@ -1040,7 +1042,7 @@ describe('ingestAgentIndexPage — immutable membership conflict diagnostics', (
       status: 'error',
       indexedThroughLedger: start + 1,
       cursor: 'page-1',
-      lastErrorMessage: expect.stringMatching(/immutable agent membership identity conflict/i),
+      lastErrorMessage: 'AGENT_INDEX_MEMBERSHIP_CONFLICT',
     })
     expect(
       await store.readOwnerMemberships({

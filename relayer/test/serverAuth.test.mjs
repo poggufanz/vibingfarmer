@@ -48,4 +48,24 @@ describe('withProxyKeyAuth', () => {
     expect(badRes.statusCode).toBe(401);
     expect(handler).toHaveBeenCalledTimes(2);
   });
+
+  it('evaluates both current and previous candidates even after a match', async () => {
+    const current = 'a'.repeat(64);
+    const previous = 'b'.repeat(64);
+    let outcomes = [true, false];
+    const compare = vi.fn(() => outcomes.shift() ?? false);
+    const wrapped = withProxyKeyAuth(vi.fn(inner), { current, previous }, { compare });
+
+    const res = fakeRes();
+    await wrapped({ headers: { 'x-vf-relayer-key': current } }, res);
+    expect(compare).toHaveBeenCalledTimes(2);
+    expect(res.statusCode).toBe(200);
+
+    outcomes = [false, false];
+    compare.mockClear();
+    const mismatch = fakeRes();
+    await wrapped({ headers: { 'x-vf-relayer-key': 'c'.repeat(64) } }, mismatch);
+    expect(compare).toHaveBeenCalledTimes(2);
+    expect(mismatch.statusCode).toBe(401);
+  });
 });

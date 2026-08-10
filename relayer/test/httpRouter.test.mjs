@@ -423,6 +423,21 @@ describe('Task 14 Base recovery HTTP boundary', () => {
     expect(executor.run).toHaveBeenCalledTimes(2);
   });
 
+  it('does not list, claim, or run Base recovery when Base execution is closed', async () => {
+    const works = { listRecoverable: vi.fn(() => [{ workId: '11'.repeat(32) }]) };
+    const executor = { run: vi.fn() };
+    const { router } = harness({ works, executor, baseAvailable: false });
+
+    await expect(router.resumeBaseRecoveryJobs({ limit: 1 })).resolves.toEqual({
+      resumed: [],
+      held: [],
+      blocked: [],
+      uncertain: [],
+    });
+    expect(works.listRecoverable).not.toHaveBeenCalled();
+    expect(executor.run).not.toHaveBeenCalled();
+  });
+
   it.each([
     [AgentIndexRecoveryVersionConflictError, 'version-conflict'],
     [AgentIndexRecoveryLeaseConflictError, 'lease-conflict'],
@@ -925,6 +940,8 @@ function makeHarness({
   realStores = null,
   bindingPrefix = 'binding',
   baseCrossChainAvailable = true,
+  recoveryConcurrency = 4,
+  recoveryLimit = 100,
 } = {}) {
   const events = [];
   const real =
@@ -991,6 +1008,8 @@ function makeHarness({
       baseCrossChainAvailable,
       unavailableReason: baseCrossChainAvailable ? null : 'Hardened Base deployment is not active.',
     },
+    recoveryConcurrency,
+    recoveryLimit,
   });
   return {
     clock,
@@ -1100,6 +1119,123 @@ describe('v3 mandate registration and activation worker', () => {
     expect(res.body).not.toContain(CAPABILITY);
     expect(res.body).not.toContain(body.serializedApproval);
     expect(res.body).not.toContain(SESSION_KEY);
+  });
+
+  it('bounds unique activation registrations and retries durable overflow without restart', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const releases = new Map();
+    const activator = vi.fn(async (approval, { onSubmitted }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await onSubmitted(USER_OP_HASH);
+      await new Promise((resolve) => releases.set(approval, resolve));
+      active -= 1;
+      return { userOpHash: USER_OP_HASH, txHash: TX_HASH };
+    });
+    const harness = makeHarness({
+      activateMandate: activator,
+      recoveryConcurrency: 1,
+      recoveryLimit: 1,
+    });
+    const bodies = [1, 2, 3].map((index) => registrationBody({
+      mandateId: mandateIdAt(index),
+      capability: capabilityAt(index),
+      expiresAt: VALID_UNTIL_SECONDS - index,
+    }));
+
+    const responses = await Promise.all(bodies.map((body) => postMandate(harness, body)));
+    expect(responses.map(({ res }) => res.statusCode)).toEqual([202, 202, 202]);
+    await vi.waitFor(() => expect(releases.size).toBeGreaterThanOrEqual(1));
+    expect(harness.real.mandatesV3.status(identityOf(bodies[2])).status)
+      .toBe('pending_activation');
+
+    for (const body of bodies) {
+      const approval = body.serializedApproval;
+      await vi.waitFor(() => expect(releases.has(approval)).toBe(true));
+      releases.get(approval)();
+    }
+    for (const body of bodies) await waitForStatus(harness, body, 'active');
+    expect(maxActive).toBe(1);
+    expect(activator).toHaveBeenCalledTimes(3);
+    harness.router.stopMandateActivationQueue({ cancelPending: true });
+  });
+
+  it('serializes overflow retry scans while a bounded activation is still draining', async () => {
+    vi.useFakeTimers();
+    let releaseActivation;
+    let markFirstStarted;
+    const activationGate = new Promise((resolve) => {
+      releaseActivation = resolve;
+    });
+    const firstStarted = new Promise((resolve) => {
+      markFirstStarted = resolve;
+    });
+    let harness;
+    try {
+      let calls = 0;
+      const activator = vi.fn(async (_approval, { onSubmitted }) => {
+        calls += 1;
+        if (calls === 1) markFirstStarted();
+        await onSubmitted(USER_OP_HASH);
+        await activationGate;
+        return { userOpHash: USER_OP_HASH, txHash: TX_HASH };
+      });
+      harness = makeHarness({
+        activateMandate: activator,
+        recoveryConcurrency: 1,
+        recoveryLimit: 1,
+      });
+      const bodies = [6, 7, 8].map((index) => registrationBody({
+        mandateId: mandateIdAt(index),
+        capability: capabilityAt(index),
+        expiresAt: VALID_UNTIL_SECONDS - index,
+      }));
+
+      await Promise.all(bodies.map((body) => postMandate(harness, body)));
+      await firstStarted;
+      await vi.advanceTimersByTimeAsync(25 * 6);
+      expect(harness.events.filter((event) => event === 'store:listRecoverable')).toHaveLength(1);
+
+      releaseActivation();
+      await vi.waitFor(() => expect(calls).toBe(3));
+      for (const body of bodies) await waitForStatus(harness, body, 'active');
+    } finally {
+      releaseActivation?.();
+      if (harness) await harness.router.stopMandateActivationQueue({ cancelPending: true });
+      vi.useRealTimers();
+    }
+  });
+
+  it('isolates one failed activation so the next queued registration still runs', async () => {
+    let calls = 0;
+    const activator = vi.fn(async (_approval, { onSubmitted }) => {
+      calls += 1;
+      if (calls === 1) throw new Error('T16 activation failure');
+      await onSubmitted(USER_OP_HASH);
+      return { userOpHash: USER_OP_HASH, txHash: TX_HASH };
+    });
+    const harness = makeHarness({
+      activateMandate: activator,
+      recoveryConcurrency: 1,
+      recoveryLimit: 1,
+    });
+    const first = registrationBody({
+      mandateId: mandateIdAt(4),
+      capability: capabilityAt(4),
+      expiresAt: VALID_UNTIL_SECONDS - 4,
+    });
+    const second = registrationBody({
+      mandateId: mandateIdAt(5),
+      capability: capabilityAt(5),
+      expiresAt: VALID_UNTIL_SECONDS - 5,
+    });
+
+    await postMandate(harness, first);
+    await postMandate(harness, second);
+    await waitForStatus(harness, second, 'active');
+    expect(activator).toHaveBeenCalledTimes(2);
+    harness.router.stopMandateActivationQueue({ cancelPending: true });
   });
 
   it('returns a generic failure without a cookie or partial row when atomic enqueue fails', async () => {

@@ -132,4 +132,53 @@ describe('runtimePreflight', () => {
     expect(processLike.exitCode).toBe(1);
     expect(sink).toEqual(['RELAYER_STARTUP_FAILED']);
   });
+
+  it('closes the constructed server when listener startup rejects', async () => {
+    const processLike = { exitCode: 0 };
+    const calls = [];
+    const logs = [];
+    const server = {
+      listen: async () => {
+        calls.push('listen');
+        throw new Error('T16 listen rejected provider secret');
+      },
+      close: () => calls.push('close'),
+    };
+    const result = await runRelayer({
+      env: { NODE_ENV: 'development', RELAYER_ALLOW_OPEN_PROXY: '0' },
+      loadConfigFn: () => goodConfig({ mode: 'development', allowOpenProxy: false }),
+      preflightFn: async () => calls.push('preflight'),
+      createServerFn: () => {
+        calls.push('create-server');
+        return server;
+      },
+      logger: { info() {}, error(code, details) { logs.push({ code, details }); } },
+      processLike,
+    });
+
+    expect(result).toEqual({ ok: false, code: 'RELAYER_STARTUP_FAILED' });
+    expect(calls).toEqual(['preflight', 'create-server', 'listen', 'close']);
+    expect(JSON.stringify(logs)).not.toContain('provider secret');
+    expect(logs).toEqual([{ code: 'RELAYER_STARTUP_FAILED', details: {} }]);
+    expect(processLike.exitCode).toBe(1);
+  });
+
+  it('does not close a successfully listening server during handoff', async () => {
+    let closeCalls = 0;
+    const server = {
+      listen: async () => ({ close() {} }),
+      close: () => { closeCalls += 1; },
+    };
+    const result = await runRelayer({
+      env: { NODE_ENV: 'development', RELAYER_ALLOW_OPEN_PROXY: '0' },
+      loadConfigFn: () => goodConfig({ mode: 'development', allowOpenProxy: false }),
+      preflightFn: async () => {},
+      createServerFn: () => server,
+      logger: { info() {}, error() {} },
+      processLike: { exitCode: 0 },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(closeCalls).toBe(0);
+  });
 });

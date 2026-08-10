@@ -1477,7 +1477,7 @@ export async function handleIngest({
     const sourceId = `${sources[i].networkId}:${sources[i].address}`
     return r.status === 'fulfilled'
       ? { sourceId, ok: true, ...r.value }
-      : { sourceId, ok: false, error: r.reason?.message || String(r.reason) }
+      : { sourceId, ok: false, error: 'AGENT_INDEX_SOURCE_UNAVAILABLE' }
   })
   const failed = results.filter((r) => !r.ok).length
   return { status: 200, body: { results, ok: results.length - failed, failed } }
@@ -1513,8 +1513,8 @@ export async function handleBackfillCommit({ secret, providedSecret, store, audi
   try {
     const result = await commitBackfillAudit({ store, audit })
     return { status: 200, body: { ok: true, ...result } }
-  } catch (err) {
-    return { status: 400, body: { error: err.message } }
+  } catch {
+    return { status: 400, body: { error: 'AGENT_INDEX_BACKFILL_FAILED' } }
   }
 }
 
@@ -1559,8 +1559,8 @@ export async function handleAssociationReport({
       now,
     })
     return { status: 200, body: { ok: true, ...result } }
-  } catch (err) {
-    return { status: 400, body: { error: err.message } }
+  } catch {
+    return { status: 400, body: { error: 'AGENT_INDEX_ASSOCIATION_FAILED' } }
   }
 }
 

@@ -315,6 +315,10 @@ export function createRelayerRouter({
       state: 'recovery',
     }),
   });
+  const ACTIVATION_RETRY_DELAY_MS = 25;
+  let activationRetryTimer = null;
+  let activationRetryRequested = false;
+  let activationRetryRunning = false;
   let activeBaseRecoveryResume = null;
   let activeFarmResumeV2 = null;
   let activeUnwindResume = null;
@@ -355,6 +359,41 @@ export function createRelayerRouter({
 
   function activationIdentityKey(identity) {
     return `${identity.mandateId}|${identity.stellarOwner}|${String(identity.kernelAddress).toLowerCase()}`;
+  }
+
+  function scheduleActivationRetry() {
+    if (activationRetryTimer !== null || activationRetryRunning || !activationRetryRequested
+      || mandateActivationQueue.state === 'stopped') return;
+    activationRetryTimer = setTimeout(async () => {
+      activationRetryTimer = null;
+      if (activationRetryRunning) {
+        activationRetryRequested = true;
+        return;
+      }
+      activationRetryRunning = true;
+      activationRetryRequested = false;
+      try {
+        await resumeMandateActivations();
+        const remaining = await mandateActivations?.listRecoverable?.({
+          nowSeconds: nowSeconds(),
+          limit: 1,
+        });
+        if (Array.isArray(remaining) && remaining.length > 0) activationRetryRequested = true;
+        else activationRetryRequested = false;
+      } catch {
+        activationRetryRequested = true;
+        try { logger.error('MANDATE_ACTIVATION_RETRY_FAILED', { state: 'recovery' }); } catch {}
+      } finally {
+        activationRetryRunning = false;
+        scheduleActivationRetry();
+      }
+    }, ACTIVATION_RETRY_DELAY_MS);
+    activationRetryTimer?.unref?.();
+  }
+
+  function requestActivationRetry() {
+    activationRetryRequested = true;
+    scheduleActivationRetry();
   }
 
   function cloneForMandateEvaluation(record) {
@@ -624,9 +663,10 @@ export function createRelayerRouter({
   }
 
   function scheduleMandateActivation(identity) {
-    queueMicrotask(() => {
-      void dispatchMandateActivation(identity).catch(() => {});
-    });
+    if (!mandateActivationQueue.enqueue({
+      id: activationIdentityKey(identity),
+      ...identity,
+    })) requestActivationRetry();
   }
 
   function registrationResponse(result, capability, at) {
@@ -850,12 +890,14 @@ export function createRelayerRouter({
     });
     let queued = 0;
     for (const work of recoverable) {
-      queued += mandateActivationQueue.enqueue({
-        id: work.mandateId,
+      const accepted = mandateActivationQueue.enqueue({
+        id: activationIdentityKey(work),
         mandateId: work.mandateId,
         stellarOwner: work.stellarOwner,
         kernelAddress: work.kernelAddress,
-      }) ? 1 : 0;
+      });
+      queued += accepted ? 1 : 0;
+      if (!accepted) requestActivationRetry();
     }
     await mandateActivationQueue.drain();
     return { resumed: queued, queued };
@@ -1304,6 +1346,9 @@ export function createRelayerRouter({
   }
 
   async function resumeBaseRecoveryJobs({ limit = recoveryLimit } = {}) {
+    if (!baseExecutionAvailable) {
+      return { resumed: [], held: [], blocked: [], uncertain: [] };
+    }
     if (!baseRecoveryWorks || typeof baseRecoveryWorks.listRecoverable !== 'function') {
       return { resumed: [], held: [], blocked: [], uncertain: [] };
     }
@@ -2494,7 +2539,14 @@ export function createRelayerRouter({
     return sendJson(res, 404, { error: 'Not found' });
   };
   relayerRouter.resumeMandateActivations = resumeMandateActivations;
-  relayerRouter.stopMandateActivationQueue = (options) => mandateActivationQueue.stop(options);
+  relayerRouter.stopMandateActivationQueue = async (options) => {
+    activationRetryRequested = false;
+    if (activationRetryTimer !== null) {
+      clearTimeout(activationRetryTimer);
+      activationRetryTimer = null;
+    }
+    return mandateActivationQueue.stop(options);
+  };
   relayerRouter.resumeFarmJobs = resumeFarmJobs;
   relayerRouter.resumeBaseRecoveryJobs = resumeBaseRecoveryJobs;
   relayerRouter.resumeUnwindJobs = resumeUnwindJobs;

@@ -130,9 +130,9 @@ export default async function handler(req, res) {
       return res.end(JSON.stringify({ error: 'On-ramp session response missing widgetUrl' }))
     }
     return res.end(JSON.stringify({ widgetUrl }))
-  } catch (err) {
-    console.error('[api/onramp-session] error:', err?.message || err)
+  } catch {
+    console.error('[api/onramp-session] ONRAMP_SESSION_FAILED')
     res.statusCode = 502
-    return res.end(JSON.stringify({ error: 'On-ramp session failed' }))
+    return res.end(JSON.stringify({ error: 'On-ramp session failed', code: 'VF_ONRAMP_FAILED' }))
   }
 }

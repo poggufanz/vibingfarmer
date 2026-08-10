@@ -162,6 +162,7 @@ function productionListenHarness({
   includeRecovery = false,
   includeEvidenceOutbox = false,
   startBaseEvidenceWorkerFn = null,
+  startBaseRecoveryWorkerFn = null,
 }) {
   const config = serverConfig({
     mode: 'production',
@@ -308,6 +309,7 @@ function productionListenHarness({
       };
     },
     ...(startBaseEvidenceWorkerFn ? { startBaseEvidenceWorkerFn } : {}),
+    ...(startBaseRecoveryWorkerFn ? { startBaseRecoveryWorkerFn } : {}),
     createRouter: (deps) => {
       state.routerDeps = deps;
       return router;
@@ -1278,6 +1280,24 @@ describe('runtimeServerConfig', () => {
     expect(routerDeps.forwardFarmDeployment).toBeNull();
   });
 
+  it('closes SQLite when composition throws after opening the durable store', () => {
+    const config = serverConfig();
+    Object.defineProperty(config, 'sessionKeyCipher', {
+      value: Object.freeze({ seal() {}, open() {} }),
+      enumerable: false,
+    });
+    const closed = vi.fn();
+    const sqlite = { db: { close: closed }, cctpRelays: {} };
+
+    expect(() => serverModule.createRelayerServer(config, {
+      openSqlite: () => sqlite,
+      createWatcherFn: () => {
+        throw new Error('T16 post-open composition failure');
+      },
+    })).toThrow('T16 post-open composition failure');
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
   it('lets the actual production listener start without Base-only readiness while Base is closed', async () => {
     const { relayer, state, httpServer } = productionListenHarness({
       baseCrossChainAvailable: false,
@@ -1334,6 +1354,31 @@ describe('runtimeServerConfig', () => {
       outbox: {},
       reporter: expect.any(Object),
     });
+  });
+
+  it('does not compose the periodic Base recovery worker while Base execution is closed', async () => {
+    const recoveryWorkers = [];
+    const { relayer, httpServer } = productionListenHarness({
+      baseCrossChainAvailable: false,
+      includeRecovery: true,
+      startBaseRecoveryWorkerFn: (options) => {
+        recoveryWorkers.push(options);
+        return { stop() {} };
+      },
+      local: {
+        writable: true,
+        legacyMandateTables: [],
+        mandateMigrationCleanupPending: false,
+      },
+      remote: {
+        ready: true,
+        schemaVersion: 1,
+        stores: { executionReceipts: true },
+      },
+    });
+
+    await expect(relayer.listen(8788)).resolves.toBe(httpServer);
+    expect(recoveryWorkers).toHaveLength(0);
   });
 
   it('keeps the actual production listener closed when active Base durability is absent', async () => {

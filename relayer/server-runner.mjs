@@ -16,9 +16,15 @@ export async function runRelayer({
   logger = createSafeLogger({ mode: env.NODE_ENV || 'development' }),
   processLike = process,
 } = {}) {
+  let server = null;
+  let serverClosed = false;
+  const closeServer = () => {
+    if (!server || serverClosed) return;
+    serverClosed = true;
+    try { server.close?.(); } catch {}
+  };
   try {
     const config = loadConfigFn(env);
-    let server;
     // The production composition owns the durable stores and reporter client. Construct that
     // resource graph without workers/listener, then hand its real probes to the fail-closed gate.
     // Injected test/tool factories retain the simpler preflight-before-construction ordering.
@@ -34,7 +40,7 @@ export async function runRelayer({
           dependencies: server.preflightDependencies,
         });
       } catch (error) {
-        server.close?.();
+        closeServer();
         throw error;
       }
     } else {
@@ -45,6 +51,7 @@ export async function runRelayer({
     try { logger.info('RELAYER_LISTENING', { port }); } catch {}
     return { ok: true, config, server, listener };
   } catch (error) {
+    closeServer();
     const code = error?.code === 'RUNTIME_PREFLIGHT_FAILED'
       ? error.reasonCode || 'RUNTIME_PREFLIGHT_FAILED'
       : 'RELAYER_STARTUP_FAILED';

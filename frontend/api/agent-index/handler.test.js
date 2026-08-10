@@ -1392,13 +1392,33 @@ describe('handleIngest — bounded ingestion, one page per source, isolated fail
     const good = out.body.results.find((r) => r.sourceId.endsWith(ROUTER_V1.address))
     expect(good).toMatchObject({ ok: true, status: 'committed', membershipCount: 1 })
     const bad = out.body.results.find((r) => !r.ok)
-    expect(bad.error).toMatch(/rpc down/)
+    expect(bad.error).toBe('AGENT_INDEX_SOURCE_UNAVAILABLE')
 
     const rows = await store.readOwnerMemberships({
       networkId: ROUTER_V1.networkId,
       owner: OWNER_A,
     })
     expect(rows).toHaveLength(1)
+  })
+
+  it('collapses provider ingest failures to a stable code without echoing provider text', async () => {
+    const poison = 'T16_PROVIDER_SECRET_RPC_BODY_COOKIE'
+    const out = await handleIngest({
+      secret: 'topsecret',
+      providedSecret: 'topsecret',
+      store: createAgentIndexStore(fakeD1()),
+      sources: [ROUTER_V1],
+      eventSourceFor: async () => {
+        throw new Error(poison)
+      },
+      finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
+    })
+
+    expect(out.status).toBe(200)
+    expect(JSON.stringify(out.body)).not.toContain(poison)
+    expect(out.body.results).toEqual([
+      expect.objectContaining({ ok: false, error: 'AGENT_INDEX_SOURCE_UNAVAILABLE' }),
+    ])
   })
 })
 
@@ -1858,6 +1878,38 @@ describe('handleBackfillCommit — posts only verified memberships through the p
     const coverage = await store.readCoverage({ networkId: ROUTER_V1.networkId })
     expect(coverage.backfillAudits).toHaveLength(0)
   })
+
+  it('returns a stable backfill error code when a provider/store failure contains poison text', async () => {
+    const poison = 'T16_PROVIDER_SECRET_BACKFILL_BODY'
+    const out = await handleBackfillCommit({
+      secret: 's',
+      providedSecret: 's',
+      store: {
+        upsertMembership: async () => {
+          throw new Error(poison)
+        },
+      },
+      audit: {
+        auditId: 'audit-poison',
+        networkId: ROUTER_V1.networkId,
+        fromLedger: 1,
+        throughLedger: 1,
+        directSetupCutoffLedger: 1,
+        creatorManifestVersion: 'v1',
+        sources: [],
+        candidates: [{}],
+        verifiedAgents: [{}],
+        rejectedCandidates: [],
+        unresolvedCandidates: [],
+        verdict: 'partial',
+        completedAt: 1700000000,
+      },
+    })
+
+    expect(out.status).toBe(400)
+    expect(JSON.stringify(out.body)).not.toContain(poison)
+    expect(out.body).toEqual({ error: 'AGENT_INDEX_BACKFILL_FAILED' })
+  })
 })
 
 describe('handleAssociationReport — server-only authentication', () => {
@@ -1923,6 +1975,70 @@ describe('handleAssociationReport — server-only authentication', () => {
       report: association,
     })
     expect(out).toMatchObject({ status: 503, body: { configured: false } })
+  })
+
+  it('does not echo provider/store text from an association write failure', async () => {
+    const poison = 'T16_PROVIDER_SECRET_ASSOCIATION_BODY'
+    const pool = BASE_POOL_CATALOG[0]
+    const report = {
+      ...association,
+      allocations: [{
+        ...association.allocations[0],
+        poolAddress: pool.address,
+        proxyTarget: pool.proxyTarget,
+        custody: { location: 'unknown' },
+      }],
+    }
+    const existing = {
+      ownerAddress: report.owner,
+      runId: report.runId,
+      bridgeAgentAddress: report.bridgeAgent,
+      poolAddress: pool.address,
+      proxyTarget: pool.proxyTarget,
+      amount: report.allocations[0].amount,
+      grantTxHash: report.grantTxHash,
+      baseJobId: report.baseJobId,
+      kernelAddress: report.kernelAddress,
+      mandateBindingId: report.mandateBindingId,
+      mandateBindingHash: report.mandateBindingHash,
+      associationSource: 'relayer-attested',
+      executionStatus: report.allocations[0].executionStatus,
+      txHash: null,
+      custodyLocation: 'unknown',
+    }
+    const out = await handleAssociationReport({
+      secret: 's',
+      providedSecret: 's',
+      idempotencyKey: JSON.stringify([
+        report.networkId,
+        report.runId,
+        report.allocations[0].allocationId,
+        report.allocations[0].executionStatus,
+        null,
+      ]),
+      store: {
+        readRunAllocation: async () => existing,
+        hasAssociationEvent: async () => false,
+        commitAssociation: async () => {
+          throw new Error(poison)
+        },
+      },
+      report,
+      scopeReader: vi.fn(),
+      poolTargets: new Map([[pool.address.toLowerCase(), pool.proxyTarget]]),
+      scopeRequirements: {
+        reportToken: 'USDC',
+        reportDecimals: 6,
+        scopeDecimals: 7,
+        token: 'CTOKEN',
+        messenger: 'CMESSENGER',
+        destinationDomain: 6,
+      },
+    })
+
+    expect(out.status).toBe(400)
+    expect(JSON.stringify(out.body)).not.toContain(poison)
+    expect(out.body).toEqual({ error: 'AGENT_INDEX_ASSOCIATION_FAILED' })
   })
 })
 

@@ -19,6 +19,21 @@ import {
   creatorForAddress,
 } from '../../src/stellar/agentCreatorManifest.js'
 
+const SOURCE_ERROR_CODES = Object.freeze({
+  conflict: 'AGENT_INDEX_MEMBERSHIP_CONFLICT',
+  paging: 'AGENT_INDEX_PAGING_TOKEN_INVALID',
+  schema: 'AGENT_INDEX_EVENT_SCHEMA_INVALID',
+  source: 'AGENT_INDEX_SOURCE_ERROR',
+})
+
+function sourceErrorCode(error) {
+  if (error instanceof AgentIndexConflictError) return SOURCE_ERROR_CODES.conflict
+  const message = String(error?.message || '').toLowerCase()
+  if (message.includes('paging token')) return SOURCE_ERROR_CODES.paging
+  if (message.includes('schema') || message.includes('decode')) return SOURCE_ERROR_CODES.schema
+  return SOURCE_ERROR_CODES.source
+}
+
 /**
  * Classify one raw event record against `source`'s expected schema. Three outcomes:
  *   - `{ matched: false }` — the topic isn't this source's event at all. Safe to drop silently;
@@ -419,7 +434,7 @@ export async function ingestAgentIndexPage({
         networkId: source.networkId,
         creatorAddress: source.address,
         fromLedger,
-        message: result.error.message,
+        message: sourceErrorCode(result.error),
       })
       throw result.error
     }
@@ -474,7 +489,7 @@ export async function ingestAgentIndexPage({
           networkId: source.networkId,
           creatorAddress: source.address,
           fromLedger,
-          message: error.message,
+          message: sourceErrorCode(error),
         })
         throw error
       }
@@ -532,7 +547,7 @@ export async function ingestAgentIndexPage({
         networkId: source.networkId,
         creatorAddress: source.address,
         fromLedger,
-        message: error.message,
+        message: sourceErrorCode(error),
       })
     }
     throw error

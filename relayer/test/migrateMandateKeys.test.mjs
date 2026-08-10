@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -317,6 +324,7 @@ describe('mandates:migrate-encryption wrapper', () => {
     seedPendingMigration(path);
     const beforeDb = new DatabaseSync(path, { readOnly: true });
     const before = beforeDb.prepare('SELECT phase FROM mandate_migration_state WHERE id = 1').get();
+    const beforeEnvelope = beforeDb.prepare('SELECT session_key_envelope FROM mandates_v3').get();
     beforeDb.close();
     const wrongKey = keyring('wrong-key', 0x55);
     await expect(runMigration(
@@ -328,6 +336,8 @@ describe('mandates:migrate-encryption wrapper', () => {
     try {
       expect(checkAfterWrong.prepare('SELECT phase FROM mandate_migration_state WHERE id = 1').get())
         .toEqual(before);
+      expect(checkAfterWrong.prepare('SELECT session_key_envelope FROM mandates_v3').get())
+        .toEqual(beforeEnvelope);
     } finally {
       checkAfterWrong.close();
     }
@@ -352,6 +362,94 @@ describe('mandates:migrate-encryption wrapper', () => {
       { RELAYER_SESSION_KEY_ENCRYPTION_KEYS: keyring('new-key', 0x66) },
       { migration: canonicalMigration },
     )).resolves.toMatchObject({ code: 'MANDATE_MIGRATION_ALREADY_COMPLETE', migrated: 1 });
+  });
+
+  it('rotates a completed migration transactionally and preserves marker aggregates', async () => {
+    const { path, directory } = legacyV2Db();
+    const manifestPath = writeManifest(path, directory);
+    await expect(runMigration(
+      ['--db', path, '--manifest', manifestPath, '--quarantine-invalid'],
+      { RELAYER_SESSION_KEY_ENCRYPTION_KEYS: keyring('old-key', 0x44) },
+      { migration: canonicalMigration },
+    )).resolves.toMatchObject({ code: 'MANDATE_MIGRATION_COMPLETE', migrated: 1 });
+
+    const beforeDb = new DatabaseSync(path, { readOnly: true });
+    const beforeMarker = beforeDb.prepare(
+      'SELECT phase, manifest_version, source_digest, target_digest, migrated_count, quarantined_count FROM mandate_migration_state WHERE id = 1',
+    ).get();
+    const beforeRow = beforeDb.prepare('SELECT * FROM mandates_v3 WHERE status = ?').get('activation_uncertain');
+    beforeDb.close();
+    expect(beforeMarker.phase).toBe('completed');
+    expect(beforeRow.session_key_envelope).toMatch(/^v1\.old-key\./);
+
+    const rotatingKeys = `${keyring('new-key', 0x66)},${keyring('old-key', 0x44)}`;
+    await expect(runMigration(
+      ['--db', path, '--rotate'],
+      { RELAYER_SESSION_KEY_ENCRYPTION_KEYS: rotatingKeys },
+      { migration: canonicalMigration },
+    )).resolves.toMatchObject({ code: 'MANDATE_MIGRATION_ROTATED', migrated: 1 });
+
+    const afterDb = new DatabaseSync(path, { readOnly: true });
+    try {
+      const afterMarker = afterDb.prepare(
+        'SELECT phase, manifest_version, source_digest, target_digest, migrated_count, quarantined_count FROM mandate_migration_state WHERE id = 1',
+      ).get();
+      const afterRow = afterDb.prepare('SELECT * FROM mandates_v3 WHERE status = ?').get('activation_uncertain');
+      expect(afterMarker).toEqual(beforeMarker);
+      expect(afterRow.session_key_envelope).toMatch(/^v1\.new-key\./);
+      const opened = createSecretEnvelope(parseSecretKeyring(keyring('new-key', 0x66))).open(
+        afterRow.session_key_envelope,
+        mandateSessionAad({
+          mandateId: afterRow.mandate_id,
+          approvalDigest: afterRow.approval_digest,
+          policyDigest: afterRow.policy_digest,
+          stellarOwner: afterRow.stellar_owner,
+          kernelAddress: afterRow.kernel_address,
+          sessionKeyAddress: afterRow.session_key_address,
+          validUntilSeconds: afterRow.valid_until_seconds,
+          bindingId: afterRow.binding_id,
+        }),
+      );
+      expect(opened).toMatchObject({ plaintext: SESSION_PRIVATE_KEY, needsRotation: false });
+    } finally {
+      afterDb.close();
+    }
+    for (const name of readdirSync(directory).filter((entry) => entry === 'mandates.db-wal')) {
+      expect(readFileSync(join(directory, name)).byteLength).toBe(0);
+    }
+    await expect(runMigration(
+      ['--db', path, '--rotate'],
+      { RELAYER_SESSION_KEY_ENCRYPTION_KEYS: keyring('new-key', 0x66) },
+      { migration: canonicalMigration },
+    )).resolves.toMatchObject({ code: 'MANDATE_MIGRATION_ALREADY_COMPLETE', migrated: 1 });
+  });
+
+  it.each([
+    ['missing', (directory) => join(directory, 'does-not-exist.db'), 'MANDATE_MIGRATION_DB_NOT_FOUND'],
+    ['non-regular', (directory) => directory, 'MANDATE_MIGRATION_DB_NOT_REGULAR'],
+    ['unreadable', (directory) => {
+      const path = join(directory, 'unreadable.db');
+      writeFileSync(path, 'not a database');
+      chmodSync(path, 0o000);
+      return path;
+    }, 'MANDATE_MIGRATION_DB_UNREADABLE'],
+  ])('rejects an explicit %s --db path before migration and file creation', (_label, pathFor, code) => {
+    const directory = mkdtempSync(join(tmpdir(), 'vf-task16-migration-cli-path-'));
+    const path = pathFor(directory);
+    const child = spawnSync(process.execPath, ['src/migrateMandateKeys.mjs', '--db', path], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        NODE_NO_WARNINGS: '1',
+        RELAYER_SESSION_KEY_ENCRYPTION_KEYS: KEYRING,
+      },
+      encoding: 'utf8',
+    });
+    if (_label === 'unreadable') chmodSync(path, 0o600);
+    expect(child.status).toBe(1);
+    expect(child.stdout).toBe('');
+    expect(JSON.parse(child.stderr)).toEqual({ code });
+    if (_label === 'missing') expect(existsSync(path)).toBe(false);
   });
 
   it('prints one sanitized JSON result on direct CLI success', async () => {

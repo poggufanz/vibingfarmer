@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { accessSync, constants as fsConstants, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createSecretEnvelope, parseSecretKeyring } from './secretEnvelope.mjs';
@@ -49,7 +49,26 @@ function readManifest(path) {
   }
 }
 
+function validateDatabasePath(path) {
+  let stats;
+  try {
+    stats = statSync(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {
+      throw new MigrationCliError('MANDATE_MIGRATION_DB_NOT_FOUND');
+    }
+    throw new MigrationCliError('MANDATE_MIGRATION_DB_UNREADABLE');
+  }
+  if (!stats.isFile()) throw new MigrationCliError('MANDATE_MIGRATION_DB_NOT_REGULAR');
+  try {
+    accessSync(path, fsConstants.R_OK);
+  } catch {
+    throw new MigrationCliError('MANDATE_MIGRATION_DB_UNREADABLE');
+  }
+}
+
 function resultCode(result) {
+  if (result?.rotated) return 'MANDATE_MIGRATION_ROTATED';
   if (result?.alreadyMigrated) return 'MANDATE_MIGRATION_ALREADY_COMPLETE';
   if (result?.notNeeded) return 'MANDATE_MIGRATION_NOT_NEEDED';
   if (result?.resumedCleanup) return 'MANDATE_MIGRATION_CLEANUP_RESUMED';
@@ -80,6 +99,7 @@ export async function runMigration(
   let args;
   try {
     args = parseArgs(argv);
+    validateDatabasePath(args.db);
     const rawKeyring = env?.RELAYER_SESSION_KEY_ENCRYPTION_KEYS;
     const sessionKeyCipher = createSecretEnvelope(parseSecretKeyring(rawKeyring));
     const manifest = args.manifestPath ? readManifest(args.manifestPath) : undefined;

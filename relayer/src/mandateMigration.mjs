@@ -536,9 +536,13 @@ function checkpointTruncate(db) {
   if (result?.busy) throw new Error('legacy mandate WAL checkpoint is busy');
 }
 
-function requireCleanupRowsRecoverable(db, cipher, { rotate = false, requireActive = false } = {}) {
+function requireCleanupRowsRecoverable(
+  db,
+  cipher,
+  { rotate = false, requireActive = false, phase = 'cleanup_pending' } = {},
+) {
   const ensemble = classifyMandateSchemaEnsemble(db);
-  if (ensemble.kind !== 'current' || !ensemble.cleanupPending
+  if (ensemble.kind !== 'current' || ensemble.migrationState.phase !== phase
     || legacyTables(db).length !== 0
     || db.prepare('SELECT COUNT(*) AS n FROM mandate_activation_work').get().n !== 0) {
     throw new Error('mandate cleanup target integrity failed');
@@ -551,6 +555,7 @@ function requireCleanupRowsRecoverable(db, cipher, { rotate = false, requireActi
   }
   let migratedCount = 0;
   let quarantinedCount = 0;
+  let needsRotation = 0;
   for (const row of rows) {
     if (row.status === QUARANTINED_STATUS) {
       quarantinedCount += 1;
@@ -595,6 +600,7 @@ function requireCleanupRowsRecoverable(db, cipher, { rotate = false, requireActi
       || digest(opened.plaintext) !== row.session_key_digest) {
       throw new Error('migrated mandate envelope is unrecoverable');
     }
+    if (opened.needsRotation) needsRotation += 1;
     if (opened.needsRotation && rotate) {
       const replacement = cipher.seal(opened.plaintext, aad);
       const replacementOpened = cipher.open(replacement, aad);
@@ -622,7 +628,44 @@ function requireCleanupRowsRecoverable(db, cipher, { rotate = false, requireActi
     throw new Error('mandate cleanup target aggregate disagrees with its marker');
   }
   if (rotate) {
-    requireCleanupRowsRecoverable(db, cipher, { requireActive: true });
+    requireCleanupRowsRecoverable(db, cipher, { requireActive: true, phase });
+  }
+  return { needsRotation };
+}
+
+function rotateCompletedMigration(path, cipher) {
+  const db = new DatabaseSync(path);
+  try {
+    db.exec(`
+      PRAGMA temp_store=MEMORY;
+      PRAGMA busy_timeout=5000;
+      PRAGMA foreign_keys=ON;
+      PRAGMA secure_delete=ON;
+    `);
+    const initial = requireCleanupRowsRecoverable(db, cipher, {
+      requireActive: false,
+      phase: 'completed',
+    });
+    if (initial.needsRotation === 0) return false;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      requireCleanupRowsRecoverable(db, cipher, {
+        rotate: true,
+        requireActive: true,
+        phase: 'completed',
+      });
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    checkpointTruncate(db);
+    db.exec('VACUUM');
+    checkpointTruncate(db);
+    requireCleanupRowsRecoverable(db, cipher, { requireActive: true, phase: 'completed' });
+    return true;
+  } finally {
+    db.close();
   }
 }
 
@@ -677,6 +720,21 @@ export function migrateLegacyMandates(path, options = {}) {
   requireOffline(options.env);
   const disposition = migrationDisposition(path);
   if (disposition.action === 'completed') {
+    if (options.rotate) {
+      const rotated = rotateCompletedMigration(path, requireCipher(options.sessionKeyCipher));
+      if (!rotated) {
+        return {
+          alreadyMigrated: true,
+          migrated: disposition.state.migrated_count,
+          quarantined: disposition.state.quarantined_count,
+        };
+      }
+      return {
+        rotated: true,
+        migrated: disposition.state.migrated_count,
+        quarantined: disposition.state.quarantined_count,
+      };
+    }
     return {
       alreadyMigrated: true,
       migrated: disposition.state.migrated_count,

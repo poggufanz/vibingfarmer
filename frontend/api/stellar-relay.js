@@ -55,14 +55,33 @@ export class RelaySubmissionUnknownError extends RelayError {
   }
 }
 
-/** Serialize typed ambiguity without dropping producer-known hash/status evidence. */
+const RELAY_RESULT_STATUSES = new Set(['SUCCESS', 'FAILED', 'PENDING', 'NOT_FOUND', 'ERROR'])
+const isCanonicalRelayHash = (value) =>
+  typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
+
+function safeRelayResult(result) {
+  if (!result || typeof result !== 'object') return {}
+  const out = {}
+  if (isCanonicalRelayHash(result.hash)) out.hash = result.hash
+  if (typeof result.status === 'string' && RELAY_RESULT_STATUSES.has(result.status)) {
+    out.status = result.status
+  }
+  if (typeof result.relayer === 'string' && /^G[A-Z2-7]{55}$/.test(result.relayer)) {
+    out.relayer = result.relayer
+  }
+  if (typeof result.duplicate === 'boolean') out.duplicate = result.duplicate
+  return out
+}
+
+/** Serialize typed ambiguity with only producer-known, allowlisted evidence. */
 export function relayUnknownHttpResponse(error) {
-  const result = error?.result && typeof error.result === 'object' ? error.result : {}
+  const result = safeRelayResult(error?.result)
   return {
     status: error?.httpStatus === 409 ? 409 : 502,
     body: {
       ...result,
-      error: error?.message || 'Stellar relay submission outcome is unknown',
+      code: 'VF_SUBMISSION_UNKNOWN',
+      error: 'Stellar relay submission outcome is unknown',
       submission: 'unknown',
     },
   }
@@ -71,10 +90,9 @@ export function relayUnknownHttpResponse(error) {
 /** Only a hash-backed SUCCESS/FAILED result is an ordinary terminal relay response. */
 export function relayResultHttpResponse(result) {
   const terminal =
-    typeof result?.hash === 'string' &&
-    result.hash.length > 0 &&
+    isCanonicalRelayHash(result?.hash) &&
     (result.status === 'SUCCESS' || result.status === 'FAILED')
-  if (terminal) return { status: 200, body: result }
+  if (terminal) return { status: 200, body: safeRelayResult(result) }
   return relayUnknownHttpResponse(
     new RelaySubmissionUnknownError('Stellar relay returned no hash-backed terminal result', {
       result: result && typeof result === 'object' ? result : null,
@@ -860,10 +878,9 @@ export default async function handler(req, res) {
     }
 
     return bad(res, 'Unknown action')
-  } catch (err) {
-    const errMsg = err?.message || String(err)
-    console.error('[api/stellar-relay] error:', errMsg)
+  } catch {
+    console.error('[api/stellar-relay] STELLAR_RELAY_FAILED')
     res.statusCode = 502
-    return res.end(JSON.stringify({ error: `Stellar relay failed: ${errMsg}` }))
+    return res.end(JSON.stringify({ error: 'Stellar relay failed', code: 'VF_RELAY_FAILED' }))
   }
 }

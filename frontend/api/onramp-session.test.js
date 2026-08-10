@@ -138,4 +138,23 @@ describe('/api/onramp-session handler', () => {
     await handler(mockReq({ provider: 'nope', address: STELLAR_ADDR }), res)
     expect(res.statusCode).toBe(400)
   })
+
+  it('does not log an arbitrary provider/request error', async () => {
+    process.env.TRANSAK_API_KEY = 'k'
+    process.env.TRANSAK_ACCESS_TOKEN = 't'
+    const poison = 'T16_PROVIDER_SECRET_ONRAMP_RESPONSE_BODY'
+    const body = {}
+    Object.defineProperty(body, 'provider', {
+      get() {
+        throw new Error(poison)
+      },
+    })
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = mockRes()
+    await handler(mockReq(body), res)
+    expect(res.statusCode).toBe(502)
+    expect(JSON.stringify(JSON.parse(res.body))).not.toContain(poison)
+    expect(log.mock.calls.flat().join(' ')).not.toContain(poison)
+    log.mockRestore()
+  })
 })
