@@ -45,16 +45,43 @@ import {
   selectBaseChildRecoveryAction,
   validateBaseRecoveryRequest,
 } from './baseRecovery.mjs';
+import { createSafeLogger } from './safeLogger.mjs';
+import { createWorkQueue } from './workQueue.mjs';
 
-async function ensureBody(req) {
+export const MAX_REQUEST_BODY_BYTES = 65_536;
+
+export class RequestBodyTooLargeError extends Error {
+  constructor() {
+    super('request body exceeds the configured limit');
+    this.name = 'RequestBodyTooLargeError';
+    this.code = 'REQUEST_BODY_TOO_LARGE';
+    this.statusCode = 413;
+  }
+}
+
+export async function ensureBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return;
+  const declared = req.headers?.['content-length'] ?? req.headers?.['Content-Length'];
+  if (declared !== undefined && declared !== null && String(declared).trim() !== '') {
+    const length = Number(String(declared).trim());
+    if (Number.isFinite(length) && length >= 0 && length > MAX_REQUEST_BODY_BYTES) {
+      throw new RequestBodyTooLargeError();
+    }
+  }
   if (req.body && typeof req.body === 'object') return;
   const chunks = [];
+  let total = 0;
   try {
-    for await (const c of req) chunks.push(c);
+    for await (const c of req) {
+      const chunk = Buffer.isBuffer(c) ? c : Buffer.from(c);
+      total += chunk.byteLength;
+      if (total > MAX_REQUEST_BODY_BYTES) throw new RequestBodyTooLargeError();
+      chunks.push(chunk);
+    }
     const raw = Buffer.concat(chunks).toString('utf8');
     req.body = raw ? JSON.parse(raw) : {};
-  } catch {
+  } catch (error) {
+    if (error?.code === 'REQUEST_BODY_TOO_LARGE') throw error;
     req.body = {}; // malformed body -> handler validation rejects it downstream
   }
 }
@@ -272,12 +299,22 @@ export function createRelayerRouter({
   unwindBurnMaxAgeSeconds = unwindCookieMaxAgeSeconds - 300,
   unwindEvidenceRetryMs = 300_000,
   nowMs = () => Date.now(),
+  logger = createSafeLogger({ sink: () => {} }),
 }) {
   const baseExecutionAvailable = publicRuntime?.baseCrossChainAvailable === true;
   const activeMandateActivations = new Map();
   const activeMandateRegistrations = new Map();
   const activeIntentDeliveries = new Map();
   const activeBaseRecoveryWork = new Map();
+  const mandateActivationQueue = createWorkQueue({
+    concurrency: recoveryConcurrency,
+    maxPending: recoveryLimit,
+    run: (identity) => dispatchMandateActivation(identity),
+    onError: (_error, identity) => logger.error('MANDATE_ACTIVATION_FAILED', {
+      mandateId: identity?.mandateId,
+      state: 'recovery',
+    }),
+  });
   let activeBaseRecoveryResume = null;
   let activeFarmResumeV2 = null;
   let activeUnwindResume = null;
@@ -295,18 +332,21 @@ export function createRelayerRouter({
     && typeof unwindBundlerClient?.getUserOperation === 'function'
     && typeof unwindBundlerClient?.getUserOperationReceipt === 'function'
     && unwindFactsReady(unwindEvidenceFacts);
-  // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
-  // error is always available server-side (console.error) for debugging. Never stores the key.
+  // Record a failed job. Client-facing message is generic when sanitizeErrors is on; diagnostics
+  // cross the boundary only as a stable safe-log event. Never stores the key.
   // `context` (runId/bridgeAgent/grantTxHash for a farm job; omitted for unwind, which has none)
   // survives onto the error record — a failed job is exactly where My Money's durable index needs
   // that association most (see the "relayer 'failed' != bridge failed" bookkeeping hazard).
   function recordError(jobId, step, err, context = {}) {
     if (sanitizeErrors) {
-      console.error(`[relayer] job ${jobId} step ${step} failed:`, err);
+      logger.error('RELAYER_JOB_FAILED', { jobId, state: 'error' });
       jobs.set(jobId, { ...context, status: 'error', steps: [{ step, status: 'error', message: 'internal error' }] });
     } else {
       jobs.set(jobId, { ...context, status: 'error', steps: [{ step, status: 'error', message: errorMessage(err) }] });
     }
+  }
+  function clientError(error, fallback = 'invalid request') {
+    return sanitizeErrors ? fallback : errorMessage(error);
   }
   // Durable mandate window: the client (baseLeg.js) requests a 7-day expiry so a repeat run can
   // reuse the mandate with zero wallet ceremony; this cap just bounds how far out a client may
@@ -804,12 +844,21 @@ export function createRelayerRouter({
     if (!baseExecutionAvailable) return { resumed: [], held: [] };
     if (!mandateActivations) return;
     await mandateActivations.reconcileExpired({ nowSeconds: nowSeconds() });
-    const recoverable = await mandateActivations.listRecoverable({ nowSeconds: nowSeconds() });
-    await Promise.all(recoverable.map((work) => dispatchMandateActivation({
-      mandateId: work.mandateId,
-      stellarOwner: work.stellarOwner,
-      kernelAddress: work.kernelAddress,
-    })));
+    const recoverable = await mandateActivations.listRecoverable({
+      nowSeconds: nowSeconds(),
+      limit: recoveryLimit,
+    });
+    let queued = 0;
+    for (const work of recoverable) {
+      queued += mandateActivationQueue.enqueue({
+        id: work.mandateId,
+        mandateId: work.mandateId,
+        stellarOwner: work.stellarOwner,
+        kernelAddress: work.kernelAddress,
+      }) ? 1 : 0;
+    }
+    await mandateActivationQueue.drain();
+    return { resumed: queued, queued };
   }
 
   // Public permission evidence never contains authority material. A failed fresh read is mapped
@@ -919,7 +968,7 @@ export function createRelayerRouter({
     try {
       requireExactFields(req.body || {}, MANDATE_STATUS_FIELDS, 'mandate status');
     } catch (err) {
-      return sendJson(res, 400, { error: errorMessage(err) });
+      return sendJson(res, 400, { error: clientError(err) });
     }
     const { durable } = authenticated;
     if (durable.status !== 'active') return sendJson(res, 200, durable);
@@ -945,7 +994,7 @@ export function createRelayerRouter({
     try {
       requireExactFields(req.body || {}, MANDATE_STATUS_FIELDS, 'mandate revoke');
     } catch (err) {
-      return sendJson(res, 400, { error: errorMessage(err) });
+      return sendJson(res, 400, { error: clientError(err) });
     }
     const revoked = await mandatesV3.revoke(authenticated.identity);
     if (!revoked || !['revoked', 'expired'].includes(revoked.status)) return unauthorized(res);
@@ -1615,7 +1664,7 @@ export function createRelayerRouter({
     try {
       requireExactFields(req.body || {}, FARM_V2_FIELDS, 'farm');
     } catch (error) {
-      return sendJson(res, 400, { error: errorMessage(error) });
+      return sendJson(res, 400, { error: clientError(error) });
     }
     const gate = await freshActiveMandateGate(authenticated);
     if (gate.error) return sendJson(res, 409, { error: 'Base mandate evidence is not active' });
@@ -1925,7 +1974,7 @@ export function createRelayerRouter({
     try {
       requireExactFields(body, FARM_ATTACH_V2_FIELDS, 'farm attach');
     } catch (error) {
-      return sendJson(res, 400, { error: errorMessage(error) });
+      return sendJson(res, 400, { error: clientError(error) });
     }
     if (!JOB_ID_PATTERN.test(body.jobId || '') || !/^[0-9a-f]{64}$/.test(body.burnTxHash || '')) {
       return sendJson(res, 400, { error: 'invalid farm attachment' });
@@ -2009,7 +2058,7 @@ export function createRelayerRouter({
     try {
       requireExactFields(body, FARM_STATUS_FIELDS, 'farm status');
     } catch (err) {
-      return sendJson(res, 400, { error: errorMessage(err) });
+      return sendJson(res, 400, { error: clientError(err) });
     }
     if (typeof body.jobId !== 'string' || !JOB_ID_PATTERN.test(body.jobId)) {
       return sendJson(res, 400, { error: 'invalid jobId' });
@@ -2418,7 +2467,14 @@ export function createRelayerRouter({
       res.setHeader('Cache-Control', 'no-store');
       return sendJson(res, 400, { error: 'invalid request' });
     }
-    await ensureBody(req);
+    try {
+      await ensureBody(req);
+    } catch (error) {
+      if (error?.code === 'REQUEST_BODY_TOO_LARGE') {
+        return sendJson(res, 413, { error: 'Request body too large' });
+      }
+      return sendJson(res, 400, { error: 'invalid request' });
+    }
 
     if (req.method === 'POST' && path === '/mandate') return handleMandate(req, res);
     if (req.method === 'POST' && path === '/mandate/status') return handleMandateStatus(req, res);
@@ -2438,6 +2494,7 @@ export function createRelayerRouter({
     return sendJson(res, 404, { error: 'Not found' });
   };
   relayerRouter.resumeMandateActivations = resumeMandateActivations;
+  relayerRouter.stopMandateActivationQueue = (options) => mandateActivationQueue.stop(options);
   relayerRouter.resumeFarmJobs = resumeFarmJobs;
   relayerRouter.resumeBaseRecoveryJobs = resumeBaseRecoveryJobs;
   relayerRouter.resumeUnwindJobs = resumeUnwindJobs;

@@ -141,8 +141,10 @@ export function toPagesFunction(handler) {
 
     const ran = Promise.resolve()
       .then(() => handler(req, res))
-      .catch((err) => {
-        console.error('[pages-fn] handler error:', err?.message || err)
+      .catch(() => {
+        // Keep provider/request errors out of the edge log stream. The stable code is enough for
+        // aggregation; the response remains generic and callers cannot inject raw sentinels.
+        console.error('[pages-fn] PAGE_HANDLER_FAILED')
         if (!ended) {
           statusCode = 502
           ended = true

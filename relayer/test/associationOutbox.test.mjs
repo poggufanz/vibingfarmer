@@ -99,6 +99,24 @@ describe('SQLite association lifecycle outbox', () => {
     ]);
   });
 
+  it('stores only stable failure codes and never persists provider error text', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 1000 });
+    stores.associationOutbox.enqueue(lifecycle(1));
+    const lease = stores.associationOutbox.leaseNext({ now: 1000, leaseMs: 100 });
+    stores.associationOutbox.markRetry({
+      id: lease.id,
+      leaseToken: lease.leaseToken,
+      error: 'T16-OUTBOX-PROVIDER-SECRET: response body',
+      now: 1001,
+      retryAt: 1002,
+    });
+    expect(stores.db.prepare('SELECT last_error FROM association_outbox WHERE id = ?').get(lease.id))
+      .toEqual({ last_error: 'delivery_failed' });
+    expect(JSON.stringify(stores.db.prepare('SELECT * FROM association_outbox').all()))
+      .not.toContain('T16-OUTBOX-PROVIDER-SECRET');
+    stores.db.close();
+  });
+
   // Defect caught: a process death on the final leased attempt made leaseNext increment past the
   // configured bound forever because only markRetry enforced maxAttempts.
   it('dead-letters an expired final lease atomically without issuing another attempt', () => {

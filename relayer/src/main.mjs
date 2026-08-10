@@ -1,9 +1,9 @@
-// Standalone entry: node --env-file=.dev.vars src/main.mjs
-// (The VM runs the same thing via docker-compose; locally dev-tunnel.sh wraps this.)
-import { loadConfig } from './config.mjs'
-import { createRelayerServer } from './server.mjs'
+// Backward-compatible entry point for older VM scripts. Keep startup behavior delegated to the
+// import-safe runner so errors use stable safe codes and no listener is opened on module import.
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { runRelayer } from '../server-runner.mjs';
 
-const port = Number(process.env.RELAYER_PORT || 8788)
-const { listen } = createRelayerServer(loadConfig(process.env))
-listen(port)
-console.log(`relayer listening on :${port}`)
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  void runRelayer();
+}

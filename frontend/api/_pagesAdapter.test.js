@@ -196,6 +196,7 @@ describe('Cloudflare Pages Node-style adapter', () => {
   })
 
   it('returns a generic JSON error when the handler throws', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     const response = await invoke(
       () => {
         throw new Error('secret internal detail')
@@ -204,5 +205,8 @@ describe('Cloudflare Pages Node-style adapter', () => {
     )
     expect(response.status).toBe(502)
     expect(await response.json()).toEqual({ error: 'Server error' })
+    expect(logged).toHaveBeenCalledWith('[pages-fn] PAGE_HANDLER_FAILED')
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('secret internal detail')
+    logged.mockRestore()
   })
 })

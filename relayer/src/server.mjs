@@ -24,9 +24,10 @@ import { createBaseRecoveryExecutor } from './baseRecovery.mjs';
 import { pollAttestation } from './cctp/iris.mjs';
 import { confirmMintBase, submitMintBase } from './cctp/forward.mjs';
 import { assertCctpV2BurnMatches } from './cctp/messageV2.mjs';
+import { createSafeLogger } from './safeLogger.mjs';
 
 export function runtimeServerConfig(config) {
-  return {
+  const runtime = {
     relayerOrigin: config.publicOrigin,
     reporterEndpoint: config.reporter.url,
     reporterSchema: config.reporter.schema,
@@ -35,6 +36,10 @@ export function runtimeServerConfig(config) {
     sanitizeErrors: !config.runtime.debugErrors,
     publicRuntime: config.publicRuntime,
   };
+  if (config.runtime.proxyKeyPrevious !== undefined) {
+    runtime.proxyKeyPrevious = config.runtime.proxyKeyPrevious;
+  }
+  return runtime;
 }
 
 export async function verifyRelayerReadiness({ sqlite, reporter, baseCrossChainAvailable = true }) {
@@ -320,14 +325,29 @@ function buildUnwindEvidenceFacts(config) {
   });
 }
 
-/** Shared-secret gate between the Cloudflare proxy and this relayer. Empty key = open (local dev). */
+/** Shared-secret gate between the Cloudflare proxy and this relayer. Empty key = open only when
+ * the caller has explicitly opted into non-production open mode in configuration. */
 export function withProxyKeyAuth(handler, key) {
+  const current = typeof key === 'string' ? key : key?.current ?? key?.proxyKey ?? '';
+  const previous = typeof key === 'string' ? '' : key?.previous ?? key?.proxyKeyPrevious ?? '';
+  const candidates = [current, previous].filter((candidate) => typeof candidate === 'string' && candidate);
   return async function authed(req, res) {
-    if (key) {
-      const got = String(req.headers['x-vf-relayer-key'] || '');
-      const a = Buffer.from(got);
-      const b = Buffer.from(key);
-      const ok = a.length === b.length && timingSafeEqual(a, b);
+    if (candidates.length > 0) {
+      const got = typeof req.headers?.['x-vf-relayer-key'] === 'string'
+        ? req.headers['x-vf-relayer-key'] : '';
+      const actual = Buffer.from(got);
+      let ok = false;
+      for (const candidate of candidates) {
+        const expected = Buffer.from(candidate);
+        const width = Math.max(actual.length, expected.length);
+        const actualPadded = Buffer.alloc(width);
+        const expectedPadded = Buffer.alloc(width);
+        actual.copy(actualPadded);
+        expected.copy(expectedPadded);
+        const compared = timingSafeEqual(actualPadded, expectedPadded)
+          && actual.length === expected.length;
+        ok = ok || compared;
+      }
       if (!ok) {
         const pathname = new URL(req.url, 'http://local').pathname;
         if (
@@ -1388,6 +1408,10 @@ export function createRelayerServer(
     throw new Error('session-key encryption cipher is required before relayer startup');
   }
   const runtimeConfig = runtimeServerConfig(config);
+  const logger = createSafeLogger({
+    mode: config.mode,
+    debug: config.runtime.debugErrors,
+  });
   // When RELAYER_DB_PATH is set, sqlite backs the idempotency store + jobs + mandates so a restart
   // loses nothing (session keys still die at their 1h TTL either way). Build BEFORE createWatcher so
   // the watcher gets the sqlite-backed relay-work store rather than the file store.
@@ -1605,8 +1629,12 @@ export function createRelayerServer(
           }
         : null,
     publicRuntime: runtimeConfig.publicRuntime,
+    logger,
   });
-  const handler = withProxyKeyAuth(router, runtimeConfig.proxyKey);
+  const handler = withProxyKeyAuth(router, {
+    current: runtimeConfig.proxyKey,
+    previous: runtimeConfig.proxyKeyPrevious,
+  });
 
   async function listen(port) {
     const reconcileCctpRelays = ({ limit = recoveryLimit } = {}) =>
@@ -1714,9 +1742,33 @@ export function createRelayerServer(
         });
       },
     });
-    started.server.on('close', () => started.stopWorkers());
+    started.server.on('close', () => {
+      started.stopWorkers();
+      void router.stopMandateActivationQueue?.({ cancelPending: true });
+    });
     return started.server;
   }
 
-  return { handler, listen };
+  const preflightDependencies = production && sqlite
+    ? {
+        localProbe: async () => {
+          const local = await sqlite.probe();
+          return {
+            ...local,
+            agentIndexSchema: true,
+            evidenceStore: local.writable === true,
+            leaseStore: local.writable === true,
+          };
+        },
+        reporterProbe: () => agentIndexReporter.probe({ baseCrossChainAvailable }),
+      }
+    : undefined;
+  let resourcesClosed = false;
+  const close = () => {
+    if (resourcesClosed) return;
+    resourcesClosed = true;
+    try { sqlite?.db?.close?.(); } catch {}
+  };
+
+  return { handler, listen, preflightDependencies, close };
 }

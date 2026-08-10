@@ -19,6 +19,18 @@ function optional(env, key) {
   return value && !/FILL_ME/.test(value) ? value : '';
 }
 
+const PROXY_KEY_RE = /^[0-9a-f]{64}$/;
+
+function proxyKeyValue(env, key, { production, required = false } = {}) {
+  const value = optional(env, key);
+  if (!value) {
+    if (required) throw new Error(`env ${key} missing/unfilled`);
+    return '';
+  }
+  if (!PROXY_KEY_RE.test(value)) throw new Error(`env ${key} must be 64 lowercase hexadecimal characters`);
+  return value;
+}
+
 function parseUrl(raw, key, { production, originOnly = false, required = true } = {}) {
   if (!raw) {
     if (required) throw new Error(`env ${key} missing/unfilled`);
@@ -128,7 +140,15 @@ export function loadConfig(
     ? need(env, 'RELAYER_BASE_PRIVKEY') : optional(env, 'RELAYER_BASE_PRIVKEY');
   const zerodevProjectId = baseCrossChainAvailable
     ? need(env, 'ZERODEV_PROJECT_ID') : optional(env, 'ZERODEV_PROJECT_ID');
-  const proxyKey = production ? need(env, 'RELAYER_PROXY_KEY') : optional(env, 'RELAYER_PROXY_KEY');
+  const allowOpenProxy = !production && env.RELAYER_ALLOW_OPEN_PROXY === '1';
+  const proxyKey = proxyKeyValue(env, 'RELAYER_PROXY_KEY', {
+    production,
+    required: production || !allowOpenProxy,
+  });
+  const proxyKeyPrevious = proxyKeyValue(env, 'RELAYER_PROXY_KEY_PREVIOUS');
+  if (proxyKey && proxyKeyPrevious && proxyKey === proxyKeyPrevious) {
+    throw new Error('env RELAYER_PROXY_KEY_PREVIOUS must differ from RELAYER_PROXY_KEY');
+  }
   const reporterSecret = production ? need(env, 'AGENT_INDEX_REPORTER_SECRET') : optional(env, 'AGENT_INDEX_REPORTER_SECRET');
   const storePath = env.RELAYER_STORE_PATH || './.relayer-store.dev.json';
   const dbPath = production ? need(env, 'RELAYER_DB_PATH') : optional(env, 'RELAYER_DB_PATH');
@@ -253,7 +273,13 @@ export function loadConfig(
   nonEnumerable(config, 'store', createFileStore(storePath));
   nonEnumerable(config, 'agentIndex', agentIndex);
   nonEnumerable(config, 'sessionKeyCipher', sessionKeyCipher);
-  nonEnumerable(config, 'runtime', Object.freeze({ proxyKey, reporterSecret, debugErrors: env.RELAYER_DEBUG_ERRORS === '1' }));
+  nonEnumerable(config, 'runtime', Object.freeze({
+    proxyKey,
+    proxyKeyPrevious,
+    reporterSecret,
+    allowOpenProxy,
+    debugErrors: env.RELAYER_DEBUG_ERRORS === '1',
+  }));
   nonEnumerable(config, 'toJSON', () => publicRuntime);
   return Object.freeze(config);
 }

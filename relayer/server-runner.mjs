@@ -1,12 +1,61 @@
-// Entry point: node --env-file=.dev.vars relayer/server-runner.mjs
-// Loads relayer secrets from process.env and starts the /api/vf-cross HTTP surface on :8788.
-// Kept separate from src/server.mjs so createRelayerServer stays importable — and its module
-// load stays side-effect-free — without this file's env read / socket open running along with it.
-
+// Import-safe standalone entry point.  Tests and local tooling can import this module without
+// reading secrets, opening a socket, or changing process state.
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { loadConfig } from './src/config.mjs';
 import { createRelayerServer } from './src/server.mjs';
+import { runtimePreflight } from './src/runtimePreflight.mjs';
+import { createSafeLogger } from './src/safeLogger.mjs';
 
-const PORT = 8788;
-const config = loadConfig(process.env);
-createRelayerServer(config).listen(PORT);
-console.log(`vf-cross relayer listening on :${PORT}`);
+export async function runRelayer({
+  env = process.env,
+  port = Number(env.RELAYER_PORT || 8788),
+  loadConfigFn = loadConfig,
+  createServerFn = createRelayerServer,
+  preflightFn = runtimePreflight,
+  logger = createSafeLogger({ mode: env.NODE_ENV || 'development' }),
+  processLike = process,
+} = {}) {
+  try {
+    const config = loadConfigFn(env);
+    let server;
+    // The production composition owns the durable stores and reporter client. Construct that
+    // resource graph without workers/listener, then hand its real probes to the fail-closed gate.
+    // Injected test/tool factories retain the simpler preflight-before-construction ordering.
+    const composedDefault = createServerFn === createRelayerServer && preflightFn === runtimePreflight;
+    if (composedDefault) {
+      await preflightFn({ config, env, logger, staticOnly: true });
+      server = createServerFn(config);
+      try {
+        await preflightFn({
+          config,
+          env,
+          logger,
+          dependencies: server.preflightDependencies,
+        });
+      } catch (error) {
+        server.close?.();
+        throw error;
+      }
+    } else {
+      await preflightFn({ config, env, logger });
+      server = createServerFn(config);
+    }
+    const listener = await server.listen(port);
+    try { logger.info('RELAYER_LISTENING', { port }); } catch {}
+    return { ok: true, config, server, listener };
+  } catch (error) {
+    const code = error?.code === 'RUNTIME_PREFLIGHT_FAILED'
+      ? error.reasonCode || 'RUNTIME_PREFLIGHT_FAILED'
+      : 'RELAYER_STARTUP_FAILED';
+    try { logger.error(code, {}); } catch {}
+    processLike.exitCode = 1;
+    return { ok: false, code };
+  }
+}
+
+const invokedDirectly = process.argv[1]
+  && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+if (invokedDirectly) {
+  void runRelayer();
+}

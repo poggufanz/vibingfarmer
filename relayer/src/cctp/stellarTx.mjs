@@ -15,7 +15,11 @@
 //   STELLAR_TX_TIMEOUT — attempt window expired          -> retryable (stay mint_submitted)
 // The error prose is unchanged; the Task 8 prose-era assertions still hold verbatim.
 
+import { createSafeLogger } from '../safeLogger.mjs';
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const logger = createSafeLogger();
 
 /**
  * Polls getTransaction until the tx is SUCCESS, definitively failed, or the window expires.
@@ -42,7 +46,7 @@ export async function confirmStellarTx({ server, hash, label, attempts = 30, int
       // the final throw's `cause`) so a permanently-broken RPC doesn't masquerade as a clean
       // "not confirmed" timeout with zero trace of the real failure.
       lastErr = err;
-      console.warn(`[stellarTx] ${label} getTransaction ${i + 1}/${attempts} errored, retrying: ${err?.message || err}`);
+      logger.warn('STELLAR_TX_RPC_RETRY', { attempts, count: i + 1 });
       continue;
     }
     if (got.status === 'NOT_FOUND') continue;

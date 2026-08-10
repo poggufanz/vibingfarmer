@@ -42,7 +42,7 @@ function buildValidEnv(overrides = {}) {
     AGENT_INDEX_REPORTER_URL: 'http://localhost:5173/api/agent-index',
     AGENT_INDEX_REPORTER_SCHEMA: '1',
     AGENT_INDEX_REPORTER_SECRET: 'reporter-secret',
-    RELAYER_PROXY_KEY: 'proxy-secret',
+    RELAYER_PROXY_KEY: 'a'.repeat(64),
     RELAYER_DB_PATH: './.relayer-test.db',
     RELAYER_SESSION_KEY_ENCRYPTION_KEYS: SESSION_KEYRING,
     ...overrides,
@@ -138,6 +138,33 @@ describe('loadDeploymentFacts', () => {
 });
 
 describe('loadConfig', () => {
+  it('accepts one previous exact-length lowercase proxy key only for overlap', () => {
+    const config = loadConfig(buildValidEnv({ RELAYER_PROXY_KEY_PREVIOUS: 'b'.repeat(64) }));
+
+    expect(config.runtime.proxyKey).toBe('a'.repeat(64));
+    expect(config.runtime.proxyKeyPrevious).toBe('b'.repeat(64));
+  });
+
+  it.each([
+    ['', 'missing current key in production'],
+    ['A'.repeat(64), 'uppercase key'],
+    ['a'.repeat(63), 'short key'],
+    ['g'.repeat(64), 'non-hex key'],
+  ])('rejects weak or noncanonical configured proxy key: %s', (value, label) => {
+    const env = buildValidEnv({ [label.includes('current') ? 'RELAYER_PROXY_KEY' : 'RELAYER_PROXY_KEY_PREVIOUS']: value });
+    if (label.includes('current')) {
+      env.NODE_ENV = 'production';
+      env.RELAYER_STELLAR_PUBLIC = STELLAR_RELAYER;
+      env.RELAYER_PUBLIC_ORIGIN = 'https://relay.example';
+      env.AGENT_INDEX_REPORTER_URL = 'https://app.example/api/agent-index';
+    }
+    expect(() => loadConfig(env)).toThrow(/RELAYER_PROXY_KEY/);
+  });
+
+  it('rejects overlapping current and previous proxy keys', () => {
+    expect(() => loadConfig(buildValidEnv({ RELAYER_PROXY_KEY_PREVIOUS: 'a'.repeat(64) })))
+      .toThrow(/previous|differ|proxy/i);
+  });
   it('keeps Stellar/global readiness available without Base secrets or Base clients for a legacy deployment', () => {
     const env = buildValidEnv({
       RELAYER_BASE_PRIVKEY: '',
