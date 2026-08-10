@@ -211,10 +211,22 @@ describe('v3 mandate storage', () => {
   })
 
   it.each([
-    ['activation hash', 'unavailable', () => ({ observed: { ...activeRecord().observed, activation: null } })],
-    ['mandatory check', 'unavailable', () => ({ checks: { ...activeRecord().checks, activation: false } })],
+    [
+      'activation hash',
+      'unavailable',
+      () => ({ observed: { ...activeRecord().observed, activation: null } }),
+    ],
+    [
+      'mandatory check',
+      'unavailable',
+      () => ({ checks: { ...activeRecord().checks, activation: false } }),
+    ],
     ['owner', 'mismatched', () => ({ stellarOwner: OWNER_B })],
-    ['kernel', 'mismatched', () => ({ kernelAddress: '0x0000000000000000000000000000000000000dd4' })],
+    [
+      'kernel',
+      'mismatched',
+      () => ({ kernelAddress: '0x0000000000000000000000000000000000000dd4' }),
+    ],
   ])('stored %s mutation classifies exactly as %s', (_label, expected, mutate) => {
     const record = activeRecord(mutate())
     expect(
