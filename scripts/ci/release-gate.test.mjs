@@ -425,22 +425,67 @@ test('workflow: deploy runs a non-secret readiness step before the traffic-shift
   assert.ok(readinessIdx !== -1 && readinessIdx < wranglerIdx, 'a non-secret readiness step must run before the wrangler deploy step')
 })
 
-test('workflow: deploy applies remote D1 migrations before publishing Pages Functions', () => {
+test('workflow: deploy migrates each D1 environment before its matching Pages publish', () => {
   const workflow = loadWorkflow()
-  const steps = workflow.jobs.deploy.steps
-  const migrationIdx = steps.findIndex(
-    (step) =>
-      step.uses?.startsWith('cloudflare/wrangler-action') &&
-      step.with?.command === 'd1 migrations apply vf-gate --remote'
+  const deploy = workflow.jobs.deploy
+  const steps = deploy.steps
+  const previewCondition = 'github.event_name == \'push\' && github.ref_name != \'main\''
+  const productionCondition = 'github.event_name == \'release\' || github.ref_name == \'main\''
+
+  // Keep the protected production approval boundary and the branch-to-environment mapping intact.
+  assert.equal(
+    deploy.environment,
+    "${{ (github.event_name == 'release' || github.ref_name == 'main') && 'production' || 'preview' }}"
   )
-  const deployIdx = steps.findIndex(
+
+  const previewMigrationIdx = steps.findIndex((step) => step.run === 'npm run d1:migrate:preview')
+  const productionMigrationIdx = steps.findIndex((step) => step.run === 'npm run d1:migrate:production')
+  const previewDeployIdx = steps.findIndex(
     (step) =>
       step.uses?.startsWith('cloudflare/wrangler-action') &&
+      step.if === previewCondition &&
       String(step.with?.command).startsWith('pages deploy ')
   )
-  assert.ok(migrationIdx !== -1, 'deploy must apply the remote vf-gate D1 migrations')
-  assert.ok(deployIdx !== -1, 'deploy must publish Pages')
-  assert.ok(migrationIdx < deployIdx, 'D1 migrations must finish before Pages Functions are published')
+  const productionDeployIdx = steps.findIndex(
+    (step) =>
+      step.uses?.startsWith('cloudflare/wrangler-action') &&
+      step.if === productionCondition &&
+      String(step.with?.command).startsWith('pages deploy ')
+  )
+
+  assert.ok(previewMigrationIdx !== -1, 'preview deploy must run npm run d1:migrate:preview')
+  assert.ok(productionMigrationIdx !== -1, 'production deploy must run npm run d1:migrate:production')
+  assert.equal(steps[previewMigrationIdx].if, previewCondition)
+  assert.equal(steps[productionMigrationIdx].if, productionCondition)
+  assert.ok(previewDeployIdx !== -1, 'preview deploy must publish Pages')
+  assert.ok(productionDeployIdx !== -1, 'production deploy must publish Pages')
+  assert.ok(
+    previewMigrationIdx < previewDeployIdx,
+    'preview D1 migrations must finish before preview Pages Functions are published'
+  )
+  assert.ok(
+    productionMigrationIdx < productionDeployIdx,
+    'production D1 migrations must finish before production Pages Functions are published'
+  )
+
+  assert.equal(steps[previewDeployIdx].if, previewCondition)
+  assert.equal(steps[productionDeployIdx].if, productionCondition)
+  assert.match(
+    steps[previewDeployIdx].with.command,
+    /--env preview .*--branch=\$\{\{ github\.ref_name \}\}/
+  )
+  assert.match(steps[productionDeployIdx].with.command, /--branch=main(?:\s|$)/)
+
+  // The old single Wrangler migration action must not return as a bypass around the guarded
+  // environment-specific scripts above.
+  assert.equal(
+    steps.some(
+      (step) =>
+        step.uses?.startsWith('cloudflare/wrangler-action') &&
+        step.with?.command === 'd1 migrations apply vf-gate --remote'
+    ),
+    false
+  )
 })
 
 test('workflow: playwright upload-artifact path is a scalar naming both report directories (not a YAML sequence)', () => {
