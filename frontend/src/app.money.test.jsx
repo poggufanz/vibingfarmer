@@ -726,7 +726,7 @@ describe('/home & /agent route source: MyMoneyRoute moved to /home, /agent is no
   it('the /agent route element mounts <CrewRoute, never <MyMoneyRoute', () => {
     const agentRoute = routeBlock('/agent')
     expect(agentRoute).toMatch(/<CrewRoute/)
-    expect(agentRoute).toMatch(/agents=\{crewAgents\}/)
+    expect(agentRoute).toMatch(/crew=\{crew\}/)
     expect(agentRoute).not.toMatch(/<MyMoneyRoute/)
   })
 
@@ -797,35 +797,27 @@ describe('session-resumed banner Dismiss button (Task 10 F3 fix)', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// Fix round 1, M9: the sidebar badge and CrewRoute.jsx's own "Working for you" stat must count
-// "active" agents the SAME way (!revoked && !problems.length) -- the badge used to count only
-// !revoked, so an agent with problems made the rail say one more than the crew page for the same
-// word. Source-level proof (app.jsx too heavy to render): the badge's own count expression must
-// carry the same predicate CrewRoute.jsx's activeCount uses.
+// Task 18: Sidebar and CrewRoute must consume the same projected Crew read model. The
+// productive-membership predicate belongs to buildCrewPersonas.js and is covered by executable
+// projection/App/Crew tests; this source check only freezes the single route-composition seam.
 // ---------------------------------------------------------------------------------------------
-describe('activeAgentCount (Task 10 M9 fix): matches CrewRoute.jsx\'s own "active" definition', () => {
+describe('Crew route composition (Task 18): Sidebar and /agent share one Crew projection', () => {
   const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
-  const crewRouteSrc = fs.readFileSync(
-    path.resolve(here, './components/crew/CrewRoute.jsx'),
-    'utf8'
-  )
 
-  function exprBody(constName) {
-    const marker = `const ${constName} = `
+  function routeBlock(routePath) {
+    const marker = `path="${routePath}"`
     const start = src.indexOf(marker)
-    expect(start, `${constName} not found in app.jsx`).toBeGreaterThan(-1)
-    return src.slice(start, src.indexOf('\n\n', start))
+    expect(start, `Route ${routePath} not found in app.jsx`).toBeGreaterThan(-1)
+    const nextRoute = src.indexOf('<Route', start + marker.length)
+    return src.slice(start, nextRoute === -1 ? src.length : nextRoute)
   }
 
-  it('counts !revoked && !problems.length, not !revoked alone', () => {
-    const expr = exprBody('activeAgentCount')
-    expect(expr).toMatch(/crewAgents\.filter/)
-    expect(expr).toMatch(/!a\?\.scope\?\.value\?\.revoked/)
-    expect(expr).toMatch(/!a\?\.problems\?\.length/)
+  it('passes the projected activeCount to Sidebar', () => {
+    expect(src).toMatch(/<Sidebar[\s\S]*agentCount=\{crew\.activeCount\}/)
   })
 
-  it("CrewRoute.jsx's own activeCount uses the identical predicate (both fields present)", () => {
-    expect(crewRouteSrc).toMatch(/!a\?\.scope\?\.value\?\.revoked && !a\?\.problems\?\.length/)
+  it('passes the same projected crew object to /agent CrewRoute', () => {
+    expect(routeBlock('/agent')).toMatch(/<CrewRoute[\s\S]*crew=\{crew\}/)
   })
 })
 
