@@ -46,7 +46,7 @@ vi.mock('./stellar/agentCache.js', () => ({
 vi.mock('./stellar/sessionKey.js', () => ({
   newSessionKey: (secret) => ({
     publicKey: secret ? 'GRESTORED' : 'GFRESH',
-    secret,
+    secret: secret ?? 'SFRESH',
     rawPublicKey: new Uint8Array(32),
     sign: () => new Uint8Array(64),
   }),
@@ -366,7 +366,7 @@ beforeEach(() => {
   }))
   takeReusableAgentMock.mockReset()
   takeReusableAgentMock.mockResolvedValue(null)
-  saveCachedAgentMock.mockClear()
+  saveCachedAgentMock.mockReset().mockReturnValue(true)
   readTokenBalanceMock.mockReset()
   readTokenBalanceMock.mockImplementation(async (addr) => (addr === 'GUSER' ? null : 0n))
   runAgentDepositMock.mockReset()
@@ -768,7 +768,10 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       onEvent: vi.fn(),
       baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
     })
-    await orch.dispatch({ vaults: [{ address: '0xBASE', allocation: 1, chain: 'base' }] }, 50)
+    const summary = await orch.dispatch(
+      { vaults: [{ address: '0xBASE', allocation: 1, chain: 'base' }] },
+      50
+    )
 
     expect(workerInstances).toHaveLength(0)
     expect(submitGrantMock).toHaveBeenCalledTimes(1)
@@ -776,9 +779,68 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     expect(grantArgs.agentInits).toHaveLength(1)
     expect(grantArgs.agentInits[0].kind).toBe(1)
     expect(grantArgs.budgets).toEqual([{ budget: expect.any(BigInt), token: STELLAR_USDC_SAC }])
+    expect(summary.baseLeg).toMatchObject({ success: true })
     expect(executeBaseLegMock).toHaveBeenCalledWith(
       expect.objectContaining({ bridgeAgentAddress: 'CFRESH1' })
     )
+    expect(saveCachedAgentMock).toHaveBeenCalledTimes(1)
+    expect(saveCachedAgentMock).toHaveBeenCalledWith({
+      owner: 'GUSER',
+      vault: 'CACTIVEVAULT',
+      entry: expect.objectContaining({
+        agentAddress: 'CFRESH1',
+        secret: 'SFRESH',
+        signerPub: 'GFRESH',
+        cap: '500000000',
+        expiry: expect.any(Number),
+      }),
+    })
+  })
+
+  it('stops before the Base burn when the confirmed bridge credential cannot be persisted', async () => {
+    saveCachedAgentMock.mockReturnValue(false)
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 's-allbase-cache-failure',
+      onEvent: vi.fn(),
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+    })
+
+    const summary = await orch.dispatch(
+      { vaults: [{ address: '0xBASE', allocation: 1, chain: 'base' }] },
+      50
+    )
+
+    expect(submitGrantMock).toHaveBeenCalledOnce()
+    expect(saveCachedAgentMock).toHaveBeenCalledOnce()
+    expect(executeBaseLegMock).not.toHaveBeenCalled()
+    expect(runAgentBurnMock).not.toHaveBeenCalled()
+    expect(summary.baseLeg).toMatchObject({ success: false })
+  })
+
+  it('binds the persisted bridge credential to the exact grant signer', async () => {
+    const signer = new Uint8Array(32)
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's-bridge-cache-unit' })
+    await expect(
+      orch.grantFreshAgents(
+        [],
+        0n,
+        2_100_000_000,
+        2_000_000_000,
+        {
+          signer,
+          cap: 1n,
+          token: STELLAR_USDC_SAC,
+          target: 'CTOKENMESSENGER',
+          kind: 1,
+          mintRecipient: new Uint8Array(32),
+          destinationDomain: 6,
+          periodDuration: 3600,
+          expiry: 2_100_000_000,
+        },
+        { secret: 'SFRESH', publicKey: 'GFRESH', rawPublicKey: signer }
+      )
+    ).resolves.toMatchObject({ bridgeAgentAddress: 'CFRESH1' })
   })
 
   it('a bridge leg forces the grant path even when the Stellar allowance already covers cached reuse (never partially cached)', async () => {

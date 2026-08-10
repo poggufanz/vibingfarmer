@@ -26,6 +26,21 @@ const UNWIND_RESERVE_FIELDS = ['jobId', 'capability', 'kernelAddress', 'recipien
 const UNWIND_ATTACH_FIELDS = ['jobId', 'userOpHash', 'unwindTxHash']
 const UNWIND_STATUS_FIELDS = ['jobId']
 const FARM_ATTACH_FIELDS = ['mandateId', 'jobId', 'burnTxHash']
+const FARM_RECOVERY_FIELDS = ['mandateId', 'identity', 'action', 'evidenceVersion', 'leaseToken']
+const BASE_RECOVERY_IDENTITY_FIELDS = [
+  'networkId',
+  'bindingId',
+  'executionId',
+  'allocationId',
+  'childId',
+]
+const BASE_RECOVERY_ACTIONS = new Set([
+  'poll-attestation',
+  'submit-mint',
+  'poll-mint',
+  'submit-base-deposit',
+  'poll-base-deposit',
+])
 const FARM_FIELDS = [
   'requestId',
   'sourceDomain',
@@ -60,6 +75,11 @@ const ROUTES = {
   'POST /mandate/revoke': { auth: 'mandate', cookieIssue: 'revoke' },
   'POST /farm': { auth: 'mandate', exactFields: FARM_FIELDS },
   'POST /farm/attach': { auth: 'mandate', needsJob: true, exactFields: FARM_ATTACH_FIELDS },
+  'POST /farm/recover': {
+    auth: 'mandate',
+    exactFields: FARM_RECOVERY_FIELDS,
+    noStore: true,
+  },
   'POST /status': { auth: 'mandateOrJob', unwindFields: UNWIND_STATUS_FIELDS, noStore: true },
 }
 
@@ -120,6 +140,28 @@ function isValidUnwindBody(path, body) {
       CANONICAL_ID.test(body.jobId) &&
       /^[0-9a-f]{64}$/.test(body.burnTxHash)
     )
+  if (path === '/farm/recover') {
+    const identity = body?.identity
+    return (
+      hasExactFields(body, FARM_RECOVERY_FIELDS) &&
+      hasExactFields(identity, BASE_RECOVERY_IDENTITY_FIELDS) &&
+      CANONICAL_ID.test(body.mandateId) &&
+      identity.networkId === 'stellar-testnet' &&
+      CANONICAL_ID.test(identity.bindingId) &&
+      CANONICAL_ID.test(identity.childId) &&
+      typeof identity.executionId === 'string' &&
+      identity.executionId.length >= 1 &&
+      identity.executionId.length <= 256 &&
+      typeof identity.allocationId === 'string' &&
+      identity.allocationId.length >= 1 &&
+      identity.allocationId.length <= 192 &&
+      identity.executionId.endsWith(`:exec:${identity.allocationId}`) &&
+      BASE_RECOVERY_ACTIONS.has(body.action) &&
+      Number.isSafeInteger(body.evidenceVersion) &&
+      body.evidenceVersion >= 0 &&
+      CANONICAL_CAPABILITY.test(body.leaseToken)
+    )
+  }
   if (path === '/unwind') {
     return (
       hasExactFields(body, UNWIND_RESERVE_FIELDS) &&

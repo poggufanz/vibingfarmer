@@ -211,10 +211,72 @@ function fakeStore(overrides = {}) {
       evidenceDigest: 'd'.repeat(64),
       reportDigest: 'e'.repeat(64),
     })),
-    readPublicBaseChildEvidence: vi.fn(async (identity) => ({
+    readBaseChildRecoveryBundle: vi.fn(async (identity) => ({
+      schemaVersion: 1,
       identity,
+      owner: OWNER,
+      agent: AGENT,
+      recoverable: true,
+      recoveryVersion: 0,
+      intent: {
+        runId: 'run-route-1',
+        grantTxHash: '66'.repeat(32),
+        bindingHash: 'dd'.repeat(32),
+        baseJobId: identity.childId,
+        kernelAddress: `0x${'22'.repeat(20)}`,
+        poolAddress: `0x${'33'.repeat(20)}`,
+        proxyTarget: 'aave-v3',
+        token: 'USDC',
+        units: '1000000',
+        decimals: 6,
+        minShares: '0',
+      },
+      phases: [],
+      events: [],
+    })),
+    acquireBaseChildRecoveryLease: vi.fn(async ({ leaseToken, now, ttlMs }) => ({
+      acquired: true,
+      leaseToken,
+      expiresAt: now + ttlMs,
+    })),
+    readBaseChildRecoveryClaim: vi.fn(
+      async ({ identity, action, evidenceVersion, leaseToken }) => ({
+        identity,
+        owner: OWNER,
+        action,
+        phase: action === 'submit-mint' ? 'cctp_mint' : 'base_deposit',
+        evidenceVersion,
+        holder: 'tab-route',
+        leaseToken,
+        acquiredAt: 2_000_000_000_000,
+        expiresAt: 2_000_000_030_000,
+      })
+    ),
+    renewBaseChildRecoveryLease: vi.fn(async ({ now, ttlMs }) => ({
+      renewed: true,
+      expiresAt: now + ttlMs,
+    })),
+    releaseBaseChildRecoveryLease: vi.fn(async () => ({ released: true })),
+    readPublicBaseChildEvidence: vi.fn(async (identity) => ({
+      schemaVersion: 1,
+      identity,
+      owner: OWNER,
+      agent: AGENT,
       recoverable: true,
       recoveryVersion: 1,
+      intent: {
+        runId: 'run-route-1',
+        grantTxHash: '66'.repeat(32),
+        bindingHash: 'dd'.repeat(32),
+        baseJobId: identity.childId,
+        kernelAddress: `0x${'22'.repeat(20)}`,
+        poolAddress: `0x${'33'.repeat(20)}`,
+        proxyTarget: 'aave-v3',
+        token: 'USDC',
+        units: '1000000',
+        decimals: 6,
+        minShares: '0',
+      },
       phases: [],
       events: [],
     })),
@@ -879,6 +941,90 @@ describe('/api/agent-index authenticated execution routes', () => {
     expect(response.res.statusCode).toBe(429)
     expect(response.body).toEqual({ error: 'Too many requests' })
     expect(mocked.readContract).not.toHaveBeenCalled()
+  })
+})
+
+describe('/api/agent-index Base recovery routes', () => {
+  const identity = {
+    networkId: NETWORK,
+    bindingId: '0123456789abcdef0123456789abcdef',
+    executionId: 'run-route-1:exec:allocation-route-1',
+    allocationId: 'allocation-route-1',
+    childId: 'job-route-1',
+  }
+  const request = {
+    executionId: identity.executionId,
+    bindingId: identity.bindingId,
+    allocationId: identity.allocationId,
+    childId: identity.childId,
+    expectedRecoveryVersion: 0,
+    leaseOwner: 'tab-route',
+  }
+
+  it('mounts the browser Base claim separately from Stellar recovery and does not use reporter auth', async () => {
+    authorityReads([
+      {
+        routerOwner: OWNER,
+        scope: { owner: OWNER, revoked: false },
+        signer: SESSION.rawPublicKey(),
+      },
+      {
+        routerOwner: OWNER,
+        scope: { owner: OWNER, revoked: false },
+        signer: SESSION.rawPublicKey(),
+      },
+    ])
+    const challenge = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-challenge',
+        body: {
+          networkId: NETWORK,
+          owner: OWNER,
+          agent: AGENT,
+          requestDigest: receiptRequestDigest(request),
+        },
+      })
+    )
+    expect(challenge.res.statusCode).toBe(201)
+    const proof = {
+      challengeId: challenge.body.challenge.challengeId,
+      expiresAt: challenge.body.challenge.expiresAt,
+      signature: SESSION.sign(Buffer.from(receiptProofMessage(challenge.body.challenge))).toString(
+        'base64url'
+      ),
+    }
+    const out = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=base-recovery-request',
+        body: { request, proof },
+      })
+    )
+    expect(out.res.statusCode).toBe(200)
+    expect(out.body).toMatchObject({
+      ok: true,
+      identity,
+      action: 'no-movement',
+      evidenceVersion: 0,
+      lease: null,
+    })
+    expect(JSON.stringify(out.body)).not.toMatch(/reporter|secret|intent_json|events/i)
+    expect(mocked.store.acquireBaseChildRecoveryLease).not.toHaveBeenCalled()
+  })
+
+  it('authenticates reporter-only claim actions before constructing/reading D1', async () => {
+    const req = mockReq({
+      method: 'POST',
+      url: '/api/agent-index?action=base-recovery-claim',
+      body: { identity, action: 'submit-mint', evidenceVersion: 0, leaseToken: 'aa'.repeat(32) },
+    })
+    req.headers.authorization = 'Bearer wrong'
+    const out = await call(req)
+    expect(out.res.statusCode).toBe(401)
+    expect(out.body).toEqual({ error: 'Unauthorized' })
+    expect(mocked.createStore).not.toHaveBeenCalled()
+    expect(mocked.store.readBaseChildRecoveryClaim).not.toHaveBeenCalled()
   })
 })
 

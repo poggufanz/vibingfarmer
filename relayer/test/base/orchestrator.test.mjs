@@ -4,6 +4,8 @@ import {
   APPROVE_ABI,
   YIELD_ROUTER_ABI,
   createOrchestrator as createOrchestratorProduction,
+  readBaseDepositEvidence,
+  USER_OPERATION_EVENT_TOPIC0,
 } from '../../src/base/orchestrator.mjs';
 import { MAX_CALL_CAP_UNITS } from '../../src/base/session.mjs';
 import {
@@ -22,7 +24,10 @@ const KERNEL_ADDRESS = '0x00000000000000000000000000000000000000aa';
 const DEPOSITED_TOPIC0 = '0xf5681f9d0db1b911ac18ee83d515a1cf1051853a9eae418316a2fdf7dea427c5';
 
 function createOrchestrator(config) {
-  return createOrchestratorProduction({ baseCrossChainAvailable: true, ...config });
+  return createOrchestratorProduction({
+    baseCrossChainAvailable: true,
+    ...config,
+  });
 }
 
 function word(value) {
@@ -79,7 +84,9 @@ function buildMockKernelClient() {
     account: {
       address: '0xSmartAccount',
       encodeCalls: vi.fn().mockResolvedValue('0xencodedCallData'),
+      getNonce: vi.fn().mockResolvedValue(17n),
     },
+    getBlockNumber: vi.fn().mockResolvedValue(4321n),
     sendUserOperation: vi.fn().mockResolvedValue(USER_OP_HASH),
     waitForUserOperationReceipt: vi.fn(async ({ hash }) => ({
       success: true,
@@ -89,6 +96,395 @@ function buildMockKernelClient() {
 }
 
 describe('dispatchDeposits', () => {
+  it('captures a frozen canonical reconcile handle before the submitting fence and reuses its nonce', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.account.getNonce = vi.fn().mockResolvedValue(17n);
+    kernelClient.getBlockNumber = vi.fn().mockResolvedValue(4321n);
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(task10Receipt(allocation));
+    const checkpoints = [];
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 },
+      rpcUrl: 'https://sepolia.base.org',
+      bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession',
+      reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    await orchestrator.dispatchDeposits('approval', [allocation], {
+      onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint),
+    });
+
+    const handle = checkpoints[0].evidence.reconcileHandle;
+    expect(handle).toEqual({
+      entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+      sender: KERNEL_ADDRESS,
+      nonce: '17',
+      startBlock: '4321',
+    });
+    expect(Object.isFrozen(handle)).toBe(true);
+    expect(checkpoints.map(({ evidence }) => evidence.reconcileHandle)).toEqual([handle, handle, handle]);
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledWith({
+      callData: '0xencodedCallData',
+      nonce: 17n,
+    });
+  });
+
+  it('holds a new durable send when both reconcile readers are unavailable', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.getNonce = undefined;
+    kernelClient.getBlockNumber = undefined;
+    kernelClient.account.address = KERNEL_ADDRESS;
+    const reconstructSessionClientFn = vi.fn().mockResolvedValue(kernelClient);
+    const onCheckpoint = vi.fn();
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 },
+      rpcUrl: 'https://sepolia.base.org',
+      bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession',
+      reconstructSessionClientFn,
+    });
+    const [result] = await orchestrator.dispatchDeposits('approval', [allocation], { onCheckpoint });
+    expect(result).toMatchObject({
+      status: 'held',
+      reasonCode: 'reconcile_handle_unavailable',
+    });
+    expect(onCheckpoint).not.toHaveBeenCalled();
+    expect(kernelClient.account.encodeCalls).not.toHaveBeenCalled();
+    expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it('invokes the post-encode dual fence immediately before exactly one send', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(task10Receipt(allocation));
+    const order = [];
+    kernelClient.account.encodeCalls.mockImplementation(async () => {
+      order.push('encode');
+      return '0xencodedCallData';
+    });
+    kernelClient.sendUserOperation.mockImplementation(async () => {
+      order.push('send');
+      return USER_OP_HASH;
+    });
+    const onBeforeSend = vi.fn(async () => {
+      order.push('beforeSend');
+      return { allowed: true };
+    });
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 },
+      rpcUrl: 'https://sepolia.base.org',
+      bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession',
+      reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+    await orchestrator.dispatchDeposits('approval', [allocation], {
+      onCheckpoint: async ({ status }) => {
+        order.push(status);
+      },
+      onBeforeSend,
+    });
+    expect(order.slice(0, 4)).toEqual(['submitting', 'encode', 'beforeSend', 'send']);
+    expect(onBeforeSend).toHaveBeenCalledOnce();
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledOnce();
+  });
+
+  it('writes one durable unknown and performs zero sends when the post-encode fence is lost', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    const checkpoints = [];
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 },
+      rpcUrl: 'https://sepolia.base.org',
+      bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession',
+      reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+    const [result] = await orchestrator.dispatchDeposits('approval', [allocation], {
+      onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint),
+      onBeforeSend: async () => false,
+    });
+    expect(result).toMatchObject({
+      status: 'uncertain',
+      reasonCode: 'pre_submit_fence_lost',
+    });
+    expect(checkpoints.at(-1)).toMatchObject({
+      status: 'unknown',
+      evidence: { reasonCode: 'pre_submit_fence_lost', userOpHash: null },
+    });
+    expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it('read-only reconciliation proves one bounded EntryPoint operation and one YieldRouter event without a signing client', async () => {
+    const allocation = task10Allocation();
+    const reconcileHandle = {
+      entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+      sender: KERNEL_ADDRESS,
+      nonce: '17',
+      startBlock: '4321',
+    };
+    const entryPointLog = {
+      address: reconcileHandle.entryPoint,
+      topics: [USER_OPERATION_EVENT_TOPIC0],
+      args: {
+        userOpHash: USER_OP_HASH,
+        sender: KERNEL_ADDRESS,
+        nonce: 17n,
+        success: true,
+      },
+      transactionHash: TX_HASH,
+      blockNumber: 4322n,
+    };
+    const publicClient = {
+      getBlockNumber: vi.fn().mockResolvedValue(4330n),
+      getLogs: vi.fn().mockResolvedValue([entryPointLog]),
+    };
+    const bundlerClient = {
+      getUserOperation: vi.fn().mockResolvedValue({
+        entryPoint: reconcileHandle.entryPoint,
+        transactionHash: TX_HASH,
+        blockNumber: 4322n,
+        userOperation: { sender: KERNEL_ADDRESS, nonce: 17n },
+      }),
+      getUserOperationReceipt: vi.fn().mockResolvedValue({
+        userOpHash: USER_OP_HASH,
+        entryPoint: reconcileHandle.entryPoint,
+        sender: KERNEL_ADDRESS,
+        nonce: 17n,
+        success: true,
+        receipt: { status: 'success', transactionHash: TX_HASH },
+        logs: [depositedLog(allocation)],
+      }),
+    };
+
+    const result = await readBaseDepositEvidence({
+      publicClient,
+      bundlerClient,
+      allocation,
+      reconcileHandle,
+      userOpHash: USER_OP_HASH,
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      maxBlocks: 20,
+    });
+
+    expect(publicClient.getLogs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: reconcileHandle.entryPoint,
+        fromBlock: 4321n,
+        toBlock: 4330n,
+      }),
+    );
+    expect(bundlerClient.getUserOperation).toHaveBeenCalledWith({
+      hash: USER_OP_HASH,
+    });
+    expect(bundlerClient.getUserOperationReceipt).toHaveBeenCalledWith({
+      hash: USER_OP_HASH,
+    });
+    expect(result).toMatchObject({
+      status: 'fulfilled',
+      userOpHash: USER_OP_HASH,
+      transactionHash: TX_HASH,
+      executionStatus: 'deposited',
+      reconcileHandle,
+    });
+  });
+
+  it('read-only reconciliation returns owner action for a definitive reverted UserOperation', async () => {
+    const allocation = task10Allocation();
+    const reconcileHandle = {
+      entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+      sender: KERNEL_ADDRESS,
+      nonce: '17',
+      startBlock: '4321',
+    };
+    const entryPointLog = {
+      address: reconcileHandle.entryPoint,
+      topics: [USER_OPERATION_EVENT_TOPIC0],
+      args: {
+        userOpHash: USER_OP_HASH,
+        sender: KERNEL_ADDRESS,
+        nonce: 17n,
+        success: false,
+      },
+      transactionHash: TX_HASH,
+      blockNumber: 4322n,
+    };
+    const publicClient = {
+      getBlockNumber: vi.fn().mockResolvedValue(4330n),
+      getLogs: vi.fn().mockResolvedValue([entryPointLog]),
+    };
+    const bundlerClient = {
+      getUserOperation: vi.fn().mockResolvedValue({
+        entryPoint: reconcileHandle.entryPoint,
+        transactionHash: TX_HASH,
+        blockNumber: 4322n,
+        userOperation: { sender: KERNEL_ADDRESS, nonce: 17n },
+      }),
+      getUserOperationReceipt: vi.fn().mockResolvedValue({
+        userOpHash: USER_OP_HASH,
+        entryPoint: reconcileHandle.entryPoint,
+        sender: KERNEL_ADDRESS,
+        nonce: 17n,
+        success: false,
+        receipt: { status: 'success', transactionHash: TX_HASH },
+        logs: [],
+      }),
+    };
+
+    const result = await readBaseDepositEvidence({
+      publicClient,
+      bundlerClient,
+      allocation,
+      reconcileHandle,
+      userOpHash: USER_OP_HASH,
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      maxBlocks: 20,
+    });
+
+    expect(result).toMatchObject({
+      status: 'owner_action_required',
+      executionStatus: 'failed',
+      userOpHash: USER_OP_HASH,
+      transactionHash: TX_HASH,
+      custodyLocation: 'base-kernel',
+      kernelCustodyConfirmed: true,
+      custody: { location: 'base-kernel', confirmed: true },
+      reconcileHandle,
+    });
+  });
+
+  it('routes handle recovery through a read-only seam and never reconstructs, encodes, or sends', async () => {
+    const allocation = task10Allocation();
+    const reconcileHandle = {
+      entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+      sender: KERNEL_ADDRESS,
+      nonce: '17',
+      startBlock: '4321',
+    };
+    const reconstructSessionClientFn = vi.fn();
+    const readBaseDepositEvidenceFn = vi.fn().mockResolvedValue({
+      status: 'fulfilled',
+      userOpHash: USER_OP_HASH,
+      transactionHash: TX_HASH,
+      event: {
+        address: YIELD_ROUTER_ADDRESS,
+        topic0: DEPOSITED_TOPIC0,
+        logIndex: '7',
+        caller: KERNEL_ADDRESS,
+        poolAddress: allocation.pool,
+        assets: '1000000',
+        shares: '912345',
+      },
+    });
+    const onCheckpoint = vi.fn();
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 },
+      rpcUrl: 'unused',
+      bundlerRpcUrl: 'unused',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession',
+      reconstructSessionClientFn,
+      readBaseDepositEvidenceFn,
+    });
+
+    const result = await orchestrator.reconcileBaseDeposit({
+      allocation,
+      reconcileHandle,
+      userOpHash: USER_OP_HASH,
+      onCheckpoint,
+    });
+
+    expect(readBaseDepositEvidenceFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allocation,
+        reconcileHandle,
+        userOpHash: USER_OP_HASH,
+      }),
+    );
+    expect(reconstructSessionClientFn).not.toHaveBeenCalled();
+    expect(onCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'confirmed',
+        evidence: expect.objectContaining({ reconcileHandle }),
+      }),
+    );
+    expect(result).toMatchObject({ status: 'fulfilled', reconcileHandle });
+  });
+
+  it('writes one failed Kernel-custody checkpoint for a definitive read-only revert', async () => {
+    const allocation = task10Allocation();
+    const reconcileHandle = {
+      entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+      sender: KERNEL_ADDRESS,
+      nonce: '17',
+      startBlock: '4321',
+    };
+    const reconstructSessionClientFn = vi.fn();
+    const readBaseDepositEvidenceFn = vi.fn().mockResolvedValue({
+      status: 'owner_action_required',
+      reasonCode: 'base-deposit-failed-kernel-custody',
+      userOpHash: USER_OP_HASH,
+      transactionHash: TX_HASH,
+      reconcileHandle,
+      custodyLocation: 'base-kernel',
+      kernelCustodyConfirmed: true,
+      custody: { location: 'base-kernel', confirmed: true },
+    });
+    const onCheckpoint = vi.fn();
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 },
+      rpcUrl: 'unused',
+      bundlerRpcUrl: 'unused',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession',
+      reconstructSessionClientFn,
+      readBaseDepositEvidenceFn,
+    });
+
+    const result = await orchestrator.reconcileBaseDeposit({
+      allocation,
+      reconcileHandle,
+      userOpHash: USER_OP_HASH,
+      onCheckpoint,
+    });
+
+    expect(reconstructSessionClientFn).not.toHaveBeenCalled();
+    expect(onCheckpoint).toHaveBeenCalledOnce();
+    expect(onCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: 'base_deposit',
+        status: 'failed',
+        evidence: expect.objectContaining({
+          userOpHash: USER_OP_HASH,
+          transactionHash: TX_HASH,
+          reasonCode: 'base-deposit-failed-kernel-custody',
+          custodyLocation: 'base-kernel',
+          kernelCustodyConfirmed: true,
+          custody: { location: 'base-kernel', confirmed: true },
+          reconcileHandle,
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      status: 'owner_action_required',
+      transactionHash: TX_HASH,
+    });
+  });
+
   // Defect caught: startup recovery sent a new deposit UserOperation for a child whose exact
   // canonical submitted hash was already durable instead of confirming that hash only.
   it('confirms one exact submitted child without encoding or sending another UserOperation', async () => {
@@ -120,7 +516,10 @@ describe('dispatchDeposits', () => {
         identity: allocation.identity,
         phase: 'base_deposit',
         status: 'confirmed',
-        evidence: expect.objectContaining({ userOpHash: USER_OP_HASH, transactionHash: TX_HASH }),
+        evidence: expect.objectContaining({
+          userOpHash: USER_OP_HASH,
+          transactionHash: TX_HASH,
+        }),
       }),
     ]);
     expect(result).toMatchObject({
@@ -189,7 +588,10 @@ describe('dispatchDeposits', () => {
       'approval', allocation, USER_OP_HASH, { onCheckpoint: vi.fn() },
     );
 
-    expect(confirmed).toMatchObject({ status: 'fulfilled', userOpHash: USER_OP_HASH });
+    expect(confirmed).toMatchObject({
+      status: 'fulfilled',
+      userOpHash: USER_OP_HASH,
+    });
     expect(restartedClient.sendUserOperation).not.toHaveBeenCalled();
   });
 
@@ -235,6 +637,7 @@ describe('dispatchDeposits', () => {
         chainId: '84532', caller: KERNEL_ADDRESS, poolAddress: allocation.pool,
         assets: '1000000', minShares: '900000', userOpHash: USER_OP_HASH,
         transactionHash: TX_HASH,
+        shares: '912345',
         event: {
           address: YIELD_ROUTER_ADDRESS, topic0: DEPOSITED_TOPIC0, logIndex: '7',
           caller: KERNEL_ADDRESS, poolAddress: allocation.pool, assets: '1000000', shares: '912345',
@@ -245,6 +648,54 @@ describe('dispatchDeposits', () => {
       identity: allocation.identity, status: 'fulfilled', userOpHash: USER_OP_HASH,
       transactionHash: TX_HASH, executionStatus: 'deposited', custody: { location: 'base-proxy' },
     });
+  });
+
+  it('writes definitive failed Kernel-custody evidence when the submitted deposit reverts', async () => {
+    const allocation = task10Allocation();
+    const kernelClient = buildMockKernelClient();
+    kernelClient.account.address = KERNEL_ADDRESS;
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(
+      task10Receipt(allocation, {
+        success: false,
+        logs: [],
+        receipt: { status: 'success', transactionHash: TX_HASH },
+      }),
+    );
+    const checkpoints = [];
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 },
+      rpcUrl: 'https://sepolia.base.org',
+      bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession',
+      reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+
+    const [result] = await orchestrator.dispatchDeposits('serialized-approval', [allocation], {
+      onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint),
+    });
+
+    expect(checkpoints.map(({ status }) => status)).toEqual(['submitting', 'submitted', 'failed']);
+    expect(checkpoints.at(-1)).toMatchObject({
+      status: 'failed',
+      evidence: {
+        userOpHash: USER_OP_HASH,
+        transactionHash: TX_HASH,
+        reasonCode: 'userop_reverted',
+        custodyLocation: 'base-kernel',
+        kernelCustodyConfirmed: true,
+        custody: { location: 'base-kernel', confirmed: true },
+      },
+    });
+    expect(result).toMatchObject({
+      status: 'owner_action_required',
+      executionStatus: 'failed',
+      userOpHash: USER_OP_HASH,
+      transactionHash: TX_HASH,
+      custody: { location: 'base-kernel', confirmed: true },
+    });
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledOnce();
   });
 
   it('never encodes or sends when another process owns the durable submitting fence', async () => {
@@ -258,7 +709,10 @@ describe('dispatchDeposits', () => {
     });
 
     const results = await orchestrator.dispatchDeposits('approval', [allocation], {
-      onClaimSubmitting: vi.fn(async () => ({ claimed: false, ownerToken: null })),
+      onClaimSubmitting: vi.fn(async () => ({
+        claimed: false,
+        ownerToken: null,
+      })),
       onCheckpoint: vi.fn(),
     });
 
@@ -278,7 +732,10 @@ describe('dispatchDeposits', () => {
       releaseReconstruction = () => resolve(kernelClient);
     }));
     const onBeforeClaimSubmitting = vi.fn(async () => false);
-    const onClaimSubmitting = vi.fn(async () => ({ claimed: true, ownerToken: 'must-not-claim' }));
+    const onClaimSubmitting = vi.fn(async () => ({
+      claimed: true,
+      ownerToken: 'must-not-claim',
+    }));
     const orchestrator = createOrchestrator({
       chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
       yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
@@ -319,7 +776,10 @@ describe('dispatchDeposits', () => {
     });
 
     const results = await orchestrator.dispatchDeposits('approval', [allocation], {
-      onBeforeClaimSubmitting: vi.fn(async () => ({ authorized: true, authoritySnapshot })),
+      onBeforeClaimSubmitting: vi.fn(async () => ({
+        authorized: true,
+        authoritySnapshot,
+      })),
       onClaimSubmitting,
       onCheckpoint: vi.fn(),
     });
@@ -339,7 +799,10 @@ describe('dispatchDeposits', () => {
     const allocations = [task10Allocation(1), task10Allocation(2)];
     const kernelClient = buildMockKernelClient();
     kernelClient.account.address = KERNEL_ADDRESS;
-    const onClaimSubmitting = vi.fn(async () => ({ claimed: false, ownerToken: null }));
+    const onClaimSubmitting = vi.fn(async () => ({
+      claimed: false,
+      ownerToken: null,
+    }));
     const orchestrator = createOrchestrator({
       chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
       yieldRouterAddress: YIELD_ROUTER_ADDRESS, usdcAddress: USDC_ADDRESS,
@@ -371,7 +834,10 @@ describe('dispatchDeposits', () => {
     });
 
     await orchestrator.dispatchDeposits('approval', [allocation], {
-      onClaimSubmitting: vi.fn(async () => ({ claimed: true, ownerToken: 'private-owner' })),
+      onClaimSubmitting: vi.fn(async () => ({
+        claimed: true,
+        ownerToken: 'private-owner',
+      })),
       onCheckpoint: vi.fn(async (entry, ownership) => checkpoints.push([entry.status, ownership])),
     });
 
@@ -386,10 +852,16 @@ describe('dispatchDeposits', () => {
     const second = task10Allocation(2);
     const kernelClient = buildMockKernelClient();
     kernelClient.account.address = KERNEL_ADDRESS;
-    kernelClient.waitForUserOperationReceipt.mockResolvedValue(task10Receipt(first, {
-      logs: [],
-      receipt: { status: 'success', transactionHash: TX_HASH, logs: [depositedLog(first)] },
-    }));
+    kernelClient.waitForUserOperationReceipt.mockResolvedValue(
+      task10Receipt(first, {
+        logs: [],
+        receipt: {
+          status: 'success',
+          transactionHash: TX_HASH,
+          logs: [depositedLog(first)],
+        },
+      }),
+    );
     const checkpoints = [];
     const orchestrator = createOrchestrator({
       chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
@@ -403,8 +875,13 @@ describe('dispatchDeposits', () => {
 
     expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1);
     expect(checkpoints.at(-1)).toMatchObject({
-      identity: first.identity, status: 'unknown',
-      evidence: { userOpHash: USER_OP_HASH, transactionHash: TX_HASH, reasonCode: 'deposit_event_missing' },
+      identity: first.identity,
+      status: 'unknown',
+      evidence: {
+        userOpHash: USER_OP_HASH,
+        transactionHash: TX_HASH,
+        reasonCode: 'deposit_event_missing',
+      },
     });
     expect(results[0]).toMatchObject({ status: 'uncertain', executionStatus: 'unknown', userOpHash: USER_OP_HASH, transactionHash: TX_HASH });
     expect(results[1]).toMatchObject({ status: 'held', executionStatus: 'held', reasonCode: 'not_dispatched_after_unknown' });
@@ -431,9 +908,20 @@ describe('dispatchDeposits', () => {
 
     expect(kernelClient.waitForUserOperationReceipt).not.toHaveBeenCalled();
     expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1);
-    expect(checkpoints.at(-1)).toMatchObject({ status: 'unknown', evidence: { userOpHash: USER_OP_HASH, reasonCode: 'submitted_checkpoint_failed' } });
-    expect(results[0]).toMatchObject({ executionStatus: 'unknown', userOpHash: USER_OP_HASH });
-    expect(results[1]).toMatchObject({ reasonCode: 'not_dispatched_after_unknown' });
+    expect(checkpoints.at(-1)).toMatchObject({
+      status: 'unknown',
+      evidence: {
+        userOpHash: USER_OP_HASH,
+        reasonCode: 'submitted_checkpoint_failed',
+      },
+    });
+    expect(results[0]).toMatchObject({
+      executionStatus: 'unknown',
+      userOpHash: USER_OP_HASH,
+    });
+    expect(results[1]).toMatchObject({
+      reasonCode: 'not_dispatched_after_unknown',
+    });
   });
 
   it('does not wait for a receipt until submitted persistence has resolved', async () => {
@@ -464,20 +952,77 @@ describe('dispatchDeposits', () => {
     ['receipt UserOp mismatch', (a) => task10Receipt(a, { userOpHash: `0x${'c'.repeat(64)}` }), 'receipt_ambiguous'],
     ['receipt sender mismatch', (a) => task10Receipt(a, { sender: `0x${'c'.repeat(40)}` }), 'deposit_event_mismatch'],
     ['missing scoped logs', (a) => task10Receipt(a, { logs: undefined }), 'deposit_event_missing'],
-    ['spoof router', (a) => task10Receipt(a, { logs: [depositedLog(a, { address: `0x${'d'.repeat(40)}` })] }), 'deposit_event_missing'],
-    ['wrong caller', (a) => task10Receipt(a, { logs: [depositedLog(a, { caller: `0x${'c'.repeat(40)}` })] }), 'deposit_event_mismatch'],
-    ['wrong pool', (a) => task10Receipt(a, { logs: [depositedLog(a, { pool: `0x${'d'.repeat(40)}` })] }), 'deposit_event_mismatch'],
-    ['wrong assets', (a) => task10Receipt(a, { logs: [depositedLog(a, { assets: 999_999n })] }), 'deposit_event_mismatch'],
-    ['shares below minimum', (a) => task10Receipt(a, { logs: [depositedLog(a, { shares: 899_999n })] }), 'deposit_event_mismatch'],
-    ['duplicate event', (a) => task10Receipt(a, { logs: [depositedLog(a), depositedLog(a, { logIndex: 8 })] }), 'deposit_event_ambiguous'],
-    ['log transaction mismatch', (a) => task10Receipt(a, { logs: [depositedLog(a, { transactionHash: `0x${'c'.repeat(64)}` })] }), 'receipt_ambiguous'],
-    ['log block mismatch', (a) => task10Receipt(a, {
-      logs: [{ ...depositedLog(a), blockHash: `0x${'c'.repeat(64)}`, blockNumber: 8n }],
-      receipt: {
-        status: 'success', transactionHash: TX_HASH,
-        blockHash: `0x${'d'.repeat(64)}`, blockNumber: 7n, logs: [],
-      },
-    }), 'receipt_ambiguous'],
+    [
+      'spoof router',
+      (a) =>
+        task10Receipt(a, {
+          logs: [depositedLog(a, { address: `0x${'d'.repeat(40)}` })],
+        }),
+      'deposit_event_missing',
+    ],
+    [
+      'wrong caller',
+      (a) =>
+        task10Receipt(a, {
+          logs: [depositedLog(a, { caller: `0x${'c'.repeat(40)}` })],
+        }),
+      'deposit_event_mismatch',
+    ],
+    [
+      'wrong pool',
+      (a) =>
+        task10Receipt(a, {
+          logs: [depositedLog(a, { pool: `0x${'d'.repeat(40)}` })],
+        }),
+      'deposit_event_mismatch',
+    ],
+    [
+      'wrong assets',
+      (a) => task10Receipt(a, { logs: [depositedLog(a, { assets: 999_999n })] }),
+      'deposit_event_mismatch',
+    ],
+    [
+      'shares below minimum',
+      (a) => task10Receipt(a, { logs: [depositedLog(a, { shares: 899_999n })] }),
+      'deposit_event_mismatch',
+    ],
+    [
+      'duplicate event',
+      (a) =>
+        task10Receipt(a, {
+          logs: [depositedLog(a), depositedLog(a, { logIndex: 8 })],
+        }),
+      'deposit_event_ambiguous',
+    ],
+    [
+      'log transaction mismatch',
+      (a) =>
+        task10Receipt(a, {
+          logs: [depositedLog(a, { transactionHash: `0x${'c'.repeat(64)}` })],
+        }),
+      'receipt_ambiguous',
+    ],
+    [
+      'log block mismatch',
+      (a) =>
+        task10Receipt(a, {
+          logs: [
+            {
+              ...depositedLog(a),
+              blockHash: `0x${'c'.repeat(64)}`,
+              blockNumber: 8n,
+            },
+          ],
+          receipt: {
+            status: 'success',
+            transactionHash: TX_HASH,
+            blockHash: `0x${'d'.repeat(64)}`,
+            blockNumber: 7n,
+            logs: [],
+          },
+        }),
+      'receipt_ambiguous',
+    ],
   ])('never confirms %s', async (_label, receiptFor, reasonCode) => {
     const allocation = task10Allocation();
     const kernelClient = buildMockKernelClient();
@@ -492,15 +1037,29 @@ describe('dispatchDeposits', () => {
     const [result] = await orchestrator.dispatchDeposits('approval', [allocation], {
       onCheckpoint: async (entry) => checkpoints.push(entry),
     });
-    expect(result).toMatchObject({ status: 'uncertain', executionStatus: 'unknown', reasonCode, userOpHash: USER_OP_HASH });
-    expect(checkpoints.at(-1)).toMatchObject({ status: 'unknown', evidence: { reasonCode } });
+    expect(result).toMatchObject({
+      status: 'uncertain',
+      executionStatus: 'unknown',
+      reasonCode,
+      userOpHash: USER_OP_HASH,
+    });
+    expect(checkpoints.at(-1)).toMatchObject({
+      status: 'unknown',
+      evidence: { reasonCode },
+    });
     expect(checkpoints.some(({ status }) => status === 'confirmed')).toBe(false);
   });
 
   it.each([
     ['missing identity', (a) => ({ ...a, identity: undefined })],
     ['extra identity field', (a) => ({ ...a, identity: { ...a.identity, owner: 'forbidden' } })],
-    ['noncanonical execution mapping', (a) => ({ ...a, identity: { ...a.identity, executionId: 'run-42:exec:wrong' } })],
+    [
+      'noncanonical execution mapping',
+      (a) => ({
+        ...a,
+        identity: { ...a.identity, executionId: 'run-42:exec:wrong' },
+      }),
+    ],
     ['numeric amount', (a) => ({ ...a, amount: 100 })],
     ['noncanonical pool', (a) => ({ ...a, pool: '0x1' })],
   ])('rejects %s before reconstructing the signing client', async (_label, mutate) => {
@@ -531,7 +1090,10 @@ describe('dispatchDeposits', () => {
     });
 
     expect(results).toMatchObject([
-      { executionStatus: 'unknown', reasonCode: 'submitting_checkpoint_ambiguous' },
+      {
+        executionStatus: 'unknown',
+        reasonCode: 'submitting_checkpoint_ambiguous',
+      },
       { executionStatus: 'held', reasonCode: 'not_dispatched_after_unknown' },
     ]);
     expect(kernelClient.sendUserOperation).not.toHaveBeenCalled();
@@ -601,9 +1163,21 @@ describe('dispatchDeposits', () => {
     });
 
     const allocations = [
-      { pool: '0x00000000000000000000000000000000000000a1', amount: 100n, minShares: 90n },
-      { pool: '0x00000000000000000000000000000000000000b2', amount: 200n, minShares: 190n },
-      { pool: '0x00000000000000000000000000000000000000c3', amount: 300n, minShares: 290n },
+      {
+        pool: '0x00000000000000000000000000000000000000a1',
+        amount: 100n,
+        minShares: 90n,
+      },
+      {
+        pool: '0x00000000000000000000000000000000000000b2',
+        amount: 200n,
+        minShares: 190n,
+      },
+      {
+        pool: '0x00000000000000000000000000000000000000c3',
+        amount: 300n,
+        minShares: 290n,
+      },
     ];
 
     const results = await orchestrator.dispatchDeposits('serialized-approval', allocations);
@@ -628,9 +1202,21 @@ describe('dispatchDeposits', () => {
     });
 
     const allocations = [
-      { pool: '0x00000000000000000000000000000000000000a1', amount: 100n, minShares: 90n },
-      { pool: '0x00000000000000000000000000000000000000b2', amount: 200n, minShares: 190n },
-      { pool: '0x00000000000000000000000000000000000000c3', amount: 300n, minShares: 290n },
+      {
+        pool: '0x00000000000000000000000000000000000000a1',
+        amount: 100n,
+        minShares: 90n,
+      },
+      {
+        pool: '0x00000000000000000000000000000000000000b2',
+        amount: 200n,
+        minShares: 190n,
+      },
+      {
+        pool: '0x00000000000000000000000000000000000000c3',
+        amount: 300n,
+        minShares: 290n,
+      },
     ];
 
     const results = await orchestrator.dispatchDeposits('serialized-approval', allocations);
@@ -651,9 +1237,15 @@ describe('dispatchDeposits', () => {
       hash === FIRST_USER_OP_HASH
         ? new Promise((res) => {
             resolveFirstReceipt = () =>
-            res({ success: true, receipt: { status: 'success', transactionHash: TX_HASH } });
+              res({
+                success: true,
+                receipt: { status: 'success', transactionHash: TX_HASH },
+              });
           })
-        : Promise.resolve({ success: true, receipt: { status: 'success', transactionHash: TX_HASH } })
+        : Promise.resolve({
+            success: true,
+            receipt: { status: 'success', transactionHash: TX_HASH },
+          }),
     );
     const reconstructSessionClientFn = vi.fn().mockResolvedValue(kernelClient);
     const orchestrator = createOrchestrator({
@@ -664,8 +1256,16 @@ describe('dispatchDeposits', () => {
     });
 
     const allocations = [
-      { pool: '0x00000000000000000000000000000000000000a1', amount: 100n, minShares: 90n },
-      { pool: '0x00000000000000000000000000000000000000b2', amount: 200n, minShares: 190n },
+      {
+        pool: '0x00000000000000000000000000000000000000a1',
+        amount: 100n,
+        minShares: 90n,
+      },
+      {
+        pool: '0x00000000000000000000000000000000000000b2',
+        amount: 200n,
+        minShares: 190n,
+      },
     ];
 
     const pending = orchestrator.dispatchDeposits('serialized-approval', allocations);
@@ -757,8 +1357,14 @@ describe('dispatchDeposits', () => {
     const batches = kernelClient.account.encodeCalls.mock.calls.map(([calls]) => calls);
     expect(batches).toHaveLength(3);
     for (const [index, calls] of batches.entries()) {
-      const approval = decodeFunctionData({ abi: APPROVE_ABI, data: calls[0].data });
-      const deposit = decodeFunctionData({ abi: YIELD_ROUTER_ABI, data: calls[1].data });
+      const approval = decodeFunctionData({
+        abi: APPROVE_ABI,
+        data: calls[0].data,
+      });
+      const deposit = decodeFunctionData({
+        abi: YIELD_ROUTER_ABI,
+        data: calls[1].data,
+      });
       expect(approval.args[1]).toBe(units[index]);
       expect(deposit.args[1]).toBe(units[index]);
     }
@@ -781,8 +1387,16 @@ describe('dispatchDeposits', () => {
     });
 
     const allocations = [
-      { pool: '0x00000000000000000000000000000000000000a1', amount: MAX_CALL_CAP_UNITS, minShares: 1n },
-      { pool: '0x00000000000000000000000000000000000000b2', amount: MAX_CALL_CAP_UNITS + 1n, minShares: 1n },
+      {
+        pool: '0x00000000000000000000000000000000000000a1',
+        amount: MAX_CALL_CAP_UNITS,
+        minShares: 1n,
+      },
+      {
+        pool: '0x00000000000000000000000000000000000000b2',
+        amount: MAX_CALL_CAP_UNITS + 1n,
+        minShares: 1n,
+      },
     ];
 
     await expect(orchestrator.dispatchDeposits('serialized-approval', allocations)).rejects.toThrow(/cap/i);
@@ -791,8 +1405,18 @@ describe('dispatchDeposits', () => {
   });
 
   it.each([
-    [{ success: true, receipt: { status: 'reverted', transactionHash: TX_HASH } }],
-    [{ success: false, receipt: { status: 'success', transactionHash: TX_HASH } }],
+    [
+      {
+        success: true,
+        receipt: { status: 'reverted', transactionHash: TX_HASH },
+      },
+    ],
+    [
+      {
+        success: false,
+        receipt: { status: 'success', transactionHash: TX_HASH },
+      },
+    ],
   ])('holds an allocation when user operation success is only one-sided', async (receipt) => {
     const kernelClient = buildMockKernelClient();
     kernelClient.waitForUserOperationReceipt.mockResolvedValue(receipt);
@@ -804,10 +1428,18 @@ describe('dispatchDeposits', () => {
     });
 
     const [result] = await orchestrator.dispatchDeposits('serialized-approval', [
-      { pool: '0x00000000000000000000000000000000000000a1', amount: 100n, minShares: 90n },
+      {
+        pool: '0x00000000000000000000000000000000000000a1',
+        amount: 100n,
+        minShares: 90n,
+      },
     ]);
 
-    expect(result).toMatchObject({ status: 'rejected', executionStatus: 'held', txHash: null });
+    expect(result).toMatchObject({
+      status: 'rejected',
+      executionStatus: 'held',
+      txHash: null,
+    });
   });
 
   it('holds an allocation without waiting when the bundler returns a malformed user operation hash', async () => {
@@ -821,10 +1453,18 @@ describe('dispatchDeposits', () => {
     });
 
     const [result] = await orchestrator.dispatchDeposits('serialized-approval', [
-      { pool: '0x00000000000000000000000000000000000000a1', amount: 100n, minShares: 90n },
+      {
+        pool: '0x00000000000000000000000000000000000000a1',
+        amount: 100n,
+        minShares: 90n,
+      },
     ]);
 
-    expect(result).toMatchObject({ status: 'rejected', executionStatus: 'held', txHash: null });
+    expect(result).toMatchObject({
+      status: 'rejected',
+      executionStatus: 'held',
+      txHash: null,
+    });
     expect(kernelClient.waitForUserOperationReceipt).not.toHaveBeenCalled();
   });
 });
@@ -835,7 +1475,10 @@ describe('activateMandate', () => {
     const events = [];
     kernelClient.waitForUserOperationReceipt.mockImplementation(async () => {
       events.push('waited');
-      return { success: true, receipt: { status: 'success', transactionHash: TX_HASH } };
+      return {
+        success: true,
+        receipt: { status: 'success', transactionHash: TX_HASH },
+      };
     });
     const orchestrator = createOrchestrator({
       chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
@@ -876,8 +1519,18 @@ describe('activateMandate', () => {
   });
 
   it.each([
-    [{ success: true, receipt: { status: 'reverted', transactionHash: TX_HASH } }],
-    [{ success: false, receipt: { status: 'success', transactionHash: TX_HASH } }],
+    [
+      {
+        success: true,
+        receipt: { status: 'reverted', transactionHash: TX_HASH },
+      },
+    ],
+    [
+      {
+        success: false,
+        receipt: { status: 'success', transactionHash: TX_HASH },
+      },
+    ],
   ])('rejects a mandate activation when receipt success is only one-sided', async (receipt) => {
     const kernelClient = buildMockKernelClient();
     kernelClient.waitForUserOperationReceipt.mockResolvedValue(receipt);
@@ -913,7 +1566,9 @@ describe('Base deployment availability gate', () => {
 
   it('fails closed when a caller omits deployment availability', async () => {
     const reconstructSessionClientFn = vi.fn();
-    const orchestrator = createOrchestratorProduction({ reconstructSessionClientFn });
+    const orchestrator = createOrchestratorProduction({
+      reconstructSessionClientFn,
+    });
 
     await expect(orchestrator.dispatchDeposits('legacy-approval', []))
       .rejects.toThrow('Base cross-chain execution is unavailable');

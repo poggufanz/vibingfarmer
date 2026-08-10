@@ -33,6 +33,7 @@ import {
   relayError,
   assertCanonicalRelayRecord,
 } from './store.mjs';
+import { computeBaseRecoveryWorkId } from './baseRecovery.mjs';
 
 const HOUR_MS = 60 * 60 * 1000;
 const HASH_RE = /^0x[0-9a-f]{64}$/;
@@ -47,6 +48,13 @@ const QUARANTINED_MANDATE_STATUS = 'revoked';
 
 function migrationDigest(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function canonicalD1Bytes32(value) {
+  if (value == null) return value;
+  const bare = String(value).replace(/^0x/i, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(bare)) throw new Error('CCTP evidence digest is not canonical');
+  return `0x${bare}`;
 }
 
 export function canonicalMandateMigrationDestinationDigest({ outcome, record }) {
@@ -1125,6 +1133,40 @@ export function createSqliteStores(path, {
       FOREIGN KEY (network_id,binding_id,execution_id,allocation_id,child_id)
         REFERENCES base_evidence_heads(network_id,binding_id,execution_id,allocation_id,child_id)
     );
+    CREATE TABLE IF NOT EXISTS base_recovery_work (
+      work_id TEXT PRIMARY KEY CHECK (
+        length(work_id) = 64 AND work_id NOT GLOB '*[^0-9a-f]*'
+      ),
+      network_id TEXT NOT NULL,
+      binding_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      allocation_id TEXT NOT NULL,
+      child_id TEXT NOT NULL,
+      evidence_version INTEGER NOT NULL CHECK (evidence_version >= 0),
+      action TEXT NOT NULL CHECK (action IN (
+        'poll-attestation','submit-mint','poll-mint','submit-base-deposit','poll-base-deposit'
+      )),
+      mandate_id TEXT NOT NULL,
+      farm_job_id TEXT,
+      farm_intent_digest TEXT,
+      claim_token_digest TEXT CHECK (
+        claim_token_digest IS NULL OR (
+          length(claim_token_digest) = 64 AND claim_token_digest NOT GLOB '*[^0-9a-f]*'
+        )
+      ),
+      state TEXT NOT NULL CHECK (state IN (
+        'pending','running','held','done','uncertain','blocked','owner_action_required'
+      )),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      lease_owner TEXT,
+      lease_token TEXT,
+      lease_expires_at INTEGER,
+      checkpoint_ref TEXT,
+      reason_code TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(network_id,binding_id,execution_id,allocation_id,child_id,evidence_version,action)
+    );
     CREATE INDEX IF NOT EXISTS idx_association_outbox_delivery
       ON association_outbox (status, available_at, lease_expires_at, id);
     CREATE INDEX IF NOT EXISTS idx_association_outbox_child
@@ -1133,6 +1175,10 @@ export function createSqliteStores(path, {
       ON base_evidence_outbox (delivery_status,available_at,lease_expires_at,id);
     CREATE INDEX IF NOT EXISTS idx_farm_intent_recovery_v2
       ON farm_intent_work_v2 (state,created_at,job_id);
+    CREATE INDEX IF NOT EXISTS idx_base_recovery_work_resume
+      ON base_recovery_work (state,lease_expires_at,created_at,work_id);
+    CREATE INDEX IF NOT EXISTS idx_base_recovery_work_identity
+      ON base_recovery_work (network_id,binding_id,execution_id,allocation_id,child_id);
     CREATE TRIGGER IF NOT EXISTS farm_intent_work_v2_immutable
       BEFORE UPDATE OF
         job_id,mandate_id,request_id,stellar_owner,kernel_address,binding_id,binding_hash,
@@ -1155,6 +1201,14 @@ export function createSqliteStores(path, {
       BEFORE DELETE ON base_evidence_outbox
       BEGIN
         SELECT RAISE(ABORT, 'immutable Base evidence');
+      END;
+    CREATE TRIGGER IF NOT EXISTS base_recovery_work_immutable
+      BEFORE UPDATE OF
+        work_id,network_id,binding_id,execution_id,allocation_id,child_id,evidence_version,action,
+        mandate_id,farm_job_id,farm_intent_digest,created_at
+      ON base_recovery_work
+      BEGIN
+        SELECT RAISE(ABORT, 'immutable Base recovery work');
       END;
     ${MANDATE_V3_SCHEMA}
     `);
@@ -1738,17 +1792,25 @@ export function createSqliteStores(path, {
         }
         const expectation = JSON.parse(row.expectation_json);
         const batch = JSON.parse(row.agent_index_batch_json);
+        const evidenceVersion = String(relay.evidenceVersion);
+        const cctpImmutableEvidence = relay.nonceHex
+          ? { messageDigest: canonicalD1Bytes32(relay.messageDigest), nonce: relay.nonceHex.toLowerCase() }
+          : {};
         const burnEvidence = {
           burnTxHash: relay.burnTxHash,
           expectationDigest: relay.expectationDigest,
           burnUnits7: expectation.burnUnits7,
+          ...cctpImmutableEvidence,
         };
         const attestationEvidence = {
           burnTxHash: relay.burnTxHash,
           expectationDigest: relay.expectationDigest,
-          messageDigest: relay.messageDigest,
-          attestationDigest: relay.attestationDigest,
-          evidenceVersion: relay.evidenceVersion,
+          messageDigest: relay.nonceHex
+            ? canonicalD1Bytes32(relay.messageDigest) : relay.messageDigest,
+          attestationDigest: relay.nonceHex
+            ? canonicalD1Bytes32(relay.attestationDigest) : relay.attestationDigest,
+          evidenceVersion,
+          ...cctpImmutableEvidence,
         };
         const mintEvidence = { ...attestationEvidence, mintTxHash: relay.mintTxHash };
         for (const child of batch.children) {
@@ -1966,6 +2028,516 @@ export function createSqliteStores(path, {
       });
     },
   };
+
+  const recoveryClaimTokens = new Map();
+  const RECOVERY_TERMINAL_STATES = new Set([
+    'done', 'uncertain', 'blocked', 'owner_action_required',
+  ]);
+  const RECOVERY_STATES = new Set([
+    'pending', 'running', 'held', ...RECOVERY_TERMINAL_STATES,
+  ]);
+  const RECOVERY_ACTIONS = new Set([
+    'poll-attestation', 'submit-mint', 'poll-mint',
+    'submit-base-deposit', 'poll-base-deposit',
+  ]);
+
+  // `CREATE TABLE IF NOT EXISTS` is intentionally not treated as a migration or a
+  // readiness check.  A partially-created table with the same name would otherwise make
+  // recovery look durable while silently dropping a fencing column or immutable constraint.
+  // Keep this local classifier closed over the actual database connection and fail the
+  // readiness probe unless the exact Task 14 row shape is present.
+  const BASE_RECOVERY_COLUMNS = Object.freeze([
+    ['work_id', 'TEXT', 0, 1],
+    ['network_id', 'TEXT', 1, 0],
+    ['binding_id', 'TEXT', 1, 0],
+    ['execution_id', 'TEXT', 1, 0],
+    ['allocation_id', 'TEXT', 1, 0],
+    ['child_id', 'TEXT', 1, 0],
+    ['evidence_version', 'INTEGER', 1, 0],
+    ['action', 'TEXT', 1, 0],
+    ['mandate_id', 'TEXT', 1, 0],
+    ['farm_job_id', 'TEXT', 0, 0],
+    ['farm_intent_digest', 'TEXT', 0, 0],
+    ['claim_token_digest', 'TEXT', 0, 0],
+    ['state', 'TEXT', 1, 0],
+    ['attempts', 'INTEGER', 1, 0],
+    ['lease_owner', 'TEXT', 0, 0],
+    ['lease_token', 'TEXT', 0, 0],
+    ['lease_expires_at', 'INTEGER', 0, 0],
+    ['checkpoint_ref', 'TEXT', 0, 0],
+    ['reason_code', 'TEXT', 0, 0],
+    ['created_at', 'INTEGER', 1, 0],
+    ['updated_at', 'INTEGER', 1, 0],
+  ]);
+
+  function baseRecoverySchema() {
+    const table = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='base_recovery_work'",
+    ).get();
+    const expectedNames = new Set([
+      'base_recovery_work',
+      'idx_base_recovery_work_resume',
+      'idx_base_recovery_work_identity',
+      'base_recovery_work_immutable',
+    ]);
+    const targetReference = /(?:^|[^a-z0-9_])base_recovery_work(?:$|[^a-z0-9_])/i;
+    const related = db.prepare(`
+      SELECT type,name,tbl_name,sql FROM sqlite_master
+      WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
+    `).all().filter(({ name, tbl_name: tableName, sql }) => (
+      name === 'base_recovery_work' || tableName === 'base_recovery_work'
+        || targetReference.test(String(sql))
+    ));
+    if (!table?.sql) {
+      return related.length === 0 ? { kind: 'absent' } : { kind: 'incompatible' };
+    }
+    if (related.some(({ name }) => !expectedNames.has(name))) {
+      return { kind: 'incompatible' };
+    }
+    // `table_info` omits generated/hidden columns; xinfo is required for an
+    // exact readiness fingerprint rather than silently accepting extra schema.
+    const columns = db.prepare('PRAGMA table_xinfo(base_recovery_work)').all();
+    if (columns.length !== BASE_RECOVERY_COLUMNS.length) return { kind: 'incompatible' };
+    for (const [name, type, notNull, primaryKey] of BASE_RECOVERY_COLUMNS) {
+      const column = columns.find((entry) => entry.name === name);
+      if (!column || column.type !== type || column.notnull !== notNull || column.pk !== primaryKey
+          || column.hidden !== 0) {
+        return { kind: 'incompatible' };
+      }
+    }
+    const normalizedSql = String(table.sql).toLowerCase().replace(/\s+/g, ' ');
+    const requiredSql = [
+      'length(work_id) = 64',
+      "claim_token_digest is null or",
+      "state in ( 'pending','running','held','done','uncertain','blocked','owner_action_required' )",
+      'unique(network_id,binding_id,execution_id,allocation_id,child_id,evidence_version,action)',
+    ];
+    if (requiredSql.some((fragment) => !normalizedSql.includes(fragment))) {
+      return { kind: 'incompatible' };
+    }
+    const indexes = db.prepare('PRAGMA index_list(base_recovery_work)').all();
+    const indexColumns = (name) => db.prepare(`PRAGMA index_info(${quoteSchemaIdentifier(name)})`)
+      .all().sort((left, right) => left.seq - right.seq).map((entry) => entry.name);
+    const expectedIndexes = new Map([
+      ['idx_base_recovery_work_resume', {
+        unique: 0, origin: 'c', partial: 0,
+        columns: ['state', 'lease_expires_at', 'created_at', 'work_id'],
+      }],
+      ['idx_base_recovery_work_identity', {
+        unique: 0, origin: 'c', partial: 0,
+        columns: ['network_id', 'binding_id', 'execution_id', 'allocation_id', 'child_id'],
+      }],
+    ]);
+    // The primary key and immutable tuple UNIQUE constraint are SQLite-owned
+    // autoindexes.  Match their origin and ordered columns rather than relying
+    // on version-specific autoindex names.
+    const primary = indexes.find((index) => index.origin === 'pk');
+    if (!primary || primary.unique !== 1 || primary.partial !== 0
+        || JSON.stringify(indexColumns(primary.name)) !== JSON.stringify(['work_id'])) {
+      return { kind: 'incompatible' };
+    }
+    const immutableUnique = indexes.find((index) => index.origin === 'u');
+    if (!immutableUnique || immutableUnique.unique !== 1 || immutableUnique.partial !== 0
+        || JSON.stringify(indexColumns(immutableUnique.name)) !== JSON.stringify([
+          'network_id', 'binding_id', 'execution_id', 'allocation_id', 'child_id',
+          'evidence_version', 'action',
+        ])) {
+      return { kind: 'incompatible' };
+    }
+    if (indexes.some((index) => index.origin !== 'pk' && index.origin !== 'u'
+        && !expectedIndexes.has(index.name))) {
+      return { kind: 'incompatible' };
+    }
+    const hasIndex = (name, expected) => indexes.some((index) => (
+      index.name === name
+      && index.unique === expected.unique
+      && index.origin === expected.origin
+      && index.partial === expected.partial
+      && JSON.stringify(indexColumns(index.name)) === JSON.stringify(expected.columns)
+    ));
+    if (!hasIndex(
+      'idx_base_recovery_work_resume', expectedIndexes.get('idx_base_recovery_work_resume'),
+    ) || !hasIndex(
+      'idx_base_recovery_work_identity', expectedIndexes.get('idx_base_recovery_work_identity'),
+    )) {
+      return { kind: 'incompatible' };
+    }
+    const triggers = db.prepare(
+      "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name='base_recovery_work'",
+    ).all();
+    if (triggers.length !== 1 || triggers[0].name !== 'base_recovery_work_immutable'
+        || !triggers[0].sql) {
+      return { kind: 'incompatible' };
+    }
+    const triggerSql = normalizedSchemaSql(triggers[0].sql).toLowerCase();
+    const triggerFragments = [
+      'before update of work_id,network_id,binding_id,execution_id,allocation_id,child_id,',
+      'evidence_version,action,mandate_id,farm_job_id,farm_intent_digest,created_at',
+      'on base_recovery_work',
+      "raise(abort,'immutable base recovery work')",
+    ];
+    if (triggerFragments.some((fragment) => !triggerSql.includes(fragment))) {
+      return { kind: 'incompatible' };
+    }
+    return { kind: 'current' };
+  }
+
+  function recoveryNow(value) {
+    const at = value ?? now();
+    if (!Number.isSafeInteger(at) || at < 0) throw new Error('Base recovery time is invalid');
+    return at;
+  }
+
+  function recoveryIdentityFromRow(row) {
+    return {
+      networkId: row.network_id,
+      bindingId: row.binding_id,
+      executionId: row.execution_id,
+      allocationId: row.allocation_id,
+      childId: row.child_id,
+    };
+  }
+
+  function assertRecoveryRow(row) {
+    if (typeof row.work_id !== 'string' || !/^[0-9a-f]{64}$/.test(row.work_id)
+        || !RECOVERY_ACTIONS.has(row.action) || !RECOVERY_STATES.has(row.state)
+        || !Number.isSafeInteger(row.evidence_version) || row.evidence_version < 0
+        || !Number.isSafeInteger(row.attempts) || row.attempts < 0
+        || !Number.isSafeInteger(row.created_at) || row.created_at < 0
+        || !Number.isSafeInteger(row.updated_at) || row.updated_at < 0
+        || !/^[0-9a-f]{32}$/.test(row.mandate_id)
+        || [row.network_id, row.binding_id, row.execution_id, row.allocation_id, row.child_id]
+          .some((value) => typeof value !== 'string' || !value)
+        || (row.farm_intent_digest != null && !DIGEST_RE.test(row.farm_intent_digest))
+        || (row.claim_token_digest != null && !DIGEST_RE.test(row.claim_token_digest))) {
+      throw new Error('malformed Base recovery work row');
+    }
+  }
+
+  function recoveryRecord(row, { includeLease = true, includeClaimToken = false } = {}) {
+    if (!row) return null;
+    assertRecoveryRow(row);
+    const result = {
+      workId: row.work_id,
+      identity: recoveryIdentityFromRow(row),
+      evidenceVersion: row.evidence_version,
+      action: row.action,
+      mandateId: row.mandate_id,
+      farmJobId: row.farm_job_id ?? null,
+      farmIntentDigest: row.farm_intent_digest ?? null,
+      state: row.state,
+      attempts: row.attempts,
+      checkpointRef: row.checkpoint_ref ?? null,
+      reasonCode: row.reason_code ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+    if (includeLease) {
+      result.leaseOwner = row.lease_owner ?? null;
+      result.leaseToken = row.lease_token ?? null;
+      result.leaseExpiresAt = row.lease_expires_at ?? null;
+      if (includeClaimToken) result.claimToken = recoveryClaimTokens.get(row.work_id) ?? null;
+    }
+    return result;
+  }
+
+  function recoveryImmutableMatches(row, input) {
+    return row.work_id === input.workId
+      && row.network_id === input.identity.networkId
+      && row.binding_id === input.identity.bindingId
+      && row.execution_id === input.identity.executionId
+      && row.allocation_id === input.identity.allocationId
+      && row.child_id === input.identity.childId
+      && row.evidence_version === input.evidenceVersion
+      && row.action === input.action
+      && row.mandate_id === input.mandateId
+      && (row.farm_job_id ?? null) === (input.farmJobId ?? null)
+      && (row.farm_intent_digest ?? null) === (input.farmIntentDigest ?? null);
+  }
+
+  function recoveryClaimDigest(value) {
+    if (value == null) return null;
+    if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+      throw new Error('Base recovery claim token is invalid');
+    }
+    return createHash('sha256').update(value).digest('hex');
+  }
+
+  const baseRecoveryWorks = {
+    workId(input) {
+      return computeBaseRecoveryWorkId(input);
+    },
+
+    enqueue(input) {
+      const identity = input?.identity;
+      if (!identity || typeof identity !== 'object') throw new Error('Base recovery identity is required');
+      const workId = input.workId ?? computeBaseRecoveryWorkId(input);
+      if (typeof input.mandateId !== 'string' || !/^[0-9a-f]{32}$/.test(input.mandateId)) {
+        throw new Error('mandateId is invalid');
+      }
+      const farmIntentDigest = input.farmIntentDigest ?? null;
+      if (farmIntentDigest !== null && !DIGEST_RE.test(farmIntentDigest)) {
+        throw new Error('farmIntentDigest is invalid');
+      }
+      const at = recoveryNow(input.now);
+      return transaction(() => {
+        const existing = db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId);
+        if (existing) {
+          if (!recoveryImmutableMatches(existing, { ...input, workId, farmIntentDigest })) {
+            const conflict = new Error('immutable Base recovery work conflict');
+            conflict.code = 'BASE_RECOVERY_WORK_CONFLICT';
+            throw conflict;
+          }
+          return recoveryRecord(existing);
+        }
+        // A caller retrying an existing work ID must be classified against the
+        // persisted immutable tuple before re-deriving the ID.  Re-derivation
+        // validates the tuple's cross-field mapping and would otherwise mask a
+        // typed immutable-conflict response (for example, a changed execution
+        // ID) with an input-shape error.
+        const computedWorkId = computeBaseRecoveryWorkId(input);
+        if (workId !== computedWorkId) throw new Error('Base recovery work ID mismatch');
+        db.prepare(`
+          INSERT INTO base_recovery_work (
+            work_id,network_id,binding_id,execution_id,allocation_id,child_id,evidence_version,action,
+            mandate_id,farm_job_id,farm_intent_digest,claim_token_digest,state,attempts,
+            lease_owner,lease_token,lease_expires_at,checkpoint_ref,reason_code,created_at,updated_at
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending',0,NULL,NULL,NULL,NULL,NULL,?,?)
+        `).run(
+          workId, identity.networkId, identity.bindingId, identity.executionId,
+          identity.allocationId, identity.childId, input.evidenceVersion, input.action,
+          input.mandateId, input.farmJobId ?? null, farmIntentDigest,
+          recoveryClaimDigest(input.claimToken ?? input.leaseToken), at, at,
+        );
+        const claimToken = input.claimToken ?? input.leaseToken;
+        if (claimToken) recoveryClaimTokens.set(workId, claimToken);
+        return recoveryRecord(db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId));
+      });
+    },
+
+    get(workId) {
+      return recoveryRecord(db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId));
+    },
+
+    // The raw Agent Index token remains process-memory-only. It is exposed only through this
+    // narrow executor seam; public work/status records never carry it.
+    getClaimToken(workId) {
+      return recoveryClaimTokens.get(workId) ?? null;
+    },
+
+    claim({ workId, holder, now: claimAt, leaseMs = 30_000 } = {}) {
+      if (typeof holder !== 'string' || !holder) throw new Error('Base recovery lease holder is required');
+      if (!Number.isSafeInteger(leaseMs) || leaseMs <= 0) throw new Error('Base recovery lease is invalid');
+      const at = recoveryNow(claimAt);
+      const result = transaction(() => {
+        const expiredWorkIds = db.prepare(`
+          SELECT work_id FROM base_recovery_work
+          WHERE state='running' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?
+        `).all(at).map((row) => row.work_id);
+        db.prepare(`
+          UPDATE base_recovery_work
+          SET state='held',lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=?
+          WHERE state='running' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?
+        `).run(at, at);
+        const token = String(leaseToken());
+        const row = db.prepare(`
+          UPDATE base_recovery_work
+          SET state='running',lease_owner=?,lease_token=?,lease_expires_at=?,attempts=attempts+1,updated_at=?
+          WHERE work_id=? AND state='pending' AND (lease_token IS NULL OR lease_expires_at<=?)
+          RETURNING *
+        `).get(holder, token, at + leaseMs, at, workId, at);
+        return { row, expiredWorkIds };
+      });
+      // A local lease expiry invalidates the remote Agent Index proof as well. Keep
+      // the durable row held, but require a fresh owner proof before it can resume.
+      for (const expiredWorkId of result.expiredWorkIds) recoveryClaimTokens.delete(expiredWorkId);
+      return recoveryRecord(result.row);
+    },
+
+    heartbeat({ workId, holder, leaseToken: token, now: heartbeatAt, leaseMs = 30_000 } = {}) {
+      if (!Number.isSafeInteger(leaseMs) || leaseMs <= 0) throw new Error('Base recovery lease is invalid');
+      const at = recoveryNow(heartbeatAt);
+      const changed = db.prepare(`
+        UPDATE base_recovery_work SET lease_expires_at=?,updated_at=?
+        WHERE work_id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_expires_at>?
+      `).run(at + leaseMs, at, workId, holder, token, at);
+      return changed.changes === 1
+        ? recoveryRecord(db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId))
+        : null;
+    },
+
+    checkpoint({ workId, holder, leaseToken: token, checkpointRef = null, reasonCode = null, now: checkpointAt } = {}) {
+      const at = recoveryNow(checkpointAt);
+      const changed = db.prepare(`
+        UPDATE base_recovery_work SET checkpoint_ref=?,reason_code=?,updated_at=?
+        WHERE work_id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_expires_at>?
+      `).run(checkpointRef, reasonCode, at, workId, holder, token, at);
+      return changed.changes === 1
+        ? recoveryRecord(db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId))
+        : null;
+    },
+
+    hold({ workId, holder, leaseToken: token, reasonCode = null, now: holdAt } = {}) {
+      const at = recoveryNow(holdAt);
+      const changed = db.prepare(`
+        UPDATE base_recovery_work
+        SET state='held',reason_code=?,lease_owner=NULL,lease_token=NULL,
+            lease_expires_at=NULL,updated_at=?
+        WHERE work_id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_expires_at>?
+      `).run(reasonCode, at, workId, holder, token, at);
+      if (changed.changes !== 1) return null;
+      recoveryClaimTokens.delete(workId);
+      return recoveryRecord(db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId));
+    },
+
+    finish({
+      workId, holder, leaseToken: token, state, reasonCode = null,
+      checkpointRef = null, now: finishAt,
+    } = {}) {
+      if (!RECOVERY_TERMINAL_STATES.has(state)) throw new Error('Base recovery terminal state is invalid');
+      const at = recoveryNow(finishAt);
+      const changed = db.prepare(`
+        UPDATE base_recovery_work
+        SET state=?,reason_code=?,checkpoint_ref=?,lease_owner=NULL,lease_token=NULL,
+            lease_expires_at=NULL,updated_at=?
+        WHERE work_id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_expires_at>?
+      `).run(state, reasonCode, checkpointRef, at, workId, holder, token, at);
+      if (changed.changes === 1) {
+        recoveryClaimTokens.delete(workId);
+        return recoveryRecord(db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId));
+      }
+      const row = db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId);
+      return row && RECOVERY_TERMINAL_STATES.has(row.state) ? recoveryRecord(row) : null;
+    },
+
+    reopen({ workId, claimToken, proven = false, now: reopenAt } = {}) {
+      const at = recoveryNow(reopenAt);
+      const digest = recoveryClaimDigest(claimToken);
+      const changed = db.prepare(`
+        UPDATE base_recovery_work
+        SET state='pending',claim_token_digest=?,updated_at=?
+        WHERE work_id=? AND state='held' AND ?=1
+      `).run(digest, at, workId, proven ? 1 : 0);
+      if (changed.changes !== 1) return null;
+      recoveryClaimTokens.set(workId, claimToken);
+      return recoveryRecord(db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId));
+    },
+
+    // A fresh owner-proven Agent Index claim may reattach a token after a process restart or
+    // expired local lease. This CAS never replaces a live runner or terminal work, and only
+    // updates the token digest plus the in-memory process handoff; immutable work facts,
+    // attempts, and creation time remain untouched.
+    reattachProven({ workId, claimToken, proven = false, now: reattachAt } = {}) {
+      if (proven !== true) return null;
+      const at = recoveryNow(reattachAt);
+      const digest = recoveryClaimDigest(claimToken);
+      const changed = transaction(() => db.prepare(`
+        UPDATE base_recovery_work
+        SET state='pending',claim_token_digest=?,lease_owner=NULL,lease_token=NULL,
+            lease_expires_at=NULL,updated_at=?
+        WHERE work_id=? AND state IN ('pending','held')
+          AND (
+            (lease_owner IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)
+            OR (lease_expires_at IS NOT NULL AND lease_expires_at<=?)
+          )
+      `).run(digest, at, workId, at).changes);
+      if (changed !== 1) return null;
+      recoveryClaimTokens.set(workId, claimToken);
+      return recoveryRecord(db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId));
+    },
+
+    reopenHeld(input = {}) {
+      return this.reopen(input);
+    },
+
+    reconcileExpired({ now: reconcileAt = now(), limit = 100 } = {}) {
+      const at = recoveryNow(reconcileAt);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) throw new Error('Base recovery limit is invalid');
+      const expiredWorkIds = transaction(() => {
+        const rows = db.prepare(`
+          SELECT work_id FROM base_recovery_work
+          WHERE state='running' AND lease_expires_at<=?
+          ORDER BY lease_expires_at,created_at,work_id LIMIT ?
+        `).all(at, limit);
+        db.prepare(`
+          UPDATE base_recovery_work
+          SET state='held',lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=?
+          WHERE work_id IN (
+            SELECT work_id FROM base_recovery_work
+            WHERE state='running' AND lease_expires_at<=?
+            ORDER BY lease_expires_at,created_at,work_id LIMIT ?
+          )
+        `).run(at, at, limit);
+        return rows.map((row) => row.work_id);
+      });
+      for (const expiredWorkId of expiredWorkIds) recoveryClaimTokens.delete(expiredWorkId);
+      return expiredWorkIds.length;
+    },
+
+    listRecoverable({ now: listAt = now(), limit = 100 } = {}) {
+      this.reconcileExpired({ now: listAt, limit });
+      // A single quarantined/corrupt row must not prevent later recoverable work from
+      // resuming.  The readiness probe still fails for a malformed schema; this guard is
+      // for row-level corruption discovered after a prior successful probe.
+      const recoverable = [];
+      let cursor = null;
+      while (recoverable.length < limit) {
+        const rows = cursor
+          ? db.prepare(`
+            SELECT * FROM base_recovery_work
+            WHERE state IN ('pending','held')
+              AND (created_at > ? OR (created_at=? AND work_id>?))
+            ORDER BY created_at,work_id LIMIT ?
+          `).all(cursor.created_at, cursor.created_at, cursor.work_id, limit)
+          : db.prepare(`
+            SELECT * FROM base_recovery_work
+            WHERE state IN ('pending','held')
+            ORDER BY created_at,work_id LIMIT ?
+        `).all(limit);
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          // A restart-held row is durable metadata, not runnable work, until this
+          // process receives a fresh proven Agent Index claim.  The raw token is
+          // deliberately process-memory-only, so skip unbacked rows before they
+          // consume the bounded result budget; keyset pagination advances past
+          // them and gives later reattached work a fair chance.
+          if (!recoveryClaimTokens.has(row.work_id)) continue;
+          try {
+            recoverable.push(recoveryRecord(row));
+            if (recoverable.length >= limit) break;
+          } catch {
+            // Skip the corrupt row and continue the keyset page so it cannot
+            // starve later valid work under a small result limit.
+          }
+        }
+        const last = rows.at(-1);
+        cursor = { created_at: last.created_at, work_id: last.work_id };
+        if (rows.length < limit) break;
+      }
+      return recoverable;
+    },
+
+    status(workId) {
+      const row = db.prepare('SELECT * FROM base_recovery_work WHERE work_id=?').get(workId);
+      if (!row) return null;
+      return {
+        workId: row.work_id,
+        state: row.state,
+        attempts: row.attempts,
+        evidenceVersion: row.evidence_version,
+        action: row.action,
+      };
+    },
+  };
+
+  // A process restart cannot prove that a pre-dispatch Agent Index claim is still live. Pending
+  // rows are therefore held on reopen; only a fresh owner-proven claim may call reopen(). Expired
+  // running leases are held as well, and never become an implicit permission to resend.
+  db.prepare(`
+    UPDATE base_recovery_work
+    SET state='held',lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=?
+    WHERE state='pending' OR (state='running' AND (lease_expires_at IS NULL OR lease_expires_at<=?) )
+  `).run(now(), now());
 
   const farmExecutions = {
     prepare({ jobId, job, evidenceHeads }) {
@@ -3091,12 +3663,16 @@ export function createSqliteStores(path, {
       if (classifyUnwindSchema(db).kind !== 'current') {
         throw new Error('unwind authority schema ensemble is incompatible');
       }
+      if (baseRecoverySchema().kind !== 'current') {
+        throw new Error('Base recovery-work schema ensemble is incompatible');
+      }
       db.prepare('UPDATE jobs SET job = job WHERE 0').run();
       db.prepare('SELECT id FROM association_outbox WHERE 0').all();
       db.prepare('SELECT job_id FROM farm_execution_work WHERE 0').all();
       db.prepare('SELECT job_id FROM farm_intent_work_v2 WHERE 0').all();
       db.prepare('SELECT network_id FROM base_evidence_heads WHERE 0').all();
       db.prepare('SELECT event_id FROM base_evidence_outbox WHERE 0').all();
+      db.prepare('SELECT work_id FROM base_recovery_work WHERE 0').all();
       db.prepare('SELECT mandate_id FROM mandates_v3 WHERE 0').all();
       db.prepare('SELECT mandate_id FROM mandate_activation_work WHERE 0').all();
       db.prepare('SELECT exec_id FROM cctp_relay_work WHERE 0').all();
@@ -3104,6 +3680,7 @@ export function createSqliteStores(path, {
       return {
         writable: true,
         baseEvidenceDurable: true,
+        baseRecoveryWorkDurable: true,
         farmIntentDurable: true,
         unwindDurable: true,
         legacyMandateTables: legacyMandateTables(),
@@ -3131,6 +3708,10 @@ export function createSqliteStores(path, {
     mandateActivations,
     associationOutbox,
     baseEvidenceOutbox,
+    baseRecoveryWorks,
+    // Singular alias keeps composition resilient while callers migrate to the plural name.
+    baseRecoveryWork: baseRecoveryWorks,
+    recoveryWorks: baseRecoveryWorks,
     farmExecutions,
     farmIntents,
     cctpRelays,

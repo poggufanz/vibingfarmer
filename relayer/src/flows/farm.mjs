@@ -53,11 +53,53 @@ export function createFarmFlow({ watcher, orchestrator, domains }) {
       }
       if (recovery?.phase === 'base_deposit' && recovery.state === 'submitted') {
         try {
-          const result = await orchestrator.reconcileSubmittedDeposit(
-            approval, allocation, recovery.evidence?.userOpHash, { onCheckpoint },
-          );
+          const reconcileHandle = recovery.evidence?.reconcileHandle ?? null;
+          let result;
+          if (reconcileHandle) {
+            if (typeof orchestrator.reconcileBaseDeposit !== 'function') {
+              result = {
+                identity: allocation.identity,
+                allocationId: allocation.identity.allocationId,
+                pool: allocation.pool,
+                status: 'held',
+                reasonCode: 'reconcile_seam_unavailable',
+                executionStatus: 'held',
+                custody: { location: 'agent' },
+                userOpHash: recovery.evidence?.userOpHash ?? null,
+                transactionHash: null,
+                txHash: null,
+              };
+            } else {
+              result = await orchestrator.reconcileBaseDeposit({
+                approval,
+                allocation,
+                reconcileHandle,
+                userOpHash: recovery.evidence?.userOpHash ?? null,
+                onCheckpoint,
+              });
+            }
+          } else if (recovery.evidence?.userOpHash && typeof orchestrator.reconcileSubmittedDeposit === 'function') {
+            // Compatibility for rows written before reconcileHandle existed. This observes the
+            // exact durable hash and never dispatches a replacement operation.
+            result = await orchestrator.reconcileSubmittedDeposit(approval, allocation, recovery.evidence.userOpHash, {
+              onCheckpoint,
+            });
+          } else {
+            result = {
+              identity: allocation.identity,
+              allocationId: allocation.identity.allocationId,
+              pool: allocation.pool,
+              status: 'held',
+              reasonCode: 'reconcile_handle_missing',
+              executionStatus: 'held',
+              custody: { location: 'agent' },
+              userOpHash: recovery.evidence?.userOpHash ?? null,
+              transactionHash: null,
+              txHash: null,
+            };
+          }
           results.push(result);
-          if (result?.status === 'held') holdLater = true;
+          if (result?.status !== 'fulfilled') holdLater = true;
         } catch (reason) {
           holdLater = true;
           results.push({
@@ -67,6 +109,37 @@ export function createFarmFlow({ watcher, orchestrator, domains }) {
             status: 'uncertain',
             reason,
             reasonCode: 'submitted_reconciliation_ambiguous',
+            executionStatus: 'unknown',
+            custody: { location: 'agent' },
+          });
+        }
+        continue;
+      }
+      if (
+        recovery?.phase === 'base_deposit' &&
+        (recovery.state === 'submitting' || recovery.state === 'unknown') &&
+        recovery.evidence?.reconcileHandle &&
+        typeof orchestrator.reconcileBaseDeposit === 'function'
+      ) {
+        try {
+          const result = await orchestrator.reconcileBaseDeposit({
+            approval,
+            allocation,
+            reconcileHandle: recovery.evidence.reconcileHandle,
+            userOpHash: recovery.evidence.userOpHash ?? null,
+            onCheckpoint,
+          });
+          results.push(result);
+          if (result?.status !== 'fulfilled') holdLater = true;
+        } catch (reason) {
+          holdLater = true;
+          results.push({
+            identity: allocation.identity,
+            allocationId: allocation.identity.allocationId,
+            pool: allocation.pool,
+            status: 'uncertain',
+            reason,
+            reasonCode: 'base_reconciliation_ambiguous',
             executionStatus: 'unknown',
             custody: { location: 'agent' },
           });
@@ -87,11 +160,12 @@ export function createFarmFlow({ watcher, orchestrator, domains }) {
         identity: allocation.identity,
         allocationId: allocation.identity.allocationId,
         pool: allocation.pool,
-        status: recovery?.state === 'unknown' || recovery?.state === 'submitting'
-          ? 'uncertain' : 'held',
-        reasonCode: `recovery_${recovery?.state || 'missing'}`,
-        executionStatus: recovery?.state === 'unknown' || recovery?.state === 'submitting'
-          ? 'unknown' : 'held',
+        status: recovery?.state === 'unknown' || recovery?.state === 'submitting' ? 'uncertain' : 'held',
+        reasonCode:
+          recovery?.phase === 'base_deposit' && (recovery.state === 'submitting' || recovery.state === 'unknown')
+            ? 'reconcile_handle_missing'
+            : `recovery_${recovery?.state || 'missing'}`,
+        executionStatus: recovery?.state === 'unknown' || recovery?.state === 'submitting' ? 'unknown' : 'held',
         custody: { location: 'agent' },
       });
     }

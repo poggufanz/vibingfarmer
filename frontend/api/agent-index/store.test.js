@@ -4,8 +4,10 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
+import { createHash } from 'node:crypto'
 import { createAgentIndexStore } from './store.js'
 import { AgentIndexConflictError, sourceIdFor } from './models.js'
+import { selectBaseChildRecoveryAction } from './recovery.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'migrations')
@@ -22,6 +24,7 @@ const MIGRATIONS = [
   '0006_base_child_intents.sql',
   '0007_agent_membership_owner_pages.sql',
   '0008_base_recovery_evidence.sql',
+  '0009_base_recovery_lease_token_digest.sql',
 ]
 
 function applyMigrations(sqlite, through) {
@@ -76,7 +79,7 @@ function sqliteD1(sqlite) {
 
 function fakeD1() {
   const sqlite = new DatabaseSync(':memory:')
-  applyMigrations(sqlite, 8)
+  applyMigrations(sqlite, MIGRATIONS.length)
   return sqliteD1(sqlite)
 }
 
@@ -125,6 +128,10 @@ describe('createAgentIndexStore', () => {
         'commitAuthenticatedReceiptMutation',
         'acquireRecoveryLease',
         'releaseRecoveryLease',
+        'acquireBaseChildRecoveryLease',
+        'readBaseChildRecoveryClaim',
+        'renewBaseChildRecoveryLease',
+        'releaseBaseChildRecoveryLease',
         'probeReadiness',
         'createBaseChildIntent',
         'advanceBaseChildLifecycle',
@@ -1515,6 +1522,398 @@ describe('Base child intent and lifecycle durability', () => {
   })
 })
 
+describe('Base recovery lease full-identity CAS store', () => {
+  const identity = {
+    networkId: NETWORK,
+    bindingId: 'lease-binding',
+    executionId: 'lease-run:exec:lease-allocation',
+    allocationId: 'lease-allocation',
+    childId: 'lease-child',
+  }
+  const child = (overrides = {}) => ({
+    version: 1,
+    networkId: NETWORK,
+    owner: 'GLEASEOWNER',
+    agent: 'CLEASEAGENT',
+    bindingId: identity.bindingId,
+    executionId: identity.executionId,
+    allocationId: identity.allocationId,
+    childId: identity.childId,
+    intent: {
+      token: 'USDC',
+      units: '1000000',
+      decimals: 6,
+      poolAddress: '0xpool',
+      minShares: '0',
+      runId: 'lease-run',
+      grantTxHash: 'lease-grant',
+      bindingHash: 'lease-binding-hash',
+      kernelAddress: '0xkernel',
+      baseJobId: identity.childId,
+    },
+    lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 1000 },
+    ...overrides,
+  })
+  const lease = (overrides = {}) => ({
+    identity,
+    owner: 'GLEASEOWNER',
+    action: 'submit-mint',
+    phase: 'cctp_mint',
+    evidenceVersion: 0,
+    holder: 'tab-a',
+    leaseToken: 'aa'.repeat(32),
+    now: 2_000_000_000_000,
+    ttlMs: 30_000,
+    ...overrides,
+  })
+  async function seed(overrides = {}) {
+    await store.reserveBaseChildIntentBatch({
+      batch: {
+        idempotencyKey: 'lease-batch',
+        burnUnits7: '1000000',
+        children: [child(overrides)],
+      },
+      requestDigest: 'a'.repeat(64),
+      idempotencyKey: 'lease-batch',
+    })
+  }
+
+  it('acquires, reopens, reads, and isolates one full-identity Base lease', async () => {
+    await seed()
+    const first = await store.acquireBaseChildRecoveryLease(lease())
+    expect(first).toMatchObject({
+      acquired: true,
+      leaseToken: 'aa'.repeat(32),
+      expiresAt: 2_000_000_030_000,
+    })
+    const reopened = createAgentIndexStore(db, { enableLegacyBaseChildWrites: true })
+    await expect(reopened.readBaseChildRecoveryClaim(lease())).resolves.toMatchObject({
+      identity,
+      owner: 'GLEASEOWNER',
+      agent: 'CLEASEAGENT',
+      action: 'submit-mint',
+      phase: 'cctp_mint',
+      evidenceVersion: 0,
+      holder: 'tab-a',
+      leaseToken: 'aa'.repeat(32),
+    })
+  })
+
+  it('persists only a one-way lease-token digest while authenticating the exact raw token', async () => {
+    await seed()
+    const rawToken = 'aa'.repeat(32)
+    await expect(
+      store.acquireBaseChildRecoveryLease(lease({ leaseToken: rawToken }))
+    ).resolves.toMatchObject({
+      acquired: true,
+      leaseToken: rawToken,
+    })
+    const stored = db._raw
+      .prepare('SELECT lease_token FROM base_child_recovery_leases')
+      .get().lease_token
+    expect(stored).toBe(createHash('sha256').update(rawToken).digest('hex'))
+    expect(stored).not.toBe(rawToken)
+    expect(
+      JSON.stringify(db._raw.prepare('SELECT * FROM base_child_recovery_leases').all())
+    ).not.toContain(rawToken)
+    await expect(
+      store.readBaseChildRecoveryClaim(lease({ leaseToken: rawToken }))
+    ).resolves.toMatchObject({
+      leaseToken: rawToken,
+    })
+    await expect(
+      store.readBaseChildRecoveryClaim(lease({ leaseToken: 'bb'.repeat(32) }))
+    ).resolves.toBeNull()
+  })
+
+  it('invalidates legacy raw-token leases when migration 0009 activates digest storage', async () => {
+    const sqlite = new DatabaseSync(':memory:')
+    try {
+      applyMigrations(sqlite, 8)
+      const legacyStore = createAgentIndexStore(sqliteD1(sqlite), {
+        enableLegacyBaseChildWrites: true,
+      })
+      await legacyStore.reserveBaseChildIntentBatch({
+        batch: {
+          idempotencyKey: 'legacy-raw-token-batch',
+          burnUnits7: '1000000',
+          children: [child()],
+        },
+        requestDigest: 'f'.repeat(64),
+        idempotencyKey: 'legacy-raw-token-batch',
+      })
+      await legacyStore.acquireBaseChildRecoveryLease(lease())
+      const rawLegacyToken = 'ef'.repeat(32)
+      sqlite.prepare('UPDATE base_child_recovery_leases SET lease_token = ?').run(rawLegacyToken)
+      expect(
+        JSON.stringify(sqlite.prepare('SELECT * FROM base_child_recovery_leases').all())
+      ).toContain(rawLegacyToken)
+
+      sqlite.exec(
+        readFileSync(join(MIGRATIONS_DIR, '0009_base_recovery_lease_token_digest.sql'), 'utf8')
+      )
+
+      expect(
+        sqlite.prepare('SELECT COUNT(*) AS count FROM base_child_recovery_leases').get().count
+      ).toBe(0)
+      expect(
+        JSON.stringify(sqlite.prepare('SELECT * FROM base_child_recovery_leases').all())
+      ).not.toContain(rawLegacyToken)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it('does not let a different holder reuse the live token and preserves lease bytes', async () => {
+    await seed()
+    await expect(store.acquireBaseChildRecoveryLease(lease())).resolves.toMatchObject({
+      acquired: true,
+    })
+    const selectLease = () =>
+      db._raw
+        .prepare(
+          `SELECT network_id,binding_id,execution_id,allocation_id,child_id,phase,owner_address,
+                  action,evidence_version,holder,lease_token,acquired_at,expires_at
+             FROM base_child_recovery_leases
+            WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+              AND allocation_id = ? AND child_id = ? AND phase = ?`
+        )
+        .get(
+          identity.networkId,
+          identity.bindingId,
+          identity.executionId,
+          identity.allocationId,
+          identity.childId,
+          'cctp_mint'
+        )
+    const before = selectLease()
+    await expect(
+      store.acquireBaseChildRecoveryLease(
+        lease({ holder: 'tab-b', now: 2_000_000_000_001, ttlMs: 90_000 })
+      )
+    ).resolves.toMatchObject({ acquired: false, code: 'lease-conflict' })
+    expect(selectLease()).toEqual(before)
+    await expect(
+      store.acquireBaseChildRecoveryLease(
+        lease({
+          action: 'poll-mint',
+          holder: 'tab-b',
+          leaseToken: 'bb'.repeat(32),
+          now: 2_000_000_030_000,
+        })
+      )
+    ).resolves.toMatchObject({ acquired: false, code: 'lease-conflict' })
+    expect(selectLease()).toEqual(before)
+
+    await expect(
+      store.acquireBaseChildRecoveryLease(
+        lease({ holder: 'tab-a', now: 2_000_000_000_001, ttlMs: 90_000 })
+      )
+    ).resolves.toMatchObject({ acquired: true, expiresAt: 2_000_000_090_001 })
+    expect(selectLease()).toMatchObject({
+      holder: 'tab-a',
+      lease_token: createHash('sha256').update('aa'.repeat(32)).digest('hex'),
+      acquired_at: 2_000_000_000_001,
+      expires_at: 2_000_000_090_001,
+    })
+  })
+
+  it('permits exactly one live token, treats expiry equality as reclaimable, and rejects stale versions', async () => {
+    await seed()
+    await expect(store.acquireBaseChildRecoveryLease(lease())).resolves.toMatchObject({
+      acquired: true,
+    })
+    await expect(
+      store.acquireBaseChildRecoveryLease(
+        lease({ holder: 'tab-b', leaseToken: 'bb'.repeat(32), now: 2_000_000_000_001 })
+      )
+    ).resolves.toMatchObject({ acquired: false })
+    await expect(
+      store.acquireBaseChildRecoveryLease(
+        lease({ holder: 'tab-b', leaseToken: 'bb'.repeat(32), now: 2_000_000_030_000 - 1 })
+      )
+    ).resolves.toMatchObject({ acquired: false })
+    await expect(
+      store.acquireBaseChildRecoveryLease(
+        lease({ holder: 'tab-b', leaseToken: 'bb'.repeat(32), now: 2_000_000_030_000 })
+      )
+    ).resolves.toMatchObject({ acquired: true })
+    await expect(
+      store.acquireBaseChildRecoveryLease(
+        lease({
+          evidenceVersion: 1,
+          holder: 'tab-c',
+          leaseToken: 'cc'.repeat(32),
+          now: 2_000_000_040_000,
+        })
+      )
+    ).resolves.toMatchObject({ acquired: false, code: 'version-conflict' })
+  })
+
+  it('reads/renews/releases only the exact identity, action, version, holder, and token', async () => {
+    await seed()
+    await store.acquireBaseChildRecoveryLease(lease())
+    await expect(
+      store.readBaseChildRecoveryClaim({ ...lease(), leaseToken: 'bb'.repeat(32) })
+    ).resolves.toBeNull()
+    await expect(
+      store.readBaseChildRecoveryClaim({
+        ...lease(),
+        identity: { ...identity, executionId: 'other-run:exec:lease-allocation' },
+      })
+    ).resolves.toBeNull()
+    await expect(
+      store.renewBaseChildRecoveryLease({ ...lease(), now: 2_000_000_000_010, ttlMs: 30_000 })
+    ).resolves.toMatchObject({ renewed: true, expiresAt: 2_000_000_030_010 })
+    await expect(
+      store.renewBaseChildRecoveryLease({
+        ...lease(),
+        leaseToken: 'bb'.repeat(32),
+        now: 2_000_000_000_020,
+        ttlMs: 30_000,
+      })
+    ).resolves.toMatchObject({ renewed: false })
+    await expect(
+      store.releaseBaseChildRecoveryLease({ ...lease(), leaseToken: 'bb'.repeat(32) })
+    ).resolves.toMatchObject({ released: false })
+    await expect(store.releaseBaseChildRecoveryLease(lease())).resolves.toMatchObject({
+      released: true,
+    })
+    await expect(store.readBaseChildRecoveryClaim(lease())).resolves.toBeNull()
+  })
+
+  it('replaces a stale-version row only after the child CAS advances, without waiting for expiry', async () => {
+    await seed()
+    await store.acquireBaseChildRecoveryLease(lease())
+    await store.advanceBaseChildPhase({
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'c'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'confirmed',
+        evidence: confirmedBurnEvidence(),
+        observedAt: 2_000_000_000_001,
+      },
+    })
+    await expect(
+      store.readBaseChildRecoveryClaim({
+        ...lease({ evidenceVersion: 0, leaseToken: 'aa'.repeat(32), now: 2_000_000_000_002 }),
+        includeVersionConflict: true,
+      })
+    ).resolves.toMatchObject({ conflict: 'version', currentVersion: 1 })
+    await expect(
+      store.acquireBaseChildRecoveryLease(
+        lease({
+          evidenceVersion: 1,
+          holder: 'tab-b',
+          leaseToken: 'bb'.repeat(32),
+          now: 2_000_000_000_002,
+        })
+      )
+    ).resolves.toMatchObject({ acquired: true })
+    await expect(
+      store.readBaseChildRecoveryClaim(
+        lease({ evidenceVersion: 0, leaseToken: 'aa'.repeat(32), now: 2_000_000_000_002 })
+      )
+    ).resolves.toBeNull()
+  })
+
+  it('keeps the stale lease row byte-for-byte intact when replacement insert fails', async () => {
+    await seed()
+    await store.acquireBaseChildRecoveryLease(lease())
+    await store.advanceBaseChildPhase({
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'd'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'confirmed',
+        evidence: confirmedBurnEvidence(),
+        observedAt: 2_000_000_000_001,
+      },
+    })
+    const before = db._raw
+      .prepare(
+        `SELECT network_id,binding_id,execution_id,allocation_id,child_id,phase,owner_address,
+                action,evidence_version,holder,lease_token,acquired_at,expires_at
+           FROM base_child_recovery_leases`
+      )
+      .all()
+    db._raw.exec(`
+      CREATE TRIGGER task14_abort_recovery_replacement
+      BEFORE INSERT ON base_child_recovery_leases
+      WHEN NEW.evidence_version = 1
+      BEGIN
+        SELECT RAISE(ABORT, 'injected recovery replacement failure');
+      END;
+    `)
+    await expect(
+      store.acquireBaseChildRecoveryLease(
+        lease({
+          evidenceVersion: 1,
+          holder: 'tab-b',
+          leaseToken: 'bb'.repeat(32),
+          now: 2_000_000_000_002,
+        })
+      )
+    ).rejects.toThrow(/replacement failure/i)
+    expect(
+      db._raw
+        .prepare(
+          `SELECT network_id,binding_id,execution_id,allocation_id,child_id,phase,owner_address,
+                  action,evidence_version,holder,lease_token,acquired_at,expires_at
+             FROM base_child_recovery_leases`
+        )
+        .all()
+    ).toEqual(before)
+  })
+
+  it('keeps same-child collisions independent and refuses orphan identities', async () => {
+    await seed()
+    const collision = {
+      ...identity,
+      bindingId: 'lease-binding-2',
+      executionId: 'lease-run-2:exec:lease-allocation-2',
+      allocationId: 'lease-allocation-2',
+    }
+    await store.reserveBaseChildIntentBatch({
+      batch: {
+        idempotencyKey: 'lease-batch-2',
+        burnUnits7: '1000000',
+        children: [
+          child({
+            ...collision,
+            intent: {
+              ...child().intent,
+              runId: 'lease-run-2',
+              baseJobId: collision.childId,
+            },
+          }),
+        ],
+      },
+      requestDigest: 'b'.repeat(64),
+      idempotencyKey: 'lease-batch-2',
+    })
+    await expect(store.acquireBaseChildRecoveryLease(lease())).resolves.toMatchObject({
+      acquired: true,
+    })
+    await expect(
+      store.acquireBaseChildRecoveryLease(
+        lease({ identity: collision, holder: 'tab-b', leaseToken: 'bb'.repeat(32) })
+      )
+    ).resolves.toMatchObject({ acquired: true })
+    const orphan = {
+      ...identity,
+      allocationId: 'missing-allocation',
+      executionId: 'lease-run:exec:missing-allocation',
+    }
+    await expect(
+      store.acquireBaseChildRecoveryLease(lease({ identity: orphan, leaseToken: 'cc'.repeat(32) }))
+    ).resolves.toMatchObject({ acquired: false })
+  })
+})
+
 describe('Task 9 authoritative Base child recovery store', () => {
   const child = (ordinal = 1, overrides = {}) => {
     const allocationId = `allocation-${ordinal}`
@@ -1596,7 +1995,7 @@ describe('Task 9 authoritative Base child recovery store', () => {
     const sqliteB = new DatabaseSync(databasePath)
     try {
       sqliteA.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;')
-      applyMigrations(sqliteA, 8)
+      applyMigrations(sqliteA, MIGRATIONS.length)
       sqliteB.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;')
       const storeA = createAgentIndexStore(sqliteD1(sqliteA))
       const storeB = createAgentIndexStore(sqliteD1(sqliteB))
@@ -1644,7 +2043,7 @@ describe('Task 9 authoritative Base child recovery store', () => {
     const sqliteB = new DatabaseSync(databasePath)
     try {
       sqliteA.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;')
-      applyMigrations(sqliteA, 8)
+      applyMigrations(sqliteA, MIGRATIONS.length)
       sqliteB.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;')
       const storeA = createAgentIndexStore(sqliteD1(sqliteA))
       const storeB = createAgentIndexStore(sqliteD1(sqliteB))
@@ -2189,8 +2588,9 @@ describe('Task 9 authoritative Base child recovery store', () => {
           evidence: {
             burnTxHash: 'a'.repeat(64),
             expectationDigest: 'b'.repeat(64),
-            messageDigest: 'c'.repeat(64),
-            attestationDigest: 'd'.repeat(64),
+            messageDigest: `0x${'c'.repeat(64)}`,
+            attestationDigest: `0x${'d'.repeat(64)}`,
+            nonce: `0x${'f'.repeat(64)}`,
             evidenceVersion: '1',
             mintTxHash: `0x${'e'.repeat(64)}`,
           },
@@ -2226,6 +2626,64 @@ describe('Task 9 authoritative Base child recovery store', () => {
       })
     ).rejects.toBeInstanceOf(AgentIndexConflictError)
     expect((await store.readBaseChildRecoveryBundle(identity)).recoveryVersion).toBe(1)
+  })
+
+  it('allows a retryable attestation failure to confirm later without changing immutable facts', async () => {
+    const input = batch({
+      idempotencyKey: 'attestation-failed-retry-batch',
+      children: [child(1)],
+      burnUnits7: '10000000',
+    })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '7'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    await store.advanceBaseChildPhase({
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: '8'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'confirmed',
+        evidence: confirmedBurnEvidence('10000000'),
+        observedAt: 2400,
+      },
+    })
+    const attestationFacts = {
+      burnTxHash: 'a'.repeat(64),
+      expectationDigest: 'b'.repeat(64),
+      messageDigest: `0x${'c'.repeat(64)}`,
+      nonce: `0x${'d'.repeat(64)}`,
+    }
+    await store.advanceBaseChildPhase({
+      identity,
+      expectedRecoveryVersion: 1,
+      event: {
+        eventId: '9'.repeat(64),
+        phase: 'cctp_attestation',
+        state: 'failed',
+        evidence: { ...attestationFacts, reasonCode: 'attestation_retryable' },
+        observedAt: 2401,
+      },
+    })
+    await expect(
+      store.advanceBaseChildPhase({
+        identity,
+        expectedRecoveryVersion: 2,
+        event: {
+          eventId: 'a'.repeat(64),
+          phase: 'cctp_attestation',
+          state: 'confirmed',
+          evidence: {
+            ...attestationFacts,
+            attestationDigest: `0x${'e'.repeat(64)}`,
+            evidenceVersion: '3',
+          },
+          observedAt: 2402,
+        },
+      })
+    ).resolves.toMatchObject({ recoveryVersion: 3, written: 1 })
   })
 
   it('rolls back the event and version when the projection write aborts', async () => {
@@ -2318,9 +2776,13 @@ describe('Task 9 authoritative Base child recovery store', () => {
       },
     })
     await expect(store.readBaseChildRecoveryBundle(identity)).resolves.toMatchObject({
+      schemaVersion: 1,
       identity,
+      owner: 'GOWNER1',
+      agent: 'CAGENT1',
       recoverable: true,
       recoveryVersion: 1,
+      intent: child(1).intent,
       events: [
         {
           eventId: 'a'.repeat(64),
@@ -2328,6 +2790,10 @@ describe('Task 9 authoritative Base child recovery store', () => {
         },
       ],
     })
+    const bundle = await store.readBaseChildRecoveryBundle(identity)
+    expect(bundle.intent).not.toHaveProperty('version')
+    expect(bundle.intent).not.toHaveProperty('owner')
+    expect(bundle.intent).not.toHaveProperty('agent')
     for (const [field, value] of [
       ['networkId', 'other-network'],
       ['bindingId', 'other-binding'],
@@ -2339,5 +2805,102 @@ describe('Task 9 authoritative Base child recovery store', () => {
         store.readBaseChildRecoveryBundle({ ...identity, [field]: value })
       ).resolves.toBeNull()
     }
+  })
+
+  it('feeds a real persisted D1 bundle into the Base selector without storage-only fields', async () => {
+    const selectorIdentity = {
+      networkId: NETWORK,
+      bindingId: '0123456789abcdef0123456789abcdef',
+      executionId: 'run-selector:exec:allocation-selector',
+      allocationId: 'allocation-selector',
+      childId: 'abcdef0123456789abcdef0123456789',
+    }
+    const selectorChild = child(1, {
+      ...selectorIdentity,
+      intent: {
+        ...child(1).intent,
+        runId: 'run-selector',
+        grantTxHash: '6'.repeat(64),
+        bindingHash: 'd'.repeat(64),
+        baseJobId: selectorIdentity.childId,
+        minShares: '900000',
+      },
+    })
+    const input = batch({ children: [selectorChild], burnUnits7: '10000000' })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '1'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    const burnEvidence = {
+      burnTxHash: 'a'.repeat(64),
+      expectationDigest: 'b'.repeat(64),
+      burnUnits7: '10000000',
+      messageDigest: `0x${'c'.repeat(64)}`,
+      nonce: `0x${'d'.repeat(64)}`,
+    }
+    await store.advanceBaseChildPhase({
+      identity: selectorIdentity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'a'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'confirmed',
+        evidence: burnEvidence,
+        observedAt: 2100,
+      },
+    })
+    await store.advanceBaseChildPhase({
+      identity: selectorIdentity,
+      expectedRecoveryVersion: 1,
+      event: {
+        eventId: 'b'.repeat(64),
+        phase: 'cctp_attestation',
+        state: 'confirmed',
+        evidence: {
+          burnTxHash: burnEvidence.burnTxHash,
+          expectationDigest: burnEvidence.expectationDigest,
+          messageDigest: burnEvidence.messageDigest,
+          nonce: burnEvidence.nonce,
+          attestationDigest: `0x${'e'.repeat(64)}`,
+          evidenceVersion: '1',
+        },
+        observedAt: 2200,
+      },
+    })
+    const bundle = await store.readBaseChildRecoveryBundle(selectorIdentity)
+    expect(bundle.events.every((entry) => !Object.hasOwn(entry, 'evidenceDigest'))).toBe(true)
+    expect(bundle.phases.every((entry) => !Object.hasOwn(entry, 'evidenceDigest'))).toBe(true)
+    expect(selectBaseChildRecoveryAction(bundle)).toEqual({
+      action: 'submit-mint',
+      phase: 'cctp_mint',
+      reasonCode: 'base-attestation-confirmed',
+    })
+  })
+
+  it('rejects persisted Base evidence whose JSON no longer matches its durable digest', async () => {
+    const input = batch({ children: [child(1)], burnUnits7: '10000000' })
+    await store.reserveBaseChildIntentBatch({
+      batch: input,
+      requestDigest: '1'.repeat(64),
+      idempotencyKey: input.idempotencyKey,
+    })
+    await store.advanceBaseChildPhase({
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'a'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'confirmed',
+        evidence: confirmedBurnEvidence(),
+        observedAt: 2100,
+      },
+    })
+    db._raw.exec(`
+      DROP TRIGGER base_child_phase_events_no_update;
+      UPDATE base_child_phase_events SET evidence_json = '{"burnUnits7":"1"}';
+      UPDATE base_child_phase_projection SET evidence_json = '{"burnUnits7":"1"}';
+    `)
+    await expect(store.readBaseChildRecoveryBundle(identity)).rejects.toThrow(/digest|evidence/i)
   })
 })

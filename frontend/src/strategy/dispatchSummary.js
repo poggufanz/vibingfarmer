@@ -42,6 +42,8 @@
  * @typedef {{version:1, runId:string, planFingerprint:string, permission:object, branches:{stellar:BranchResultV1,base:BranchResultV1}, allocations:AllocationOutcomeV1[]}} DispatchReceiptV1
  */
 
+import { requireBaseRecoveryIdentity } from './baseRecoveryIdentity.js'
+
 const EXECUTION_STATUSES = new Set(['succeeded', 'failed', 'pending', 'not-started', 'unknown'])
 const CUSTODY_LOCATIONS = new Set([
   'owner',
@@ -304,6 +306,7 @@ function safeEvidence(raw) {
     'jobId',
     'finalStatus',
     'mintTxHash',
+    'userOpHash',
     'bridgeAgentAddress',
     'bridgeAgent',
     'kernelAddress',
@@ -331,8 +334,20 @@ function normalizeOutcome(planned, raw) {
   ) {
     throw new Error(`Invalid canonical amount for allocation ${planned.allocationId}.`)
   }
+  let baseIdentity = null
+  if (planned.branch === 'base' && raw?.identity != null) {
+    try {
+      const candidate = requireBaseRecoveryIdentity(raw.identity)
+      if (candidate.allocationId === planned.allocationId) baseIdentity = candidate
+    } catch {
+      // A malformed/unrelated Base identity must not become an actionable receipt key. The
+      // outcome remains visible and will project to manual review instead of being synthesized.
+      baseIdentity = null
+    }
+  }
   return {
     allocationId: planned.allocationId,
+    ...(baseIdentity ? { identity: baseIdentity } : {}),
     amount: {
       token: amount.token,
       units: String(amount.units),

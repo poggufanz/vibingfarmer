@@ -33,6 +33,15 @@ const AGENT_2 = 'CDCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UB'
 // overflow-wrap is present, which would leave a 320px guard built on it unable to see its own
 // regression (see StrategyReceipt.test.jsx's identical fix and its own red-then-green note).
 const REAL_TX_HASH = 'a1b2c3d4'.repeat(8)
+const BASE_RECOVERY_IDENTITY = Object.freeze({
+  networkId: 'stellar-testnet',
+  bindingId: '0123456789abcdef0123456789abcdef',
+  executionId: 'run-2:exec:run-2:bridge:moonwell',
+  allocationId: 'run-2:bridge:moonwell',
+  childId: 'abcdef0123456789abcdef0123456789',
+})
+const BASE_RECOVERY_IDENTITY_KEY =
+  '["stellar-testnet","0123456789abcdef0123456789abcdef","run-2:exec:run-2:bridge:moonwell","run-2:bridge:moonwell","abcdef0123456789abcdef0123456789"]'
 
 function amount(token, units, decimals = 7) {
   return { token, units, decimals }
@@ -861,6 +870,273 @@ describe('StartStage -- bridge lane: one mark, all Base child destinations, corr
     fireEvent.click(blocked)
     expect(onRecoverAllocation).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  })
+
+  it.each([
+    ['poll-attestation', 'Check attestation'],
+    ['submit-mint', 'Resume transfer to Base'],
+    ['poll-mint', 'Check Base arrival'],
+    ['submit-base-deposit', 'Deposit from Base account'],
+    ['poll-base-deposit', 'Check Base deposit'],
+  ])('offers the separate %s Base action for the exact full child identity', (action, label) => {
+    const onRecoverAllocation = vi.fn()
+    const onRecoverBaseChild = vi.fn()
+    const outcome = {
+      allocationId: BASE_RECOVERY_IDENTITY.allocationId,
+      identity: BASE_RECOVERY_IDENTITY,
+      amount: { token: 'USDC', units: '400000', decimals: 6 },
+      networkContext: {
+        executionNetwork: 'stellar-testnet',
+        destinationNetwork: 'base-sepolia',
+        currentCustodyNetwork: null,
+        transit: false,
+      },
+      executionStatus: 'failed',
+      custody: { location: 'base-kernel', confirmed: true, checkedAt: NOW },
+      txHash: null,
+      error: 'Base deposit needs recovery.',
+      evidence: {},
+    }
+    const receipt = receiptFor({
+      runId: 'run-2',
+      planFingerprint: '0xplan2',
+      allocations: [outcome],
+    })
+
+    render(
+      <StartStage
+        plan={PLAN_WITH_BRIDGE}
+        permission={PERMISSION_FRESH}
+        events={[]}
+        receipt={receipt}
+        recoveryByAllocation={{}}
+        onRecoverAllocation={onRecoverAllocation}
+        baseRecoveryByIdentity={{
+          [BASE_RECOVERY_IDENTITY_KEY]: {
+            identity: BASE_RECOVERY_IDENTITY,
+            action,
+            phase: action.includes('attestation')
+              ? 'cctp_attestation'
+              : action.includes('mint')
+                ? 'cctp_mint'
+                : 'base_deposit',
+            version: 7,
+          },
+        }}
+        baseRecoveryPendingIdentities={new Set()}
+        onRecoverBaseChild={onRecoverBaseChild}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: label })
+    expect(button.disabled).toBe(false)
+    fireEvent.click(button)
+    expect(onRecoverBaseChild).toHaveBeenCalledWith(BASE_RECOVERY_IDENTITY)
+    expect(onRecoverAllocation).not.toHaveBeenCalled()
+  })
+
+  it('uses the full identity for Base loading/pending state and never enables an unknown action', () => {
+    const onRecoverBaseChild = vi.fn()
+    const outcome = {
+      allocationId: BASE_RECOVERY_IDENTITY.allocationId,
+      identity: BASE_RECOVERY_IDENTITY,
+      amount: { token: 'USDC', units: '400000', decimals: 6 },
+      networkContext: {},
+      executionStatus: 'failed',
+      custody: { location: 'base-kernel', confirmed: true, checkedAt: NOW },
+      txHash: null,
+      error: 'Base deposit needs recovery.',
+      evidence: {},
+    }
+    const receipt = receiptFor({
+      runId: 'run-2',
+      planFingerprint: '0xplan2',
+      allocations: [outcome],
+    })
+    const props = {
+      plan: PLAN_WITH_BRIDGE,
+      permission: PERMISSION_FRESH,
+      events: [],
+      receipt,
+      onRecoverBaseChild,
+    }
+    const { rerender } = render(<StartStage {...props} />)
+
+    expect(screen.getByRole('button', { name: 'Checking Base status' }).disabled).toBe(true)
+
+    rerender(
+      <StartStage
+        {...props}
+        baseRecoveryByIdentity={{
+          [BASE_RECOVERY_IDENTITY_KEY]: {
+            identity: BASE_RECOVERY_IDENTITY,
+            action: 'submit-mint',
+            phase: 'cctp_mint',
+            version: 7,
+          },
+        }}
+        baseRecoveryPendingIdentities={new Set([BASE_RECOVERY_IDENTITY_KEY])}
+      />
+    )
+    const pending = screen.getByRole('button', { name: 'Resume transfer to Base' })
+    expect(pending.disabled).toBe(true)
+    fireEvent.click(pending)
+    expect(onRecoverBaseChild).not.toHaveBeenCalled()
+
+    rerender(
+      <StartStage
+        {...props}
+        baseRecoveryByIdentity={{
+          [BASE_RECOVERY_IDENTITY_KEY]: {
+            identity: BASE_RECOVERY_IDENTITY,
+            action: 'future-unsafe-action',
+            phase: null,
+            version: 8,
+          },
+        }}
+        baseRecoveryPendingIdentities={new Set()}
+      />
+    )
+    expect(screen.getByRole('button', { name: 'Manual review' }).disabled).toBe(true)
+  })
+
+  it.each([
+    ['no-movement', 'No Base movement confirmed'],
+    ['recovery-in-progress', 'Recovery in progress'],
+    ['manual-review', 'Manual review'],
+    ['owner-action-required', 'Action needed in Base account'],
+  ])('renders %s as an honest disabled Base state', (action, label) => {
+    const outcome = {
+      allocationId: BASE_RECOVERY_IDENTITY.allocationId,
+      identity: BASE_RECOVERY_IDENTITY,
+      amount: { token: 'USDC', units: '400000', decimals: 6 },
+      networkContext: {},
+      executionStatus: 'failed',
+      custody: { location: 'base-kernel', confirmed: true, checkedAt: NOW },
+      txHash: null,
+      error: 'Base recovery is not automatically actionable.',
+      evidence: {},
+    }
+    render(
+      <StartStage
+        plan={PLAN_WITH_BRIDGE}
+        permission={PERMISSION_FRESH}
+        events={[]}
+        receipt={receiptFor({
+          runId: 'run-2',
+          planFingerprint: '0xplan2',
+          allocations: [outcome],
+        })}
+        baseRecoveryByIdentity={{
+          [BASE_RECOVERY_IDENTITY_KEY]: {
+            identity: BASE_RECOVERY_IDENTITY,
+            action,
+            phase: null,
+            version: 7,
+          },
+        }}
+        onRecoverBaseChild={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: label }).disabled).toBe(true)
+  })
+
+  it('folds only an exact confirmed Base child projection into the settled bridge lane', () => {
+    const otherIdentity = {
+      ...BASE_RECOVERY_IDENTITY,
+      executionId: 'run-2:exec:run-2:bridge:aave-v3',
+      allocationId: 'run-2:bridge:aave-v3',
+      childId: '11111111111111111111111111111111',
+    }
+    const succeeded = {
+      allocationId: otherIdentity.allocationId,
+      identity: otherIdentity,
+      amount: { token: 'USDC', units: '600000', decimals: 6 },
+      networkContext: {
+        executionNetwork: 'stellar-testnet',
+        destinationNetwork: 'base-sepolia',
+        currentCustodyNetwork: 'base-sepolia',
+        transit: false,
+      },
+      executionStatus: 'succeeded',
+      custody: { location: 'base-proxy', confirmed: true, checkedAt: NOW },
+      txHash: `0x${'aa'.repeat(32)}`,
+      error: null,
+      evidence: {},
+    }
+    const failed = {
+      allocationId: BASE_RECOVERY_IDENTITY.allocationId,
+      identity: BASE_RECOVERY_IDENTITY,
+      amount: { token: 'USDC', units: '400000', decimals: 6 },
+      networkContext: {
+        executionNetwork: 'stellar-testnet',
+        destinationNetwork: 'base-sepolia',
+        currentCustodyNetwork: 'base-sepolia',
+        transit: false,
+      },
+      executionStatus: 'failed',
+      custody: { location: 'base-kernel', confirmed: true, checkedAt: NOW },
+      txHash: null,
+      error: 'Old Base deposit failure.',
+      evidence: {},
+    }
+    const { container } = render(
+      <StartStage
+        plan={PLAN_WITH_BRIDGE}
+        permission={PERMISSION_FRESH}
+        events={[]}
+        receipt={receiptFor({
+          runId: 'run-2',
+          planFingerprint: '0xplan2',
+          allocations: [succeeded, failed],
+        })}
+        baseRecoveryByIdentity={{
+          [BASE_RECOVERY_IDENTITY_KEY]: {
+            identity: BASE_RECOVERY_IDENTITY,
+            action: 'complete',
+            phase: null,
+            version: 8,
+            phases: {
+              base_deposit: {
+                state: 'confirmed',
+                recoveryVersion: 8,
+                observedAt: NOW + 1,
+                evidence: {
+                  userOpHash: `0x${'bb'.repeat(32)}`,
+                  transactionHash: `0x${'cc'.repeat(32)}`,
+                  assets: '400000',
+                  shares: '390000',
+                  event: {
+                    address: '0x00000000000000000000000000000000000000f1',
+                    topic0: `0x${'12'.repeat(32)}`,
+                    logIndex: '3',
+                    caller: '0x00000000000000000000000000000000000000aa',
+                    poolAddress: '0x00000000000000000000000000000000000000b2',
+                    assets: '400000',
+                    shares: '390000',
+                  },
+                },
+              },
+            },
+            custody: {
+              location: 'base-proxy',
+              confirmed: true,
+              userOpHash: `0x${'bb'.repeat(32)}`,
+              transactionHash: `0x${'cc'.repeat(32)}`,
+              assets: '400000',
+              shares: '390000',
+            },
+          },
+        }}
+      />
+    )
+
+    const bridgeLane = container.querySelector('[data-agent-kind="bridge"]')
+    expect(bridgeLane.getAttribute('data-lane-phase')).toBe('confirmed')
+    expect(within(bridgeLane).queryByText('Old Base deposit failure.')).toBeNull()
+    expect(within(bridgeLane).queryByRole('button', { name: 'Complete' })).toBeNull()
+    expect(within(bridgeLane).getByText(/Proxy custody/)).toBeTruthy()
   })
 
   it('an in-transit (still-pending) child never claims Proxy custody', () => {

@@ -24,7 +24,11 @@ import {
   receiptRequestDigest,
 } from './executionReceipts.js'
 import { requestRecovery } from './handler.js'
-import { RECOVERY_REASON_CODES, selectRecoveryAction } from './recovery.js'
+import {
+  RECOVERY_REASON_CODES,
+  selectRecoveryAction,
+  selectBaseChildRecoveryAction,
+} from './recovery.js'
 import {
   createAllocationReceipt,
   appendPhase,
@@ -630,6 +634,664 @@ describe('selectRecoveryAction (pure state table)', () => {
     expect(decision.action).toBeTypeOf('string')
     expect(decision.action).toBe('manual-review')
     expect(decision).toMatchObject({ phase: null, reasonCode: 'pull-status-unrecognized' })
+  })
+})
+
+describe('selectBaseChildRecoveryAction (closed Base evidence table)', () => {
+  it('returns no-movement for a valid child with no phase evidence', () => {
+    const bundle = {
+      schemaVersion: 1,
+      identity: {
+        networkId: 'stellar-testnet',
+        bindingId: '0123456789abcdef0123456789abcdef',
+        executionId: 'run-42:exec:run-42:bridge:aave-v3',
+        allocationId: 'run-42:bridge:aave-v3',
+        childId: 'abcdef0123456789abcdef0123456789',
+      },
+      owner: 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57',
+      agent: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM',
+      recoverable: true,
+      recoveryVersion: 0,
+      intent: {
+        runId: 'run-42',
+        grantTxHash: '66'.repeat(32),
+        bindingHash: 'dd'.repeat(32),
+        baseJobId: 'abcdef0123456789abcdef0123456789',
+        kernelAddress: '0x00000000000000000000000000000000000000aa',
+        poolAddress: '0x00000000000000000000000000000000000000b2',
+        proxyTarget: 'aave-v3',
+        token: 'USDC',
+        units: '1000000',
+        decimals: 6,
+        minShares: '900000',
+      },
+      phases: [],
+      events: [],
+    }
+    expect(selectBaseChildRecoveryAction(bundle)).toEqual({
+      action: 'no-movement',
+      phase: null,
+      reasonCode: 'base-no-movement',
+    })
+  })
+
+  const IDENTITY = {
+    networkId: 'stellar-testnet',
+    bindingId: '0123456789abcdef0123456789abcdef',
+    executionId: 'run-42:exec:run-42:bridge:aave-v3',
+    allocationId: 'run-42:bridge:aave-v3',
+    childId: 'abcdef0123456789abcdef0123456789',
+  }
+  const OWNER = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
+  const AGENT = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM'
+  const KERNEL = '0x00000000000000000000000000000000000000aa'
+  const ROUTER = '0x00000000000000000000000000000000000000f1'
+  const ENTRY_POINT = '0x0000000071727de22e5e9d8baf0edac6f37da032'
+  const POOL = '0x00000000000000000000000000000000000000b2'
+  const BURN = '66'.repeat(32)
+  const NONCE = `0x${'77'.repeat(32)}`
+  const MESSAGE = `0x${'88'.repeat(32)}`
+  const ATTESTATION = `0x${'99'.repeat(32)}`
+  const MINT = `0x${'aa'.repeat(32)}`
+  const USER_OP = `0x${'bb'.repeat(32)}`
+  const DEPOSIT = `0x${'cc'.repeat(32)}`
+  const intent = {
+    runId: 'run-42',
+    grantTxHash: BURN,
+    bindingHash: 'dd'.repeat(32),
+    baseJobId: IDENTITY.childId,
+    kernelAddress: KERNEL,
+    poolAddress: POOL,
+    proxyTarget: 'aave-v3',
+    token: 'USDC',
+    units: '1000000',
+    decimals: 6,
+    minShares: '900000',
+  }
+  const baseBundle = (overrides = {}) => ({
+    schemaVersion: 1,
+    identity: IDENTITY,
+    owner: OWNER,
+    agent: AGENT,
+    recoverable: true,
+    recoveryVersion: 0,
+    intent,
+    phases: [],
+    events: [],
+    ...overrides,
+  })
+  const evidenceFor = (phase, state, overrides = {}) => {
+    const common = {
+      cctp_burn: {
+        burnTxHash: BURN,
+        expectationDigest: 'dd'.repeat(32),
+        burnUnits7: '1000000',
+        messageDigest: MESSAGE,
+        nonce: NONCE,
+      },
+      cctp_attestation: {
+        burnTxHash: BURN,
+        expectationDigest: 'dd'.repeat(32),
+        messageDigest: MESSAGE,
+        attestationDigest: ATTESTATION,
+        nonce: NONCE,
+      },
+      cctp_mint: {
+        burnTxHash: BURN,
+        expectationDigest: 'dd'.repeat(32),
+        messageDigest: MESSAGE,
+        attestationDigest: ATTESTATION,
+        nonce: NONCE,
+        mintTxHash: MINT,
+      },
+      base_deposit: {
+        chainId: 84532,
+        yieldRouterAddress: ROUTER,
+        caller: KERNEL,
+        poolAddress: POOL,
+        assets: '1000000',
+        minShares: '900000',
+        reconcileHandle: {
+          entryPoint: ENTRY_POINT,
+          sender: KERNEL,
+          nonce: '17',
+          startBlock: '123',
+        },
+      },
+    }
+    return { ...(common[phase] ?? {}), ...overrides }
+  }
+  const eventFor = (phase, state, recoveryVersion, evidence, over = {}) => ({
+    eventId: `${String(recoveryVersion).padStart(64, '0')}`,
+    identity: IDENTITY,
+    owner: OWNER,
+    agent: AGENT,
+    recoveryVersion,
+    phase,
+    state,
+    evidence,
+    observedAt: 2_000_000_000_000 + recoveryVersion,
+    ...over,
+  })
+  const bundleWith = (...entries) => {
+    const events = entries.map(([phase, state, evidence], index) =>
+      eventFor(phase, state, index + 1, evidence)
+    )
+    const phases = entries.map(([phase, state, evidence], index) => ({
+      eventId: events[index].eventId,
+      identity: IDENTITY,
+      recoveryVersion: index + 1,
+      phase,
+      state,
+      evidence,
+      observedAt: events[index].observedAt,
+    }))
+    return baseBundle({ recoveryVersion: events.length, phases, events })
+  }
+
+  it.each([
+    [
+      'confirmed burn waits for attestation',
+      bundleWith(['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')]),
+      {
+        action: 'poll-attestation',
+        phase: 'cctp_attestation',
+        reasonCode: 'base-attestation-pending',
+      },
+    ],
+    [
+      'pending attestation retains exact message and nonce',
+      bundleWith(
+        ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+        [
+          'cctp_attestation',
+          'submitted',
+          evidenceFor('cctp_attestation', 'submitted', { evidenceVersion: 2 }),
+        ]
+      ),
+      {
+        action: 'poll-attestation',
+        phase: 'cctp_attestation',
+        reasonCode: 'base-attestation-pending',
+      },
+    ],
+    [
+      'confirmed attestation permits mint only',
+      bundleWith(
+        ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+        [
+          'cctp_attestation',
+          'confirmed',
+          evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+        ]
+      ),
+      { action: 'submit-mint', phase: 'cctp_mint', reasonCode: 'base-attestation-confirmed' },
+    ],
+    [
+      'persisted mint submit is poll-only',
+      bundleWith(
+        ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+        [
+          'cctp_attestation',
+          'confirmed',
+          evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+        ],
+        ['cctp_mint', 'submitting', evidenceFor('cctp_mint', 'submitting')]
+      ),
+      { action: 'poll-mint', phase: 'cctp_mint', reasonCode: 'base-mint-pending' },
+    ],
+    [
+      'confirmed mint permits one fenced Base deposit',
+      bundleWith(
+        ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+        [
+          'cctp_attestation',
+          'confirmed',
+          evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+        ],
+        ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')]
+      ),
+      { action: 'submit-base-deposit', phase: 'base_deposit', reasonCode: 'base-mint-confirmed' },
+    ],
+  ])('%s', (_label, bundle, expected) => {
+    expect(selectBaseChildRecoveryAction(bundle)).toMatchObject(expected)
+  })
+
+  it('maps a submitting Base deposit only when the canonical reconcile handle is present', () => {
+    const bundle = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')],
+      [
+        'base_deposit',
+        'submitting',
+        evidenceFor('base_deposit', 'submitting', {
+          reconcileHandle: {
+            entryPoint: ENTRY_POINT,
+            sender: KERNEL,
+            nonce: '17',
+            startBlock: '123',
+          },
+        }),
+      ]
+    )
+    expect(selectBaseChildRecoveryAction(bundle)).toMatchObject({
+      action: 'poll-base-deposit',
+      phase: 'base_deposit',
+      reasonCode: 'base-deposit-pending',
+    })
+  })
+
+  it('keeps legacy submitting and unknown Base evidence manual without the nested handle', () => {
+    const handlelessEvidence = evidenceFor('base_deposit', 'unknown')
+    delete handlelessEvidence.reconcileHandle
+    const bundle = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')],
+      ['base_deposit', 'unknown', handlelessEvidence]
+    )
+    expect(selectBaseChildRecoveryAction(bundle)).toMatchObject({
+      action: 'manual-review',
+      phase: null,
+      reasonCode: 'base-manual-review',
+    })
+  })
+
+  it('polls an unknown Base deposit when a canonical user operation hash replaces the handle', () => {
+    const hashOnlyEvidence = evidenceFor('base_deposit', 'unknown', { userOpHash: USER_OP })
+    delete hashOnlyEvidence.reconcileHandle
+    const bundle = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')],
+      ['base_deposit', 'unknown', hashOnlyEvidence]
+    )
+    expect(selectBaseChildRecoveryAction(bundle)).toMatchObject({
+      action: 'poll-base-deposit',
+      phase: 'base_deposit',
+      reasonCode: 'base-deposit-pending',
+    })
+  })
+
+  it('accepts canonical decimal-string block metadata emitted by the durable evidence store', () => {
+    const bundle = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')],
+      [
+        'base_deposit',
+        'submitting',
+        evidenceFor('base_deposit', 'submitting', {
+          chainId: '84532',
+          reconcileHandle: {
+            entryPoint: ENTRY_POINT,
+            sender: KERNEL,
+            nonce: '17',
+            startBlock: '123',
+          },
+        }),
+      ]
+    )
+    expect(selectBaseChildRecoveryAction(bundle)).toMatchObject({
+      action: 'poll-base-deposit',
+      phase: 'base_deposit',
+    })
+  })
+
+  it('polls attestation after a retryable failed checkpoint is confirmed with the same facts', () => {
+    const burn = eventFor('cctp_burn', 'confirmed', 1, evidenceFor('cctp_burn', 'confirmed'))
+    const failed = eventFor(
+      'cctp_attestation',
+      'failed',
+      2,
+      evidenceFor('cctp_attestation', 'failed', { reasonCode: 'attestation_retryable' })
+    )
+    const confirmed = eventFor(
+      'cctp_attestation',
+      'confirmed',
+      3,
+      evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 3 })
+    )
+    const bundle = baseBundle({
+      recoveryVersion: 3,
+      phases: [
+        {
+          identity: IDENTITY,
+          eventId: burn.eventId,
+          recoveryVersion: burn.recoveryVersion,
+          phase: burn.phase,
+          state: burn.state,
+          evidence: burn.evidence,
+          observedAt: burn.observedAt,
+        },
+        {
+          identity: IDENTITY,
+          eventId: confirmed.eventId,
+          recoveryVersion: confirmed.recoveryVersion,
+          phase: confirmed.phase,
+          state: confirmed.state,
+          evidence: confirmed.evidence,
+          observedAt: confirmed.observedAt,
+        },
+      ],
+      events: [burn, failed, confirmed],
+    })
+    expect(selectBaseChildRecoveryAction(bundle)).toEqual({
+      action: 'submit-mint',
+      phase: 'cctp_mint',
+      reasonCode: 'base-attestation-confirmed',
+    })
+  })
+
+  it('treats a definitive burn revert without downstream evidence as no movement', () => {
+    const bundle = bundleWith(['cctp_burn', 'failed', { reasonCode: 'burn_reverted' }])
+    expect(selectBaseChildRecoveryAction(bundle)).toEqual({
+      action: 'no-movement',
+      phase: null,
+      reasonCode: 'base-burn-reverted',
+    })
+  })
+
+  it('requires owner action for mandate-inactive blocked custody in the Kernel', () => {
+    const bundle = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')],
+      [
+        'base_deposit',
+        'blocked',
+        evidenceFor('base_deposit', 'blocked', {
+          kernelCustodyConfirmed: true,
+          reasonCode: 'mandate_inactive',
+        }),
+      ]
+    )
+    expect(selectBaseChildRecoveryAction(bundle)).toEqual({
+      action: 'owner-action-required',
+      phase: null,
+      reasonCode: 'base-deposit-failed-kernel-custody',
+    })
+  })
+
+  it.each([
+    ['legacy null execution', baseBundle({ identity: { ...IDENTITY, executionId: null } })],
+    [
+      'duplicate event version',
+      baseBundle({
+        recoveryVersion: 2,
+        events: [
+          eventFor('cctp_burn', 'confirmed', 1, evidenceFor('cctp_burn', 'confirmed')),
+          eventFor('cctp_burn', 'confirmed', 1, evidenceFor('cctp_burn', 'confirmed')),
+        ],
+      }),
+    ],
+    ['unexpected property', baseBundle({ unexpected: true })],
+    [
+      'wrong execution mapping',
+      baseBundle({ identity: { ...IDENTITY, executionId: 'run-42:exec:other' } }),
+    ],
+  ])('%s fails closed to manual review', (_label, bundle) => {
+    expect(() => selectBaseChildRecoveryAction(bundle)).not.toThrow()
+    expect(selectBaseChildRecoveryAction(bundle)).toMatchObject({
+      action: 'manual-review',
+      phase: null,
+      reasonCode: 'base-manual-review',
+    })
+  })
+
+  it('never selects a money-moving burn/pull/approve/withdraw/send action', () => {
+    const selected = selectBaseChildRecoveryAction(
+      bundleWith(['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')])
+    )
+    expect(['burn', 'pull', 'approve', 'withdraw', 'send-user-operation']).not.toContain(
+      selected.action
+    )
+  })
+
+  it('accepts the closed no-evidence object projection including a null base_position reinforcement', () => {
+    const bundle = baseBundle({
+      phases: {
+        cctp_burn: null,
+        cctp_attestation: null,
+        cctp_mint: null,
+        base_deposit: null,
+        base_position: null,
+      },
+    })
+    expect(selectBaseChildRecoveryAction(bundle)).toEqual({
+      action: 'no-movement',
+      phase: null,
+      reasonCode: 'base-no-movement',
+    })
+  })
+
+  it('fails closed for a mint failure and for a submitting Base deposit without the reconcile handle', () => {
+    const mintFailure = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'failed', evidenceFor('cctp_mint', 'failed', { reasonCode: 'rpc-reverted' })]
+    )
+    expect(selectBaseChildRecoveryAction(mintFailure)).toMatchObject({
+      action: 'manual-review',
+      phase: null,
+      reasonCode: 'base-manual-review',
+    })
+    const submitting = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')],
+      [
+        'base_deposit',
+        'submitting',
+        evidenceFor('base_deposit', 'submitting', { reconcileHandle: undefined }),
+      ]
+    )
+    expect(selectBaseChildRecoveryAction(submitting)).toMatchObject({
+      action: 'manual-review',
+      phase: null,
+      reasonCode: 'base-manual-review',
+    })
+  })
+
+  it('rejects a historical nonce mutation even when the latest projection is internally consistent', () => {
+    const bundle = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'submitted',
+        evidenceFor('cctp_attestation', 'submitted', { evidenceVersion: 2 }),
+      ],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 3 }),
+      ]
+    )
+    bundle.phases = [bundle.phases[0], bundle.phases[2]]
+    bundle.events[1].evidence = { ...bundle.events[1].evidence, nonce: `0x${'55'.repeat(32)}` }
+    expect(selectBaseChildRecoveryAction(bundle)).toMatchObject({
+      action: 'manual-review',
+      phase: null,
+      reasonCode: 'base-manual-review',
+    })
+  })
+
+  it('rejects a historical burn amount mutation even when the latest burn projection is consistent', () => {
+    const submitted = eventFor(
+      'cctp_burn',
+      'submitted',
+      1,
+      evidenceFor('cctp_burn', 'submitted', { burnUnits7: '999999' })
+    )
+    const confirmed = eventFor('cctp_burn', 'confirmed', 2, evidenceFor('cctp_burn', 'confirmed'))
+    const bundle = baseBundle({
+      recoveryVersion: 2,
+      phases: [{ ...confirmed, owner: undefined, agent: undefined }],
+      events: [submitted, confirmed],
+    })
+    expect(selectBaseChildRecoveryAction(bundle)).toMatchObject({
+      action: 'manual-review',
+      phase: null,
+      reasonCode: 'base-manual-review',
+    })
+  })
+
+  it('requires the exact router event and positive minShares for Base completion', () => {
+    const evidence = {
+      ...evidenceFor('base_deposit', 'confirmed'),
+      shares: '900001',
+      userOpHash: USER_OP,
+      transactionHash: DEPOSIT,
+      event: {
+        address: ROUTER,
+        topic0: `0x${'12'.repeat(32)}`,
+        logIndex: '0',
+        caller: KERNEL,
+        poolAddress: POOL,
+        assets: '1000000',
+        shares: '900001',
+      },
+    }
+    const complete = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')],
+      ['base_deposit', 'confirmed', evidence]
+    )
+    expect(selectBaseChildRecoveryAction(complete)).toEqual({
+      action: 'complete',
+      phase: null,
+      reasonCode: 'base-deposit-confirmed',
+    })
+    const ownerAction = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')],
+      [
+        'base_deposit',
+        'failed',
+        evidenceFor('base_deposit', 'failed', {
+          transactionHash: DEPOSIT,
+          reasonCode: 'mandate_inactive',
+          custodyLocation: 'base-kernel',
+          kernelCustodyConfirmed: true,
+        }),
+      ]
+    )
+    expect(selectBaseChildRecoveryAction(ownerAction)).toMatchObject({
+      action: 'owner-action-required',
+      phase: null,
+      reasonCode: 'base-deposit-failed-kernel-custody',
+    })
+  })
+
+  it('fails closed when a historical event identity or projection head is mutated', () => {
+    const bundle = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ]
+    )
+    bundle.events[1].eventId = bundle.events[0].eventId
+    bundle.phases[1].eventId = bundle.events[0].eventId
+    expect(selectBaseChildRecoveryAction(bundle)).toMatchObject({ action: 'manual-review' })
+
+    const observedAtMutation = bundleWith([
+      'cctp_burn',
+      'confirmed',
+      evidenceFor('cctp_burn', 'confirmed'),
+    ])
+    observedAtMutation.phases[0].observedAt += 1
+    expect(selectBaseChildRecoveryAction(observedAtMutation)).toMatchObject({
+      action: 'manual-review',
+    })
+  })
+
+  it('requires Base deposit assets and caller to remain bound to the Kernel intent', () => {
+    const evidence = {
+      ...evidenceFor('base_deposit', 'confirmed'),
+      shares: '900001',
+      userOpHash: USER_OP,
+      transactionHash: DEPOSIT,
+      event: {
+        address: ROUTER,
+        topic0: `0x${'12'.repeat(32)}`,
+        logIndex: '0',
+        caller: KERNEL,
+        poolAddress: POOL,
+        assets: '999999',
+        shares: '900001',
+      },
+    }
+    const bundle = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')],
+      ['base_deposit', 'confirmed', evidence]
+    )
+    expect(selectBaseChildRecoveryAction(bundle)).toMatchObject({ action: 'manual-review' })
+
+    const callerEvidence = {
+      ...evidence,
+      event: { ...evidence.event, assets: '1000000' },
+      assets: '1000000',
+      caller: '0x00000000000000000000000000000000000000c3',
+    }
+    callerEvidence.event.caller = callerEvidence.caller
+    const callerMutation = bundleWith(
+      ['cctp_burn', 'confirmed', evidenceFor('cctp_burn', 'confirmed')],
+      [
+        'cctp_attestation',
+        'confirmed',
+        evidenceFor('cctp_attestation', 'confirmed', { evidenceVersion: 2 }),
+      ],
+      ['cctp_mint', 'confirmed', evidenceFor('cctp_mint', 'confirmed')],
+      ['base_deposit', 'confirmed', callerEvidence]
+    )
+    expect(selectBaseChildRecoveryAction(callerMutation)).toMatchObject({ action: 'manual-review' })
   })
 })
 

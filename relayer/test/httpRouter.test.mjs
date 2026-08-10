@@ -1,44 +1,35 @@
-import { describe, it, expect, vi } from "vitest";
-import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Keypair } from "@stellar/stellar-sdk";
-import { concatHex, encodeAbiParameters, keccak256, pad, slice } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { describe, it, expect, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Keypair } from '@stellar/stellar-sdk';
+import { concatHex, encodeAbiParameters, keccak256, pad, slice } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { toCallPolicy, toTimestampPolicy, ParamCondition } from '@zerodev/permissions/policies';
+import { createRelayerRouter, sameRecoveryFarmIntentFacts } from '../src/httpRouter.mjs';
+import { DEPOSITED_TOPIC0, createOrchestrator } from '../src/base/orchestrator.mjs';
+import { createFarmFlow } from '../src/flows/farm.mjs';
 import {
-  toCallPolicy,
-  toTimestampPolicy,
-  ParamCondition,
-} from "@zerodev/permissions/policies";
-import { createRelayerRouter } from "../src/httpRouter.mjs";
-import {
-  DEPOSITED_TOPIC0,
-  createOrchestrator,
-} from "../src/base/orchestrator.mjs";
-import { createFarmFlow } from "../src/flows/farm.mjs";
-import { AgentIndexBatchConflictError } from '../src/agentIndexReporter.mjs';
-import { createMandateStoresV3 } from "../src/mandateStore.mjs";
-import {
-  MAX_CALL_CAP_UNITS,
-  validateMandateBinding,
-} from "../src/base/session.mjs";
-import { createSqliteStores } from "../src/sqliteStores.mjs";
-import {
-  createSecretEnvelope,
-  parseSecretKeyring,
-} from "../src/secretEnvelope.mjs";
+  AgentIndexBatchConflictError,
+  AgentIndexRecoveryLeaseConflictError,
+  AgentIndexRecoveryVersionConflictError,
+} from '../src/agentIndexReporter.mjs';
+import { createMandateStoresV3 } from '../src/mandateStore.mjs';
+import { MAX_CALL_CAP_UNITS, validateMandateBinding } from '../src/base/session.mjs';
+import { createSqliteStores } from '../src/sqliteStores.mjs';
+import { createSecretEnvelope, parseSecretKeyring } from '../src/secretEnvelope.mjs';
 
 function mockRes() {
   return {
     statusCode: 200,
     headers: {},
-    body: "",
+    body: '',
     setHeader(k, v) {
       this.headers[k] = v;
     },
     end(s) {
-      this.body = s ?? "";
+      this.body = s ?? '';
       return this;
     },
   };
@@ -47,18 +38,18 @@ const jsonOf = (res) => (res.body ? JSON.parse(res.body) : undefined);
 
 // Shared route allocation fixture. The approval itself is built below from the real ZeroDev
 // policy serializers, so route tests exercise the same canonical Task-4 wire shape as activation.
-const POOL_ADDRESS = `0x${"e5".repeat(20)}`;
+const POOL_ADDRESS = `0x${'e5'.repeat(20)}`;
 
 function wireAllocation({
-  allocationId = "run-42:bridge:aave-v3",
+  allocationId = 'run-42:bridge:aave-v3',
   pool = POOL_ADDRESS,
   units = 100n,
-  minShares = "90",
+  minShares = '90',
 } = {}) {
   return {
     allocationId,
     poolAddress: pool,
-    amount: { token: "USDC", units: units.toString(), decimals: 6 },
+    amount: { token: 'USDC', units: units.toString(), decimals: 6 },
     minShares,
   };
 }
@@ -74,14 +65,545 @@ const SESSION_KEY = `0x${'22'.repeat(32)}`;
 const SESSION = privateKeyToAccount(SESSION_KEY).address;
 const USER_OP_HASH = `0x${'33'.repeat(32)}`;
 const TX_HASH = `0x${'44'.repeat(32)}`;
-const unwindJobCommitment = (jobId) => keccak256(concatHex([
-  '0x76662d756e77696e642d6a6f622d7631', `0x${jobId}`,
-]));
+const unwindJobCommitment = (jobId) => keccak256(concatHex(['0x76662d756e77696e642d6a6f622d7631', `0x${jobId}`]));
 const UNWIND_PUBLIC_CLIENT = Object.freeze({
-  getChainId() {}, getTransactionReceipt() {},
+  getChainId() {},
+  getTransactionReceipt() {},
+});
+
+describe('Task 14 Base recovery HTTP boundary', () => {
+  const RECOVERY_IDENTITY = Object.freeze({
+    networkId: 'stellar-testnet',
+    bindingId: '0123456789abcdef0123456789abcdef',
+    executionId: 'run-42:exec:run-42:bridge:aave-v3',
+    allocationId: 'run-42:bridge:aave-v3',
+    childId: 'abcdef0123456789abcdef0123456789',
+  });
+  const RECOVERY_CAPABILITY = 'ab'.repeat(32);
+  const RECOVERY_AUTHORITY = Object.freeze({
+    mandateId: '22'.repeat(16),
+    status: 'revoked',
+    stellarOwner: 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57',
+    kernelAddress: '0x00000000000000000000000000000000000000aa',
+    bindingId: RECOVERY_IDENTITY.bindingId,
+    bindingHash: 'dd'.repeat(32),
+    capabilityHash: createHash('sha256').update(RECOVERY_CAPABILITY).digest('hex'),
+  });
+  const recoveryEvent = (phase, state, version, evidence = {}) => ({
+    identity: RECOVERY_IDENTITY,
+    phase,
+    state,
+    evidence,
+    recoveryVersion: version,
+    eventId: `${String(version).padStart(2, '0')}`.repeat(32),
+    observedAt: 2_000_000_000_000 + version,
+  });
+  function recoveryBundle({ withSubmittingDeposit = false } = {}) {
+    const burn = recoveryEvent('cctp_burn', 'confirmed', 1, {
+      burnTxHash: '66'.repeat(32),
+      expectationDigest: '77'.repeat(32),
+      burnUnits7: '10000000',
+      messageDigest: '0x' + '88'.repeat(32),
+      nonce: '0x' + '77'.repeat(32),
+    });
+    const attestation = recoveryEvent('cctp_attestation', 'confirmed', 2, {
+      burnTxHash: '66'.repeat(32),
+      expectationDigest: '77'.repeat(32),
+      messageDigest: '0x' + '88'.repeat(32),
+      attestationDigest: '0x' + '99'.repeat(32),
+      nonce: '0x' + '77'.repeat(32),
+      evidenceVersion: '1',
+    });
+    const events = [burn, attestation];
+    if (withSubmittingDeposit) {
+      events.push(
+        recoveryEvent('cctp_mint', 'confirmed', 3, {
+          burnTxHash: '66'.repeat(32),
+          expectationDigest: '77'.repeat(32),
+          messageDigest: '0x' + '88'.repeat(32),
+          attestationDigest: '0x' + '99'.repeat(32),
+          nonce: '0x' + '77'.repeat(32),
+          evidenceVersion: '1',
+          mintTxHash: '0x' + 'aa'.repeat(32),
+        }),
+      );
+      events.push(
+        recoveryEvent('base_deposit', 'submitting', 4, {
+          chainId: '84532',
+          yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
+          caller: RECOVERY_AUTHORITY.kernelAddress,
+          poolAddress: '0x00000000000000000000000000000000000000b2',
+          assets: '1000000',
+          minShares: '900000',
+          reconcileHandle: {
+            entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+            sender: RECOVERY_AUTHORITY.kernelAddress,
+            nonce: '17',
+            startBlock: '4321',
+          },
+        }),
+      );
+    }
+    const phases = {
+      cctp_burn: events[0],
+      cctp_attestation: events[1],
+      cctp_mint: events[2] ?? null,
+      base_deposit: events[3] ?? null,
+      base_position: null,
+    };
+    return {
+      schemaVersion: 1,
+      identity: RECOVERY_IDENTITY,
+      owner: RECOVERY_AUTHORITY.stellarOwner,
+      agent: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM',
+      recoverable: true,
+      recoveryVersion: events.length,
+      intent: {
+        runId: 'run-42',
+        grantTxHash: '66'.repeat(32),
+        bindingHash: 'dd'.repeat(32),
+        baseJobId: RECOVERY_IDENTITY.childId,
+        kernelAddress: RECOVERY_AUTHORITY.kernelAddress,
+        poolAddress: '0x00000000000000000000000000000000000000b2',
+        proxyTarget: 'aave-v3',
+        token: 'USDC',
+        units: '1000000',
+        decimals: 6,
+        minShares: '900000',
+      },
+      phases,
+      events,
+    };
+  }
+  function harness({
+    authority = RECOVERY_AUTHORITY,
+    reporter = null,
+    works = null,
+    farmIntents = null,
+    executor = null,
+    baseAvailable = true,
+  } = {}) {
+    const calls = { reporter: [], works: [] };
+    const fakeReporter = reporter ?? {
+      readBaseRecoveryClaim: vi.fn(async (request) => ({
+        acknowledged: true,
+        schemaVersion: 1,
+        identity: request.identity,
+        action: request.action,
+        phase: 'cctp_mint',
+        evidenceVersion: request.evidenceVersion,
+        lease: { holder: 'tab-42', expiresAt: 2_000_000_030_000 },
+        bundle: recoveryBundle(),
+      })),
+    };
+    const fakeWorks = works ?? {
+      enqueue: vi.fn((input) => ({
+        workId: '0a3fcbe288b70e792df216a67870ce6291c0401017ed0a3401b6d32524a655d9',
+        state: 'pending',
+        ...input,
+      })),
+    };
+    const localFarmIntents = farmIntents ?? {
+      getByJob: vi.fn(() => matchingFarmIntent()),
+    };
+    const router = createRelayerRouter({
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
+      mandatesV3: { authority: vi.fn(() => authority) },
+      mandateStatusConfig: {},
+      publicRuntime: { baseCrossChainAvailable: baseAvailable },
+      networkId: 'stellar-testnet',
+      agentIndexReporter: fakeReporter,
+      baseRecoveryWorks: fakeWorks,
+      baseRecoveryExecutor: executor,
+      farmIntents: localFarmIntents,
+      nowSeconds: () => 2_000_000_000,
+    });
+    calls.reporter = fakeReporter;
+    calls.works = fakeWorks;
+    return { router, calls };
+  }
+  const requestFor = (overrides = {}) => ({
+    method: 'POST',
+    url: '/api/vf-cross/farm/recover',
+    headers: { authorization: `Bearer ${RECOVERY_CAPABILITY}` },
+    body: {
+      mandateId: RECOVERY_AUTHORITY.mandateId,
+      identity: RECOVERY_IDENTITY,
+      action: 'submit-mint',
+      evidenceVersion: 2,
+      leaseToken: 'aa'.repeat(32),
+      ...overrides,
+    },
+  });
+
+  function matchingFarmIntent(overrides = {}) {
+    const bundle = recoveryBundle();
+    const allocation = {
+      allocationId: RECOVERY_IDENTITY.allocationId,
+      executionId: RECOVERY_IDENTITY.executionId,
+      childId: RECOVERY_IDENTITY.childId,
+      token: 'USDC',
+      units: '1000000',
+      decimals: 6,
+      poolAddress: bundle.intent.poolAddress,
+      proxyTarget: 'aave-v3',
+      minShares: '900000',
+    };
+    const child = {
+      networkId: RECOVERY_IDENTITY.networkId,
+      bindingId: RECOVERY_IDENTITY.bindingId,
+      executionId: RECOVERY_IDENTITY.executionId,
+      allocationId: RECOVERY_IDENTITY.allocationId,
+      childId: RECOVERY_IDENTITY.childId,
+      owner: bundle.owner,
+      agent: bundle.agent,
+      intent: {
+        token: allocation.token,
+        units: allocation.units,
+        decimals: allocation.decimals,
+        poolAddress: allocation.poolAddress,
+        proxyTarget: allocation.proxyTarget,
+        minShares: allocation.minShares,
+        runId: bundle.intent.runId,
+        grantTxHash: bundle.intent.grantTxHash,
+        kernelAddress: bundle.intent.kernelAddress,
+        bindingHash: bundle.intent.bindingHash,
+        baseJobId: bundle.intent.baseJobId,
+      },
+    };
+    return {
+      jobId: RECOVERY_IDENTITY.childId,
+      mandateId: RECOVERY_AUTHORITY.mandateId,
+      stellarOwner: RECOVERY_AUTHORITY.stellarOwner,
+      kernelAddress: RECOVERY_AUTHORITY.kernelAddress,
+      bindingId: RECOVERY_IDENTITY.bindingId,
+      bindingHash: bundle.intent.bindingHash,
+      intentDigest: 'ee'.repeat(32),
+      relayExecId: `forward-farm:${RECOVERY_IDENTITY.childId}`,
+      intent: {
+        jobId: RECOVERY_IDENTITY.childId,
+        mandate: {
+          mandateId: RECOVERY_AUTHORITY.mandateId,
+          stellarOwner: RECOVERY_AUTHORITY.stellarOwner,
+          kernelAddress: RECOVERY_AUTHORITY.kernelAddress,
+          bindingId: RECOVERY_IDENTITY.bindingId,
+          bindingHash: bundle.intent.bindingHash,
+        },
+        run: {
+          runId: bundle.intent.runId,
+          grantTxHash: bundle.intent.grantTxHash,
+        },
+        allocations: [allocation],
+      },
+      batch: { children: [child] },
+      ...overrides,
+    };
+  }
+
+  it('authenticates before reporter/work existence and returns generic 401', async () => {
+    const reporter = { readBaseRecoveryClaim: vi.fn() };
+    const works = { enqueue: vi.fn() };
+    const { router } = harness({
+      reporter,
+      works,
+      authority: { ...RECOVERY_AUTHORITY, capabilityHash: '00'.repeat(32) },
+    });
+    const response = mockRes();
+    await router(requestFor(), response);
+    expect(response.statusCode).toBe(401);
+    expect(reporter.readBaseRecoveryClaim).not.toHaveBeenCalled();
+    expect(works.enqueue).not.toHaveBeenCalled();
+    expect(response.body).not.toContain(RECOVERY_IDENTITY.childId);
+  });
+
+  it('rejects caller money-routing fields after capability auth and before reporter read', async () => {
+    const reporter = { readBaseRecoveryClaim: vi.fn() };
+    const { router } = harness({ reporter });
+    const response = mockRes();
+    await router(requestFor({ poolAddress: '0x00000000000000000000000000000000000000b2' }), response);
+    expect(response.statusCode).toBe(400);
+    expect(reporter.readBaseRecoveryClaim).not.toHaveBeenCalled();
+  });
+
+  it.each([false, 'false', {}])(
+    'does not schedule send-capable recovery when Base availability is not exactly true: %p',
+    async (baseAvailable) => {
+      const reporter = { readBaseRecoveryClaim: vi.fn() };
+      const works = { enqueue: vi.fn() };
+      const { router } = harness({ reporter, works, baseAvailable });
+      const response = mockRes();
+      await router(requestFor(), response);
+      expect(response.statusCode).toBe(503);
+      expect(reporter.readBaseRecoveryClaim).not.toHaveBeenCalled();
+      expect(works.enqueue).not.toHaveBeenCalled();
+    },
+  );
+
+  it('re-fetches the exact claim, durably enqueues before 202, and supports revoked post-burn CCTP work', async () => {
+    const { router, calls } = harness();
+    const response = mockRes();
+    await router(requestFor(), response);
+    expect(response.statusCode).toBe(202);
+    expect(JSON.parse(response.body)).toEqual({
+      accepted: true,
+      workId: '817ea368c0b0ee3fd533b03ca3421421cf8a10e818dce5ba7de9ec8c3908376e',
+      identity: RECOVERY_IDENTITY,
+      action: 'submit-mint',
+      evidenceVersion: 2,
+      status: 'pending',
+    });
+    expect(calls.reporter.readBaseRecoveryClaim).toHaveBeenCalledTimes(1);
+    expect(calls.works.enqueue).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(JSON.parse(response.body))).not.toContain('leaseToken');
+  });
+
+  it('commits durable work before scheduling and joins concurrent exact retries to one executor', async () => {
+    const order = [];
+    let durableCommit = false;
+    let finishRun;
+    const running = new Promise((resolve) => {
+      finishRun = resolve;
+    });
+    const workId = '817ea368c0b0ee3fd533b03ca3421421cf8a10e818dce5ba7de9ec8c3908376e';
+    const works = {
+      enqueue: vi.fn((input) => {
+        order.push('enqueue');
+        queueMicrotask(() => {
+          durableCommit = true;
+        });
+        return { ...input, workId, state: 'pending' };
+      }),
+    };
+    const executor = {
+      run: vi.fn(async () => {
+        order.push(durableCommit ? 'run' : 'run-before-commit');
+        await running;
+        return { workId, state: 'done' };
+      }),
+    };
+    const { router } = harness({ works, executor });
+    const first = mockRes();
+    const second = mockRes();
+    await Promise.all([router(requestFor(), first), router(requestFor(), second)]);
+    await vi.waitFor(() => expect(executor.run).toHaveBeenCalledTimes(1));
+    expect(first.statusCode).toBe(202);
+    expect(second.statusCode).toBe(202);
+    expect(works.enqueue).toHaveBeenCalledTimes(2);
+    expect(order[0]).toBe('enqueue');
+    expect(order).not.toContain('run-before-commit');
+    expect(order.at(-1)).toBe('run');
+    finishRun();
+    await expect(executor.run.mock.results[0].value).resolves.toMatchObject({
+      state: 'done',
+    });
+  });
+
+  it('continues bounded startup recovery after one malformed work item fails', async () => {
+    const records = [
+      { workId: '11'.repeat(32), state: 'pending' },
+      { workId: '22'.repeat(32), state: 'pending' },
+    ];
+    const works = { listRecoverable: vi.fn(() => records) };
+    const executor = {
+      run: vi.fn(async (workId) => {
+        if (workId === records[0].workId) throw new Error('malformed durable row');
+        return { workId, state: 'done' };
+      }),
+    };
+    const { router } = harness({ works, executor });
+    await expect(router.resumeBaseRecoveryJobs({ limit: 2 })).resolves.toEqual({
+      resumed: [records[1].workId],
+      held: [records[0].workId],
+      blocked: [],
+      uncertain: [],
+    });
+    expect(works.listRecoverable).toHaveBeenCalledWith(expect.objectContaining({ limit: 2 }));
+    expect(executor.run).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [AgentIndexRecoveryVersionConflictError, 'version-conflict'],
+    [AgentIndexRecoveryLeaseConflictError, 'lease-conflict'],
+  ])('returns the frozen client conflict code for %s', async (ErrorType, code) => {
+    const reporter = {
+      readBaseRecoveryClaim: vi.fn(async () => {
+        throw new ErrorType('race');
+      }),
+    };
+    const { router } = harness({ reporter });
+    const response = mockRes();
+    await router(requestFor(), response);
+    expect(response.statusCode).toBe(409);
+    expect(jsonOf(response)).toEqual(expect.objectContaining({ error: expect.any(String), code }));
+  });
+
+  it('accepts the nested Task 10 reconcile handle through the recovery HTTP boundary', async () => {
+    const reporter = {
+      readBaseRecoveryClaim: vi.fn(async (request) => ({
+        ok: true,
+        identity: request.identity,
+        action: 'poll-base-deposit',
+        phase: 'base_deposit',
+        reasonCode: 'base-deposit-pending',
+        evidenceVersion: 4,
+        lease: {
+          holder: 'tab-42',
+          leaseToken: 'bb'.repeat(32),
+          expiresAt: 2_000_000_030_000,
+        },
+        bundle: recoveryBundle({ withSubmittingDeposit: true }),
+      })),
+    };
+    const { router, calls } = harness({ reporter });
+    const response = mockRes();
+    await router(requestFor({ action: 'poll-base-deposit', evidenceVersion: 4 }), response);
+    expect(response.statusCode).toBe(202);
+    expect(calls.works.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'poll-base-deposit',
+        evidenceVersion: 4,
+      }),
+    );
+  });
+
+  it('blocks recovery when the durable local farm intent is missing', async () => {
+    const { router, calls } = harness({
+      farmIntents: { getByJob: vi.fn(() => null) },
+    });
+    const response = mockRes();
+    await router(requestFor(), response);
+    expect(response.statusCode).toBe(409);
+    expect(calls.works.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the durable local farm-intent store is not composed', async () => {
+    const { router, calls } = harness({ farmIntents: {} });
+    const response = mockRes();
+    await router(requestFor(), response);
+    expect(response.statusCode).toBe(503);
+    expect(calls.works.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('blocks a same-identity recovery when immutable local binding facts disagree', async () => {
+    const intent = matchingFarmIntent({ bindingHash: 'ab'.repeat(32) });
+    const { router, calls } = harness({
+      farmIntents: { getByJob: vi.fn(() => intent) },
+    });
+    const response = mockRes();
+    await router(requestFor(), response);
+    expect(response.statusCode).toBe(409);
+    expect(calls.works.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('rejects a local farm intent without its canonical immutable digest', async () => {
+    const intent = matchingFarmIntent({ intentDigest: null });
+    const { router, calls } = harness({
+      farmIntents: { getByJob: vi.fn(() => intent) },
+    });
+    const response = mockRes();
+    await router(requestFor(), response);
+    expect(response.statusCode).toBe(409);
+    expect(calls.works.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('releases an acquired Agent Index claim on authority rejection without changing the response', async () => {
+    const releaseBaseRecoveryClaim = vi.fn(async () => {
+      throw new Error('release race');
+    });
+    const reporter = {
+      readBaseRecoveryClaim: vi.fn(async (request) => ({
+        ok: true,
+        identity: request.identity,
+        action: request.action,
+        phase: 'cctp_mint',
+        reasonCode: 'base-attestation-confirmed',
+        evidenceVersion: request.evidenceVersion,
+        lease: {
+          holder: 'tab-42',
+          leaseToken: request.leaseToken,
+          expiresAt: 2_000_000_030_000,
+        },
+        bundle: recoveryBundle(),
+      })),
+      releaseBaseRecoveryClaim,
+    };
+    const { router, calls } = harness({
+      reporter,
+      authority: { ...RECOVERY_AUTHORITY, bindingHash: 'ab'.repeat(32) },
+    });
+    const response = mockRes();
+    await router(requestFor(), response);
+    expect(response.statusCode).toBe(401);
+    expect(releaseBaseRecoveryClaim).toHaveBeenCalledWith({
+      identity: RECOVERY_IDENTITY,
+      action: 'submit-mint',
+      evidenceVersion: 2,
+      leaseToken: 'aa'.repeat(32),
+    });
+    expect(calls.works.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('releases an acquired claim when durable enqueue fails and preserves the storage response', async () => {
+    const releaseBaseRecoveryClaim = vi.fn(async () => {
+      throw new Error('release unavailable');
+    });
+    const reporter = {
+      readBaseRecoveryClaim: vi.fn(async (request) => ({
+        ok: true,
+        identity: request.identity,
+        action: request.action,
+        phase: 'cctp_mint',
+        reasonCode: 'base-attestation-confirmed',
+        evidenceVersion: request.evidenceVersion,
+        lease: {
+          holder: 'tab-42',
+          leaseToken: request.leaseToken,
+          expiresAt: 2_000_000_030_000,
+        },
+        bundle: recoveryBundle(),
+      })),
+      releaseBaseRecoveryClaim,
+    };
+    const works = {
+      enqueue: vi.fn(() => {
+        throw new Error('sqlite unavailable');
+      }),
+    };
+    const { router } = harness({ reporter, works });
+    const response = mockRes();
+    await router(requestFor(), response);
+    expect(response.statusCode).toBe(503);
+    expect(releaseBaseRecoveryClaim).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires one binding hash across authority, D1 intent, and local farm intent', () => {
+    const bundle = recoveryBundle();
+    const intent = matchingFarmIntent();
+    expect(
+      sameRecoveryFarmIntentFacts({
+        intent,
+        bundle,
+        authority: RECOVERY_AUTHORITY,
+        identity: RECOVERY_IDENTITY,
+        mandateId: RECOVERY_AUTHORITY.mandateId,
+      }),
+    ).toBe(true);
+    expect(
+      sameRecoveryFarmIntentFacts({
+        intent: { ...intent, bindingHash: 'ab'.repeat(32) },
+        bundle,
+        authority: { ...RECOVERY_AUTHORITY, bindingHash: 'ab'.repeat(32) },
+        identity: RECOVERY_IDENTITY,
+        mandateId: RECOVERY_AUTHORITY.mandateId,
+      }),
+    ).toBe(false);
+  });
 });
 const UNWIND_BUNDLER_CLIENT = Object.freeze({
-  getUserOperation() {}, getUserOperationReceipt() {},
+  getUserOperation() {},
+  getUserOperationReceipt() {},
 });
 const UNWIND_FACTS = Object.freeze({
   generation: 'hardened-v2',
@@ -104,9 +626,7 @@ const CANONICAL_ROUTER = '0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d';
 const DEFAULT_ACTION_SELECTOR = '0xe9ae5c53';
 const ZERO_ADDRESS = `0x${'00'.repeat(20)}`;
 const OTHER_KERNEL = `0x${'88'.repeat(20)}`;
-const OTHER_SESSION_ADDRESS = privateKeyToAccount(
-  `0x${'99'.repeat(32)}`,
-).address;
+const OTHER_SESSION_ADDRESS = privateKeyToAccount(`0x${'99'.repeat(32)}`).address;
 const WITHDRAW_PERMISSION = Object.freeze({
   target: CANONICAL_ROUTER,
   valueLimit: '0',
@@ -154,9 +674,10 @@ function sha256(value) {
 }
 
 function serializeCanonical(value) {
-  return Buffer.from(JSON.stringify(value, (_, child) => (
-    typeof child === 'bigint' ? child.toString() : child
-  )), 'utf8').toString('base64');
+  return Buffer.from(
+    JSON.stringify(value, (_, child) => (typeof child === 'bigint' ? child.toString() : child)),
+    'utf8',
+  ).toString('base64');
 }
 
 function canonicalPermissions(cap = MAX_CALL_CAP_UNITS) {
@@ -173,8 +694,16 @@ function canonicalPermissions(cap = MAX_CALL_CAP_UNITS) {
       callType: '0x00',
       selector: '0x095ea7b3',
       rules: [
-        { params: [pad(CANONICAL_ROUTER, { size: 32 })], offset: 0, condition: ParamCondition.EQUAL },
-        { params: [encodedCap], offset: 32, condition: ParamCondition.LESS_THAN_OR_EQUAL },
+        {
+          params: [pad(CANONICAL_ROUTER, { size: 32 })],
+          offset: 0,
+          condition: ParamCondition.EQUAL,
+        },
+        {
+          params: [encodedCap],
+          offset: 32,
+          condition: ParamCondition.LESS_THAN_OR_EQUAL,
+        },
       ],
     },
     {
@@ -185,7 +714,11 @@ function canonicalPermissions(cap = MAX_CALL_CAP_UNITS) {
       callType: '0x00',
       selector: '0x0efe6a8b',
       rules: [
-        { params: [encodedCap], offset: 32, condition: ParamCondition.LESS_THAN_OR_EQUAL },
+        {
+          params: [encodedCap],
+          offset: 32,
+          condition: ParamCondition.LESS_THAN_OR_EQUAL,
+        },
       ],
     },
   ];
@@ -196,29 +729,28 @@ function canonicalPermissionId(entries) {
     [{ name: 'policiesData', type: 'bytes[]' }],
     [entries.map((entry) => concatHex([entry.getPolicyInfoInBytes(), entry.getPolicyData()]))],
   );
-  const signerData = encodeAbiParameters(
-    [{ name: 'signerData', type: 'bytes' }],
-    [concatHex([ECDSA_SIGNER, SESSION])],
-  );
-  return slice(keccak256(encodeAbiParameters(
-    [{ name: 'policyAndSignerData', type: 'bytes[]' }],
-    [[policiesData, '0x0000', signerData]],
-  )), 0, 4).toLowerCase();
+  const signerData = encodeAbiParameters([{ name: 'signerData', type: 'bytes' }], [concatHex([ECDSA_SIGNER, SESSION])]);
+  return slice(
+    keccak256(
+      encodeAbiParameters([{ name: 'policyAndSignerData', type: 'bytes[]' }], [[policiesData, '0x0000', signerData]]),
+    ),
+    0,
+    4,
+  ).toLowerCase();
 }
 
 function canonicalApproval(
   validUntilSeconds = VALID_UNTIL_SECONDS,
-  {
-    accountAddress = KERNEL,
-    cap = MAX_CALL_CAP_UNITS,
-    extraPermissions = [],
-  } = {},
+  { accountAddress = KERNEL, cap = MAX_CALL_CAP_UNITS, extraPermissions = [] } = {},
 ) {
   const call = toCallPolicy({
     policyVersion: '0.0.4',
     permissions: [...canonicalPermissions(cap), ...extraPermissions],
   });
-  const timestamp = toTimestampPolicy({ validAfter: 0, validUntil: validUntilSeconds });
+  const timestamp = toTimestampPolicy({
+    validAfter: 0,
+    validUntil: validUntilSeconds,
+  });
   return serializeCanonical({
     permissionParams: {
       permissionId: canonicalPermissionId([call, timestamp]),
@@ -265,31 +797,27 @@ function identityOf(body) {
 
 function associationRows(stores, jobId) {
   const associations = stores.jobs.get(jobId)?._attach?.associations ?? [];
-  return associations.flatMap(({ recoveryIdentity }) => (
-    stores.associationOutbox.status(recoveryIdentity)
-  ));
+  return associations.flatMap(({ recoveryIdentity }) => stores.associationOutbox.status(recoveryIdentity));
 }
 
 function mintedResult(mintTxHash) {
-  const canonicalMintTxHash = /^0x[0-9a-f]{64}$/.test(mintTxHash)
-    ? mintTxHash
-    : `0x${sha256(mintTxHash)}`;
+  const canonicalMintTxHash = /^0x[0-9a-f]{64}$/.test(mintTxHash) ? mintTxHash : `0x${sha256(mintTxHash)}`;
   return {
     status: 'minted',
     mintTxHash,
     evidence: {
-      burnTxHash: sha256('burn-evidence'), expectationDigest: sha256('expectation-evidence'),
+      burnTxHash: sha256('burn-evidence'),
+      expectationDigest: sha256('expectation-evidence'),
       messageDigest: sha256('message-evidence'),
       attestationDigest: sha256('attestation-evidence'),
-      evidenceVersion: '1', mintTxHash: canonicalMintTxHash,
+      evidenceVersion: '1',
+      mintTxHash: canonicalMintTxHash,
     },
   };
 }
 
 function canonicalRecord(body, bindingId = 'binding-1') {
-  const bindingHash = sha256(
-    `${body.stellarOwner}|${body.kernelAddress}|${body.sessionKeyAddress}|${body.expiresAt}`,
-  );
+  const bindingHash = sha256(`${body.stellarOwner}|${body.kernelAddress}|${body.sessionKeyAddress}|${body.expiresAt}`);
   const validation = validateMandateBinding({
     serializedApproval: body.serializedApproval,
     sessionPrivateKey: body.sessionPrivateKey,
@@ -338,7 +866,9 @@ function tracedStores(real, events, { transformMandateGet, enqueueError } = {}) 
       events.push('store:revoke');
       return real.mandatesV3.revoke(identity);
     },
-    get size() { return real.mandatesV3.size; },
+    get size() {
+      return real.mandatesV3.size;
+    },
   };
   const mandateActivations = {
     enqueue(input) {
@@ -397,36 +927,50 @@ function makeHarness({
   baseCrossChainAvailable = true,
 } = {}) {
   const events = [];
-  const real = realStores ?? createMandateStoresV3({
-    nowSeconds: () => clock.value,
-    leaseToken: (() => {
-      let value = 0;
-      return () => `activation-lease-${++value}`;
-    })(),
+  const real =
+    realStores ??
+    createMandateStoresV3({
+      nowSeconds: () => clock.value,
+      leaseToken: (() => {
+        let value = 0;
+        return () => `activation-lease-${++value}`;
+      })(),
+    });
+  const traced = tracedStores(real, events, {
+    transformMandateGet,
+    enqueueError,
   });
-  const traced = tracedStores(real, events, { transformMandateGet, enqueueError });
   const evaluatorCalls = [];
   const activatorCalls = [];
-  const activator = activateMandate ?? (async (approval, { onSubmitted } = {}) => {
-    activatorCalls.push(approval);
-    events.push('activator:called');
-    events.push('activator:onSubmitted');
-    await onSubmitted(USER_OP_HASH);
-    events.push('activator:receipt');
-    return { userOpHash: USER_OP_HASH, txHash: TX_HASH };
-  });
-  const evaluator = evaluateMandateStatusFn ?? (async (args) => {
-    evaluatorCalls.push(args);
-    events.push('evaluator:called');
-    return { status: 'active', reasonCodes: [] };
-  });
+  const activator =
+    activateMandate ??
+    (async (approval, { onSubmitted } = {}) => {
+      activatorCalls.push(approval);
+      events.push('activator:called');
+      events.push('activator:onSubmitted');
+      await onSubmitted(USER_OP_HASH);
+      events.push('activator:receipt');
+      return { userOpHash: USER_OP_HASH, txHash: TX_HASH };
+    });
+  const evaluator =
+    evaluateMandateStatusFn ??
+    (async (args) => {
+      evaluatorCalls.push(args);
+      events.push('evaluator:called');
+      return { status: 'active', reasonCodes: [] };
+    });
   let nextId = 0;
   const router = createRelayerRouter({
     buildFarm: vi.fn(() => ({ farm: vi.fn() })),
     jobs: new Map(),
-    mandatesV2: new Proxy({}, {
-      get() { throw new Error('v2 mandate store must not be consulted by the v3 router'); },
-    }),
+    mandatesV2: new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('v2 mandate store must not be consulted by the v3 router');
+        },
+      },
+    ),
     mandatesV3: traced.mandatesV3,
     mandateActivations: traced.mandateActivations,
     buildMandateActivator: (sessionPrivateKey) => ({
@@ -465,9 +1009,7 @@ function request(body, capability) {
     method: 'POST',
     url: '/api/vf-cross/mandate',
     body,
-    headers: capability === undefined
-      ? {}
-      : { authorization: `Bearer ${capability}` },
+    headers: capability === undefined ? {} : { authorization: `Bearer ${capability}` },
   };
 }
 
@@ -579,7 +1121,9 @@ describe('v3 mandate registration and activation worker', () => {
     const duplicateFailure = makeHarness({
       enqueueError: new Error(`duplicate storage unavailable for ${CAPABILITY} ${SESSION_KEY}`),
     });
-    duplicateFailure.real.mandateActivations.enqueue({ record: canonicalRecord(body) });
+    duplicateFailure.real.mandateActivations.enqueue({
+      record: canonicalRecord(body),
+    });
     const duplicate = await postMandate(duplicateFailure, { ...body });
     expect(duplicate.res.statusCode).toBe(500);
     expect(duplicate.res.headers['Set-Cookie']).toBeUndefined();
@@ -590,7 +1134,9 @@ describe('v3 mandate registration and activation worker', () => {
 
   it('authenticates exact duplicates before comparison and never reactivates pending or active bindings', async () => {
     let releaseActivation;
-    const activationGate = new Promise((resolve) => { releaseActivation = resolve; });
+    const activationGate = new Promise((resolve) => {
+      releaseActivation = resolve;
+    });
     let sends = 0;
     const harness = makeHarness({
       activateMandate: async (_approval, { onSubmitted }) => {
@@ -628,13 +1174,19 @@ describe('v3 mandate registration and activation worker', () => {
     expect(sends).toBe(2);
 
     const wrong = capabilityAt(99);
-    const wrongCapability = await postMandate(harness, { ...body, capability: wrong });
+    const wrongCapability = await postMandate(harness, {
+      ...body,
+      capability: wrong,
+    });
     expect(wrongCapability.res.statusCode).toBe(401);
     expect(wrongCapability.res.body).not.toContain(wrong);
     expect(wrongCapability.res.body).not.toContain(CAPABILITY);
     expect(sends).toBe(2);
 
-    const missingCapability = await postMandate(harness, { ...body, capability: undefined });
+    const missingCapability = await postMandate(harness, {
+      ...body,
+      capability: undefined,
+    });
     expect(missingCapability.res.statusCode).toBe(401);
     expect(sends).toBe(2);
 
@@ -650,7 +1202,9 @@ describe('v3 mandate registration and activation worker', () => {
 
   it('returns 409 for exact duplicates whose durable state is uncertain, revoked, or expired', async () => {
     const uncertain = makeHarness({
-      activateMandate: async () => { throw new Error(`bundler rejected ${SESSION_KEY}`); },
+      activateMandate: async () => {
+        throw new Error(`bundler rejected ${SESSION_KEY}`);
+      },
     });
     const uncertainBody = registrationBody();
     await postMandate(uncertain, uncertainBody);
@@ -706,8 +1260,7 @@ describe('v3 mandate registration and activation worker', () => {
     const { res } = await postMandate(harness, body);
     expect(res.statusCode).toBe(202);
     await vi.waitFor(() => {
-      expect(['activation_uncertain', 'revoked'])
-        .toContain(harness.real.mandatesV3.status(identityOf(body)).status);
+      expect(['activation_uncertain', 'revoked']).toContain(harness.real.mandatesV3.status(identityOf(body)).status);
     });
 
     expect(sends).toBe(0);
@@ -775,29 +1328,65 @@ describe('v3 mandate registration and activation worker', () => {
   it.each([
     ['before onSubmitted', false, null],
     ['after onSubmitted', true, USER_OP_HASH],
-  ])('makes an activation failure %s uncertain without inventing evidence', async (_label, submitFirst, expectedHash) => {
+  ])(
+    'makes an activation failure %s uncertain without inventing evidence',
+    async (_label, submitFirst, expectedHash) => {
+      const harness = makeHarness({
+        activateMandate: async (_approval, { onSubmitted }) => {
+          if (submitFirst) await onSubmitted(USER_OP_HASH);
+          throw new Error(`private activation failure ${SESSION_KEY}`);
+        },
+      });
+      const body = registrationBody();
+
+      const { res } = await postMandate(harness, body);
+      expect(res.statusCode).toBe(202);
+      expect(res.body).not.toContain(SESSION_KEY);
+      await waitForStatus(harness, body, 'activation_uncertain');
+
+      expect(harness.real.mandateActivations.get(identityOf(body))).toMatchObject({
+        status: 'uncertain',
+        userOpHash: expectedHash,
+        txHash: null,
+        leaseToken: null,
+      });
+      expect(harness.events).toContain('store:finishUncertain');
+      expect(JSON.stringify(harness.real.mandatesV3.status(identityOf(body)))).not.toContain(
+        'private activation failure',
+      );
+    },
+  );
+
+  it('retains the callback hash when the submitted checkpoint loses its lease', async () => {
+    const realStores = createMandateStoresV3({
+      nowSeconds: () => NOW_SECONDS,
+      leaseToken: (() => {
+        let value = 0;
+        return () => `checkpoint-lease-${++value}`;
+      })(),
+    });
+    const checkpoint = realStores.mandateActivations.checkpoint.bind(realStores.mandateActivations);
+    realStores.mandateActivations.checkpoint = vi.fn((input) => {
+      if (input.status === 'submitted') throw new Error('submitted checkpoint lease lost');
+      return checkpoint(input);
+    });
     const harness = makeHarness({
+      realStores,
       activateMandate: async (_approval, { onSubmitted }) => {
-        if (submitFirst) await onSubmitted(USER_OP_HASH);
-        throw new Error(`private activation failure ${SESSION_KEY}`);
+        await onSubmitted(USER_OP_HASH);
+        throw new Error('activation failed after submitted checkpoint lease loss');
       },
     });
     const body = registrationBody();
-
     const { res } = await postMandate(harness, body);
     expect(res.statusCode).toBe(202);
-    expect(res.body).not.toContain(SESSION_KEY);
     await waitForStatus(harness, body, 'activation_uncertain');
-
-    expect(harness.real.mandateActivations.get(identityOf(body))).toMatchObject({
+    expect(realStores.mandateActivations.get(identityOf(body))).toMatchObject({
       status: 'uncertain',
-      userOpHash: expectedHash,
+      userOpHash: USER_OP_HASH,
       txHash: null,
       leaseToken: null,
     });
-    expect(harness.events).toContain('store:finishUncertain');
-    expect(JSON.stringify(harness.real.mandatesV3.status(identityOf(body))))
-      .not.toContain('private activation failure');
   });
 
   it('rejects a mismatched strict activator result without evaluation, active finish, or resend', async () => {
@@ -833,7 +1422,10 @@ describe('v3 mandate registration and activation worker', () => {
 
   it('retains both receipt hashes as uncertain when fresh post-receipt evidence is nonactive', async () => {
     const harness = makeHarness({
-      evaluateMandateStatusFn: async () => ({ status: 'unknown', reasonCodes: ['RPC_ERROR'] }),
+      evaluateMandateStatusFn: async () => ({
+        status: 'unknown',
+        reasonCodes: ['RPC_ERROR'],
+      }),
     });
     const body = registrationBody();
 
@@ -850,7 +1442,10 @@ describe('v3 mandate registration and activation worker', () => {
 
   it('atomically tombstones and erases the key when fresh receipt evidence says revoked', async () => {
     const harness = makeHarness({
-      evaluateMandateStatusFn: async () => ({ status: 'revoked', reasonCodes: ['PERMISSION_REVOKED'] }),
+      evaluateMandateStatusFn: async () => ({
+        status: 'revoked',
+        reasonCodes: ['PERMISSION_REVOKED'],
+      }),
     });
     const body = registrationBody();
 
@@ -884,10 +1479,12 @@ describe('v3 mandate registration and activation worker', () => {
         return Object.create(Object.getPrototypeOf(record), descriptors);
       },
     });
-    const bodies = [1, 2, 3, 4].map((index) => registrationBody({
-      mandateId: mandateIdAt(index),
-      capability: capabilityAt(index),
-    }));
+    const bodies = [1, 2, 3, 4].map((index) =>
+      registrationBody({
+        mandateId: mandateIdAt(index),
+        capability: capabilityAt(index),
+      }),
+    );
     for (const [index, body] of bodies.entries()) {
       harness.real.mandateActivations.enqueue({
         record: canonicalRecord(body, `resume-binding-${index + 1}`),
@@ -909,25 +1506,38 @@ describe('v3 mandate registration and activation worker', () => {
     });
     const [running, submitting, submitted, pending] = bodies;
     const runningLease = harness.real.mandateActivations.claim({
-      ...identityOf(running), nowSeconds: NOW_SECONDS, leaseSeconds: 5,
+      ...identityOf(running),
+      nowSeconds: NOW_SECONDS,
+      leaseSeconds: 5,
     });
     const submittingLease = harness.real.mandateActivations.claim({
-      ...identityOf(submitting), nowSeconds: NOW_SECONDS, leaseSeconds: 5,
+      ...identityOf(submitting),
+      nowSeconds: NOW_SECONDS,
+      leaseSeconds: 5,
     });
     harness.real.mandateActivations.checkpoint({
-      ...identityOf(submitting), leaseToken: submittingLease.leaseToken,
-      status: 'submitting', nowSeconds: NOW_SECONDS,
+      ...identityOf(submitting),
+      leaseToken: submittingLease.leaseToken,
+      status: 'submitting',
+      nowSeconds: NOW_SECONDS,
     });
     const submittedLease = harness.real.mandateActivations.claim({
-      ...identityOf(submitted), nowSeconds: NOW_SECONDS, leaseSeconds: 5,
+      ...identityOf(submitted),
+      nowSeconds: NOW_SECONDS,
+      leaseSeconds: 5,
     });
     harness.real.mandateActivations.checkpoint({
-      ...identityOf(submitted), leaseToken: submittedLease.leaseToken,
-      status: 'submitting', nowSeconds: NOW_SECONDS,
+      ...identityOf(submitted),
+      leaseToken: submittedLease.leaseToken,
+      status: 'submitting',
+      nowSeconds: NOW_SECONDS,
     });
     harness.real.mandateActivations.checkpoint({
-      ...identityOf(submitted), leaseToken: submittedLease.leaseToken,
-      status: 'submitted', userOpHash: USER_OP_HASH, nowSeconds: NOW_SECONDS,
+      ...identityOf(submitted),
+      leaseToken: submittedLease.leaseToken,
+      status: 'submitted',
+      userOpHash: USER_OP_HASH,
+      nowSeconds: NOW_SECONDS,
     });
     expect(runningLease.status).toBe('running');
     expect(harness.real.mandateActivations.get(identityOf(pending)).status).toBe('pending');
@@ -937,15 +1547,15 @@ describe('v3 mandate registration and activation worker', () => {
     await waitForStatus(harness, running, 'active');
     await waitForStatus(harness, pending, 'active');
 
-    expect(harness.real.mandatesV3.status(identityOf(submitting)).status)
-      .toBe('activation_uncertain');
-    expect(harness.real.mandatesV3.status(identityOf(submitted)).status)
-      .toBe('activation_uncertain');
+    expect(harness.real.mandatesV3.status(identityOf(submitting)).status).toBe('activation_uncertain');
+    expect(harness.real.mandatesV3.status(identityOf(submitted)).status).toBe('activation_uncertain');
     expect(harness.real.mandateActivations.get(identityOf(submitting))).toMatchObject({
-      status: 'uncertain', userOpHash: null,
+      status: 'uncertain',
+      userOpHash: null,
     });
     expect(harness.real.mandateActivations.get(identityOf(submitted))).toMatchObject({
-      status: 'uncertain', userOpHash: USER_OP_HASH,
+      status: 'uncertain',
+      userOpHash: USER_OP_HASH,
     });
     expect(harness.events.filter((event) => event === 'activator:called')).toHaveLength(2);
     expect(harness.events.filter((event) => event === 'store:reconcileExpired')).toHaveLength(1);
@@ -955,7 +1565,9 @@ describe('v3 mandate registration and activation worker', () => {
 
   it('deduplicates concurrent restart resumes and duplicate HTTP registration', async () => {
     let releaseActivation;
-    const gate = new Promise((resolve) => { releaseActivation = resolve; });
+    const gate = new Promise((resolve) => {
+      releaseActivation = resolve;
+    });
     let sends = 0;
     const harness = makeHarness({
       activateMandate: async (_approval, { onSubmitted }) => {
@@ -1049,10 +1661,7 @@ describe('v3 mandate registration and activation worker', () => {
     const wrongProcessResponse = mockRes();
     await Promise.all([
       correctProcess.router(request({ ...body }), correctProcessResponse),
-      wrongProcess.router(
-        request({ ...body, capability: wrongCapability }),
-        wrongProcessResponse,
-      ),
+      wrongProcess.router(request({ ...body, capability: wrongCapability }), wrongProcessResponse),
     ]);
     await waitForStatus(correctProcess, body, 'active');
     expect(correctProcessResponse.statusCode).toBe(202);
@@ -1065,8 +1674,12 @@ describe('v3 mandate registration and activation worker', () => {
     vi.useFakeTimers();
     let releaseReceipt;
     let enteredReceiptWait;
-    const receiptGate = new Promise((resolve) => { releaseReceipt = resolve; });
-    const entered = new Promise((resolve) => { enteredReceiptWait = resolve; });
+    const receiptGate = new Promise((resolve) => {
+      releaseReceipt = resolve;
+    });
+    const entered = new Promise((resolve) => {
+      enteredReceiptWait = resolve;
+    });
     let harness;
     try {
       harness = makeHarness({
@@ -1100,9 +1713,7 @@ describe('v3 mandate registration and activation worker', () => {
       const receiptIndex = harness.events.indexOf('activator:receipt');
       const waitRenewals = harness.events
         .map((event, index) => ({ event, index }))
-        .filter(({ event, index }) => (
-          event === 'store:renew' && index > waitingIndex && index < receiptIndex
-        ));
+        .filter(({ event, index }) => event === 'store:renew' && index > waitingIndex && index < receiptIndex);
       expect(waitRenewals.length).toBeGreaterThanOrEqual(3);
     } finally {
       vi.useRealTimers();
@@ -1158,7 +1769,9 @@ describe('v3 mandate registration and activation worker', () => {
     const { res, json } = await postMandate(harness, registrationBody({ capability: 'malformed' }));
 
     expect(res.statusCode).toBe(503);
-    expect(json).toEqual({ error: 'Base cross-chain execution is unavailable' });
+    expect(json).toEqual({
+      error: 'Base cross-chain execution is unavailable',
+    });
     expect(harness.events).toEqual([]);
     expect(harness.real.mandatesV3.size).toBe(0);
   });
@@ -1166,18 +1779,17 @@ describe('v3 mandate registration and activation worker', () => {
   it('does not resume activation work or touch activation storage when Base is unavailable', async () => {
     const harness = makeHarness({ baseCrossChainAvailable: false });
 
-    await expect(harness.router.resumeMandateActivations())
-      .resolves.toEqual({ resumed: [], held: [] });
+    await expect(harness.router.resumeMandateActivations()).resolves.toEqual({
+      resumed: [],
+      held: [],
+    });
     expect(harness.events).toEqual([]);
   });
 });
 
 describe('v3 mandate canonical registration validation', () => {
   it.each([
-    [
-      'session private key/address mismatch',
-      () => registrationBody({ sessionKeyAddress: OTHER_SESSION_ADDRESS }),
-    ],
+    ['session private key/address mismatch', () => registrationBody({ sessionKeyAddress: OTHER_SESSION_ADDRESS })],
     [
       'approval account/kernel mismatch',
       () =>
@@ -1186,10 +1798,7 @@ describe('v3 mandate canonical registration validation', () => {
           serializedApproval: canonicalApproval(VALID_UNTIL_SECONDS),
         }),
     ],
-    [
-      'invalid Stellar owner StrKey',
-      () => registrationBody({ stellarOwner: 'not-a-stellar-address' }),
-    ],
+    ['invalid Stellar owner StrKey', () => registrationBody({ stellarOwner: 'not-a-stellar-address' })],
     [
       'forbidden withdraw permission',
       () =>
@@ -1228,8 +1837,7 @@ describe('v3 mandate canonical registration validation', () => {
       expect(harness.real.mandatesV3.size).toBe(0);
       expect(harness.events).not.toContain('store:enqueue');
       expect(harness.activatorCalls).toHaveLength(0);
-      expect(harness.events.some((event) => event.startsWith('activator:key:')))
-        .toBe(false);
+      expect(harness.events.some((event) => event.startsWith('activator:key:'))).toBe(false);
       expect(res.body).not.toContain(body.capability);
       expect(res.body).not.toContain(body.serializedApproval);
       expect(res.body).not.toContain(body.sessionPrivateKey);
@@ -1237,13 +1845,13 @@ describe('v3 mandate canonical registration validation', () => {
   );
 });
 
-describe("v3 mandate route authorization and execution gates", () => {
+describe('v3 mandate route authorization and execution gates', () => {
   const SECOND_MANDATE_ID = mandateIdAt(2);
   const SECOND_CAPABILITY = capabilityAt(2);
   const WRONG_CAPABILITY = capabilityAt(99);
-  const SECOND_POOL = `0x${"55".repeat(20)}`;
+  const SECOND_POOL = `0x${'55'.repeat(20)}`;
   const JOB_ID_RE = /^[0-9a-f]{32}$/;
-  const routeJobIdAt = (index) => (0x1000 + index).toString(16).padStart(32, "0");
+  const routeJobIdAt = (index) => (0x1000 + index).toString(16).padStart(32, '0');
   const FIRST_JOB_ID = routeJobIdAt(1);
   const PRIVATE_JOB_ID = routeJobIdAt(90);
   const OWNED_JOB_ID = routeJobIdAt(91);
@@ -1253,12 +1861,12 @@ describe("v3 mandate route authorization and execution gates", () => {
   const REVOKE_COOKIE = `__Host-vf-mandate-${MANDATE_ID}=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
   const ACTIVE_ROUTE_EVIDENCE = Object.freeze({
     version: 2,
-    status: "active",
+    status: 'active',
     reasonCodes: [],
     expected: { owner: OWNER, kernelAddress: KERNEL },
     observed: {
-      blockNumber: "101",
-      blockHash: `0x${"66".repeat(32)}`,
+      blockNumber: '101',
+      blockHash: `0x${'66'.repeat(32)}`,
       blockTime: NOW_SECONDS,
       activation: {
         userOpHash: USER_OP_HASH,
@@ -1270,11 +1878,7 @@ describe("v3 mandate route authorization and execution gates", () => {
   });
 
   function routeCipher() {
-    return createSecretEnvelope(
-      parseSecretKeyring(
-        `route-tests:${Buffer.alloc(32, 19).toString("base64")}`,
-      ),
-    );
+    return createSecretEnvelope(parseSecretKeyring(`route-tests:${Buffer.alloc(32, 19).toString('base64')}`));
   }
 
   function routeBody(overrides = {}) {
@@ -1297,19 +1901,19 @@ describe("v3 mandate route authorization and execution gates", () => {
     return identityOf(body);
   }
 
-  function routeAllocations(runId = "run-42") {
+  function routeAllocations(runId = 'run-42') {
     return [
       wireAllocation({
         allocationId: `${runId}:bridge:aave-v3`,
         pool: POOL_ADDRESS,
         units: 400n,
-        minShares: "390",
+        minShares: '390',
       }),
       wireAllocation({
         allocationId: `${runId}:bridge:blend-v2`,
         pool: SECOND_POOL,
         units: 600n,
-        minShares: "580",
+        minShares: '580',
       }),
     ];
   }
@@ -1320,15 +1924,15 @@ describe("v3 mandate route authorization and execution gates", () => {
       mandateId: body.mandateId,
       stellarOwner: body.stellarOwner,
       kernelAddress: body.kernelAddress,
-      bridgeAgent: "bridge-agent-1",
-      runId: "run-42",
-      grantTxHash: "grant-1",
+      bridgeAgent: 'bridge-agent-1',
+      runId: 'run-42',
+      grantTxHash: 'grant-1',
       allocations: routeAllocations(),
       ...overrides,
     };
   }
 
-  function attachBody(jobId, body = routeBody(), burnTxHash = "burn-1") {
+  function attachBody(jobId, body = routeBody(), burnTxHash = 'burn-1') {
     return {
       jobId,
       burnTxHash,
@@ -1347,14 +1951,12 @@ describe("v3 mandate route authorization and execution gates", () => {
   }
 
   function bearer(capability) {
-    return capability === undefined
-      ? {}
-      : { authorization: `Bearer ${capability}` };
+    return capability === undefined ? {} : { authorization: `Bearer ${capability}` };
   }
 
   function protectedRequest(path, body, capability) {
     return {
-      method: "POST",
+      method: 'POST',
       url: `/api/vf-cross${path}`,
       body,
       headers: bearer(capability),
@@ -1362,9 +1964,7 @@ describe("v3 mandate route authorization and execution gates", () => {
   }
 
   async function postProtected(harness, path, body, ...capabilityArgs) {
-    const capability = capabilityArgs.length === 0
-      ? CAPABILITY
-      : capabilityArgs[0];
+    const capability = capabilityArgs.length === 0 ? CAPABILITY : capabilityArgs[0];
     const res = mockRes();
     await harness.router(protectedRequest(path, body, capability), res);
     return { res, json: jsonOf(res) };
@@ -1398,7 +1998,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       enumerable: descriptors.bindingHash?.enumerable ?? true,
       configurable: true,
       get() {
-        events.push("binding:pure");
+        events.push('binding:pure');
         return bindingHash;
       },
     };
@@ -1443,42 +2043,46 @@ describe("v3 mandate route authorization and execution gates", () => {
       enqueue: vi.fn((input) => {
         const rows = Array.isArray(input) ? input : [input];
         reports.push(...rows);
-        events.push("outbox:enqueue");
+        events.push('outbox:enqueue');
         return rows.map((report) => ({
           duplicate: false,
-          status: "pending",
+          status: 'pending',
           report,
         }));
       }),
       status: vi.fn((identity) =>
-        delivery.filter((row) => row.childId === identity.childId
-          && row.executionId === identity.executionId),
+        delivery.filter((row) => row.childId === identity.childId && row.executionId === identity.executionId),
       ),
     };
     const evidenceRows = [];
-    const baseEvidenceOutbox = providedEvidenceOutbox ?? realStores?.baseEvidenceOutbox ?? {
-      seed: vi.fn(() => ({ duplicate: false, recoveryVersion: 0 })),
-      enqueue: vi.fn((checkpoint) => {
-        evidenceRows.push(checkpoint);
-        return { state: checkpoint.status, expectedRecoveryVersion: evidenceRows.length - 1 };
-      }),
-      status: vi.fn((identity) => ({
-        complete: false,
-        blocked: false,
-        recoveryVersion: evidenceRows.filter((row) => (
-          row.identity.executionId === identity.executionId
-        )).length,
-        events: [],
-      })),
-    };
+    const baseEvidenceOutbox = providedEvidenceOutbox ??
+      realStores?.baseEvidenceOutbox ?? {
+        seed: vi.fn(() => ({ duplicate: false, recoveryVersion: 0 })),
+        enqueue: vi.fn((checkpoint) => {
+          evidenceRows.push(checkpoint);
+          return {
+            state: checkpoint.status,
+            expectedRecoveryVersion: evidenceRows.length - 1,
+          };
+        }),
+        status: vi.fn((identity) => ({
+          complete: false,
+          blocked: false,
+          recoveryVersion: evidenceRows.filter((row) => row.identity.executionId === identity.executionId).length,
+          events: [],
+        })),
+      };
     const reporter = {
       commitIntentBatch: vi.fn(async (batch) => {
-        events.push("reporter:intent");
+        events.push('reporter:intent');
         if (reporterImplementation) return reporterImplementation(batch);
         const canonicalJson = (value) => {
           if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
           if (value && typeof value === 'object') {
-            return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+            return `{${Object.keys(value)
+              .sort()
+              .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+              .join(',')}}`;
           }
           return JSON.stringify(value);
         };
@@ -1505,19 +2109,19 @@ describe("v3 mandate route authorization and execution gates", () => {
     let transformGet = transformMandateGet ?? ((record) => record);
     const mandatesV3 = {
       authority(mandateId) {
-        events.push("store:get");
+        events.push('store:get');
         return real.mandatesV3.authority(mandateId);
       },
       get(identity) {
-        events.push("store:get");
+        events.push('store:get');
         return transformGet(real.mandatesV3.get(identity), identity);
       },
       status(identity) {
-        events.push("store:status");
+        events.push('store:status');
         return real.mandatesV3.status(identity);
       },
       revoke(identity) {
-        events.push("store:revoke");
+        events.push('store:revoke');
         return real.mandatesV3.revoke(identity);
       },
       get size() {
@@ -1527,24 +2131,23 @@ describe("v3 mandate route authorization and execution gates", () => {
     const sequence = [...evidenceSequence];
     let currentEvidence = evidence;
     const evaluator = vi.fn(async (args) => {
-      events.push("evaluator:fresh");
-      const selected =
-        sequence.length > 0 ? sequence.shift() : currentEvidence;
-      return typeof selected === "function" ? selected(args) : selected;
+      events.push('evaluator:fresh');
+      const selected = sequence.length > 0 ? sequence.shift() : currentEvidence;
+      return typeof selected === 'function' ? selected(args) : selected;
     });
     const farmFn = vi.fn(async (params) => {
-      events.push("farm:called");
+      events.push('farm:called');
       if (farmImplementation) return farmImplementation(params);
       const mintResult = {
-        status: "minted",
-        mintTxHash: "0xmint",
+        status: 'minted',
+        mintTxHash: '0xmint',
         evidence: {
-          burnTxHash: "burn-default",
-          expectationDigest: "expectation-default",
-          messageDigest: "message-default",
-          attestationDigest: "attestation-default",
-          evidenceVersion: "1",
-          mintTxHash: "0xmint",
+          burnTxHash: 'burn-default',
+          expectationDigest: 'expectation-default',
+          messageDigest: 'message-default',
+          attestationDigest: 'attestation-default',
+          evidenceVersion: '1',
+          mintTxHash: '0xmint',
         },
       };
       await params.onMintConfirmed?.(mintResult);
@@ -1552,9 +2155,9 @@ describe("v3 mandate route authorization and execution gates", () => {
         mintResult,
         depositResults: params.allocations.map((allocation) => ({
           allocationId: allocation.allocationId,
-          status: "fulfilled",
-          executionStatus: "deposited",
-          custody: { location: "base-proxy" },
+          status: 'fulfilled',
+          executionStatus: 'deposited',
+          custody: { location: 'base-proxy' },
           txHash: `deposit:${allocation.allocationId}`,
         })),
         runId: params.runId,
@@ -1563,7 +2166,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       };
     });
     const buildFarm = vi.fn((sessionPrivateKey) => {
-      events.push("buildFarm");
+      events.push('buildFarm');
       if (buildFarmImplementation) return buildFarmImplementation(sessionPrivateKey);
       return { farm: (params) => farmFn(params) };
     });
@@ -1575,9 +2178,7 @@ describe("v3 mandate route authorization and execution gates", () => {
         {},
         {
           get() {
-            throw new Error(
-              "v2 mandate store must not be consulted by v3 routes",
-            );
+            throw new Error('v2 mandate store must not be consulted by v3 routes');
           },
         },
       ),
@@ -1585,16 +2186,16 @@ describe("v3 mandate route authorization and execution gates", () => {
       mandateActivations: real.mandateActivations,
       buildMandateActivator: () => ({
         activateMandate: vi.fn(async () => {
-          throw new Error("route tests must not activate a mandate");
+          throw new Error('route tests must not activate a mandate');
         }),
       }),
       genId: () => routeJobIdAt(++nextJob),
       usdcAddress: CANONICAL_USDC,
       yieldRouterAddress: CANONICAL_ROUTER,
       relayerOrigin: CONFIG.publicOrigin,
-      networkId: "stellar-testnet",
+      networkId: 'stellar-testnet',
       publicRuntime: {
-        networkId: "stellar-testnet",
+        networkId: 'stellar-testnet',
         readiness: { ready: true },
         baseCrossChainAvailable,
         unavailableReason: baseCrossChainAvailable ? null : 'Hardened Base deployment is not active.',
@@ -1602,10 +2203,12 @@ describe("v3 mandate route authorization and execution gates", () => {
       evaluateMandateStatusFn: evaluator,
       mandateStatusConfig: CONFIG,
       nowSeconds: () => clock.value,
-      poolTargets: providedPoolTargets ?? new Map([
-        [POOL_ADDRESS.toLowerCase(), "aave-v3"],
-        [SECOND_POOL.toLowerCase(), "blend-v2"],
-      ]),
+      poolTargets:
+        providedPoolTargets ??
+        new Map([
+          [POOL_ADDRESS.toLowerCase(), 'aave-v3'],
+          [SECOND_POOL.toLowerCase(), 'blend-v2'],
+        ]),
       agentIndexReporter: reporter,
       associationOutbox,
       baseEvidenceOutbox,
@@ -1650,7 +2253,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     };
   }
 
-  function seedActiveMandate(harness, body, bindingId = "active-binding-1") {
+  function seedActiveMandate(harness, body, bindingId = 'active-binding-1') {
     const identity = identityOf(body);
     harness.real.mandateActivations.enqueue({
       record: canonicalRecord(body, bindingId),
@@ -1662,13 +2265,13 @@ describe("v3 mandate route authorization and execution gates", () => {
     harness.real.mandateActivations.checkpoint({
       ...identity,
       leaseToken: claimed.leaseToken,
-      status: "submitting",
+      status: 'submitting',
       nowSeconds: harness.clock.value,
     });
     harness.real.mandateActivations.checkpoint({
       ...identity,
       leaseToken: claimed.leaseToken,
-      status: "submitted",
+      status: 'submitted',
       userOpHash: USER_OP_HASH,
       nowSeconds: harness.clock.value,
     });
@@ -1683,22 +2286,14 @@ describe("v3 mandate route authorization and execution gates", () => {
     return harness.real.mandatesV3.get(identity);
   }
 
-  function seedPendingMandate(
-    harness,
-    body,
-    bindingId = "pending-binding-1",
-  ) {
+  function seedPendingMandate(harness, body, bindingId = 'pending-binding-1') {
     harness.real.mandateActivations.enqueue({
       record: canonicalRecord(body, bindingId),
     });
     return harness.real.mandatesV3.status(identityOf(body));
   }
 
-  function seedUncertainMandate(
-    harness,
-    body,
-    bindingId = "uncertain-binding-1",
-  ) {
+  function seedUncertainMandate(harness, body, bindingId = 'uncertain-binding-1') {
     const identity = identityOf(body);
     harness.real.mandateActivations.enqueue({
       record: canonicalRecord(body, bindingId),
@@ -1710,7 +2305,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     harness.real.mandateActivations.checkpoint({
       ...identity,
       leaseToken: claimed.leaseToken,
-      status: "submitting",
+      status: 'submitting',
       nowSeconds: harness.clock.value,
     });
     harness.real.mandateActivations.finishUncertain({
@@ -1732,7 +2327,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       record: canonicalRecord(body, bindingId),
     });
 
-    if (status === "activation_uncertain") {
+    if (status === 'activation_uncertain') {
       const claimed = stores.mandateActivations.claim({
         ...identity,
         nowSeconds: fenceClock.value,
@@ -1740,7 +2335,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       stores.mandateActivations.checkpoint({
         ...identity,
         leaseToken: claimed.leaseToken,
-        status: "submitting",
+        status: 'submitting',
         nowSeconds: fenceClock.value,
       });
       stores.mandateActivations.finishUncertain({
@@ -1748,9 +2343,9 @@ describe("v3 mandate route authorization and execution gates", () => {
         leaseToken: claimed.leaseToken,
         nowSeconds: fenceClock.value,
       });
-    } else if (status === "revoked") {
+    } else if (status === 'revoked') {
       stores.mandatesV3.revoke(identity);
-    } else if (status === "expired") {
+    } else if (status === 'expired') {
       const claimed = stores.mandateActivations.claim({
         ...identity,
         nowSeconds: fenceClock.value,
@@ -1758,13 +2353,13 @@ describe("v3 mandate route authorization and execution gates", () => {
       stores.mandateActivations.checkpoint({
         ...identity,
         leaseToken: claimed.leaseToken,
-        status: "submitting",
+        status: 'submitting',
         nowSeconds: fenceClock.value,
       });
       stores.mandateActivations.checkpoint({
         ...identity,
         leaseToken: claimed.leaseToken,
-        status: "submitted",
+        status: 'submitted',
         userOpHash: USER_OP_HASH,
         nowSeconds: fenceClock.value,
       });
@@ -1778,14 +2373,14 @@ describe("v3 mandate route authorization and execution gates", () => {
       });
       fenceClock.value = body.expiresAt;
       stores.mandatesV3.status(identity);
-    } else if (status !== "pending_activation") {
+    } else if (status !== 'pending_activation') {
       throw new Error(`unsupported fence fixture status: ${status}`);
     }
 
     const record = stores.mandatesV3.get(identity);
-    if (status === "expired") {
-      expect(stores.mandatesV3.status(identity).status).toBe("expired");
-      expect(record?.status).toBe("active");
+    if (status === 'expired') {
+      expect(stores.mandatesV3.status(identity).status).toBe('expired');
+      expect(record?.status).toBe('active');
       expect(record?.sessionPrivateKey).toBeUndefined();
     } else {
       expect(record?.status).toBe(status);
@@ -1794,7 +2389,7 @@ describe("v3 mandate route authorization and execution gates", () => {
   }
 
   function expectPrivateMaterialAbsent(value, body = routeBody()) {
-    const text = typeof value === "string" ? value : JSON.stringify(value);
+    const text = typeof value === 'string' ? value : JSON.stringify(value);
     expect(text).not.toContain(body.serializedApproval);
     expect(text).not.toContain(body.sessionPrivateKey);
     expect(text).not.toContain(body.capability);
@@ -1803,57 +2398,53 @@ describe("v3 mandate route authorization and execution gates", () => {
 
   function expectGenericUnauthorized(res, body = routeBody()) {
     expect(res.statusCode).toBe(401);
-    expect(jsonOf(res)).toEqual({ error: "unauthorized" });
+    expect(jsonOf(res)).toEqual({ error: 'unauthorized' });
     expectPrivateMaterialAbsent(res.body, body);
     expect(res.body).not.toMatch(
       /pending_activation|activation_uncertain|active-binding|private-step-sentinel|0x3333|0x4444/i,
     );
   }
 
-  it("keeps OPTIONS/config public while advertising Authorization only at the fixed POST surface", async () => {
+  it('keeps OPTIONS/config public while advertising Authorization only at the fixed POST surface', async () => {
     const harness = makeRouteHarness();
     const options = mockRes();
     await harness.router(
       {
-        method: "OPTIONS",
-        url: "/api/vf-cross/farm",
+        method: 'OPTIONS',
+        url: '/api/vf-cross/farm',
         body: {},
         headers: {},
       },
       options,
     );
     expect(options.statusCode).toBe(204);
-    expect(options.headers["Access-Control-Allow-Headers"]).toMatch(
-      /Authorization/,
-    );
-    expect(options.body).toBe("");
+    expect(options.headers['Access-Control-Allow-Headers']).toMatch(/Authorization/);
+    expect(options.body).toBe('');
 
     const config = mockRes();
     await harness.router(
       {
-        method: "GET",
-        url: "/api/vf-cross/config",
+        method: 'GET',
+        url: '/api/vf-cross/config',
         headers: {},
       },
       config,
     );
     expect(config.statusCode).toBe(200);
     expect(jsonOf(config)).toMatchObject({
-      networkId: "stellar-testnet",
+      networkId: 'stellar-testnet',
       readiness: { ready: true },
       baseCrossChainAvailable: true,
       unavailableReason: null,
     });
-    expect(config.body).not.toMatch(
-      /deployment|verification|rpc|runtimeCodeHash|adminSafe|selector/i,
-    );
+    expect(config.body).not.toMatch(/deployment|verification|rpc|runtimeCodeHash|adminSafe|selector/i);
     expectPrivateMaterialAbsent(config.body);
 
     const unknown = mockRes();
     await harness.router(
       {
-        method: "POST",
-        url: "/api/vf-cross/not-a-route",
+        method: 'POST',
+        url: '/api/vf-cross/not-a-route',
         body: {},
         headers: {},
       },
@@ -1864,41 +2455,41 @@ describe("v3 mandate route authorization and execution gates", () => {
 
   const PROTECTED_ROUTE_CASES = [
     {
-      label: "mandate status",
-      path: "/mandate/status",
+      label: 'mandate status',
+      path: '/mandate/status',
       body: () => statusBody(),
     },
     {
-      label: "mandate revoke",
-      path: "/mandate/revoke",
+      label: 'mandate revoke',
+      path: '/mandate/revoke',
       body: () => statusBody(),
     },
     {
-      label: "farm intent",
-      path: "/farm",
+      label: 'farm intent',
+      path: '/farm',
       body: () => farmBody(),
     },
     {
-      label: "farm attach",
-      path: "/farm/attach",
+      label: 'farm attach',
+      path: '/farm/attach',
       body: () => attachBody(PRIVATE_JOB_ID),
     },
     {
-      label: "farm status",
-      path: "/status",
+      label: 'farm status',
+      path: '/status',
       body: () => ({ mandateId: MANDATE_ID, jobId: PRIVATE_JOB_ID }),
     },
   ];
   const INVALID_AUTHORITIES = [
-    ["missing bearer", undefined],
-    ["wrong bearer", WRONG_CAPABILITY],
-    ["another mandate bearer", SECOND_CAPABILITY],
+    ['missing bearer', undefined],
+    ['wrong bearer', WRONG_CAPABILITY],
+    ['another mandate bearer', SECOND_CAPABILITY],
   ];
   const INVALID_JOB_IDS = [
-    ["short", "abcd"],
-    ["uppercase hex", "A".repeat(32)],
-    ["non-hex", "g".repeat(32)],
-    ["numeric", 4097],
+    ['short', 'abcd'],
+    ['uppercase hex', 'A'.repeat(32)],
+    ['non-hex', 'g'.repeat(32)],
+    ['numeric', 4097],
   ];
 
   const PROTECTED_AUTH_MATRIX = PROTECTED_ROUTE_CASES.flatMap((routeCase) =>
@@ -1911,27 +2502,27 @@ describe("v3 mandate route authorization and execution gates", () => {
   );
 
   it.each(PROTECTED_AUTH_MATRIX)(
-    "returns indistinguishable 401 for $routeLabel with $authorityLabel before state disclosure",
+    'returns indistinguishable 401 for $routeLabel with $authorityLabel before state disclosure',
     async ({ routeCase, capability }) => {
       const harness = makeRouteHarness();
       const bodyA = routeBody();
       const bodyB = secondRouteBody();
       const active = seedActiveMandate(harness, bodyA);
-      seedActiveMandate(harness, bodyB, "active-binding-2");
+      seedActiveMandate(harness, bodyB, 'active-binding-2');
       harness.events.length = 0;
       harness.jobs.set(PRIVATE_JOB_ID, {
-        status: "queued",
-        steps: [{ step: "private-step-sentinel", status: "secret" }],
-        runId: "run-42",
-        bridgeAgent: "bridge-agent-1",
-        grantTxHash: "grant-1",
+        status: 'queued',
+        steps: [{ step: 'private-step-sentinel', status: 'secret' }],
+        runId: 'run-42',
+        bridgeAgent: 'bridge-agent-1',
+        grantTxHash: 'grant-1',
         _attach: {
           mandateId: MANDATE_ID,
           stellarOwner: OWNER,
           kernelAddress: KERNEL,
           bindingId: active.bindingId,
           bindingHash: active.bindingHash,
-          networkId: "stellar-testnet",
+          networkId: 'stellar-testnet',
           jobId: PRIVATE_JOB_ID,
           allocations: routeAllocations(),
           associations: routeAllocations().map(({ allocationId }) => ({
@@ -1942,32 +2533,21 @@ describe("v3 mandate route authorization and execution gates", () => {
         },
       });
       const beforeJob = JSON.stringify(harness.jobs.get(PRIVATE_JOB_ID));
-      const beforeMandate = harness.real.mandatesV3.status(
-        routeIdentity(bodyA),
-      );
-      const jobGet = vi.spyOn(harness.jobs, "get");
+      const beforeMandate = harness.real.mandatesV3.status(routeIdentity(bodyA));
+      const jobGet = vi.spyOn(harness.jobs, 'get');
       jobGet.mockClear();
 
-      const { res } = await postProtected(
-        harness,
-        routeCase.path,
-        routeCase.body(),
-        capability,
-      );
+      const { res } = await postProtected(harness, routeCase.path, routeCase.body(), capability);
 
       expectGenericUnauthorized(res, bodyA);
       expect(jobGet).not.toHaveBeenCalled();
       jobGet.mockRestore();
-      expect(JSON.stringify(harness.jobs.get(PRIVATE_JOB_ID))).toBe(
-        beforeJob,
-      );
-      expect(harness.real.mandatesV3.status(routeIdentity(bodyA))).toEqual(
-        beforeMandate,
-      );
+      expect(JSON.stringify(harness.jobs.get(PRIVATE_JOB_ID))).toBe(beforeJob);
+      expect(harness.real.mandatesV3.status(routeIdentity(bodyA))).toEqual(beforeMandate);
       expect(harness.evaluator).not.toHaveBeenCalled();
       expect(harness.reporter.commitIntentBatch).not.toHaveBeenCalled();
       expect(harness.buildFarm).not.toHaveBeenCalled();
-      expect(harness.events).not.toContain("store:revoke");
+      expect(harness.events).not.toContain('store:revoke');
       expect(harness.reports).toHaveLength(0);
     },
   );
@@ -1989,9 +2569,14 @@ describe("v3 mandate route authorization and execution gates", () => {
   });
 
   it('rejects authenticated farm and attach before evidence, intent-store, RPC, or build work', async () => {
-    const poisonIntents = new Proxy({}, {
-      get() { throw new Error('intent store must not be touched while Base is unavailable'); },
-    });
+    const poisonIntents = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('intent store must not be touched while Base is unavailable');
+        },
+      },
+    );
     const harness = makeRouteHarness({
       baseCrossChainAvailable: false,
       farmIntents: poisonIntents,
@@ -2008,7 +2593,9 @@ describe("v3 mandate route authorization and execution gates", () => {
     ]) {
       const { res, json } = await postProtected(harness, path, payload);
       expect(res.statusCode).toBe(503);
-      expect(json).toEqual({ error: 'Base cross-chain execution is unavailable' });
+      expect(json).toEqual({
+        error: 'Base cross-chain execution is unavailable',
+      });
     }
     expect(harness.evaluator).not.toHaveBeenCalled();
     expect(harness.buildFarm).not.toHaveBeenCalled();
@@ -2034,46 +2621,61 @@ describe("v3 mandate route authorization and execution gates", () => {
     const harness = makeRouteHarness({ baseCrossChainAvailable: false });
     const res = mockRes();
 
-    await harness.router({
-      method: 'POST',
-      url: '/api/vf-cross/unwind',
-      body: {
-        jobId: 'ab'.repeat(16), capability: CAPABILITY,
-        kernelAddress: KERNEL, recipientHint: OWNER,
+    await harness.router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/unwind',
+        body: {
+          jobId: 'ab'.repeat(16),
+          capability: CAPABILITY,
+          kernelAddress: KERNEL,
+          recipientHint: OWNER,
+        },
+        headers: {},
       },
-      headers: {},
-    }, res);
+      res,
+    );
 
     expect(res.statusCode).toBe(503);
-    expect(jsonOf(res)).toEqual({ error: 'Base cross-chain execution is unavailable' });
+    expect(jsonOf(res)).toEqual({
+      error: 'Base cross-chain execution is unavailable',
+    });
     expect(harness.jobs.size).toBe(0);
     expect(reserve).not.toHaveBeenCalled();
     expect(harness.buildFarm).not.toHaveBeenCalled();
   });
 
   it('does not resume farm recovery or touch recovery storage when Base is unavailable', async () => {
-    const poisonIntents = new Proxy({}, {
-      get() { throw new Error('recovery store must not be touched while Base is unavailable'); },
-    });
+    const poisonIntents = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('recovery store must not be touched while Base is unavailable');
+        },
+      },
+    );
     const harness = makeRouteHarness({
       baseCrossChainAvailable: false,
       farmIntents: poisonIntents,
     });
 
     await expect(harness.router.resumeFarmJobs()).resolves.toEqual({
-      resumed: [], held: [], blocked: [], uncertain: [],
+      resumed: [],
+      held: [],
+      blocked: [],
+      uncertain: [],
     });
     expect(harness.buildFarm).not.toHaveBeenCalled();
     expect(harness.evaluator).not.toHaveBeenCalled();
   });
 
-  it("does not distinguish an existing and unknown attach job before bearer authorization", async () => {
+  it('does not distinguish an existing and unknown attach job before bearer authorization', async () => {
     const harness = makeRouteHarness();
     const body = routeBody();
     const active = seedActiveMandate(harness, body);
     harness.jobs.set(PRIVATE_JOB_ID, {
-      status: "queued",
-      steps: [{ step: "private-step-sentinel" }],
+      status: 'queued',
+      steps: [{ step: 'private-step-sentinel' }],
       _attach: {
         mandateId: MANDATE_ID,
         stellarOwner: OWNER,
@@ -2083,18 +2685,8 @@ describe("v3 mandate route authorization and execution gates", () => {
       },
     });
 
-    const existing = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(PRIVATE_JOB_ID),
-      WRONG_CAPABILITY,
-    );
-    const unknown = await postProtected(
-      harness,
-      "/farm/attach",
-      attachBody(UNKNOWN_JOB_ID),
-      WRONG_CAPABILITY,
-    );
+    const existing = await postProtected(harness, '/farm/attach', attachBody(PRIVATE_JOB_ID), WRONG_CAPABILITY);
+    const unknown = await postProtected(harness, '/farm/attach', attachBody(UNKNOWN_JOB_ID), WRONG_CAPABILITY);
 
     expectGenericUnauthorized(existing.res, body);
     expectGenericUnauthorized(unknown.res, body);
@@ -2103,15 +2695,15 @@ describe("v3 mandate route authorization and execution gates", () => {
 
   it.each([
     [
-      "capability in JSON body",
+      'capability in JSON body',
       ({ body, jobId }) => ({
-        url: "/api/vf-cross/farm/attach",
+        url: '/api/vf-cross/farm/attach',
         body: { ...attachBody(jobId, body), capability: body.capability },
         headers: {},
       }),
     ],
     [
-      "capability in query",
+      'capability in query',
       ({ body, jobId }) => ({
         url: `/api/vf-cross/farm/attach?capability=${body.capability}`,
         body: attachBody(jobId, body),
@@ -2119,9 +2711,9 @@ describe("v3 mandate route authorization and execution gates", () => {
       }),
     ],
     [
-      "capability in cookie",
+      'capability in cookie',
       ({ body, jobId }) => ({
-        url: "/api/vf-cross/farm/attach",
+        url: '/api/vf-cross/farm/attach',
         body: attachBody(jobId, body),
         headers: {
           cookie: `__Host-vf-mandate-${body.mandateId}=${body.capability}`,
@@ -2129,114 +2721,103 @@ describe("v3 mandate route authorization and execution gates", () => {
       }),
     ],
     [
-      "Basic authorization scheme",
+      'Basic authorization scheme',
       ({ body, jobId }) => ({
-        url: "/api/vf-cross/farm/attach",
+        url: '/api/vf-cross/farm/attach',
         body: attachBody(jobId, body),
         headers: { authorization: `Basic ${body.capability}` },
       }),
     ],
     [
-      "lowercase bearer scheme",
+      'lowercase bearer scheme',
       ({ body, jobId }) => ({
-        url: "/api/vf-cross/farm/attach",
+        url: '/api/vf-cross/farm/attach',
         body: attachBody(jobId, body),
         headers: { authorization: `bearer ${body.capability}` },
       }),
     ],
     [
-      "Bearer header with trailing token",
+      'Bearer header with trailing token',
       ({ body, jobId }) => ({
-        url: "/api/vf-cross/farm/attach",
+        url: '/api/vf-cross/farm/attach',
         body: attachBody(jobId, body),
         headers: { authorization: `Bearer ${body.capability} extra` },
       }),
     ],
-  ])(
-    "rejects %s as generic unauthorized before mandate or job lookup",
-    async (_label, buildRequest) => {
-      const harness = makeRouteHarness();
-      const body = routeBody();
-      const active = seedActiveMandate(harness, body);
-      harness.jobs.set(PRIVATE_JOB_ID, {
-        status: "queued",
-        steps: [{ step: "private-step-sentinel" }],
-        _attach: {
-          mandateId: body.mandateId,
-          stellarOwner: body.stellarOwner,
-          kernelAddress: body.kernelAddress,
-          bindingId: active.bindingId,
-          bindingHash: active.bindingHash,
-        },
-      });
-      harness.events.length = 0;
-      const jobGet = vi.spyOn(harness.jobs, "get");
-      const candidate = buildRequest({ body, jobId: PRIVATE_JOB_ID });
-      const res = mockRes();
+  ])('rejects %s as generic unauthorized before mandate or job lookup', async (_label, buildRequest) => {
+    const harness = makeRouteHarness();
+    const body = routeBody();
+    const active = seedActiveMandate(harness, body);
+    harness.jobs.set(PRIVATE_JOB_ID, {
+      status: 'queued',
+      steps: [{ step: 'private-step-sentinel' }],
+      _attach: {
+        mandateId: body.mandateId,
+        stellarOwner: body.stellarOwner,
+        kernelAddress: body.kernelAddress,
+        bindingId: active.bindingId,
+        bindingHash: active.bindingHash,
+      },
+    });
+    harness.events.length = 0;
+    const jobGet = vi.spyOn(harness.jobs, 'get');
+    const candidate = buildRequest({ body, jobId: PRIVATE_JOB_ID });
+    const res = mockRes();
 
-      await harness.router(
-        {
-          method: "POST",
-          url: candidate.url,
-          body: candidate.body,
-          headers: candidate.headers,
-        },
-        res,
-      );
+    await harness.router(
+      {
+        method: 'POST',
+        url: candidate.url,
+        body: candidate.body,
+        headers: candidate.headers,
+      },
+      res,
+    );
 
-      expectGenericUnauthorized(res, body);
-      expect(jobGet).not.toHaveBeenCalled();
-      jobGet.mockRestore();
-      expect(harness.events).not.toContain("store:get");
-      expect(harness.evaluator).not.toHaveBeenCalled();
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expect(res.body).not.toContain("private-step-sentinel");
-      expect(harness.requestUrls).toEqual([candidate.url]);
-      if (candidate.url.includes("?")) {
-        expect(candidate.url).toContain(body.capability);
-        expect(res.body).not.toContain(body.capability);
-      }
-    },
-  );
+    expectGenericUnauthorized(res, body);
+    expect(jobGet).not.toHaveBeenCalled();
+    jobGet.mockRestore();
+    expect(harness.events).not.toContain('store:get');
+    expect(harness.evaluator).not.toHaveBeenCalled();
+    expect(harness.buildFarm).not.toHaveBeenCalled();
+    expect(res.body).not.toContain('private-step-sentinel');
+    expect(harness.requestUrls).toEqual([candidate.url]);
+    if (candidate.url.includes('?')) {
+      expect(candidate.url).toContain(body.capability);
+      expect(res.body).not.toContain(body.capability);
+    }
+  });
 
   it.each(
-    ["/farm/attach", "/status"].flatMap((path) =>
-      INVALID_JOB_IDS.map(([label, jobId]) => ({ path, label, jobId })),
-    ),
-  )(
-    "rejects $label job ID on $path after capability authorization and before lookup",
-    async ({ path, jobId }) => {
-      const harness = makeRouteHarness();
-      const body = routeBody();
-      seedActiveMandate(harness, body);
-      harness.events.length = 0;
-      const jobGet = vi.spyOn(harness.jobs, "get");
+    ['/farm/attach', '/status'].flatMap((path) => INVALID_JOB_IDS.map(([label, jobId]) => ({ path, label, jobId }))),
+  )('rejects $label job ID on $path after capability authorization and before lookup', async ({ path, jobId }) => {
+    const harness = makeRouteHarness();
+    const body = routeBody();
+    seedActiveMandate(harness, body);
+    harness.events.length = 0;
+    const jobGet = vi.spyOn(harness.jobs, 'get');
 
-      const payload =
-        path === "/farm/attach"
-          ? attachBody(jobId, body)
-          : { mandateId: body.mandateId, jobId };
-      const { res } = await postProtected(harness, path, payload);
+    const payload = path === '/farm/attach' ? attachBody(jobId, body) : { mandateId: body.mandateId, jobId };
+    const { res } = await postProtected(harness, path, payload);
 
-      expect(res.statusCode).toBe(path === '/farm/attach' ? 503 : 400);
-      expect(harness.events).toContain("store:get");
-      expect(jobGet).not.toHaveBeenCalled();
-      jobGet.mockRestore();
-      expect(harness.buildFarm).not.toHaveBeenCalled();
-      expectPrivateMaterialAbsent(res.body, body);
-    },
-  );
+    expect(res.statusCode).toBe(path === '/farm/attach' ? 503 : 400);
+    expect(harness.events).toContain('store:get');
+    expect(jobGet).not.toHaveBeenCalled();
+    jobGet.mockRestore();
+    expect(harness.buildFarm).not.toHaveBeenCalled();
+    expectPrivateMaterialAbsent(res.body, body);
+  });
 
-  it("removes approval-bearing and identifier-bearing GET routes", async () => {
+  it('removes approval-bearing and identifier-bearing GET routes', async () => {
     const harness = makeRouteHarness();
     harness.jobs.set(PRIVATE_JOB_ID, {
-      status: "done",
-      steps: [{ step: "private-step-sentinel" }],
+      status: 'done',
+      steps: [{ step: 'private-step-sentinel' }],
     });
     const oldMandate = mockRes();
     await harness.router(
       {
-        method: "GET",
+        method: 'GET',
         url: `/api/vf-cross/mandate/valid?approval=${encodeURIComponent(canonicalApproval())}`,
         headers: {},
       },
@@ -2245,7 +2826,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     const oldStatus = mockRes();
     await harness.router(
       {
-        method: "GET",
+        method: 'GET',
         url: `/api/vf-cross/status/${PRIVATE_JOB_ID}`,
         headers: {},
       },
@@ -2254,72 +2835,57 @@ describe("v3 mandate route authorization and execution gates", () => {
 
     expect(oldMandate.statusCode).toBe(404);
     expect(oldStatus.statusCode).toBe(404);
-    expect(oldStatus.body).not.toContain("private-step-sentinel");
+    expect(oldStatus.body).not.toContain('private-step-sentinel');
   });
 
-
   it.each([
+    ['pending_activation', (harness, body) => seedPendingMandate(harness, body)],
+    ['activation_uncertain', (harness, body) => seedUncertainMandate(harness, body)],
     [
-      "pending_activation",
-      (harness, body) => seedPendingMandate(harness, body),
-    ],
-    [
-      "activation_uncertain",
-      (harness, body) => seedUncertainMandate(harness, body),
-    ],
-    [
-      "revoked",
+      'revoked',
       (harness, body) => {
-        seedPendingMandate(harness, body, "revoked-binding-1");
+        seedPendingMandate(harness, body, 'revoked-binding-1');
         return harness.real.mandatesV3.revoke(routeIdentity(body));
       },
     ],
     [
-      "expired",
+      'expired',
       (harness, body) => {
-        seedPendingMandate(harness, body, "expired-binding-1");
+        seedPendingMandate(harness, body, 'expired-binding-1');
         harness.clock.value = body.expiresAt;
         return harness.real.mandatesV3.status(routeIdentity(body));
       },
     ],
-  ])(
-    "returns durable %s mandate truth without evaluating or leaking authority",
-    async (expectedStatus, arrange) => {
-      const clock = { value: NOW_SECONDS };
-      const harness = makeRouteHarness({ clock });
-      const body =
-        expectedStatus === "expired"
-          ? routeBody({
-              expiresAt: NOW_SECONDS + 1,
-              serializedApproval: canonicalApproval(NOW_SECONDS + 1),
-            })
-          : routeBody();
-      arrange(harness, body);
-      harness.events.length = 0;
+  ])('returns durable %s mandate truth without evaluating or leaking authority', async (expectedStatus, arrange) => {
+    const clock = { value: NOW_SECONDS };
+    const harness = makeRouteHarness({ clock });
+    const body =
+      expectedStatus === 'expired'
+        ? routeBody({
+            expiresAt: NOW_SECONDS + 1,
+            serializedApproval: canonicalApproval(NOW_SECONDS + 1),
+          })
+        : routeBody();
+    arrange(harness, body);
+    harness.events.length = 0;
 
-      const { res, json } = await postProtected(
-        harness,
-        "/mandate/status",
-        statusBody(body),
-        body.capability,
-      );
+    const { res, json } = await postProtected(harness, '/mandate/status', statusBody(body), body.capability);
 
-      expect(res.statusCode).toBe(200);
-      expect(res.headers["Cache-Control"]).toBe("no-store");
-      expect(json).toMatchObject({
-        mandateId: body.mandateId,
-        status: expectedStatus,
-      });
-      expect(harness.evaluator).not.toHaveBeenCalled();
-      expectPrivateMaterialAbsent(res.body, body);
-    },
-  );
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Cache-Control']).toBe('no-store');
+    expect(json).toMatchObject({
+      mandateId: body.mandateId,
+      status: expectedStatus,
+    });
+    expect(harness.evaluator).not.toHaveBeenCalled();
+    expectPrivateMaterialAbsent(res.body, body);
+  });
 
-  it("freshly evaluates active mandate status amount-free and returns new revoked evidence instead of cached active truth", async () => {
+  it('freshly evaluates active mandate status amount-free and returns new revoked evidence instead of cached active truth', async () => {
     const revokedEvidence = {
       ...ACTIVE_ROUTE_EVIDENCE,
-      status: "revoked",
-      reasonCodes: ["PERMISSION_REVOKED"],
+      status: 'revoked',
+      reasonCodes: ['PERMISSION_REVOKED'],
       checks: { ...ACTIVE_ROUTE_EVIDENCE.checks, permissionInstalled: false },
     };
     const harness = makeRouteHarness({
@@ -2329,16 +2895,8 @@ describe("v3 mandate route authorization and execution gates", () => {
     seedActiveMandate(harness, body);
     harness.events.length = 0;
 
-    const active = await postProtected(
-      harness,
-      "/mandate/status",
-      statusBody(body),
-    );
-    const revoked = await postProtected(
-      harness,
-      "/mandate/status",
-      statusBody(body),
-    );
+    const active = await postProtected(harness, '/mandate/status', statusBody(body));
+    const revoked = await postProtected(harness, '/mandate/status', statusBody(body));
 
     expect(active.res.statusCode).toBe(200);
     expect(active.json).toEqual(ACTIVE_ROUTE_EVIDENCE);
@@ -2347,12 +2905,12 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(harness.evaluator).toHaveBeenCalledTimes(2);
     for (const [args] of harness.evaluator.mock.calls) {
       expect(args).toMatchObject({ config: CONFIG });
-      expect(args).not.toHaveProperty("allocation");
+      expect(args).not.toHaveProperty('allocation');
     }
     expectPrivateMaterialAbsent(active.res.body, body);
     expectPrivateMaterialAbsent(revoked.res.body, body);
 
-    const extra = await postProtected(harness, "/mandate/status", {
+    const extra = await postProtected(harness, '/mandate/status', {
       ...statusBody(body),
       allocation: wireAllocation(),
     });
@@ -2360,7 +2918,7 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(harness.evaluator).toHaveBeenCalledTimes(2);
   });
 
-  it("maps active evaluator failure to no-store unknown without exposing internal diagnostics", async () => {
+  it('maps active evaluator failure to no-store unknown without exposing internal diagnostics', async () => {
     const harness = makeRouteHarness({
       evidence: () => {
         throw new Error(`rpc https://private.example/${SESSION_KEY}`);
@@ -2369,70 +2927,54 @@ describe("v3 mandate route authorization and execution gates", () => {
     const body = routeBody();
     seedActiveMandate(harness, body);
 
-    const { res, json } = await postProtected(
-      harness,
-      "/mandate/status",
-      statusBody(body),
-    );
+    const { res, json } = await postProtected(harness, '/mandate/status', statusBody(body));
 
     expect(res.statusCode).toBe(200);
-    expect(res.headers["Cache-Control"]).toBe("no-store");
+    expect(res.headers['Cache-Control']).toBe('no-store');
     expect(json).toMatchObject({
-      status: "unknown",
-      reasonCodes: ["STATUS_ERROR"],
+      status: 'unknown',
+      reasonCodes: ['STATUS_ERROR'],
     });
     expectPrivateMaterialAbsent(res.body, body);
-    expect(res.body).not.toContain("private.example");
+    expect(res.body).not.toContain('private.example');
   });
 
-  it("revokes to a capability-retaining keyless tombstone and clears the exact __Host cookie idempotently", async () => {
+  it('revokes to a capability-retaining keyless tombstone and clears the exact __Host cookie idempotently', async () => {
     const harness = makeRouteHarness();
     const body = routeBody();
     seedActiveMandate(harness, body);
     harness.jobs.set(OWNED_JOB_ID, {
-      status: "queued",
+      status: 'queued',
       steps: [],
       _attach: { mandateId: MANDATE_ID },
     });
 
-    const first = await postProtected(
-      harness,
-      "/mandate/revoke",
-      statusBody(body),
-    );
+    const first = await postProtected(harness, '/mandate/revoke', statusBody(body));
     expect(first.res.statusCode).toBe(200);
     expect(first.json).toMatchObject({
       ok: true,
-      status: "revoked",
-      scope: "relayer-key-copy",
+      status: 'revoked',
+      scope: 'relayer-key-copy',
     });
-    expect(typeof first.json.note).toBe("string");
-    expect(first.res.headers["Set-Cookie"]).toBe(REVOKE_COOKIE);
+    expect(typeof first.json.note).toBe('string');
+    expect(first.res.headers['Set-Cookie']).toBe(REVOKE_COOKIE);
     expectPrivateMaterialAbsent(first.res.body, body);
 
     const internal = harness.real.mandatesV3.get(routeIdentity(body));
-    expect(internal.status).toBe("revoked");
+    expect(internal.status).toBe('revoked');
     expect(internal.sessionPrivateKey).toBeUndefined();
     expect(internal.capabilityHash).toBe(sha256(CAPABILITY));
-    expect(Object.keys(internal)).not.toContain("capabilityHash");
-    expect(
-      harness.real.mandateActivations.get(routeIdentity(body)),
-    ).toBeNull();
+    expect(Object.keys(internal)).not.toContain('capabilityHash');
+    expect(harness.real.mandateActivations.get(routeIdentity(body))).toBeNull();
 
-    const second = await postProtected(
-      harness,
-      "/mandate/revoke",
-      statusBody(body),
-    );
+    const second = await postProtected(harness, '/mandate/revoke', statusBody(body));
     expect(second.res.statusCode).toBe(200);
     expect(second.json).toEqual(first.json);
-    expect(second.res.headers["Set-Cookie"]).toBe(REVOKE_COOKIE);
-    expect(
-      harness.real.mandatesV3.get(routeIdentity(body)).sessionPrivateKey,
-    ).toBeUndefined();
+    expect(second.res.headers['Set-Cookie']).toBe(REVOKE_COOKIE);
+    expect(harness.real.mandatesV3.get(routeIdentity(body)).sessionPrivateKey).toBeUndefined();
 
-    const deniedFarm = await postProtected(harness, "/farm", farmBody(body));
-    const deniedStatus = await postProtected(harness, "/status", {
+    const deniedFarm = await postProtected(harness, '/farm', farmBody(body));
+    const deniedStatus = await postProtected(harness, '/status', {
       mandateId: MANDATE_ID,
       jobId: OWNED_JOB_ID,
     });
@@ -2444,9 +2986,11 @@ describe("v3 mandate route authorization and execution gates", () => {
 
   // Defect caught: /farm called Agent Index before any local durable request/batch authority and
   // allocated a fresh job on each browser retry.
-  it("persists the exact Task 11 request before one batch call and returns the stable job", async () => {
+  it('persists the exact Task 11 request before one batch call and returns the stable job', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-http-')), 'relayer.db');
-    const stores = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const stores = createSqliteStores(path, {
+      sessionKeyCipher: routeCipher(),
+    });
     let reporterSawLocal = false;
     const harness = makeRouteHarness({
       realStores: stores,
@@ -2464,13 +3008,19 @@ describe("v3 mandate route authorization and execution gates", () => {
         poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
       },
       reporterImplementation(batch) {
-        reporterSawLocal = Boolean(stores.farmIntents.getByRequest({
-          mandateId: MANDATE_ID,
-          requestId: '01'.repeat(16),
-        }));
+        reporterSawLocal = Boolean(
+          stores.farmIntents.getByRequest({
+            mandateId: MANDATE_ID,
+            requestId: '01'.repeat(16),
+          }),
+        );
         const canonicalJson = (value) => {
           if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-          if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+          if (value && typeof value === 'object')
+            return `{${Object.keys(value)
+              .sort()
+              .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+              .join(',')}}`;
           return JSON.stringify(value);
         };
         return {
@@ -2521,64 +3071,96 @@ describe("v3 mandate route authorization and execution gates", () => {
   });
 
   it.each([
-    ['nested allocation field', (request) => ({
-      ...request,
-      allocations: [{ ...request.allocations[0], privateHint: 'must-reject' }],
-    })],
-    ['nested amount field', (request) => ({
-      ...request,
-      allocations: [{
-        ...request.allocations[0],
-        amount: { ...request.allocations[0].amount, serverFact: 27 },
-      }],
-    })],
-    ['leading-zero units', (request) => ({
-      ...request,
-      allocations: [{
-        ...request.allocations[0],
-        amount: { ...request.allocations[0].amount, units: '0100' },
-      }],
-    })],
-    ['non-string units', (request) => ({
-      ...request,
-      allocations: [{
-        ...request.allocations[0],
-        amount: { ...request.allocations[0].amount, units: 100 },
-      }],
-    })],
-    ['leading-zero minShares', (request) => ({
-      ...request,
-      allocations: [{ ...request.allocations[0], minShares: '090' }],
-    })],
-    ['non-string minShares', (request) => ({
-      ...request,
-      allocations: [{ ...request.allocations[0], minShares: 90 }],
-    })],
+    [
+      'nested allocation field',
+      (request) => ({
+        ...request,
+        allocations: [{ ...request.allocations[0], privateHint: 'must-reject' }],
+      }),
+    ],
+    [
+      'nested amount field',
+      (request) => ({
+        ...request,
+        allocations: [
+          {
+            ...request.allocations[0],
+            amount: { ...request.allocations[0].amount, serverFact: 27 },
+          },
+        ],
+      }),
+    ],
+    [
+      'leading-zero units',
+      (request) => ({
+        ...request,
+        allocations: [
+          {
+            ...request.allocations[0],
+            amount: { ...request.allocations[0].amount, units: '0100' },
+          },
+        ],
+      }),
+    ],
+    [
+      'non-string units',
+      (request) => ({
+        ...request,
+        allocations: [
+          {
+            ...request.allocations[0],
+            amount: { ...request.allocations[0].amount, units: 100 },
+          },
+        ],
+      }),
+    ],
+    [
+      'leading-zero minShares',
+      (request) => ({
+        ...request,
+        allocations: [{ ...request.allocations[0], minShares: '090' }],
+      }),
+    ],
+    [
+      'non-string minShares',
+      (request) => ({
+        ...request,
+        allocations: [{ ...request.allocations[0], minShares: 90 }],
+      }),
+    ],
     ['uppercase grant hash', (request) => ({ ...request, grantTxHash: 'AA'.repeat(32) })],
   ])('rejects noncanonical forward-farm variant: %s', async (_label, mutate) => {
-    const stores = createSqliteStores(
-      join(mkdtempSync(join(tmpdir(), 'vf-task11-route-validation-')), 'relayer.db'),
-      { sessionKeyCipher: routeCipher() },
-    );
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-task11-route-validation-')), 'relayer.db'), {
+      sessionKeyCipher: routeCipher(),
+    });
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
       poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
     };
     const harness = makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents: stores.farmIntents,
       associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
     });
     const body = routeBody();
     seedActiveMandate(harness, body);
     const canonical = {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     };
 
     const response = await postProtected(harness, '/farm', mutate(canonical));
@@ -2590,30 +3172,38 @@ describe("v3 mandate route authorization and execution gates", () => {
   });
 
   it('rejects immutable request mutation and a burn hash reused by another v2 job', async () => {
-    const stores = createSqliteStores(
-      join(mkdtempSync(join(tmpdir(), 'vf-task11-route-conflicts-')), 'relayer.db'),
-      { sessionKeyCipher: routeCipher() },
-    );
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-task11-route-conflicts-')), 'relayer.db'), {
+      sessionKeyCipher: routeCipher(),
+    });
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
       poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
     };
     const harness = makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents: stores.farmIntents,
       associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
       relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
     });
     const body = routeBody();
     seedActiveMandate(harness, body);
     const request = (requestId) => ({
-      requestId, mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId,
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     });
     const first = await postProtected(harness, '/farm', request('01'.repeat(16)));
     expect(first.res.statusCode).toBe(201);
@@ -2625,19 +3215,36 @@ describe("v3 mandate route authorization and execution gates", () => {
     const second = await postProtected(harness, '/farm', request('02'.repeat(16)));
     expect(second.res.statusCode).toBe(201);
     const burnTxHash = 'bb'.repeat(32);
-    expect((await postProtected(harness, '/farm/attach', {
-      mandateId: body.mandateId, jobId: first.json.jobId, burnTxHash: 'BB'.repeat(32),
-    })).res.statusCode).toBe(400);
-    expect((await postProtected(harness, '/farm/attach', {
-      mandateId: body.mandateId, jobId: first.json.jobId, burnTxHash,
-    })).res.statusCode).toBe(202);
+    expect(
+      (
+        await postProtected(harness, '/farm/attach', {
+          mandateId: body.mandateId,
+          jobId: first.json.jobId,
+          burnTxHash: 'BB'.repeat(32),
+        })
+      ).res.statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await postProtected(harness, '/farm/attach', {
+          mandateId: body.mandateId,
+          jobId: first.json.jobId,
+          burnTxHash,
+        })
+      ).res.statusCode,
+    ).toBe(202);
     const reused = await postProtected(harness, '/farm/attach', {
-      mandateId: body.mandateId, jobId: second.json.jobId, burnTxHash,
+      mandateId: body.mandateId,
+      jobId: second.json.jobId,
+      burnTxHash,
     });
     expect(reused.res.statusCode).toBe(409);
-    expect(stores.farmIntents.getByJob({
-      mandateId: body.mandateId, jobId: second.json.jobId,
-    })).toMatchObject({ state: 'awaiting_burn', burnTxHash: null });
+    expect(
+      stores.farmIntents.getByJob({
+        mandateId: body.mandateId,
+        jobId: second.json.jobId,
+      }),
+    ).toMatchObject({ state: 'awaiting_burn', burnTxHash: null });
     stores.db.close();
   });
 
@@ -2649,7 +3256,9 @@ describe("v3 mandate route authorization and execution gates", () => {
         { sessionKeyCipher: routeCipher() },
       );
       const deployment = {
-        networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+        networkId: 'stellar-testnet',
+        sourceDomain: 27,
+        destinationDomain: 6,
         tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
         baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
         stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -2657,16 +3266,23 @@ describe("v3 mandate route authorization and execution gates", () => {
       };
       const body = routeBody();
       const healthy = makeRouteHarness({
-        realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+        realStores: stores,
+        jobs: stores.jobs,
+        farmIntents: stores.farmIntents,
         associationOutbox: stores.associationOutbox,
-        baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+        baseEvidenceOutbox: stores.baseEvidenceOutbox,
+        forwardFarmDeployment: deployment,
       });
       seedActiveMandate(healthy, body);
       const request = {
-        requestId: '01'.repeat(16), mandateId: body.mandateId,
-        stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+        requestId: '01'.repeat(16),
+        mandateId: body.mandateId,
+        stellarOwner: body.stellarOwner,
+        kernelAddress: body.kernelAddress,
         bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-        runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+        runId: 'run-42',
+        grantTxHash: 'aa'.repeat(32),
+        allocations: [routeAllocations()[0]],
       };
       let jobId;
       if (fault === 'attach burn') {
@@ -2677,19 +3293,33 @@ describe("v3 mandate route authorization and execution gates", () => {
       const failingIntents = {
         ...stores.farmIntents,
         ...(fault === 'create intent'
-          ? { createOrGetIntent() { throw new Error('SQLITE_FULL private diagnostic'); } }
-          : { attachBurnAtomic() { throw new Error('SQLITE_FULL private diagnostic'); } }),
+          ? {
+              createOrGetIntent() {
+                throw new Error('SQLITE_FULL private diagnostic');
+              },
+            }
+          : {
+              attachBurnAtomic() {
+                throw new Error('SQLITE_FULL private diagnostic');
+              },
+            }),
       };
       const failing = makeRouteHarness({
-        realStores: stores, jobs: stores.jobs, farmIntents: failingIntents,
+        realStores: stores,
+        jobs: stores.jobs,
+        farmIntents: failingIntents,
         associationOutbox: stores.associationOutbox,
-        baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+        baseEvidenceOutbox: stores.baseEvidenceOutbox,
+        forwardFarmDeployment: deployment,
       });
-      const response = fault === 'create intent'
-        ? await postProtected(failing, '/farm', request)
-        : await postProtected(failing, '/farm/attach', {
-            mandateId: body.mandateId, jobId, burnTxHash: 'bb'.repeat(32),
-          });
+      const response =
+        fault === 'create intent'
+          ? await postProtected(failing, '/farm', request)
+          : await postProtected(failing, '/farm/attach', {
+              mandateId: body.mandateId,
+              jobId,
+              burnTxHash: 'bb'.repeat(32),
+            });
       expect(response.res.statusCode).toBe(503);
       expect(response.res.body).not.toContain('SQLITE_FULL');
       stores.db.close();
@@ -2698,52 +3328,84 @@ describe("v3 mandate route authorization and execution gates", () => {
 
   it('allows one D1 delivery owner across two routers sharing SQLite', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-route-d1-race-')), 'relayer.db');
-    const leftStores = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
-    const rightStores = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const leftStores = createSqliteStores(path, {
+      sessionKeyCipher: routeCipher(),
+    });
+    const rightStores = createSqliteStores(path, {
+      sessionKeyCipher: routeCipher(),
+    });
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
       poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
     };
     let release;
-    const reporterImplementation = vi.fn((batch) => new Promise((resolve) => {
-      release = () => resolve({
-        acknowledged: true, schemaVersion: 1, idempotencyKey: batch.idempotencyKey,
-        requestDigest: createHash('sha256').update((value => {
-          const canonical = (entry) => Array.isArray(entry)
-            ? `[${entry.map(canonical).join(',')}]`
-            : entry && typeof entry === 'object'
-              ? `{${Object.keys(entry).sort().map((key) => `${JSON.stringify(key)}:${canonical(entry[key])}`).join(',')}}`
-              : JSON.stringify(entry);
-          return canonical(value);
-        })(batch)).digest('hex'),
-        children: batch.children.map((child) => ({
-          identity: {
-            networkId: child.networkId, bindingId: child.bindingId,
-            executionId: child.executionId, allocationId: child.allocationId, childId: child.childId,
-          },
-          recoveryVersion: 0,
-        })),
-        written: batch.children.length, duplicates: 0,
+    const reporterImplementation = vi.fn(
+      (batch) =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              acknowledged: true,
+              schemaVersion: 1,
+              idempotencyKey: batch.idempotencyKey,
+              requestDigest: createHash('sha256')
+                .update(
+                  ((value) => {
+                    const canonical = (entry) =>
+                      Array.isArray(entry)
+                        ? `[${entry.map(canonical).join(',')}]`
+                        : entry && typeof entry === 'object'
+                          ? `{${Object.keys(entry)
+                              .sort()
+                              .map((key) => `${JSON.stringify(key)}:${canonical(entry[key])}`)
+                              .join(',')}}`
+                          : JSON.stringify(entry);
+                    return canonical(value);
+                  })(batch),
+                )
+                .digest('hex'),
+              children: batch.children.map((child) => ({
+                identity: {
+                  networkId: child.networkId,
+                  bindingId: child.bindingId,
+                  executionId: child.executionId,
+                  allocationId: child.allocationId,
+                  childId: child.childId,
+                },
+                recoveryVersion: 0,
+              })),
+              written: batch.children.length,
+              duplicates: 0,
+            });
+        }),
+    );
+    const harnessFor = (stores) =>
+      makeRouteHarness({
+        realStores: stores,
+        jobs: stores.jobs,
+        farmIntents: stores.farmIntents,
+        associationOutbox: stores.associationOutbox,
+        baseEvidenceOutbox: stores.baseEvidenceOutbox,
+        forwardFarmDeployment: deployment,
+        reporterImplementation,
       });
-    }));
-    const harnessFor = (stores) => makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
-      associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
-      reporterImplementation,
-    });
     const left = harnessFor(leftStores);
     const right = harnessFor(rightStores);
     const body = routeBody();
     seedActiveMandate(left, body);
     const request = {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     };
     const winner = postProtected(left, '/farm', request);
     await vi.waitFor(() => expect(reporterImplementation).toHaveBeenCalledTimes(1));
@@ -2760,15 +3422,25 @@ describe("v3 mandate route authorization and execution gates", () => {
   // durable CCTP/evidence work, then scheduled execution from a private `_attach` JSON blob.
   it('authenticates the minimal attach body and schedules only after the atomic relay commit', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-attach-')), 'relayer.db');
-    const stores = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const stores = createSqliteStores(path, {
+      sessionKeyCipher: routeCipher(),
+    });
     const relayForwardMint = vi.fn(async ({ execId }) => {
-      expect(stores.farmIntents.getByJob({ mandateId: MANDATE_ID, jobId: FIRST_JOB_ID }))
-        .toMatchObject({ state: 'relay_pending', relayExecId: execId });
-      expect(stores.cctpRelays.get(execId)).toMatchObject({ state: 'attestation_pending' });
+      expect(
+        stores.farmIntents.getByJob({
+          mandateId: MANDATE_ID,
+          jobId: FIRST_JOB_ID,
+        }),
+      ).toMatchObject({ state: 'relay_pending', relayExecId: execId });
+      expect(stores.cctpRelays.get(execId)).toMatchObject({
+        state: 'attestation_pending',
+      });
       return { status: 'attestation_pending' };
     });
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -2786,10 +3458,14 @@ describe("v3 mandate route authorization and execution gates", () => {
     const body = routeBody();
     seedActiveMandate(harness, body);
     const farm = await postProtected(harness, '/farm', {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     });
     expect(farm.res.statusCode).toBe(201);
     const attach = await postProtected(harness, '/farm/attach', {
@@ -2818,111 +3494,165 @@ describe("v3 mandate route authorization and execution gates", () => {
   // Defect caught: startup ignored durable intent_pending v2 work and instead replayed only the
   // legacy whole-farm job JSON path.
   it('resumes only the persisted idempotent Task 9 batch after a pre-ack crash window', async () => {
-    const stores = createSqliteStores(
-      join(mkdtempSync(join(tmpdir(), 'vf-task11-resume-')), 'relayer.db'),
-      { sessionKeyCipher: routeCipher() },
-    );
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-task11-resume-')), 'relayer.db'), {
+      sessionKeyCipher: routeCipher(),
+    });
     let attempts = 0;
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
       poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
     };
     const harness = makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents: stores.farmIntents,
       associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
       reporterImplementation(batch) {
         attempts += 1;
         if (attempts === 2) throw new Error('D1 unavailable');
-        const canonicalJson = (value) => Array.isArray(value)
-          ? `[${value.map(canonicalJson).join(',')}]`
-          : value && typeof value === 'object'
-            ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
-            : JSON.stringify(value);
+        const canonicalJson = (value) =>
+          Array.isArray(value)
+            ? `[${value.map(canonicalJson).join(',')}]`
+            : value && typeof value === 'object'
+              ? `{${Object.keys(value)
+                  .sort()
+                  .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+                  .join(',')}}`
+              : JSON.stringify(value);
         return {
-          acknowledged: true, schemaVersion: 1, idempotencyKey: batch.idempotencyKey,
+          acknowledged: true,
+          schemaVersion: 1,
+          idempotencyKey: batch.idempotencyKey,
           requestDigest: createHash('sha256').update(canonicalJson(batch)).digest('hex'),
           children: batch.children.map((child) => ({
             identity: {
-              networkId: child.networkId, bindingId: child.bindingId,
-              executionId: child.executionId, allocationId: child.allocationId, childId: child.childId,
+              networkId: child.networkId,
+              bindingId: child.bindingId,
+              executionId: child.executionId,
+              allocationId: child.allocationId,
+              childId: child.childId,
             },
             recoveryVersion: 0,
           })),
-          written: batch.children.length, duplicates: 0,
+          written: batch.children.length,
+          duplicates: 0,
         };
       },
     });
     const body = routeBody();
     seedActiveMandate(harness, body);
     const corrupt = await postProtected(harness, '/farm', {
-      requestId: '00'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '00'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     });
     expect(corrupt.res.statusCode).toBe(201);
-    stores.db.prepare(`UPDATE farm_intent_work_v2
-      SET state='deposit_pending',updated_at=1 WHERE job_id=?`).run(corrupt.json.jobId);
+    stores.db
+      .prepare(
+        `UPDATE farm_intent_work_v2
+      SET state='deposit_pending',updated_at=1 WHERE job_id=?`,
+      )
+      .run(corrupt.json.jobId);
     stores.jobs.set(corrupt.json.jobId, {
-      ...stores.jobs.get(corrupt.json.jobId), status: 'deposit_pending',
+      ...stores.jobs.get(corrupt.json.jobId),
+      status: 'deposit_pending',
     });
     stores.db.exec('DROP TRIGGER farm_intent_work_v2_immutable');
-    stores.db.prepare(`UPDATE farm_intent_work_v2 SET intent_json='{malformed'
-      WHERE job_id=?`).run(corrupt.json.jobId);
+    stores.db
+      .prepare(
+        `UPDATE farm_intent_work_v2 SET intent_json='{malformed'
+      WHERE job_id=?`,
+      )
+      .run(corrupt.json.jobId);
     const failed = await postProtected(harness, '/farm', {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     });
     expect(failed.res.statusCode).toBe(503);
-    expect(stores.farmIntents.getByRequest({ mandateId: body.mandateId, requestId: '01'.repeat(16) }))
-      .toMatchObject({ state: 'intent_pending' });
+    expect(
+      stores.farmIntents.getByRequest({
+        mandateId: body.mandateId,
+        requestId: '01'.repeat(16),
+      }),
+    ).toMatchObject({ state: 'intent_pending' });
     const validRecord = stores.farmIntents.getByRequest({
-      mandateId: body.mandateId, requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      requestId: '01'.repeat(16),
     });
     const summary = await harness.router.resumeFarmJobs();
     expect(summary).toMatchObject({
-      resumed: [validRecord.jobId], blocked: [corrupt.json.jobId], uncertain: [],
+      resumed: [validRecord.jobId],
+      blocked: [corrupt.json.jobId],
+      uncertain: [],
     });
-    expect(stores.db.prepare(`SELECT state,reason_code FROM farm_intent_work_v2 WHERE job_id=?`)
-      .get(corrupt.json.jobId)).toEqual({
-        state: 'blocked', reason_code: 'malformed_recovery_record',
-      });
+    expect(
+      stores.db.prepare(`SELECT state,reason_code FROM farm_intent_work_v2 WHERE job_id=?`).get(corrupt.json.jobId),
+    ).toEqual({
+      state: 'blocked',
+      reason_code: 'malformed_recovery_record',
+    });
     expect(stores.jobs.get(corrupt.json.jobId)).toMatchObject({
-      jobId: corrupt.json.jobId, status: 'blocked', reasonCode: 'malformed_recovery_record',
+      jobId: corrupt.json.jobId,
+      status: 'blocked',
+      reasonCode: 'malformed_recovery_record',
     });
     expect(JSON.stringify(summary)).not.toContain('{malformed');
-    expect(stores.farmIntents.getByRequest({ mandateId: body.mandateId, requestId: '01'.repeat(16) }))
-      .toMatchObject({ state: 'awaiting_burn' });
+    expect(
+      stores.farmIntents.getByRequest({
+        mandateId: body.mandateId,
+        requestId: '01'.repeat(16),
+      }),
+    ).toMatchObject({ state: 'awaiting_burn' });
     expect(attempts).toBe(3);
     expect(harness.buildFarm).not.toHaveBeenCalled();
     stores.db.close();
   });
 
   it('blocks a malformed public projection and continues later SQLite recovery work in order', async () => {
-    const stores = createSqliteStores(
-      join(mkdtempSync(join(tmpdir(), 'vf-task11-public-corrupt-')), 'relayer.db'),
-      { sessionKeyCipher: routeCipher() },
-    );
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-task11-public-corrupt-')), 'relayer.db'), {
+      sessionKeyCipher: routeCipher(),
+    });
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
       poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
     };
-    const recoverDeposits = vi.fn(async ({ children }) => children.map(({ allocation }) => ({
-      identity: allocation.identity, status: 'fulfilled', executionStatus: 'deposited',
-    })));
+    const recoverDeposits = vi.fn(async ({ children }) =>
+      children.map(({ allocation }) => ({
+        identity: allocation.identity,
+        status: 'fulfilled',
+        executionStatus: 'deposited',
+      })),
+    );
     const harness = makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents: stores.farmIntents,
       associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
       cctpRelays: stores.cctpRelays,
       relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
       buildFarmImplementation: () => ({ farm: vi.fn(), recoverDeposits }),
@@ -2931,28 +3661,42 @@ describe("v3 mandate route authorization and execution gates", () => {
     seedActiveMandate(harness, body);
     const create = async (requestId, burnTxHash, { projectMint = true } = {}) => {
       const farm = await postProtected(harness, '/farm', {
-        requestId, mandateId: body.mandateId,
-        stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+        requestId,
+        mandateId: body.mandateId,
+        stellarOwner: body.stellarOwner,
+        kernelAddress: body.kernelAddress,
         bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-        runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+        runId: 'run-42',
+        grantTxHash: 'aa'.repeat(32),
+        allocations: [routeAllocations()[0]],
       });
       expect(farm.res.statusCode).toBe(201);
       await postProtected(harness, '/farm/attach', {
-        mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash,
+        mandateId: body.mandateId,
+        jobId: farm.json.jobId,
+        burnTxHash,
       });
       const record = stores.farmIntents.getByJob({
-        mandateId: body.mandateId, jobId: farm.json.jobId,
+        mandateId: body.mandateId,
+        jobId: farm.json.jobId,
       });
       if (projectMint) {
         stores.farmIntents.projectMintEvidenceAtomic({
           identity: {
-            mandateId: body.mandateId, jobId: record.jobId,
-            bindingId: record.bindingId, intentDigest: record.intentDigest,
+            mandateId: body.mandateId,
+            jobId: record.jobId,
+            bindingId: record.bindingId,
+            intentDigest: record.intentDigest,
           },
           relay: {
-            execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
-            expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
-            attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+            execId: record.relayExecId,
+            state: 'minted',
+            burnTxHash: record.burnTxHash,
+            expectationDigest: record.expectationDigest,
+            messageDigest: 'cc'.repeat(32),
+            attestationDigest: 'dd'.repeat(32),
+            evidenceVersion: '1',
+            nonceHex: `0x${'01'.repeat(32)}`,
             mintTxHash: `0x${'ee'.repeat(32)}`,
           },
           now: 2_000_000_000_000,
@@ -2960,42 +3704,71 @@ describe("v3 mandate route authorization and execution gates", () => {
       }
       return record;
     };
-    const corrupt = await create('01'.repeat(16), 'ba'.repeat(32), { projectMint: false });
+    const corrupt = await create('01'.repeat(16), 'ba'.repeat(32), {
+      projectMint: false,
+    });
     const valid = await create('02'.repeat(16), 'bb'.repeat(32));
     const relayAt = 2_000_000_000_000;
     const relayClaim = stores.cctpRelays.claim({
-      execId: corrupt.relayExecId, now: relayAt, leaseMs: 60_000,
+      execId: corrupt.relayExecId,
+      now: relayAt,
+      leaseMs: 60_000,
     });
     stores.cctpRelays.recordAttested({
-      execId: corrupt.relayExecId, leaseToken: relayClaim.leaseToken,
-      messageHex: '0xab', nonceHex: `0x${'01'.repeat(32)}`,
-      attestationHex: '0xcd', now: relayAt + 1,
+      execId: corrupt.relayExecId,
+      leaseToken: relayClaim.leaseToken,
+      messageHex: '0xab',
+      nonceHex: `0x${'01'.repeat(32)}`,
+      attestationHex: '0xcd',
+      now: relayAt + 1,
     });
     stores.cctpRelays.markMintSubmitting({
-      execId: corrupt.relayExecId, leaseToken: relayClaim.leaseToken, now: relayAt + 2,
+      execId: corrupt.relayExecId,
+      leaseToken: relayClaim.leaseToken,
+      now: relayAt + 2,
     });
     const canonicalMintTxHash = `0x${'ee'.repeat(32)}`;
     stores.cctpRelays.markMintSubmitted({
-      execId: corrupt.relayExecId, leaseToken: relayClaim.leaseToken,
-      mintTxHash: canonicalMintTxHash, now: relayAt + 3,
+      execId: corrupt.relayExecId,
+      leaseToken: relayClaim.leaseToken,
+      mintTxHash: canonicalMintTxHash,
+      now: relayAt + 3,
     });
     stores.cctpRelays.finishMinted({
-      execId: corrupt.relayExecId, leaseToken: relayClaim.leaseToken,
-      mintTxHash: canonicalMintTxHash, now: relayAt + 4,
+      execId: corrupt.relayExecId,
+      leaseToken: relayClaim.leaseToken,
+      mintTxHash: canonicalMintTxHash,
+      now: relayAt + 4,
     });
-    stores.db.prepare(`UPDATE jobs SET job='{\"serializedApproval\":\"must-not-leak\"'
-      WHERE job_id=?`).run(corrupt.jobId);
+    stores.db
+      .prepare(
+        `UPDATE jobs SET job='{\"serializedApproval\":\"must-not-leak\"'
+      WHERE job_id=?`,
+      )
+      .run(corrupt.jobId);
 
     const summary = await harness.router.resumeFarmJobs();
 
     expect(summary).toEqual({
-      resumed: [valid.jobId], held: [], blocked: [corrupt.jobId], uncertain: [],
+      resumed: [valid.jobId],
+      held: [],
+      blocked: [corrupt.jobId],
+      uncertain: [],
     });
     expect(recoverDeposits).toHaveBeenCalledTimes(1);
-    expect(stores.farmIntents.getByJob({ mandateId: body.mandateId, jobId: corrupt.jobId }))
-      .toMatchObject({ state: 'blocked', reasonCode: 'malformed_public_projection' });
+    expect(
+      stores.farmIntents.getByJob({
+        mandateId: body.mandateId,
+        jobId: corrupt.jobId,
+      }),
+    ).toMatchObject({
+      state: 'blocked',
+      reasonCode: 'malformed_public_projection',
+    });
     expect(stores.jobs.get(corrupt.jobId)).toEqual({
-      jobId: corrupt.jobId, status: 'blocked', reasonCode: 'malformed_public_projection',
+      jobId: corrupt.jobId,
+      status: 'blocked',
+      reasonCode: 'malformed_public_projection',
     });
     expect(JSON.stringify(summary)).not.toMatch(/serializedApproval|must-not-leak|JSON/);
     stores.db.close();
@@ -3003,12 +3776,13 @@ describe("v3 mandate route authorization and execution gates", () => {
 
   it('heartbeats slow intent delivery and never acks after renewal loses the lease', async () => {
     vi.useFakeTimers();
-    const stores = createSqliteStores(
-      join(mkdtempSync(join(tmpdir(), 'vf-task11-intent-heartbeat-')), 'relayer.db'),
-      { sessionKeyCipher: routeCipher() },
-    );
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-task11-intent-heartbeat-')), 'relayer.db'), {
+      sessionKeyCipher: routeCipher(),
+    });
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -3024,40 +3798,65 @@ describe("v3 mandate route authorization and execution gates", () => {
       finishAwaitingBurn,
     };
     let releaseReporter;
-    const reporterImplementation = vi.fn((batch) => new Promise((resolve) => {
-      releaseReporter = () => resolve({
-        acknowledged: true, schemaVersion: 1, idempotencyKey: batch.idempotencyKey,
-        requestDigest: createHash('sha256').update((value => {
-          const canonical = (entry) => Array.isArray(entry)
-            ? `[${entry.map(canonical).join(',')}]`
-            : entry && typeof entry === 'object'
-              ? `{${Object.keys(entry).sort().map((key) => `${JSON.stringify(key)}:${canonical(entry[key])}`).join(',')}}`
-              : JSON.stringify(entry);
-          return canonical(value);
-        })(batch)).digest('hex'),
-        children: batch.children.map((child) => ({
-          identity: {
-            networkId: child.networkId, bindingId: child.bindingId,
-            executionId: child.executionId, allocationId: child.allocationId, childId: child.childId,
-          },
-          recoveryVersion: 0,
-        })),
-        written: batch.children.length, duplicates: 0,
-      });
-    }));
+    const reporterImplementation = vi.fn(
+      (batch) =>
+        new Promise((resolve) => {
+          releaseReporter = () =>
+            resolve({
+              acknowledged: true,
+              schemaVersion: 1,
+              idempotencyKey: batch.idempotencyKey,
+              requestDigest: createHash('sha256')
+                .update(
+                  ((value) => {
+                    const canonical = (entry) =>
+                      Array.isArray(entry)
+                        ? `[${entry.map(canonical).join(',')}]`
+                        : entry && typeof entry === 'object'
+                          ? `{${Object.keys(entry)
+                              .sort()
+                              .map((key) => `${JSON.stringify(key)}:${canonical(entry[key])}`)
+                              .join(',')}}`
+                          : JSON.stringify(entry);
+                    return canonical(value);
+                  })(batch),
+                )
+                .digest('hex'),
+              children: batch.children.map((child) => ({
+                identity: {
+                  networkId: child.networkId,
+                  bindingId: child.bindingId,
+                  executionId: child.executionId,
+                  allocationId: child.allocationId,
+                  childId: child.childId,
+                },
+                recoveryVersion: 0,
+              })),
+              written: batch.children.length,
+              duplicates: 0,
+            });
+        }),
+    );
     const harness = makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents,
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents,
       associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
       reporterImplementation,
     });
     const body = routeBody();
     seedActiveMandate(harness, body);
     const pending = postProtected(harness, '/farm', {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     });
     await vi.waitFor(() => expect(reporterImplementation).toHaveBeenCalledTimes(1));
     await vi.advanceTimersByTimeAsync(10_001);
@@ -3066,20 +3865,24 @@ describe("v3 mandate route authorization and execution gates", () => {
     const response = await pending;
     expect(response.res.statusCode).toBe(503);
     expect(finishAwaitingBurn).not.toHaveBeenCalled();
-    expect(stores.farmIntents.getByRequest({
-      mandateId: body.mandateId, requestId: '01'.repeat(16),
-    })).toMatchObject({ state: 'intent_pending' });
+    expect(
+      stores.farmIntents.getByRequest({
+        mandateId: body.mandateId,
+        requestId: '01'.repeat(16),
+      }),
+    ).toMatchObject({ state: 'intent_pending' });
     stores.db.close();
     vi.useRealTimers();
   });
 
   it('atomically terminalizes a permanent Agent Index batch conflict instead of retrying it', async () => {
-    const stores = createSqliteStores(
-      join(mkdtempSync(join(tmpdir(), 'vf-task11-intent-conflict-')), 'relayer.db'),
-      { sessionKeyCipher: routeCipher() },
-    );
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-task11-intent-conflict-')), 'relayer.db'), {
+      sessionKeyCipher: routeCipher(),
+    });
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -3089,92 +3892,128 @@ describe("v3 mandate route authorization and execution gates", () => {
       throw new AgentIndexBatchConflictError('immutable D1 conflict');
     });
     const harness = makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents: stores.farmIntents,
       associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
       reporterImplementation,
     });
     const body = routeBody();
     seedActiveMandate(harness, body);
 
     const response = await postProtected(harness, '/farm', {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     });
 
     expect(response.res.statusCode).toBe(409);
-    expect(stores.farmIntents.getByRequest({
-      mandateId: body.mandateId, requestId: '01'.repeat(16),
-    })).toMatchObject({ state: 'blocked', reasonCode: 'agent_index_intent_conflict' });
+    expect(
+      stores.farmIntents.getByRequest({
+        mandateId: body.mandateId,
+        requestId: '01'.repeat(16),
+      }),
+    ).toMatchObject({
+      state: 'blocked',
+      reasonCode: 'agent_index_intent_conflict',
+    });
     expect(stores.jobs.get(FIRST_JOB_ID)).toMatchObject({
-      status: 'blocked', reasonCode: 'agent_index_intent_conflict',
+      status: 'blocked',
+      reasonCode: 'agent_index_intent_conflict',
     });
     expect(await harness.router.resumeFarmJobs()).toEqual({
-      resumed: [], held: [], blocked: [], uncertain: [],
+      resumed: [],
+      held: [],
+      blocked: [],
+      uncertain: [],
     });
     expect(reporterImplementation).toHaveBeenCalledTimes(1);
     stores.db.close();
   });
 
-  it.each(['farm', 'farm attach'])(
-    'maps a durable getByJob read failure on %s to a generic 503',
-    async (route) => {
-      const stores = createSqliteStores(
-        join(mkdtempSync(join(tmpdir(), 'vf-task11-read-error-')), 'relayer.db'),
-        { sessionKeyCipher: routeCipher() },
-      );
-      const deployment = {
-        networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
-        tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
-        baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
-        stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-        poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
-      };
-      const body = routeBody();
-      const healthy = makeRouteHarness({
-        realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
-        associationOutbox: stores.associationOutbox,
-        baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
-      });
-      seedActiveMandate(healthy, body);
-      const created = await postProtected(healthy, '/farm', {
-        requestId: '01'.repeat(16), mandateId: body.mandateId,
-        stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
-        bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-        runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
-      });
-      expect(created.res.statusCode).toBe(201);
-      const failingIntents = {
-        ...stores.farmIntents,
-        getByJob() { throw new Error('SQLITE_CORRUPT private diagnostic'); },
-      };
-      const failing = makeRouteHarness({
-        realStores: stores, jobs: stores.jobs, farmIntents: failingIntents,
-        associationOutbox: stores.associationOutbox,
-        baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
-      });
-      const response = route === 'farm'
+  it.each(['farm', 'farm attach'])('maps a durable getByJob read failure on %s to a generic 503', async (route) => {
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-task11-read-error-')), 'relayer.db'), {
+      sessionKeyCipher: routeCipher(),
+    });
+    const deployment = {
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
+      tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+      baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+      stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+      poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+    };
+    const body = routeBody();
+    const healthy = makeRouteHarness({
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents: stores.farmIntents,
+      associationOutbox: stores.associationOutbox,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
+    });
+    seedActiveMandate(healthy, body);
+    const created = await postProtected(healthy, '/farm', {
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
+      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
+    });
+    expect(created.res.statusCode).toBe(201);
+    const failingIntents = {
+      ...stores.farmIntents,
+      getByJob() {
+        throw new Error('SQLITE_CORRUPT private diagnostic');
+      },
+    };
+    const failing = makeRouteHarness({
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents: failingIntents,
+      associationOutbox: stores.associationOutbox,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
+    });
+    const response =
+      route === 'farm'
         ? await postProtected(failing, '/farm', {
-            requestId: '02'.repeat(16), mandateId: body.mandateId,
-            stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+            requestId: '02'.repeat(16),
+            mandateId: body.mandateId,
+            stellarOwner: body.stellarOwner,
+            kernelAddress: body.kernelAddress,
             bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-            runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+            runId: 'run-42',
+            grantTxHash: 'aa'.repeat(32),
+            allocations: [routeAllocations()[0]],
           })
         : await postProtected(failing, '/farm/attach', {
-            mandateId: body.mandateId, jobId: created.json.jobId, burnTxHash: 'bb'.repeat(32),
+            mandateId: body.mandateId,
+            jobId: created.json.jobId,
+            burnTxHash: 'bb'.repeat(32),
           });
 
-      expect(response.res.statusCode).toBe(503);
-      expect(response.res.body).not.toContain('SQLITE_CORRUPT');
-      stores.db.close();
-    },
-  );
+    expect(response.res.statusCode).toBe(503);
+    expect(response.res.body).not.toContain('SQLITE_CORRUPT');
+    stores.db.close();
+  });
 
   it('fails closed without v2 intent authority even when legacy jobs and work stores exist', async () => {
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -3185,10 +4024,14 @@ describe("v3 mandate route authorization and execution gates", () => {
     seedActiveMandate(harness, body);
 
     const response = await postProtected(harness, '/farm', {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     });
 
     expect(response.res.statusCode).toBe(503);
@@ -3197,13 +4040,14 @@ describe("v3 mandate route authorization and execution gates", () => {
   });
 
   it('fresh-gates mixed Base child recovery and passes exact ordered evidence without replaying farm', async () => {
-    const stores = createSqliteStores(
-      join(mkdtempSync(join(tmpdir(), 'vf-task11-mixed-base-')), 'relayer.db'),
-      { sessionKeyCipher: routeCipher() },
-    );
+    const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-task11-mixed-base-')), 'relayer.db'), {
+      sessionKeyCipher: routeCipher(),
+    });
     const thirdPool = `0x${'66'.repeat(20)}`;
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -3213,13 +4057,20 @@ describe("v3 mandate route authorization and execution gates", () => {
         [thirdPool, 'morpho'],
       ]),
     };
-    const recoverDeposits = vi.fn(async ({ children }) => children.map(({ allocation }) => ({
-      identity: allocation.identity, status: 'fulfilled', executionStatus: 'deposited',
-    })));
+    const recoverDeposits = vi.fn(async ({ children }) =>
+      children.map(({ allocation }) => ({
+        identity: allocation.identity,
+        status: 'fulfilled',
+        executionStatus: 'deposited',
+      })),
+    );
     const harness = makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents: stores.farmIntents,
       associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
       relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
       poolTargets: deployment.poolTargets,
       buildFarmImplementation: () => ({ farm: vi.fn(), recoverDeposits }),
@@ -3227,65 +4078,107 @@ describe("v3 mandate route authorization and execution gates", () => {
     const body = routeBody();
     seedActiveMandate(harness, body);
     const allocations = [
-      wireAllocation({ allocationId: 'run-42:bridge:aave-v3', pool: POOL_ADDRESS }),
-      wireAllocation({ allocationId: 'run-42:bridge:blend-v2', pool: `0x${'55'.repeat(20)}` }),
+      wireAllocation({
+        allocationId: 'run-42:bridge:aave-v3',
+        pool: POOL_ADDRESS,
+      }),
+      wireAllocation({
+        allocationId: 'run-42:bridge:blend-v2',
+        pool: `0x${'55'.repeat(20)}`,
+      }),
       wireAllocation({ allocationId: 'run-42:bridge:morpho', pool: thirdPool }),
     ];
     const farm = await postProtected(harness, '/farm', {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations,
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations,
     });
     expect(farm.res.statusCode).toBe(201);
     await postProtected(harness, '/farm/attach', {
-      mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash: 'bb'.repeat(32),
+      mandateId: body.mandateId,
+      jobId: farm.json.jobId,
+      burnTxHash: 'bb'.repeat(32),
     });
     await flushMicrotasks();
-    const record = stores.farmIntents.getByJob({ mandateId: body.mandateId, jobId: farm.json.jobId });
+    const record = stores.farmIntents.getByJob({
+      mandateId: body.mandateId,
+      jobId: farm.json.jobId,
+    });
     const projectionIdentity = {
-      mandateId: body.mandateId, jobId: farm.json.jobId,
-      bindingId: record.bindingId, intentDigest: record.intentDigest,
+      mandateId: body.mandateId,
+      jobId: farm.json.jobId,
+      bindingId: record.bindingId,
+      intentDigest: record.intentDigest,
     };
     stores.farmIntents.projectMintEvidenceAtomic({
       identity: projectionIdentity,
       relay: {
-        execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
-        expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
-        attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+        execId: record.relayExecId,
+        state: 'minted',
+        burnTxHash: record.burnTxHash,
+        expectationDigest: record.expectationDigest,
+        messageDigest: 'cc'.repeat(32),
+        attestationDigest: 'dd'.repeat(32),
+        evidenceVersion: '1',
+        nonceHex: `0x${'01'.repeat(32)}`,
         mintTxHash: `0x${'ee'.repeat(32)}`,
       },
       now: 2_000_000_300,
     });
     const childIdentity = (allocation) => ({
-      networkId: record.intent.networkId, bindingId: record.bindingId,
-      executionId: allocation.executionId, allocationId: allocation.allocationId,
+      networkId: record.intent.networkId,
+      bindingId: record.bindingId,
+      executionId: allocation.executionId,
+      allocationId: allocation.allocationId,
       childId: allocation.childId,
     });
     const common = (allocation) => ({
-      chainId: '84532', yieldRouterAddress: CANONICAL_ROUTER.toLowerCase(),
-      caller: KERNEL.toLowerCase(), poolAddress: allocation.poolAddress,
-      assets: allocation.units, minShares: allocation.minShares,
+      chainId: '84532',
+      yieldRouterAddress: CANONICAL_ROUTER.toLowerCase(),
+      caller: KERNEL.toLowerCase(),
+      poolAddress: allocation.poolAddress,
+      assets: allocation.units,
+      minShares: allocation.minShares,
     });
     const [confirmed, submitted] = record.intent.allocations;
     for (const allocation of [confirmed, submitted]) {
       stores.baseEvidenceOutbox.enqueue({
-        identity: childIdentity(allocation), phase: 'base_deposit', status: 'submitting',
-        evidence: common(allocation), observedAt: 2_000_000_301,
+        identity: childIdentity(allocation),
+        phase: 'base_deposit',
+        status: 'submitting',
+        evidence: common(allocation),
+        observedAt: 2_000_000_301,
       });
       stores.baseEvidenceOutbox.enqueue({
-        identity: childIdentity(allocation), phase: 'base_deposit', status: 'submitted',
-        evidence: { ...common(allocation), userOpHash: USER_OP_HASH }, observedAt: 2_000_000_302,
+        identity: childIdentity(allocation),
+        phase: 'base_deposit',
+        status: 'submitted',
+        evidence: { ...common(allocation), userOpHash: USER_OP_HASH },
+        observedAt: 2_000_000_302,
       });
     }
     stores.baseEvidenceOutbox.enqueue({
-      identity: childIdentity(confirmed), phase: 'base_deposit', status: 'confirmed',
+      identity: childIdentity(confirmed),
+      phase: 'base_deposit',
+      status: 'confirmed',
       evidence: {
-        ...common(confirmed), userOpHash: USER_OP_HASH, transactionHash: TX_HASH,
+        ...common(confirmed),
+        shares: confirmed.minShares,
+        userOpHash: USER_OP_HASH,
+        transactionHash: TX_HASH,
         event: {
-          address: CANONICAL_ROUTER.toLowerCase(), topic0: DEPOSITED_TOPIC0, logIndex: '1',
-          caller: KERNEL.toLowerCase(), poolAddress: confirmed.poolAddress,
-          assets: confirmed.units, shares: confirmed.minShares,
+          address: CANONICAL_ROUTER.toLowerCase(),
+          topic0: DEPOSITED_TOPIC0,
+          logIndex: '1',
+          caller: KERNEL.toLowerCase(),
+          poolAddress: confirmed.poolAddress,
+          assets: confirmed.units,
+          shares: confirmed.minShares,
         },
       },
       observedAt: 2_000_000_303,
@@ -3293,75 +4186,117 @@ describe("v3 mandate route authorization and execution gates", () => {
 
     const summary = await harness.router.resumeFarmJobs();
 
-    expect(summary).toMatchObject({ resumed: [farm.json.jobId], blocked: [], uncertain: [] });
+    expect(summary).toMatchObject({
+      resumed: [farm.json.jobId],
+      blocked: [],
+      uncertain: [],
+    });
     expect(harness.buildFarm).toHaveBeenCalledTimes(2);
     expect(harness.farmFn).not.toHaveBeenCalled();
     expect(recoverDeposits).toHaveBeenCalledTimes(2);
-    expect(recoverDeposits.mock.calls.map(([{ children }]) => (
-      children.map(({ recovery }) => `${recovery.phase}:${recovery.state}`)
-    ))).toEqual([['base_deposit:submitted'], ['cctp_mint:confirmed']]);
-    expect(stores.farmIntents.getByJob({ mandateId: body.mandateId, jobId: farm.json.jobId }))
-      .toMatchObject({ state: 'done' });
+    expect(
+      recoverDeposits.mock.calls.map(([{ children }]) =>
+        children.map(({ recovery }) => `${recovery.phase}:${recovery.state}`),
+      ),
+    ).toEqual([['base_deposit:submitted'], ['cctp_mint:confirmed']]);
+    expect(
+      stores.farmIntents.getByJob({
+        mandateId: body.mandateId,
+        jobId: farm.json.jobId,
+      }),
+    ).toMatchObject({ state: 'done' });
 
     const secondFarm = await postProtected(harness, '/farm', {
-      requestId: '02'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '02'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: allocations.slice(0, 2),
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: allocations.slice(0, 2),
     });
     await postProtected(harness, '/farm/attach', {
-      mandateId: body.mandateId, jobId: secondFarm.json.jobId, burnTxHash: 'bc'.repeat(32),
+      mandateId: body.mandateId,
+      jobId: secondFarm.json.jobId,
+      burnTxHash: 'bc'.repeat(32),
     });
     const secondRecord = stores.farmIntents.getByJob({
-      mandateId: body.mandateId, jobId: secondFarm.json.jobId,
+      mandateId: body.mandateId,
+      jobId: secondFarm.json.jobId,
     });
     const secondProjection = {
-      mandateId: body.mandateId, jobId: secondRecord.jobId,
-      bindingId: secondRecord.bindingId, intentDigest: secondRecord.intentDigest,
+      mandateId: body.mandateId,
+      jobId: secondRecord.jobId,
+      bindingId: secondRecord.bindingId,
+      intentDigest: secondRecord.intentDigest,
     };
     stores.farmIntents.projectMintEvidenceAtomic({
       identity: secondProjection,
       relay: {
-        execId: secondRecord.relayExecId, state: 'minted', burnTxHash: secondRecord.burnTxHash,
-        expectationDigest: secondRecord.expectationDigest, messageDigest: 'ce'.repeat(32),
-        attestationDigest: 'de'.repeat(32), evidenceVersion: '1',
+        execId: secondRecord.relayExecId,
+        state: 'minted',
+        burnTxHash: secondRecord.burnTxHash,
+        expectationDigest: secondRecord.expectationDigest,
+        messageDigest: 'ce'.repeat(32),
+        attestationDigest: 'de'.repeat(32),
+        evidenceVersion: '1',
+        nonceHex: `0x${'02'.repeat(32)}`,
         mintTxHash: `0x${'ef'.repeat(32)}`,
-      }, now: 2_000_000_400,
+      },
+      now: 2_000_000_400,
     });
     const firstSecondAllocation = secondRecord.intent.allocations[0];
     const secondIdentity = {
-      networkId: secondRecord.intent.networkId, bindingId: secondRecord.bindingId,
+      networkId: secondRecord.intent.networkId,
+      bindingId: secondRecord.bindingId,
       executionId: firstSecondAllocation.executionId,
-      allocationId: firstSecondAllocation.allocationId, childId: firstSecondAllocation.childId,
+      allocationId: firstSecondAllocation.allocationId,
+      childId: firstSecondAllocation.childId,
     };
     const secondCommon = {
-      chainId: '84532', yieldRouterAddress: CANONICAL_ROUTER.toLowerCase(),
-      caller: KERNEL.toLowerCase(), poolAddress: firstSecondAllocation.poolAddress,
-      assets: firstSecondAllocation.units, minShares: firstSecondAllocation.minShares,
+      chainId: '84532',
+      yieldRouterAddress: CANONICAL_ROUTER.toLowerCase(),
+      caller: KERNEL.toLowerCase(),
+      poolAddress: firstSecondAllocation.poolAddress,
+      assets: firstSecondAllocation.units,
+      minShares: firstSecondAllocation.minShares,
     };
     stores.baseEvidenceOutbox.enqueue({
-      identity: secondIdentity, phase: 'base_deposit', status: 'submitting',
-      evidence: secondCommon, observedAt: 2_000_000_401,
+      identity: secondIdentity,
+      phase: 'base_deposit',
+      status: 'submitting',
+      evidence: secondCommon,
+      observedAt: 2_000_000_401,
     });
     stores.baseEvidenceOutbox.enqueue({
-      identity: secondIdentity, phase: 'base_deposit', status: 'submitted',
-      evidence: { ...secondCommon, userOpHash: USER_OP_HASH }, observedAt: 2_000_000_402,
+      identity: secondIdentity,
+      phase: 'base_deposit',
+      status: 'submitted',
+      evidence: { ...secondCommon, userOpHash: USER_OP_HASH },
+      observedAt: 2_000_000_402,
     });
     recoverDeposits.mockImplementationOnce(async ({ children }) => {
       stores.mandatesV3.revoke(routeIdentity(body));
       return children.map(({ allocation: entry }) => ({
-        identity: entry.identity, status: 'fulfilled', executionStatus: 'deposited',
+        identity: entry.identity,
+        status: 'fulfilled',
+        executionStatus: 'deposited',
       }));
     });
 
     const revokedSummary = await harness.router.resumeFarmJobs();
 
     expect(revokedSummary).toMatchObject({
-      resumed: [], blocked: [secondFarm.json.jobId], uncertain: [],
+      resumed: [],
+      blocked: [secondFarm.json.jobId],
+      uncertain: [],
     });
     expect(recoverDeposits).toHaveBeenCalledTimes(3);
-    expect(recoverDeposits.mock.calls[2][0].children[0].recovery)
-      .toMatchObject({ phase: 'base_deposit', state: 'submitted' });
+    expect(recoverDeposits.mock.calls[2][0].children[0].recovery).toMatchObject({
+      phase: 'base_deposit',
+      state: 'submitted',
+    });
     expect(harness.buildFarm).toHaveBeenCalledTimes(3);
     stores.db.close();
   });
@@ -3369,7 +4304,9 @@ describe("v3 mandate route authorization and execution gates", () => {
   it('reopens a submitted receipt timeout and confirms only the exact stored UserOperation hash', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-submitted-reopen-')), 'relayer.db');
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -3377,137 +4314,224 @@ describe("v3 mandate route authorization and execution gates", () => {
     };
     const word = (value) => BigInt(value).toString(16).padStart(64, '0');
     const receiptFor = (allocation) => ({
-      userOpHash: USER_OP_HASH, sender: KERNEL, success: true,
-      logs: [{
-        address: CANONICAL_ROUTER,
-        topics: [
-          DEPOSITED_TOPIC0,
-          `0x${KERNEL.slice(2).padStart(64, '0')}`,
-          `0x${allocation.poolAddress.slice(2).padStart(64, '0')}`,
-        ],
-        data: `0x${word(allocation.units)}${word(allocation.minShares)}`,
-        logIndex: 1, transactionHash: TX_HASH,
-      }],
+      userOpHash: USER_OP_HASH,
+      sender: KERNEL,
+      success: true,
+      logs: [
+        {
+          address: CANONICAL_ROUTER,
+          topics: [
+            DEPOSITED_TOPIC0,
+            `0x${KERNEL.slice(2).padStart(64, '0')}`,
+            `0x${allocation.poolAddress.slice(2).padStart(64, '0')}`,
+          ],
+          data: `0x${word(allocation.units)}${word(allocation.minShares)}`,
+          logIndex: 1,
+          transactionHash: TX_HASH,
+        },
+      ],
       receipt: { status: 'success', transactionHash: TX_HASH, logs: [] },
     });
-    const buildFlow = (reconstructSessionClientFn, sessionPrivateKey) => createFarmFlow({
-      watcher: {}, domains: { stellar: 27 },
-      orchestrator: createOrchestrator({
-        chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org',
-        bundlerRpcUrl: 'https://bundler', yieldRouterAddress: CANONICAL_ROUTER,
-        usdcAddress: CANONICAL_USDC, sessionPrivateKey,
-        baseCrossChainAvailable: true,
-        now: () => 2_000_000_000_000, reconstructSessionClientFn,
-      }),
-    });
+    const buildFlow = (reconstructSessionClientFn, sessionPrivateKey, readBaseDepositEvidenceFn) =>
+      createFarmFlow({
+        watcher: {},
+        domains: { stellar: 27 },
+        orchestrator: createOrchestrator({
+          chain: { id: 84532 },
+          rpcUrl: 'https://sepolia.base.org',
+          bundlerRpcUrl: 'https://bundler',
+          yieldRouterAddress: CANONICAL_ROUTER,
+          usdcAddress: CANONICAL_USDC,
+          sessionPrivateKey,
+          baseCrossChainAvailable: true,
+          captureReconcileHandleFn: async ({ entryPoint, sender }) => ({
+            entryPoint,
+            sender,
+            nonce: '0',
+            startBlock: '100',
+          }),
+          readBaseDepositEvidenceFn,
+          now: () => 2_000_000_000_000,
+          reconstructSessionClientFn,
+        }),
+      });
     let stores = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
     const sendBeforeRestart = vi.fn(async () => USER_OP_HASH);
-    const waitBeforeRestart = vi.fn(async () => { throw new Error('bundler timeout'); });
+    const waitBeforeRestart = vi.fn(async () => {
+      throw new Error('bundler timeout');
+    });
     const firstReconstruct = vi.fn(async () => ({
       account: { address: KERNEL, encodeCalls: vi.fn(async () => '0xencoded') },
       sendUserOperation: sendBeforeRestart,
       waitForUserOperationReceipt: waitBeforeRestart,
     }));
     const first = makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents: stores.farmIntents,
       associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
       relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
-      buildFarmImplementation: (sessionPrivateKey) => buildFlow(
-        firstReconstruct, sessionPrivateKey,
-      ),
+      buildFarmImplementation: (sessionPrivateKey) => buildFlow(firstReconstruct, sessionPrivateKey),
     });
     const body = routeBody();
     seedActiveMandate(first, body);
     const farm = await postProtected(first, '/farm', {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     });
     expect(farm.res.statusCode).toBe(201);
     await postProtected(first, '/farm/attach', {
-      mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash: 'bb'.repeat(32),
+      mandateId: body.mandateId,
+      jobId: farm.json.jobId,
+      burnTxHash: 'bb'.repeat(32),
     });
     await flushMicrotasks();
     const record = stores.farmIntents.getByJob({
-      mandateId: body.mandateId, jobId: farm.json.jobId,
+      mandateId: body.mandateId,
+      jobId: farm.json.jobId,
     });
     const projectionIdentity = {
-      mandateId: body.mandateId, jobId: record.jobId,
-      bindingId: record.bindingId, intentDigest: record.intentDigest,
+      mandateId: body.mandateId,
+      jobId: record.jobId,
+      bindingId: record.bindingId,
+      intentDigest: record.intentDigest,
     };
     stores.farmIntents.projectMintEvidenceAtomic({
       identity: projectionIdentity,
       relay: {
-        execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
-        expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
-        attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+        execId: record.relayExecId,
+        state: 'minted',
+        burnTxHash: record.burnTxHash,
+        expectationDigest: record.expectationDigest,
+        messageDigest: 'cc'.repeat(32),
+        attestationDigest: 'dd'.repeat(32),
+        evidenceVersion: '1',
+        nonceHex: `0x${'01'.repeat(32)}`,
         mintTxHash: `0x${'ee'.repeat(32)}`,
       },
       now: 2_000_000_000_000,
     });
     const child = record.batch.children[0];
     const childIdentity = {
-      networkId: child.networkId, bindingId: child.bindingId,
-      executionId: child.executionId, allocationId: child.allocationId, childId: child.childId,
+      networkId: child.networkId,
+      bindingId: child.bindingId,
+      executionId: child.executionId,
+      allocationId: child.allocationId,
+      childId: child.childId,
     };
 
     expect(await first.router.resumeFarmJobs()).toEqual({
-      resumed: [], held: [record.jobId], blocked: [], uncertain: [],
+      resumed: [],
+      held: [record.jobId],
+      blocked: [],
+      uncertain: [],
     });
     expect(sendBeforeRestart).toHaveBeenCalledOnce();
-    expect(waitBeforeRestart).toHaveBeenCalledWith({ hash: USER_OP_HASH, timeout: 120_000 });
-    expect(stores.baseEvidenceOutbox.recoveryState(childIdentity)).toMatchObject({
-      phase: 'base_deposit', state: 'submitted', evidence: { userOpHash: USER_OP_HASH },
+    expect(waitBeforeRestart).toHaveBeenCalledWith({
+      hash: USER_OP_HASH,
+      timeout: 120_000,
     });
-    expect(stores.farmIntents.getByJob({ mandateId: body.mandateId, jobId: record.jobId }))
-      .toMatchObject({ state: 'deposit_confirming' });
+    expect(stores.baseEvidenceOutbox.recoveryState(childIdentity)).toMatchObject({
+      phase: 'base_deposit',
+      state: 'submitted',
+      evidence: { userOpHash: USER_OP_HASH },
+    });
+    expect(
+      stores.farmIntents.getByJob({
+        mandateId: body.mandateId,
+        jobId: record.jobId,
+      }),
+    ).toMatchObject({ state: 'deposit_confirming' });
     stores.db.close();
 
     stores = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
-    const sendAfterRestart = vi.fn(async () => { throw new Error('must not resend'); });
-    const waitAfterRestart = vi.fn(async ({ hash }) => {
-      expect(hash).toBe(USER_OP_HASH);
-      return receiptFor(record.intent.allocations[0]);
+    const sendAfterRestart = vi.fn(async () => {
+      throw new Error('must not resend');
     });
+    const readAfterRestart = vi.fn(async ({ allocation, userOpHash, reconcileHandle }) => ({
+      status: 'fulfilled',
+      userOpHash,
+      transactionHash: TX_HASH,
+      event: {
+        address: CANONICAL_ROUTER.toLowerCase(),
+        topic0: DEPOSITED_TOPIC0,
+        logIndex: '1',
+        caller: KERNEL,
+        poolAddress: allocation.pool,
+        assets: allocation.amount.toString(10),
+        shares: allocation.minShares.toString(10),
+      },
+      reconcileHandle,
+    }));
     const restartedEncodeCalls = vi.fn(async () => 'must-not-encode');
     const secondReconstruct = vi.fn(async () => ({
       account: { address: KERNEL, encodeCalls: restartedEncodeCalls },
       sendUserOperation: sendAfterRestart,
-      waitForUserOperationReceipt: waitAfterRestart,
+      waitForUserOperationReceipt: vi.fn(async () => {
+        throw new Error('must not poll signer');
+      }),
     }));
     const second = makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
+      realStores: stores,
+      jobs: stores.jobs,
+      farmIntents: stores.farmIntents,
       associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox: stores.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: stores.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
       relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
-      buildFarmImplementation: (sessionPrivateKey) => buildFlow(
-        secondReconstruct, sessionPrivateKey,
-      ),
+      buildFarmImplementation: (sessionPrivateKey) => buildFlow(secondReconstruct, sessionPrivateKey, readAfterRestart),
     });
 
     expect(await second.router.resumeFarmJobs()).toEqual({
-      resumed: [record.jobId], held: [], blocked: [], uncertain: [],
+      resumed: [record.jobId],
+      held: [],
+      blocked: [],
+      uncertain: [],
     });
     expect(sendAfterRestart).not.toHaveBeenCalled();
     expect(restartedEncodeCalls).not.toHaveBeenCalled();
-    expect(waitAfterRestart).toHaveBeenCalledOnce();
+    expect(secondReconstruct).not.toHaveBeenCalled();
+    expect(readAfterRestart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userOpHash: USER_OP_HASH,
+        reconcileHandle: expect.objectContaining({
+          nonce: '0',
+          startBlock: '100',
+        }),
+      }),
+    );
     expect(stores.baseEvidenceOutbox.recoveryState(childIdentity)).toMatchObject({
-      phase: 'base_deposit', state: 'confirmed',
+      phase: 'base_deposit',
+      state: 'confirmed',
       evidence: { userOpHash: USER_OP_HASH, transactionHash: TX_HASH },
     });
-    expect(stores.farmIntents.getByJob({ mandateId: body.mandateId, jobId: record.jobId }))
-      .toMatchObject({ state: 'done' });
+    expect(
+      stores.farmIntents.getByJob({
+        mandateId: body.mandateId,
+        jobId: record.jobId,
+      }),
+    ).toMatchObject({ state: 'done' });
     stores.db.close();
   });
 
   it('refuses a Base submission when the owning v2 farm is blocked after the final authority gate', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-block-before-claim-')), 'relayer.db');
     const first = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
-    const second = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const second = createSqliteStores(path, {
+      sessionKeyCipher: routeCipher(),
+    });
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -3515,26 +4539,44 @@ describe("v3 mandate route authorization and execution gates", () => {
     };
     const encodeCalls = vi.fn(async () => '0xencoded');
     const sendUserOperation = vi.fn(async () => USER_OP_HASH);
-    const waitForUserOperationReceipt = vi.fn(async () => { throw new Error('must not poll'); });
+    const waitForUserOperationReceipt = vi.fn(async () => {
+      throw new Error('must not poll');
+    });
     const reconstructSessionClientFn = vi.fn(async () => ({
       account: { address: KERNEL, encodeCalls },
       sendUserOperation,
       waitForUserOperationReceipt,
     }));
-    const buildFlow = (sessionPrivateKey) => createFarmFlow({
-      watcher: {}, domains: { stellar: 27 },
-      orchestrator: createOrchestrator({
-        chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org',
-        bundlerRpcUrl: 'https://bundler', yieldRouterAddress: CANONICAL_ROUTER,
-        usdcAddress: CANONICAL_USDC, sessionPrivateKey,
-        baseCrossChainAvailable: true,
-        now: () => 2_000_000_000_000, reconstructSessionClientFn,
-      }),
-    });
+    const buildFlow = (sessionPrivateKey) =>
+      createFarmFlow({
+        watcher: {},
+        domains: { stellar: 27 },
+        orchestrator: createOrchestrator({
+          chain: { id: 84532 },
+          rpcUrl: 'https://sepolia.base.org',
+          bundlerRpcUrl: 'https://bundler',
+          yieldRouterAddress: CANONICAL_ROUTER,
+          usdcAddress: CANONICAL_USDC,
+          sessionPrivateKey,
+          baseCrossChainAvailable: true,
+          captureReconcileHandleFn: async ({ entryPoint, sender }) => ({
+            entryPoint,
+            sender,
+            nonce: '0',
+            startBlock: '100',
+          }),
+          now: () => 2_000_000_000_000,
+          reconstructSessionClientFn,
+        }),
+      });
     let claimReached;
-    const claimSignal = new Promise((resolve) => { claimReached = resolve; });
+    const claimSignal = new Promise((resolve) => {
+      claimReached = resolve;
+    });
     let releaseClaim;
-    const claimGate = new Promise((resolve) => { releaseClaim = resolve; });
+    const claimGate = new Promise((resolve) => {
+      releaseClaim = resolve;
+    });
     const claimAuthorizedSubmission = vi.fn(async (args) => {
       claimReached();
       await claimGate;
@@ -3542,51 +4584,68 @@ describe("v3 mandate route authorization and execution gates", () => {
     });
     const farmIntents = { ...first.farmIntents, claimAuthorizedSubmission };
     const harness = makeRouteHarness({
-      realStores: first, jobs: first.jobs, farmIntents,
+      realStores: first,
+      jobs: first.jobs,
+      farmIntents,
       associationOutbox: first.associationOutbox,
-      baseEvidenceOutbox: first.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: first.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
       relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
       buildFarmImplementation: buildFlow,
     });
     const body = routeBody();
     seedActiveMandate(harness, body);
     const farm = await postProtected(harness, '/farm', {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     });
     expect(farm.res.statusCode).toBe(201);
     await postProtected(harness, '/farm/attach', {
-      mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash: 'bb'.repeat(32),
+      mandateId: body.mandateId,
+      jobId: farm.json.jobId,
+      burnTxHash: 'bb'.repeat(32),
     });
     await flushMicrotasks();
     const record = first.farmIntents.getByJob({
-      mandateId: body.mandateId, jobId: farm.json.jobId,
+      mandateId: body.mandateId,
+      jobId: farm.json.jobId,
     });
     const projectionIdentity = {
-      mandateId: body.mandateId, jobId: record.jobId,
-      bindingId: record.bindingId, intentDigest: record.intentDigest,
+      mandateId: body.mandateId,
+      jobId: record.jobId,
+      bindingId: record.bindingId,
+      intentDigest: record.intentDigest,
     };
     first.farmIntents.projectMintEvidenceAtomic({
       identity: projectionIdentity,
       relay: {
-        execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
-        expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
-        attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+        execId: record.relayExecId,
+        state: 'minted',
+        burnTxHash: record.burnTxHash,
+        expectationDigest: record.expectationDigest,
+        messageDigest: 'cc'.repeat(32),
+        attestationDigest: 'dd'.repeat(32),
+        evidenceVersion: '1',
+        nonceHex: `0x${'01'.repeat(32)}`,
         mintTxHash: `0x${'ee'.repeat(32)}`,
       },
       now: 2_000_000_000_000,
     });
     const child = record.batch.children[0];
     const childIdentity = {
-      networkId: child.networkId, bindingId: child.bindingId,
-      executionId: child.executionId, allocationId: child.allocationId,
+      networkId: child.networkId,
+      bindingId: child.bindingId,
+      executionId: child.executionId,
+      allocationId: child.allocationId,
       childId: child.childId,
     };
-    const eventsBefore = first.db.prepare(
-      'SELECT COUNT(*) AS count FROM base_evidence_outbox',
-    ).get().count;
+    const eventsBefore = first.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count;
 
     const resume = harness.router.resumeFarmJobs();
     await claimSignal;
@@ -3594,38 +4653,59 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(first.farmIntents.getByJob(projectionIdentity)).toMatchObject({
       state: 'deposit_confirming',
     });
-    expect(second.farmIntents.blockEvidenceConflict({
-      identity: childIdentity, now: 2_000_000_000_001,
-    })).toEqual({ jobId: record.jobId, status: 'blocked' });
+    expect(
+      second.farmIntents.blockEvidenceConflict({
+        identity: childIdentity,
+        now: 2_000_000_000_001,
+      }),
+    ).toEqual({ jobId: record.jobId, status: 'blocked' });
     releaseClaim();
 
     expect(await resume).toEqual({
-      resumed: [], held: [record.jobId], blocked: [], uncertain: [],
+      resumed: [],
+      held: [record.jobId],
+      blocked: [],
+      uncertain: [],
     });
     expect(await claimAuthorizedSubmission.mock.results[0].value).toEqual({
-      claimed: false, ownerToken: null, reasonCode: 'mandate_authority_changed',
+      claimed: false,
+      ownerToken: null,
+      reasonCode: 'mandate_authority_changed',
     });
     expect(encodeCalls).not.toHaveBeenCalled();
     expect(sendUserOperation).not.toHaveBeenCalled();
     expect(waitForUserOperationReceipt).not.toHaveBeenCalled();
     expect(first.baseEvidenceOutbox.recoveryState(childIdentity)).toMatchObject({
-      phase: 'cctp_mint', state: 'confirmed',
+      phase: 'cctp_mint',
+      state: 'confirmed',
     });
-    expect(first.db.prepare(`SELECT submission_owner_token,latest_phase,latest_state
+    expect(
+      first.db
+        .prepare(
+          `SELECT submission_owner_token,latest_phase,latest_state
       FROM base_evidence_heads WHERE network_id=? AND binding_id=? AND execution_id=?
-        AND allocation_id=? AND child_id=?`).get(
-      childIdentity.networkId, childIdentity.bindingId, childIdentity.executionId,
-      childIdentity.allocationId, childIdentity.childId,
-    )).toEqual({
-      submission_owner_token: null, latest_phase: 'cctp_mint', latest_state: 'confirmed',
+        AND allocation_id=? AND child_id=?`,
+        )
+        .get(
+          childIdentity.networkId,
+          childIdentity.bindingId,
+          childIdentity.executionId,
+          childIdentity.allocationId,
+          childIdentity.childId,
+        ),
+    ).toEqual({
+      submission_owner_token: null,
+      latest_phase: 'cctp_mint',
+      latest_state: 'confirmed',
     });
-    expect(first.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count)
-      .toBe(eventsBefore);
+    expect(first.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count).toBe(eventsBefore);
     expect(first.farmIntents.getByJob(projectionIdentity)).toMatchObject({
-      state: 'blocked', reasonCode: 'base_evidence_conflict',
+      state: 'blocked',
+      reasonCode: 'base_evidence_conflict',
     });
     expect(first.jobs.get(record.jobId)).toMatchObject({
-      status: 'blocked', reasonCode: 'base_evidence_conflict',
+      status: 'blocked',
+      reasonCode: 'base_evidence_conflict',
     });
     second.db.close();
     first.db.close();
@@ -3634,9 +4714,13 @@ describe("v3 mandate route authorization and execution gates", () => {
   it('preserves a committed Base submission fence when v2 blocking and revoke linearize afterward', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-claim-before-block-')), 'relayer.db');
     const first = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
-    const second = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const second = createSqliteStores(path, {
+      sessionKeyCipher: routeCipher(),
+    });
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -3644,26 +4728,44 @@ describe("v3 mandate route authorization and execution gates", () => {
     };
     const encodeCalls = vi.fn(async () => '0xencoded');
     const sendUserOperation = vi.fn(async () => USER_OP_HASH);
-    const waitForUserOperationReceipt = vi.fn(async () => { throw new Error('bundler timeout'); });
+    const waitForUserOperationReceipt = vi.fn(async () => {
+      throw new Error('bundler timeout');
+    });
     const reconstructSessionClientFn = vi.fn(async () => ({
       account: { address: KERNEL, encodeCalls },
       sendUserOperation,
       waitForUserOperationReceipt,
     }));
-    const buildFlow = (sessionPrivateKey) => createFarmFlow({
-      watcher: {}, domains: { stellar: 27 },
-      orchestrator: createOrchestrator({
-        chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org',
-        bundlerRpcUrl: 'https://bundler', yieldRouterAddress: CANONICAL_ROUTER,
-        usdcAddress: CANONICAL_USDC, sessionPrivateKey,
-        baseCrossChainAvailable: true,
-        now: () => 2_000_000_000_000, reconstructSessionClientFn,
-      }),
-    });
+    const buildFlow = (sessionPrivateKey) =>
+      createFarmFlow({
+        watcher: {},
+        domains: { stellar: 27 },
+        orchestrator: createOrchestrator({
+          chain: { id: 84532 },
+          rpcUrl: 'https://sepolia.base.org',
+          bundlerRpcUrl: 'https://bundler',
+          yieldRouterAddress: CANONICAL_ROUTER,
+          usdcAddress: CANONICAL_USDC,
+          sessionPrivateKey,
+          baseCrossChainAvailable: true,
+          captureReconcileHandleFn: async ({ entryPoint, sender }) => ({
+            entryPoint,
+            sender,
+            nonce: '0',
+            startBlock: '100',
+          }),
+          now: () => 2_000_000_000_000,
+          reconstructSessionClientFn,
+        }),
+      });
     let claimCommitted;
-    const claimSignal = new Promise((resolve) => { claimCommitted = resolve; });
+    const claimSignal = new Promise((resolve) => {
+      claimCommitted = resolve;
+    });
     let releaseClaim;
-    const claimGate = new Promise((resolve) => { releaseClaim = resolve; });
+    const claimGate = new Promise((resolve) => {
+      releaseClaim = resolve;
+    });
     const claimAuthorizedSubmission = vi.fn(async (args) => {
       const claim = first.farmIntents.claimAuthorizedSubmission(args);
       claimCommitted(claim);
@@ -3672,51 +4774,68 @@ describe("v3 mandate route authorization and execution gates", () => {
     });
     const farmIntents = { ...first.farmIntents, claimAuthorizedSubmission };
     const harness = makeRouteHarness({
-      realStores: first, jobs: first.jobs, farmIntents,
+      realStores: first,
+      jobs: first.jobs,
+      farmIntents,
       associationOutbox: first.associationOutbox,
-      baseEvidenceOutbox: first.baseEvidenceOutbox, forwardFarmDeployment: deployment,
+      baseEvidenceOutbox: first.baseEvidenceOutbox,
+      forwardFarmDeployment: deployment,
       relayForwardMint: vi.fn(async () => ({ status: 'attestation_pending' })),
       buildFarmImplementation: buildFlow,
     });
     const body = routeBody();
     seedActiveMandate(harness, body);
     const farm = await postProtected(harness, '/farm', {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [routeAllocations()[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [routeAllocations()[0]],
     });
     expect(farm.res.statusCode).toBe(201);
     await postProtected(harness, '/farm/attach', {
-      mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash: 'bb'.repeat(32),
+      mandateId: body.mandateId,
+      jobId: farm.json.jobId,
+      burnTxHash: 'bb'.repeat(32),
     });
     await flushMicrotasks();
     const record = first.farmIntents.getByJob({
-      mandateId: body.mandateId, jobId: farm.json.jobId,
+      mandateId: body.mandateId,
+      jobId: farm.json.jobId,
     });
     const projectionIdentity = {
-      mandateId: body.mandateId, jobId: record.jobId,
-      bindingId: record.bindingId, intentDigest: record.intentDigest,
+      mandateId: body.mandateId,
+      jobId: record.jobId,
+      bindingId: record.bindingId,
+      intentDigest: record.intentDigest,
     };
     first.farmIntents.projectMintEvidenceAtomic({
       identity: projectionIdentity,
       relay: {
-        execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
-        expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
-        attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+        execId: record.relayExecId,
+        state: 'minted',
+        burnTxHash: record.burnTxHash,
+        expectationDigest: record.expectationDigest,
+        messageDigest: 'cc'.repeat(32),
+        attestationDigest: 'dd'.repeat(32),
+        evidenceVersion: '1',
+        nonceHex: `0x${'01'.repeat(32)}`,
         mintTxHash: `0x${'ee'.repeat(32)}`,
       },
       now: 2_000_000_000_000,
     });
     const child = record.batch.children[0];
     const childIdentity = {
-      networkId: child.networkId, bindingId: child.bindingId,
-      executionId: child.executionId, allocationId: child.allocationId,
+      networkId: child.networkId,
+      bindingId: child.bindingId,
+      executionId: child.executionId,
+      allocationId: child.allocationId,
       childId: child.childId,
     };
-    const eventsBefore = first.db.prepare(
-      'SELECT COUNT(*) AS count FROM base_evidence_outbox',
-    ).get().count;
+    const eventsBefore = first.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count;
 
     const resume = harness.router.resumeFarmJobs();
     const committedClaim = await claimSignal;
@@ -3724,59 +4843,93 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(typeof committedClaim.ownerToken).toBe('string');
     expect(encodeCalls).not.toHaveBeenCalled();
     expect(sendUserOperation).not.toHaveBeenCalled();
-    const submittingHead = second.db.prepare(`SELECT latest_phase,latest_state,submission_owner_token
+    const submittingHead = second.db
+      .prepare(
+        `SELECT latest_phase,latest_state,submission_owner_token
       FROM base_evidence_heads WHERE network_id=? AND binding_id=? AND execution_id=?
-        AND allocation_id=? AND child_id=?`).get(
-      childIdentity.networkId, childIdentity.bindingId, childIdentity.executionId,
-      childIdentity.allocationId, childIdentity.childId,
-    );
+        AND allocation_id=? AND child_id=?`,
+      )
+      .get(
+        childIdentity.networkId,
+        childIdentity.bindingId,
+        childIdentity.executionId,
+        childIdentity.allocationId,
+        childIdentity.childId,
+      );
     expect(submittingHead).toEqual({
-      latest_phase: 'base_deposit', latest_state: 'submitting',
+      latest_phase: 'base_deposit',
+      latest_state: 'submitting',
       submission_owner_token: committedClaim.ownerToken,
     });
-    expect(second.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count)
-      .toBe(eventsBefore + 1);
+    expect(second.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count).toBe(eventsBefore + 1);
 
-    expect(second.farmIntents.blockEvidenceConflict({
-      identity: childIdentity, now: 2_000_000_000_001,
-    })).toEqual({ jobId: record.jobId, status: 'blocked' });
-    expect(second.mandatesV3.revoke(routeIdentity(body))).toMatchObject({ status: 'revoked' });
-    expect(second.db.prepare(`SELECT latest_phase,latest_state,submission_owner_token
+    expect(
+      second.farmIntents.blockEvidenceConflict({
+        identity: childIdentity,
+        now: 2_000_000_000_001,
+      }),
+    ).toEqual({ jobId: record.jobId, status: 'blocked' });
+    expect(second.mandatesV3.revoke(routeIdentity(body))).toMatchObject({
+      status: 'revoked',
+    });
+    expect(
+      second.db
+        .prepare(
+          `SELECT latest_phase,latest_state,submission_owner_token
       FROM base_evidence_heads WHERE network_id=? AND binding_id=? AND execution_id=?
-        AND allocation_id=? AND child_id=?`).get(
-      childIdentity.networkId, childIdentity.bindingId, childIdentity.executionId,
-      childIdentity.allocationId, childIdentity.childId,
-    )).toEqual(submittingHead);
-    expect(second.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count)
-      .toBe(eventsBefore + 1);
+        AND allocation_id=? AND child_id=?`,
+        )
+        .get(
+          childIdentity.networkId,
+          childIdentity.bindingId,
+          childIdentity.executionId,
+          childIdentity.allocationId,
+          childIdentity.childId,
+        ),
+    ).toEqual(submittingHead);
+    expect(second.db.prepare('SELECT COUNT(*) AS count FROM base_evidence_outbox').get().count).toBe(eventsBefore + 1);
     expect(second.farmIntents.getByJob(projectionIdentity)).toMatchObject({
-      state: 'blocked', reasonCode: 'base_evidence_conflict',
+      state: 'blocked',
+      reasonCode: 'base_evidence_conflict',
     });
     expect(second.jobs.get(record.jobId)).toMatchObject({
-      status: 'blocked', reasonCode: 'base_evidence_conflict',
+      status: 'blocked',
+      reasonCode: 'base_evidence_conflict',
     });
-    expect(JSON.stringify({
-      job: second.jobs.get(record.jobId),
-      status: second.baseEvidenceOutbox.status(childIdentity),
-    })).not.toMatch(new RegExp(`${committedClaim.ownerToken}|${SESSION_KEY.slice(2)}|${CAPABILITY}`, 'i'));
+    expect(
+      JSON.stringify({
+        job: second.jobs.get(record.jobId),
+        status: second.baseEvidenceOutbox.status(childIdentity),
+      }),
+    ).not.toMatch(new RegExp(`${committedClaim.ownerToken}|${SESSION_KEY.slice(2)}|${CAPABILITY}`, 'i'));
 
     releaseClaim();
     expect(await resume).toEqual({
-      resumed: [], held: [record.jobId], blocked: [], uncertain: [],
+      resumed: [],
+      held: [record.jobId],
+      blocked: [],
+      uncertain: [],
     });
     expect(encodeCalls).toHaveBeenCalledOnce();
     expect(sendUserOperation).toHaveBeenCalledOnce();
     expect(waitForUserOperationReceipt).toHaveBeenCalledWith({
-      hash: USER_OP_HASH, timeout: 120_000,
+      hash: USER_OP_HASH,
+      timeout: 120_000,
     });
     expect(first.baseEvidenceOutbox.recoveryState(childIdentity)).toMatchObject({
-      phase: 'base_deposit', state: 'submitted', evidence: { userOpHash: USER_OP_HASH },
+      phase: 'base_deposit',
+      state: 'submitted',
+      evidence: { userOpHash: USER_OP_HASH },
     });
     expect(first.farmIntents.getByJob(projectionIdentity)).toMatchObject({
-      state: 'blocked', reasonCode: 'base_evidence_conflict',
+      state: 'blocked',
+      reasonCode: 'base_evidence_conflict',
     });
     expect(await harness.router.resumeFarmJobs()).toEqual({
-      resumed: [], held: [], blocked: [], uncertain: [],
+      resumed: [],
+      held: [],
+      blocked: [],
+      uncertain: [],
     });
     expect(sendUserOperation).toHaveBeenCalledOnce();
     second.db.close();
@@ -3786,48 +4939,66 @@ describe("v3 mandate route authorization and execution gates", () => {
   it('lets only the first router own two never-started children and preserves serial send order', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'vf-task11-two-router-send-')), 'relayer.db');
     const first = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
-    const second = createSqliteStores(path, { sessionKeyCipher: routeCipher() });
+    const second = createSqliteStores(path, {
+      sessionKeyCipher: routeCipher(),
+    });
     const deployment = {
-      networkId: 'stellar-testnet', sourceDomain: 27, destinationDomain: 6,
+      networkId: 'stellar-testnet',
+      sourceDomain: 27,
+      destinationDomain: 6,
       tokenMessengerMinter: 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
       baseTokenMessenger: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
       stellarUsdcSac: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
       poolTargets: new Map([
-        [POOL_ADDRESS.toLowerCase(), 'aave-v3'], [SECOND_POOL.toLowerCase(), 'blend-v2'],
+        [POOL_ADDRESS.toLowerCase(), 'aave-v3'],
+        [SECOND_POOL.toLowerCase(), 'blend-v2'],
       ]),
     };
     const allocations = routeAllocations();
     const secondUserOpHash = `0x${'44'.repeat(32)}`;
     const word = (value) => BigInt(value).toString(16).padStart(64, '0');
-    const sendUserOperation = vi.fn()
-      .mockResolvedValueOnce(USER_OP_HASH)
-      .mockResolvedValueOnce(secondUserOpHash);
+    const sendUserOperation = vi.fn().mockResolvedValueOnce(USER_OP_HASH).mockResolvedValueOnce(secondUserOpHash);
     let releaseRightReconstruction;
-    const rightReconstructionGate = new Promise((resolve) => { releaseRightReconstruction = resolve; });
+    const rightReconstructionGate = new Promise((resolve) => {
+      releaseRightReconstruction = resolve;
+    });
     const rightReconstruct = vi.fn(async () => {
       if (rightReconstruct.mock.calls.length === 1) await rightReconstructionGate;
       return makeKernelClient();
     });
     let submittedReached;
-    const submittedSignal = new Promise((resolve) => { submittedReached = resolve; });
+    const submittedSignal = new Promise((resolve) => {
+      submittedReached = resolve;
+    });
     let releaseSubmitted;
-    const submittedGate = new Promise((resolve) => { releaseSubmitted = resolve; });
+    const submittedGate = new Promise((resolve) => {
+      releaseSubmitted = resolve;
+    });
     let releaseFirstReceipt;
-    const firstReceiptGate = new Promise((resolve) => { releaseFirstReceipt = resolve; });
+    const firstReceiptGate = new Promise((resolve) => {
+      releaseFirstReceipt = resolve;
+    });
     let firstReceiptReached;
-    const firstReceiptSignal = new Promise((resolve) => { firstReceiptReached = resolve; });
+    const firstReceiptSignal = new Promise((resolve) => {
+      firstReceiptReached = resolve;
+    });
     const receiptFor = (allocation, userOpHash, transactionHash) => ({
-      userOpHash, sender: KERNEL, success: true,
-      logs: [{
-        address: CANONICAL_ROUTER,
-        topics: [
-          DEPOSITED_TOPIC0,
-          `0x${KERNEL.slice(2).padStart(64, '0')}`,
-          `0x${allocation.poolAddress.slice(2).padStart(64, '0')}`,
-        ],
-        data: `0x${word(allocation.amount.units)}${word(allocation.minShares)}`,
-        logIndex: 1, transactionHash,
-      }],
+      userOpHash,
+      sender: KERNEL,
+      success: true,
+      logs: [
+        {
+          address: CANONICAL_ROUTER,
+          topics: [
+            DEPOSITED_TOPIC0,
+            `0x${KERNEL.slice(2).padStart(64, '0')}`,
+            `0x${allocation.poolAddress.slice(2).padStart(64, '0')}`,
+          ],
+          data: `0x${word(allocation.amount.units)}${word(allocation.minShares)}`,
+          logIndex: 1,
+          transactionHash,
+        },
+      ],
       receipt: { status: 'success', transactionHash, logs: [] },
     });
     const makeKernelClient = () => ({
@@ -3843,17 +5014,31 @@ describe("v3 mandate route authorization and execution gates", () => {
       }),
     });
     const leftReconstruct = vi.fn(async () => makeKernelClient());
-    const relayForwardMint = vi.fn(async () => ({ status: 'attestation_pending' }));
-    const buildFlow = (reconstructSessionClientFn) => createFarmFlow({
-      watcher: {}, domains: { stellar: 27 },
-      orchestrator: createOrchestrator({
-        chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://bundler',
-        yieldRouterAddress: CANONICAL_ROUTER, usdcAddress: CANONICAL_USDC,
-        sessionPrivateKey: SESSION_KEY, now: () => 2_000_000_000_000,
-        baseCrossChainAvailable: true,
-        reconstructSessionClientFn,
-      }),
-    });
+    const relayForwardMint = vi.fn(async () => ({
+      status: 'attestation_pending',
+    }));
+    const buildFlow = (reconstructSessionClientFn) =>
+      createFarmFlow({
+        watcher: {},
+        domains: { stellar: 27 },
+        orchestrator: createOrchestrator({
+          chain: { id: 84532 },
+          rpcUrl: 'https://sepolia.base.org',
+          bundlerRpcUrl: 'https://bundler',
+          yieldRouterAddress: CANONICAL_ROUTER,
+          usdcAddress: CANONICAL_USDC,
+          sessionPrivateKey: SESSION_KEY,
+          now: () => 2_000_000_000_000,
+          baseCrossChainAvailable: true,
+          captureReconcileHandleFn: async ({ entryPoint, sender }) => ({
+            entryPoint,
+            sender,
+            nonce: '0',
+            startBlock: '100',
+          }),
+          reconstructSessionClientFn,
+        }),
+      });
     const leftOutbox = {
       ...first.baseEvidenceOutbox,
       claimSubmission: vi.fn((checkpoint) => first.baseEvidenceOutbox.claimSubmission(checkpoint)),
@@ -3865,48 +5050,73 @@ describe("v3 mandate route authorization and execution gates", () => {
         return first.baseEvidenceOutbox.enqueueOwned(checkpoint, ownership);
       },
     };
-    const harnessFor = (stores, baseEvidenceOutbox, reconstructSessionClientFn) => makeRouteHarness({
-      realStores: stores, jobs: stores.jobs, farmIntents: stores.farmIntents,
-      associationOutbox: stores.associationOutbox,
-      baseEvidenceOutbox, forwardFarmDeployment: deployment,
-      relayForwardMint,
-      poolTargets: deployment.poolTargets,
-      buildFarmImplementation: () => buildFlow(reconstructSessionClientFn),
-    });
+    const harnessFor = (stores, baseEvidenceOutbox, reconstructSessionClientFn) =>
+      makeRouteHarness({
+        realStores: stores,
+        jobs: stores.jobs,
+        farmIntents: stores.farmIntents,
+        associationOutbox: stores.associationOutbox,
+        baseEvidenceOutbox,
+        forwardFarmDeployment: deployment,
+        relayForwardMint,
+        poolTargets: deployment.poolTargets,
+        buildFarmImplementation: () => buildFlow(reconstructSessionClientFn),
+      });
     const left = harnessFor(first, leftOutbox, leftReconstruct);
     const right = harnessFor(second, second.baseEvidenceOutbox, rightReconstruct);
     const body = routeBody();
     seedActiveMandate(left, body);
     const farm = await postProtected(left, '/farm', {
-      requestId: '01'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '01'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations,
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations,
     });
-    const attachments = await Promise.all([left, right].map((harness) => postProtected(
-      harness, '/farm/attach', {
-        mandateId: body.mandateId, jobId: farm.json.jobId, burnTxHash: 'bb'.repeat(32),
-      },
-    )));
+    const attachments = await Promise.all(
+      [left, right].map((harness) =>
+        postProtected(harness, '/farm/attach', {
+          mandateId: body.mandateId,
+          jobId: farm.json.jobId,
+          burnTxHash: 'bb'.repeat(32),
+        }),
+      ),
+    );
     expect(attachments.map(({ res }) => res.statusCode)).toEqual([202, 202]);
     await flushMicrotasks();
     expect(relayForwardMint).toHaveBeenCalledTimes(1);
-    const record = first.farmIntents.getByJob({ mandateId: body.mandateId, jobId: farm.json.jobId });
+    const record = first.farmIntents.getByJob({
+      mandateId: body.mandateId,
+      jobId: farm.json.jobId,
+    });
     const projectionIdentity = {
-      mandateId: body.mandateId, jobId: record.jobId,
-      bindingId: record.bindingId, intentDigest: record.intentDigest,
+      mandateId: body.mandateId,
+      jobId: record.jobId,
+      bindingId: record.bindingId,
+      intentDigest: record.intentDigest,
     };
     first.farmIntents.projectMintEvidenceAtomic({
       identity: projectionIdentity,
       relay: {
-        execId: record.relayExecId, state: 'minted', burnTxHash: record.burnTxHash,
-        expectationDigest: record.expectationDigest, messageDigest: 'cc'.repeat(32),
-        attestationDigest: 'dd'.repeat(32), evidenceVersion: '1',
+        execId: record.relayExecId,
+        state: 'minted',
+        burnTxHash: record.burnTxHash,
+        expectationDigest: record.expectationDigest,
+        messageDigest: 'cc'.repeat(32),
+        attestationDigest: 'dd'.repeat(32),
+        evidenceVersion: '1',
+        nonceHex: `0x${'01'.repeat(32)}`,
         mintTxHash: `0x${'ee'.repeat(32)}`,
-      }, now: 2_000_000_000_000,
+      },
+      now: 2_000_000_000_000,
     });
     first.farmIntents.advanceProjection({
-      identity: projectionIdentity, from: 'deposit_pending', to: 'deposit_confirming',
+      identity: projectionIdentity,
+      from: 'deposit_pending',
+      to: 'deposit_confirming',
       now: 2_000_000_000_000,
     });
     const rightResume = right.router.resumeFarmJobs();
@@ -3925,36 +5135,65 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(sendUserOperation).toHaveBeenCalledTimes(2);
     const summaries = [leftSummary, rightSummary];
     expect(summaries.flatMap(({ resumed }) => resumed)).toEqual([farm.json.jobId]);
-    expect(first.farmIntents.getByJob({ mandateId: body.mandateId, jobId: farm.json.jobId }))
-      .toMatchObject({ state: 'done' });
+    expect(
+      first.farmIntents.getByJob({
+        mandateId: body.mandateId,
+        jobId: farm.json.jobId,
+      }),
+    ).toMatchObject({ state: 'done' });
 
     const gapBody = secondRouteBody();
     seedActiveMandate(left, gapBody, 'active-binding-gap');
-    const gapFarm = await postProtected(left, '/farm', {
-      requestId: '03'.repeat(16), mandateId: gapBody.mandateId,
-      stellarOwner: gapBody.stellarOwner, kernelAddress: gapBody.kernelAddress,
-      bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [allocations[0]],
-    }, SECOND_CAPABILITY);
+    const gapFarm = await postProtected(
+      left,
+      '/farm',
+      {
+        requestId: '03'.repeat(16),
+        mandateId: gapBody.mandateId,
+        stellarOwner: gapBody.stellarOwner,
+        kernelAddress: gapBody.kernelAddress,
+        bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
+        runId: 'run-42',
+        grantTxHash: 'aa'.repeat(32),
+        allocations: [allocations[0]],
+      },
+      SECOND_CAPABILITY,
+    );
     expect(gapFarm.res.statusCode).toBe(201);
-    await postProtected(left, '/farm/attach', {
-      mandateId: gapBody.mandateId, jobId: gapFarm.json.jobId, burnTxHash: 'bd'.repeat(32),
-    }, SECOND_CAPABILITY);
+    await postProtected(
+      left,
+      '/farm/attach',
+      {
+        mandateId: gapBody.mandateId,
+        jobId: gapFarm.json.jobId,
+        burnTxHash: 'bd'.repeat(32),
+      },
+      SECOND_CAPABILITY,
+    );
     const gapRecord = first.farmIntents.getByJob({
-      mandateId: gapBody.mandateId, jobId: gapFarm.json.jobId,
+      mandateId: gapBody.mandateId,
+      jobId: gapFarm.json.jobId,
     });
     const gapProjection = {
-      mandateId: gapBody.mandateId, jobId: gapRecord.jobId,
-      bindingId: gapRecord.bindingId, intentDigest: gapRecord.intentDigest,
+      mandateId: gapBody.mandateId,
+      jobId: gapRecord.jobId,
+      bindingId: gapRecord.bindingId,
+      intentDigest: gapRecord.intentDigest,
     };
     first.farmIntents.projectMintEvidenceAtomic({
       identity: gapProjection,
       relay: {
-        execId: gapRecord.relayExecId, state: 'minted', burnTxHash: gapRecord.burnTxHash,
-        expectationDigest: gapRecord.expectationDigest, messageDigest: 'cf'.repeat(32),
-        attestationDigest: 'df'.repeat(32), evidenceVersion: '1',
+        execId: gapRecord.relayExecId,
+        state: 'minted',
+        burnTxHash: gapRecord.burnTxHash,
+        expectationDigest: gapRecord.expectationDigest,
+        messageDigest: 'cf'.repeat(32),
+        attestationDigest: 'df'.repeat(32),
+        evidenceVersion: '1',
+        nonceHex: `0x${'03'.repeat(32)}`,
         mintTxHash: `0x${'f0'.repeat(32)}`,
-      }, now: 2_000_000_000_050,
+      },
+      now: 2_000_000_000_050,
     });
     let gapRevoked = false;
     const revokeInClaimGap = () => {
@@ -3967,8 +5206,7 @@ describe("v3 mandate route authorization and execution gates", () => {
       revokeInClaimGap();
       return rawClaim(checkpoint);
     });
-    const authorizedClaim = first.farmIntents.claimAuthorizedSubmission
-      .bind(first.farmIntents);
+    const authorizedClaim = first.farmIntents.claimAuthorizedSubmission.bind(first.farmIntents);
     const claimAuthorizedSubmission = vi.fn((args) => {
       revokeInClaimGap();
       return authorizedClaim(args);
@@ -3982,36 +5220,55 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(claimAuthorizedSubmission).toHaveBeenCalledOnce();
     expect(sendUserOperation).toHaveBeenCalledTimes(gapSendsBefore);
     const gapChild = gapRecord.batch.children[0];
-    expect(first.baseEvidenceOutbox.recoveryState({
-      networkId: gapChild.networkId, bindingId: gapChild.bindingId,
-      executionId: gapChild.executionId, allocationId: gapChild.allocationId,
-      childId: gapChild.childId,
-    })).toMatchObject({ phase: 'cctp_mint', state: 'confirmed' });
+    expect(
+      first.baseEvidenceOutbox.recoveryState({
+        networkId: gapChild.networkId,
+        bindingId: gapChild.bindingId,
+        executionId: gapChild.executionId,
+        allocationId: gapChild.allocationId,
+        childId: gapChild.childId,
+      }),
+    ).toMatchObject({ phase: 'cctp_mint', state: 'confirmed' });
 
     const revokedFarm = await postProtected(left, '/farm', {
-      requestId: '02'.repeat(16), mandateId: body.mandateId,
-      stellarOwner: body.stellarOwner, kernelAddress: body.kernelAddress,
+      requestId: '02'.repeat(16),
+      mandateId: body.mandateId,
+      stellarOwner: body.stellarOwner,
+      kernelAddress: body.kernelAddress,
       bridgeAgent: 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ',
-      runId: 'run-42', grantTxHash: 'aa'.repeat(32), allocations: [allocations[0]],
+      runId: 'run-42',
+      grantTxHash: 'aa'.repeat(32),
+      allocations: [allocations[0]],
     });
     await postProtected(left, '/farm/attach', {
-      mandateId: body.mandateId, jobId: revokedFarm.json.jobId, burnTxHash: 'bc'.repeat(32),
+      mandateId: body.mandateId,
+      jobId: revokedFarm.json.jobId,
+      burnTxHash: 'bc'.repeat(32),
     });
     const revokedRecord = first.farmIntents.getByJob({
-      mandateId: body.mandateId, jobId: revokedFarm.json.jobId,
+      mandateId: body.mandateId,
+      jobId: revokedFarm.json.jobId,
     });
     const revokedProjection = {
-      mandateId: body.mandateId, jobId: revokedRecord.jobId,
-      bindingId: revokedRecord.bindingId, intentDigest: revokedRecord.intentDigest,
+      mandateId: body.mandateId,
+      jobId: revokedRecord.jobId,
+      bindingId: revokedRecord.bindingId,
+      intentDigest: revokedRecord.intentDigest,
     };
     first.farmIntents.projectMintEvidenceAtomic({
       identity: revokedProjection,
       relay: {
-        execId: revokedRecord.relayExecId, state: 'minted', burnTxHash: revokedRecord.burnTxHash,
-        expectationDigest: revokedRecord.expectationDigest, messageDigest: 'ce'.repeat(32),
-        attestationDigest: 'de'.repeat(32), evidenceVersion: '1',
+        execId: revokedRecord.relayExecId,
+        state: 'minted',
+        burnTxHash: revokedRecord.burnTxHash,
+        expectationDigest: revokedRecord.expectationDigest,
+        messageDigest: 'ce'.repeat(32),
+        attestationDigest: 'de'.repeat(32),
+        evidenceVersion: '1',
+        nonceHex: `0x${'02'.repeat(32)}`,
         mintTxHash: `0x${'ef'.repeat(32)}`,
-      }, now: 2_000_000_000_100,
+      },
+      now: 2_000_000_000_100,
     });
     let releaseRevokedReconstruction;
     const revokedReconstructionGate = new Promise((resolve) => {
@@ -4037,30 +5294,54 @@ describe("v3 mandate route authorization and execution gates", () => {
     first.db.close();
   });
 
-
   it.each([
-    'getAuthority', 'status', 'claimEvidence', 'renewEvidence', 'releaseEvidence',
-    'attachAndEnqueue', 'finishBlocked', 'finishUncertain', 'reconcileFromCctp',
-    'reconcileExpired', 'listForResume',
-    'readUnwindEvidence', 'relayReverseMint', 'unwindPublicClient',
-    'unwindBundlerClient', 'unwindEvidenceFacts',
+    'getAuthority',
+    'status',
+    'claimEvidence',
+    'renewEvidence',
+    'releaseEvidence',
+    'attachAndEnqueue',
+    'finishBlocked',
+    'finishUncertain',
+    'reconcileFromCctp',
+    'reconcileExpired',
+    'listForResume',
+    'readUnwindEvidence',
+    'relayReverseMint',
+    'unwindPublicClient',
+    'unwindBundlerClient',
+    'unwindEvidenceFacts',
   ])('fails reserve closed before persistence when attach dependency %s is unavailable', async (missing) => {
     const reserve = vi.fn(() => ({
-      jobId: 'ab'.repeat(16), status: 'awaiting_burn', expiresAt: 1_700_003_600_000,
+      jobId: 'ab'.repeat(16),
+      status: 'awaiting_burn',
+      expiresAt: 1_700_003_600_000,
     }));
     const unwindJobs = {
       reserve,
-      getAuthority: vi.fn(), status: vi.fn(), claimEvidence: vi.fn(),
-      renewEvidence: vi.fn(), releaseEvidence: vi.fn(), attachAndEnqueue: vi.fn(),
-      finishBlocked: vi.fn(), finishUncertain: vi.fn(), reconcileFromCctp: vi.fn(),
-      reconcileExpired: vi.fn(), listForResume: vi.fn(),
+      getAuthority: vi.fn(),
+      status: vi.fn(),
+      claimEvidence: vi.fn(),
+      renewEvidence: vi.fn(),
+      releaseEvidence: vi.fn(),
+      attachAndEnqueue: vi.fn(),
+      finishBlocked: vi.fn(),
+      finishUncertain: vi.fn(),
+      reconcileFromCctp: vi.fn(),
+      reconcileExpired: vi.fn(),
+      listForResume: vi.fn(),
     };
     const dependencies = {
-      readUnwindEvidence: vi.fn(), relayReverseMint: vi.fn(),
+      readUnwindEvidence: vi.fn(),
+      relayReverseMint: vi.fn(),
       unwindPublicClient: { getChainId() {}, getTransactionReceipt() {} },
-      unwindBundlerClient: { getUserOperation() {}, getUserOperationReceipt() {} },
+      unwindBundlerClient: {
+        getUserOperation() {},
+        getUserOperationReceipt() {},
+      },
       unwindEvidenceFacts: {
-        generation: 'hardened-v2', chainId: 84532,
+        generation: 'hardened-v2',
+        chainId: 84532,
         entryPointAddress: '0x0000000071727de22e5e9d8baf0edac6f37da032',
         baseExitSweeperAddress: `0x${'44'.repeat(20)}`,
         usdcAddress: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
@@ -4075,23 +5356,35 @@ describe("v3 mandate route authorization and execution gates", () => {
     if (Object.hasOwn(unwindJobs, missing)) delete unwindJobs[missing];
     else delete dependencies[missing];
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
-      unwindJobs, ...dependencies,
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
+      unwindJobs,
+      ...dependencies,
       unwindCookieMaxAgeSeconds: 3600,
       nowMs: () => 1_700_000_000_000,
       publicRuntime: { baseCrossChainAvailable: true },
     });
     const response = mockRes();
-    await router({
-      method: 'POST', url: '/api/vf-cross/unwind', headers: {},
-      body: {
-        jobId: 'ab'.repeat(16), capability: CAPABILITY,
-        kernelAddress: KERNEL, recipientHint: OWNER,
+    await router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/unwind',
+        headers: {},
+        body: {
+          jobId: 'ab'.repeat(16),
+          capability: CAPABILITY,
+          kernelAddress: KERNEL,
+          recipientHint: OWNER,
+        },
       },
-    }, response);
+      response,
+    );
 
     expect(response.statusCode).toBe(503);
-    expect(jsonOf(response)).toEqual({ error: 'unwind relay is unavailable' });
+    expect(jsonOf(response)).toEqual({
+      error: 'unwind relay is unavailable',
+    });
     expect(response.headers['Set-Cookie']).toBeUndefined();
     expect(reserve).not.toHaveBeenCalled();
   });
@@ -4116,24 +5409,37 @@ describe("v3 mandate route authorization and execution gates", () => {
       genId: vi.fn(),
       unwindJobs: {
         reserve,
-        getAuthority: vi.fn(), status: vi.fn(), claimEvidence: vi.fn(),
-        renewEvidence: vi.fn(), releaseEvidence: vi.fn(), attachAndEnqueue: vi.fn(),
-        finishBlocked: vi.fn(), finishUncertain: vi.fn(), reconcileFromCctp: vi.fn(),
-        reconcileExpired: vi.fn(), listForResume: vi.fn(),
+        getAuthority: vi.fn(),
+        status: vi.fn(),
+        claimEvidence: vi.fn(),
+        renewEvidence: vi.fn(),
+        releaseEvidence: vi.fn(),
+        attachAndEnqueue: vi.fn(),
+        finishBlocked: vi.fn(),
+        finishUncertain: vi.fn(),
+        reconcileFromCctp: vi.fn(),
+        reconcileExpired: vi.fn(),
+        listForResume: vi.fn(),
       },
       readUnwindEvidence: vi.fn(),
       relayReverseMint,
       unwindPublicClient: { getChainId() {}, getTransactionReceipt() {} },
-      unwindBundlerClient: { getUserOperation() {}, getUserOperationReceipt() {} },
+      unwindBundlerClient: {
+        getUserOperation() {},
+        getUserOperationReceipt() {},
+      },
       unwindEvidenceFacts: {
-        generation: 'hardened-v2', chainId: 84532,
+        generation: 'hardened-v2',
+        chainId: 84532,
         entryPointAddress: '0x0000000071727de22e5e9d8baf0edac6f37da032',
         baseExitSweeperAddress: `0x${'44'.repeat(20)}`,
         usdcAddress: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
         tokenMessengerV2Address: '0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa',
         messageTransmitterV2Address: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
-        stellarDomain: 27, stellarTokenMessenger: `0x${'55'.repeat(32)}`,
-        cctpForwarder: `0x${'66'.repeat(32)}`, finalityThreshold: 1000,
+        stellarDomain: 27,
+        stellarTokenMessenger: `0x${'55'.repeat(32)}`,
+        cctpForwarder: `0x${'66'.repeat(32)}`,
+        finalityThreshold: 1000,
       },
       unwindCookieMaxAgeSeconds: 3600,
       nowMs: () => 1_700_000_000_000,
@@ -4141,12 +5447,20 @@ describe("v3 mandate route authorization and execution gates", () => {
     });
     const response = mockRes();
 
-    await router({
-      method: 'POST',
-      url: '/api/vf-cross/unwind',
-      headers: {},
-      body: { jobId, capability: CAPABILITY, kernelAddress: mixedKernel, recipientHint: OWNER },
-    }, response);
+    await router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/unwind',
+        headers: {},
+        body: {
+          jobId,
+          capability: CAPABILITY,
+          kernelAddress: mixedKernel,
+          recipientHint: OWNER,
+        },
+      },
+      response,
+    );
 
     expect(response.statusCode).toBe(202);
     expect(jsonOf(response)).toEqual({ jobId, status: 'awaiting_burn' });
@@ -4154,15 +5468,17 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect(response.headers['Set-Cookie']).toBe(
       `__Host-vf-unwind-${jobId}=${CAPABILITY}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`,
     );
-    expect(reserve).toHaveBeenCalledWith(expect.objectContaining({
-      jobId,
-      capabilityHash: CAPABILITY_HASH,
-      kernelAddress: canonicalKernel,
-      recipientHint: OWNER,
-      expiresAt: 1_700_003_300_000,
-      capabilityExpiresAt: 1_700_003_600_000,
-      now: 1_700_000_000_000,
-    }));
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId,
+        capabilityHash: CAPABILITY_HASH,
+        kernelAddress: canonicalKernel,
+        recipientHint: OWNER,
+        expiresAt: 1_700_003_300_000,
+        capabilityExpiresAt: 1_700_003_600_000,
+        now: 1_700_000_000_000,
+      }),
+    );
     expect(Object.keys(reserve.mock.calls[0][0])).not.toContain('capability');
     expect(jobs.size).toBe(0);
     expect(relayReverseMint).not.toHaveBeenCalled();
@@ -4173,28 +5489,44 @@ describe("v3 mandate route authorization and execution gates", () => {
     const jobId = 'ab'.repeat(16);
     let now = 1_700_000_000_000;
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
       unwindJobs: stores.unwindJobs,
-      readUnwindEvidence: vi.fn(), relayReverseMint: vi.fn(),
+      readUnwindEvidence: vi.fn(),
+      relayReverseMint: vi.fn(),
       unwindPublicClient: { getChainId() {}, getTransactionReceipt() {} },
-      unwindBundlerClient: { getUserOperation() {}, getUserOperationReceipt() {} },
+      unwindBundlerClient: {
+        getUserOperation() {},
+        getUserOperationReceipt() {},
+      },
       unwindEvidenceFacts: {
-        generation: 'hardened-v2', chainId: 84532,
+        generation: 'hardened-v2',
+        chainId: 84532,
         entryPointAddress: '0x0000000071727de22e5e9d8baf0edac6f37da032',
         baseExitSweeperAddress: `0x${'44'.repeat(20)}`,
         usdcAddress: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
         tokenMessengerV2Address: '0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa',
         messageTransmitterV2Address: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
-        stellarDomain: 27, stellarTokenMessenger: `0x${'55'.repeat(32)}`,
-        cctpForwarder: `0x${'66'.repeat(32)}`, finalityThreshold: 1000,
+        stellarDomain: 27,
+        stellarTokenMessenger: `0x${'55'.repeat(32)}`,
+        cctpForwarder: `0x${'66'.repeat(32)}`,
+        finalityThreshold: 1000,
       },
       unwindCookieMaxAgeSeconds: 3600,
       nowMs: () => now,
       publicRuntime: { baseCrossChainAvailable: true },
     });
     const request = () => ({
-      method: 'POST', url: '/api/vf-cross/unwind', headers: {},
-      body: { jobId, capability: CAPABILITY, kernelAddress: KERNEL, recipientHint: OWNER },
+      method: 'POST',
+      url: '/api/vf-cross/unwind',
+      headers: {},
+      body: {
+        jobId,
+        capability: CAPABILITY,
+        kernelAddress: KERNEL,
+        recipientHint: OWNER,
+      },
     });
     const first = mockRes();
     await router(request(), first);
@@ -4222,8 +5554,12 @@ describe("v3 mandate route authorization and execution gates", () => {
       throw error;
     });
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: stores.jobs, genId: vi.fn(),
-      unwindJobs: stores.unwindJobs, readUnwindEvidence, relayReverseMint: vi.fn(),
+      buildFarm: vi.fn(),
+      jobs: stores.jobs,
+      genId: vi.fn(),
+      unwindJobs: stores.unwindJobs,
+      readUnwindEvidence,
+      relayReverseMint: vi.fn(),
       unwindPublicClient: UNWIND_PUBLIC_CLIENT,
       unwindBundlerClient: UNWIND_BUNDLER_CLIENT,
       unwindEvidenceFacts: UNWIND_FACTS,
@@ -4234,11 +5570,19 @@ describe("v3 mandate route authorization and execution gates", () => {
       publicRuntime: { baseCrossChainAvailable: true },
     });
     const reserveRequest = () => ({
-      method: 'POST', url: '/api/vf-cross/unwind', headers: {},
-      body: { jobId, capability: CAPABILITY, kernelAddress: KERNEL, recipientHint: OWNER },
+      method: 'POST',
+      url: '/api/vf-cross/unwind',
+      headers: {},
+      body: {
+        jobId,
+        capability: CAPABILITY,
+        kernelAddress: KERNEL,
+        recipientHint: OWNER,
+      },
     });
     const attachRequest = (userOpHash = USER_OP_HASH) => ({
-      method: 'POST', url: '/api/vf-cross/unwind/attach',
+      method: 'POST',
+      url: '/api/vf-cross/unwind/attach',
       headers: { authorization: `Bearer ${CAPABILITY}` },
       body: { jobId, userOpHash, unwindTxHash: TX_HASH },
     });
@@ -4288,7 +5632,9 @@ describe("v3 mandate route authorization and execution gates", () => {
       state: 'relay_pending',
       capabilityHash: CAPABILITY_HASH,
     }));
-    const status = vi.fn(() => { throw new Error('stale wrapper read must not answer status'); });
+    const status = vi.fn(() => {
+      throw new Error('stale wrapper read must not answer status');
+    });
     const reconcileFromCctp = vi.fn(() => ({
       jobId,
       status: 'relay_pending',
@@ -4304,18 +5650,28 @@ describe("v3 mandate route authorization and execution gates", () => {
     });
     const response = mockRes();
 
-    await router({
-      method: 'POST',
-      url: '/api/vf-cross/status',
-      headers: { authorization: `Bearer ${CAPABILITY}` },
-      body: { jobId },
-    }, response);
+    await router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/status',
+        headers: { authorization: `Bearer ${CAPABILITY}` },
+        body: { jobId },
+      },
+      response,
+    );
 
     expect(response.statusCode).toBe(200);
-    expect(jsonOf(response)).toEqual({ jobId, status: 'relay_pending', unwindTxHash: TX_HASH });
+    expect(jsonOf(response)).toEqual({
+      jobId,
+      status: 'relay_pending',
+      unwindTxHash: TX_HASH,
+    });
     expect(response.headers['Cache-Control']).toBe('no-store');
     expect(getAuthority).toHaveBeenCalledWith(jobId);
-    expect(reconcileFromCctp).toHaveBeenCalledWith({ jobId, now: 1_700_000_000_000 });
+    expect(reconcileFromCctp).toHaveBeenCalledWith({
+      jobId,
+      now: 1_700_000_000_000,
+    });
     expect(status).not.toHaveBeenCalled();
     expect(response.body).not.toContain(CAPABILITY);
     expect(response.body).not.toContain(CAPABILITY_HASH);
@@ -4326,8 +5682,11 @@ describe("v3 mandate route authorization and execution gates", () => {
     const capabilityExpiresAt = 1_700_000_001_000;
     let now = capabilityExpiresAt - 1;
     const claimEvidence = vi.fn(() => ({
-      jobId, kernelAddress: KERNEL, recipientHint: OWNER,
-      leaseToken: 'boundary-lease', leaseExpiresAt: capabilityExpiresAt,
+      jobId,
+      kernelAddress: KERNEL,
+      recipientHint: OWNER,
+      leaseToken: 'boundary-lease',
+      leaseExpiresAt: capabilityExpiresAt,
     }));
     const reconcileFromCctp = vi.fn(() => ({ jobId, status: 'awaiting_burn' }));
     const readUnwindEvidence = vi.fn(async () => {
@@ -4338,17 +5697,33 @@ describe("v3 mandate route authorization and execution gates", () => {
     const unwindJobs = {
       reserve: vi.fn(),
       getAuthority: vi.fn(() => ({
-        jobId, kernelAddress: KERNEL, recipientHint: OWNER,
-        state: 'awaiting_burn', capabilityHash: CAPABILITY_HASH,
-        capabilityExpiresAt, userOpHash: null, unwindTxHash: null,
+        jobId,
+        kernelAddress: KERNEL,
+        recipientHint: OWNER,
+        state: 'awaiting_burn',
+        capabilityHash: CAPABILITY_HASH,
+        capabilityExpiresAt,
+        userOpHash: null,
+        unwindTxHash: null,
       })),
-      status: vi.fn(), claimEvidence, renewEvidence: vi.fn(), releaseEvidence: vi.fn(),
-      attachAndEnqueue: vi.fn(), finishBlocked: vi.fn(), finishUncertain: vi.fn(),
-      reconcileFromCctp, reconcileExpired: vi.fn(), listForResume: vi.fn(),
+      status: vi.fn(),
+      claimEvidence,
+      renewEvidence: vi.fn(),
+      releaseEvidence: vi.fn(),
+      attachAndEnqueue: vi.fn(),
+      finishBlocked: vi.fn(),
+      finishUncertain: vi.fn(),
+      reconcileFromCctp,
+      reconcileExpired: vi.fn(),
+      listForResume: vi.fn(),
     };
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(), unwindJobs,
-      readUnwindEvidence, relayReverseMint: vi.fn(),
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
+      unwindJobs,
+      readUnwindEvidence,
+      relayReverseMint: vi.fn(),
       unwindPublicClient: UNWIND_PUBLIC_CLIENT,
       unwindBundlerClient: UNWIND_BUNDLER_CLIENT,
       unwindEvidenceFacts: UNWIND_FACTS,
@@ -4356,11 +5731,14 @@ describe("v3 mandate route authorization and execution gates", () => {
       publicRuntime: { baseCrossChainAvailable: true },
     });
     const statusRequest = () => ({
-      method: 'POST', url: '/api/vf-cross/status',
-      headers: { authorization: `Bearer ${CAPABILITY}` }, body: { jobId },
+      method: 'POST',
+      url: '/api/vf-cross/status',
+      headers: { authorization: `Bearer ${CAPABILITY}` },
+      body: { jobId },
     });
     const attachRequest = () => ({
-      method: 'POST', url: '/api/vf-cross/unwind/attach',
+      method: 'POST',
+      url: '/api/vf-cross/unwind/attach',
       headers: { authorization: `Bearer ${CAPABILITY}` },
       body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
     });
@@ -4371,8 +5749,11 @@ describe("v3 mandate route authorization and execution gates", () => {
     const justBeforeAttach = mockRes();
     await router(attachRequest(), justBeforeAttach);
     expect(justBeforeAttach.statusCode).toBe(503);
-    expect({ claim: claimEvidence.mock.calls.length, reconcile: reconcileFromCctp.mock.calls.length,
-      reads: readUnwindEvidence.mock.calls.length }).toEqual({ claim: 1, reconcile: 1, reads: 1 });
+    expect({
+      claim: claimEvidence.mock.calls.length,
+      reconcile: reconcileFromCctp.mock.calls.length,
+      reads: readUnwindEvidence.mock.calls.length,
+    }).toEqual({ claim: 1, reconcile: 1, reads: 1 });
 
     for (const boundary of [capabilityExpiresAt, capabilityExpiresAt + 1]) {
       now = boundary;
@@ -4383,61 +5764,111 @@ describe("v3 mandate route authorization and execution gates", () => {
         expect(jsonOf(response)).toEqual({ error: 'unauthorized' });
       }
     }
-    expect({ claim: claimEvidence.mock.calls.length, reconcile: reconcileFromCctp.mock.calls.length,
-      reads: readUnwindEvidence.mock.calls.length }).toEqual({ claim: 1, reconcile: 1, reads: 1 });
+    expect({
+      claim: claimEvidence.mock.calls.length,
+      reconcile: reconcileFromCctp.mock.calls.length,
+      reads: readUnwindEvidence.mock.calls.length,
+    }).toEqual({ claim: 1, reconcile: 1, reads: 1 });
   });
 
   it.each([
-    ['pending', { jobId: 'ab'.repeat(16), status: 'relay_pending', unwindTxHash: TX_HASH }],
-    ['running', { jobId: 'ab'.repeat(16), status: 'relay_running', unwindTxHash: TX_HASH }],
-    ['submitted', {
-      jobId: 'ab'.repeat(16), status: 'relay_running', unwindTxHash: TX_HASH,
-      mintTxHash: 'aa'.repeat(32),
-    }],
-    ['done', {
-      jobId: 'ab'.repeat(16), status: 'done', unwindTxHash: TX_HASH,
-      mintTxHash: 'aa'.repeat(32),
-    }],
-    ['blocked', {
-      jobId: 'ab'.repeat(16), status: 'blocked', unwindTxHash: TX_HASH,
-      reasonCode: 'destination_reverted',
-    }],
-    ['uncertain', {
-      jobId: 'ab'.repeat(16), status: 'uncertain', unwindTxHash: TX_HASH,
-      mintTxHash: 'aa'.repeat(32), reasonCode: 'submitted_checkpoint_failed',
-    }],
-  ])('projects authenticated Task8 %s truth on status without evidence reads or relay sends', async (_label, projection) => {
-    const readUnwindEvidence = vi.fn();
-    const relayReverseMint = vi.fn();
-    const reconcileFromCctp = vi.fn(() => projection);
-    const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
-      unwindJobs: {
-        reserve: vi.fn(),
-        getAuthority: vi.fn(() => ({
-          jobId: projection.jobId, kernelAddress: KERNEL, recipientHint: OWNER,
-          capabilityHash: CAPABILITY_HASH,
-          capabilityExpiresAt: 1_700_003_600_000,
-        })),
-        reconcileFromCctp,
+    [
+      'pending',
+      {
+        jobId: 'ab'.repeat(16),
+        status: 'relay_pending',
+        unwindTxHash: TX_HASH,
       },
-      readUnwindEvidence, relayReverseMint,
-      nowMs: () => 1_700_000_000_000,
-      publicRuntime: { baseCrossChainAvailable: true },
-    });
-    const response = mockRes();
-    await router({
-      method: 'POST', url: '/api/vf-cross/status',
-      headers: { authorization: `Bearer ${CAPABILITY}` },
-      body: { jobId: projection.jobId },
-    }, response);
+    ],
+    [
+      'running',
+      {
+        jobId: 'ab'.repeat(16),
+        status: 'relay_running',
+        unwindTxHash: TX_HASH,
+      },
+    ],
+    [
+      'submitted',
+      {
+        jobId: 'ab'.repeat(16),
+        status: 'relay_running',
+        unwindTxHash: TX_HASH,
+        mintTxHash: 'aa'.repeat(32),
+      },
+    ],
+    [
+      'done',
+      {
+        jobId: 'ab'.repeat(16),
+        status: 'done',
+        unwindTxHash: TX_HASH,
+        mintTxHash: 'aa'.repeat(32),
+      },
+    ],
+    [
+      'blocked',
+      {
+        jobId: 'ab'.repeat(16),
+        status: 'blocked',
+        unwindTxHash: TX_HASH,
+        reasonCode: 'destination_reverted',
+      },
+    ],
+    [
+      'uncertain',
+      {
+        jobId: 'ab'.repeat(16),
+        status: 'uncertain',
+        unwindTxHash: TX_HASH,
+        mintTxHash: 'aa'.repeat(32),
+        reasonCode: 'submitted_checkpoint_failed',
+      },
+    ],
+  ])(
+    'projects authenticated Task8 %s truth on status without evidence reads or relay sends',
+    async (_label, projection) => {
+      const readUnwindEvidence = vi.fn();
+      const relayReverseMint = vi.fn();
+      const reconcileFromCctp = vi.fn(() => projection);
+      const router = createRelayerRouter({
+        buildFarm: vi.fn(),
+        jobs: new Map(),
+        genId: vi.fn(),
+        unwindJobs: {
+          reserve: vi.fn(),
+          getAuthority: vi.fn(() => ({
+            jobId: projection.jobId,
+            kernelAddress: KERNEL,
+            recipientHint: OWNER,
+            capabilityHash: CAPABILITY_HASH,
+            capabilityExpiresAt: 1_700_003_600_000,
+          })),
+          reconcileFromCctp,
+        },
+        readUnwindEvidence,
+        relayReverseMint,
+        nowMs: () => 1_700_000_000_000,
+        publicRuntime: { baseCrossChainAvailable: true },
+      });
+      const response = mockRes();
+      await router(
+        {
+          method: 'POST',
+          url: '/api/vf-cross/status',
+          headers: { authorization: `Bearer ${CAPABILITY}` },
+          body: { jobId: projection.jobId },
+        },
+        response,
+      );
 
-    expect(response.statusCode).toBe(200);
-    expect(jsonOf(response)).toEqual(projection);
-    expect(reconcileFromCctp).toHaveBeenCalledOnce();
-    expect(readUnwindEvidence).not.toHaveBeenCalled();
-    expect(relayReverseMint).not.toHaveBeenCalled();
-  });
+      expect(response.statusCode).toBe(200);
+      expect(jsonOf(response)).toEqual(projection);
+      expect(reconcileFromCctp).toHaveBeenCalledOnce();
+      expect(readUnwindEvidence).not.toHaveBeenCalled();
+      expect(relayReverseMint).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ['missing Authorization', {}],
@@ -4445,25 +5876,40 @@ describe("v3 mandate route authorization and execution gates", () => {
     ['lowercase bearer', { authorization: `bearer ${CAPABILITY}` }],
     ['trailing bearer token', { authorization: `Bearer ${CAPABILITY} extra` }],
     ['Node Cookie only', { cookie: `__Host-vf-unwind-${'ab'.repeat(16)}=${CAPABILITY}` }],
-    ['Bearer plus Node Cookie', {
-      authorization: `Bearer ${CAPABILITY}`,
-      cookie: `__Host-vf-unwind-${'ab'.repeat(16)}=${CAPABILITY}`,
-    }],
+    [
+      'Bearer plus Node Cookie',
+      {
+        authorization: `Bearer ${CAPABILITY}`,
+        cookie: `__Host-vf-unwind-${'ab'.repeat(16)}=${CAPABILITY}`,
+      },
+    ],
   ])('rejects unwind attach with %s before authority, evidence, or state reads', async (_label, headers) => {
     const getAuthority = vi.fn();
     const status = vi.fn();
     const readUnwindEvidence = vi.fn();
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
-      unwindJobs: { getAuthority, status }, readUnwindEvidence,
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
+      unwindJobs: { getAuthority, status },
+      readUnwindEvidence,
       publicRuntime: { baseCrossChainAvailable: true },
     });
     const response = mockRes();
 
-    await router({
-      method: 'POST', url: '/api/vf-cross/unwind/attach', headers,
-      body: { jobId: 'ab'.repeat(16), userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
-    }, response);
+    await router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/unwind/attach',
+        headers,
+        body: {
+          jobId: 'ab'.repeat(16),
+          userOpHash: USER_OP_HASH,
+          unwindTxHash: TX_HASH,
+        },
+      },
+      response,
+    );
 
     expect(response.statusCode).toBe(401);
     expect(jsonOf(response)).toEqual({ error: 'unauthorized' });
@@ -4479,23 +5925,36 @@ describe("v3 mandate route authorization and execution gates", () => {
     const wrongCapability = 'f'.repeat(64);
     const secondCapability = 'e'.repeat(64);
     const authorities = new Map([
-      [existingJob, {
-        jobId: existingJob, capabilityHash: CAPABILITY_HASH,
-        kernelAddress: KERNEL, recipientHint: OWNER,
-        capabilityExpiresAt: 1_700_003_600_000,
-      }],
-      [unknownJob, {
-        jobId: unknownJob, capabilityHash: sha256(secondCapability),
-        kernelAddress: KERNEL, recipientHint: OWNER,
-        capabilityExpiresAt: 1_700_003_600_000,
-      }],
+      [
+        existingJob,
+        {
+          jobId: existingJob,
+          capabilityHash: CAPABILITY_HASH,
+          kernelAddress: KERNEL,
+          recipientHint: OWNER,
+          capabilityExpiresAt: 1_700_003_600_000,
+        },
+      ],
+      [
+        unknownJob,
+        {
+          jobId: unknownJob,
+          capabilityHash: sha256(secondCapability),
+          kernelAddress: KERNEL,
+          recipientHint: OWNER,
+          capabilityExpiresAt: 1_700_003_600_000,
+        },
+      ],
     ]);
     const getAuthority = vi.fn((jobId) => authorities.get(jobId) ?? null);
     const status = vi.fn();
     const readUnwindEvidence = vi.fn();
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
-      unwindJobs: { getAuthority, status }, readUnwindEvidence,
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
+      unwindJobs: { getAuthority, status },
+      readUnwindEvidence,
       publicRuntime: { baseCrossChainAvailable: true },
     });
     const cases = [
@@ -4506,11 +5965,15 @@ describe("v3 mandate route authorization and execution gates", () => {
     const bodies = [];
     for (const testCase of cases) {
       const response = mockRes();
-      await router({
-        method: 'POST', url: '/api/vf-cross/status',
-        headers: { authorization: `Bearer ${testCase.capability}` },
-        body: { jobId: testCase.jobId },
-      }, response);
+      await router(
+        {
+          method: 'POST',
+          url: '/api/vf-cross/status',
+          headers: { authorization: `Bearer ${testCase.capability}` },
+          body: { jobId: testCase.jobId },
+        },
+        response,
+      );
       expect(response.statusCode).toBe(401);
       bodies.push(response.body);
     }
@@ -4527,19 +5990,28 @@ describe("v3 mandate route authorization and execution gates", () => {
     const getAuthority = vi.fn();
     const readUnwindEvidence = vi.fn();
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
-      unwindJobs: { getAuthority }, readUnwindEvidence,
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
+      unwindJobs: { getAuthority },
+      readUnwindEvidence,
       publicRuntime: { baseCrossChainAvailable: true },
     });
     const response = mockRes();
-    await router({
-      method: 'POST', url: '/api/vf-cross/unwind/attach',
-      headers: { authorization: `Bearer ${CAPABILITY}` },
-      body: {
-        jobId: 'ab'.repeat(16), userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH,
-        capability: CAPABILITY,
+    await router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/unwind/attach',
+        headers: { authorization: `Bearer ${CAPABILITY}` },
+        body: {
+          jobId: 'ab'.repeat(16),
+          userOpHash: USER_OP_HASH,
+          unwindTxHash: TX_HASH,
+          capability: CAPABILITY,
+        },
       },
-    }, response);
+      response,
+    );
     expect(response.statusCode).toBe(400);
     expect(jsonOf(response)).toEqual({ error: 'invalid unwind attach' });
     expect(getAuthority).not.toHaveBeenCalled();
@@ -4551,18 +6023,24 @@ describe("v3 mandate route authorization and execution gates", () => {
     const getAuthority = vi.fn();
     const readUnwindEvidence = vi.fn();
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
       unwindJobs: { getAuthority, status: vi.fn() },
       readUnwindEvidence,
       publicRuntime: { baseCrossChainAvailable: true },
     });
     const response = mockRes();
 
-    await router({
-      method: 'POST', url: '/api/vf-cross/status',
-      headers: { authorization: `Bearer ${CAPABILITY}` },
-      body: { jobId: 'ab'.repeat(16), owner: KERNEL },
-    }, response);
+    await router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/status',
+        headers: { authorization: `Bearer ${CAPABILITY}` },
+        body: { jobId: 'ab'.repeat(16), owner: KERNEL },
+      },
+      response,
+    );
 
     expect(response.statusCode).toBe(400);
     expect(jsonOf(response)).toEqual({ error: 'invalid status request' });
@@ -4573,9 +6051,14 @@ describe("v3 mandate route authorization and execution gates", () => {
   it('authenticates and atomically attaches chain proof before scheduling only Task8 mint resume', async () => {
     const jobId = 'ab'.repeat(16);
     const proof = Object.freeze({
-      synthetic: 'verified-proof', userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH,
+      synthetic: 'verified-proof',
+      userOpHash: USER_OP_HASH,
+      unwindTxHash: TX_HASH,
     });
-    const expectation = Object.freeze({ sourceDomain: 6, direction: 'base-to-stellar' });
+    const expectation = Object.freeze({
+      sourceDomain: 6,
+      direction: 'base-to-stellar',
+    });
     const publicClient = UNWIND_PUBLIC_CLIENT;
     const bundlerClient = UNWIND_BUNDLER_CLIENT;
     const facts = UNWIND_FACTS;
@@ -4608,12 +6091,18 @@ describe("v3 mandate route authorization and execution gates", () => {
       jobs: new Map(),
       genId: vi.fn(),
       unwindJobs: {
-        reserve: vi.fn(), getAuthority, status: vi.fn(), claimEvidence,
+        reserve: vi.fn(),
+        getAuthority,
+        status: vi.fn(),
+        claimEvidence,
         renewEvidence: vi.fn(),
         releaseEvidence: vi.fn(),
         attachAndEnqueue,
-        finishBlocked: vi.fn(), finishUncertain: vi.fn(), reconcileFromCctp: vi.fn(),
-        reconcileExpired: vi.fn(), listForResume: vi.fn(),
+        finishBlocked: vi.fn(),
+        finishUncertain: vi.fn(),
+        reconcileFromCctp: vi.fn(),
+        reconcileExpired: vi.fn(),
+        listForResume: vi.fn(),
       },
       readUnwindEvidence,
       relayReverseMint,
@@ -4625,15 +6114,22 @@ describe("v3 mandate route authorization and execution gates", () => {
     });
     const response = mockRes();
 
-    await router({
-      method: 'POST',
-      url: '/api/vf-cross/unwind/attach',
-      headers: { authorization: `Bearer ${CAPABILITY}` },
-      body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
-    }, response);
+    await router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/unwind/attach',
+        headers: { authorization: `Bearer ${CAPABILITY}` },
+        body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
+      },
+      response,
+    );
 
     expect(response.statusCode).toBe(202);
-    expect(jsonOf(response)).toEqual({ jobId, status: 'relay_pending', unwindTxHash: TX_HASH });
+    expect(jsonOf(response)).toEqual({
+      jobId,
+      status: 'relay_pending',
+      unwindTxHash: TX_HASH,
+    });
     expect(readUnwindEvidence).toHaveBeenCalledWith({
       publicClient,
       bundlerClient,
@@ -4660,12 +6156,14 @@ describe("v3 mandate route authorization and execution gates", () => {
       leaseToken: 'evidence-lease',
       now: 1_700_000_000_000,
     });
-    await vi.waitFor(() => expect(relayReverseMint).toHaveBeenCalledWith({
-      execId: `unwind:${jobId}`,
-      sourceDomain: 6,
-      burnTxHash: TX_HASH,
-      expectation,
-    }));
+    await vi.waitFor(() =>
+      expect(relayReverseMint).toHaveBeenCalledWith({
+        execId: `unwind:${jobId}`,
+        sourceDomain: 6,
+        burnTxHash: TX_HASH,
+        expectation,
+      }),
+    );
     expect(buildFarm).not.toHaveBeenCalled();
   });
 
@@ -4673,7 +6171,9 @@ describe("v3 mandate route authorization and execution gates", () => {
     const stores = createSqliteStores(join(mkdtempSync(join(tmpdir(), 'vf-unwind-route-')), 'relayer.db'));
     const jobId = 'ab'.repeat(16);
     const reserveJson = JSON.stringify({
-      jobId, kernelAddress: KERNEL, recipientHint: OWNER,
+      jobId,
+      kernelAddress: KERNEL,
+      recipientHint: OWNER,
     });
     const requestDigest = sha256(`vf-unwind-reserve-v1\0${reserveJson}`);
     stores.unwindJobs.reserve({
@@ -4724,16 +6224,23 @@ describe("v3 mandate route authorization and execution gates", () => {
       sourceMessageHex: '0xdeadbeef',
       sourceMessageDigest: sha256(Buffer.from('deadbeef', 'hex')),
       logIndices: Object.freeze({
-        messageSent: 1, depositForBurn: 2, swept: 3, userOperationEvent: 4,
+        messageSent: 1,
+        depositForBurn: 2,
+        swept: 3,
+        userOperationEvent: 4,
       }),
       logDigests: Object.freeze({
-        messageSent: '11'.repeat(32), depositForBurn: '12'.repeat(32),
-        swept: '13'.repeat(32), userOperationEvent: '14'.repeat(32),
+        messageSent: '11'.repeat(32),
+        depositForBurn: '12'.repeat(32),
+        swept: '13'.repeat(32),
+        userOperationEvent: '14'.repeat(32),
       }),
     });
     const relayReverseMint = vi.fn(async () => ({ status: 'in-progress' }));
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: stores.jobs, genId: vi.fn(),
+      buildFarm: vi.fn(),
+      jobs: stores.jobs,
+      genId: vi.fn(),
       unwindJobs: stores.unwindJobs,
       readUnwindEvidence: vi.fn(async () => ({ proof, expectation })),
       relayReverseMint,
@@ -4745,16 +6252,26 @@ describe("v3 mandate route authorization and execution gates", () => {
     });
     const response = mockRes();
 
-    await router({
-      method: 'POST', url: '/api/vf-cross/unwind/attach',
-      headers: { authorization: `Bearer ${CAPABILITY}` },
-      body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
-    }, response);
+    await router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/unwind/attach',
+        headers: { authorization: `Bearer ${CAPABILITY}` },
+        body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
+      },
+      response,
+    );
 
     expect(response.statusCode).toBe(202);
-    expect(jsonOf(response)).toEqual({ jobId, status: 'relay_pending', unwindTxHash: TX_HASH });
+    expect(jsonOf(response)).toEqual({
+      jobId,
+      status: 'relay_pending',
+      unwindTxHash: TX_HASH,
+    });
     expect(stores.cctpRelays.get(`unwind:${jobId}`)).toMatchObject({
-      sourceDomain: 6, burnTxHash: TX_HASH, state: 'attestation_pending',
+      sourceDomain: 6,
+      burnTxHash: TX_HASH,
+      state: 'attestation_pending',
     });
     expect(JSON.stringify(stores.unwindJobs.getAuthority(jobId))).not.toContain(CAPABILITY);
     await vi.waitFor(() => expect(relayReverseMint).toHaveBeenCalledTimes(1));
@@ -4764,29 +6281,46 @@ describe("v3 mandate route authorization and execution gates", () => {
   it('rejects a reader-returned receipt identity that differs from the authenticated attach pair', async () => {
     const jobId = 'ab'.repeat(16);
     const finishBlocked = vi.fn(() => ({
-      jobId, status: 'blocked', reasonCode: 'message_mismatch',
+      jobId,
+      status: 'blocked',
+      reasonCode: 'message_mismatch',
     }));
     const attachAndEnqueue = vi.fn();
     const relayReverseMint = vi.fn();
     const unwindJobs = {
       reserve: vi.fn(),
       getAuthority: vi.fn(() => ({
-        jobId, kernelAddress: KERNEL, recipientHint: OWNER,
-        state: 'awaiting_burn', capabilityHash: CAPABILITY_HASH,
+        jobId,
+        kernelAddress: KERNEL,
+        recipientHint: OWNER,
+        state: 'awaiting_burn',
+        capabilityHash: CAPABILITY_HASH,
         capabilityExpiresAt: 1_700_003_600_000,
-        userOpHash: null, unwindTxHash: null,
+        userOpHash: null,
+        unwindTxHash: null,
       })),
       status: vi.fn(),
       claimEvidence: vi.fn(() => ({
-        jobId, kernelAddress: KERNEL, recipientHint: OWNER,
-        leaseToken: 'identity-lease', leaseExpiresAt: 1_700_000_030_000,
+        jobId,
+        kernelAddress: KERNEL,
+        recipientHint: OWNER,
+        leaseToken: 'identity-lease',
+        leaseExpiresAt: 1_700_000_030_000,
       })),
-      renewEvidence: vi.fn(), releaseEvidence: vi.fn(), attachAndEnqueue,
-      finishBlocked, finishUncertain: vi.fn(), reconcileFromCctp: vi.fn(),
-      reconcileExpired: vi.fn(), listForResume: vi.fn(),
+      renewEvidence: vi.fn(),
+      releaseEvidence: vi.fn(),
+      attachAndEnqueue,
+      finishBlocked,
+      finishUncertain: vi.fn(),
+      reconcileFromCctp: vi.fn(),
+      reconcileExpired: vi.fn(),
+      listForResume: vi.fn(),
     };
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(), unwindJobs,
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
+      unwindJobs,
       readUnwindEvidence: vi.fn(async () => ({
         proof: {
           userOpHash: `0x${'35'.repeat(32)}`,
@@ -4802,16 +6336,24 @@ describe("v3 mandate route authorization and execution gates", () => {
       publicRuntime: { baseCrossChainAvailable: true },
     });
     const response = mockRes();
-    await router({
-      method: 'POST', url: '/api/vf-cross/unwind/attach',
-      headers: { authorization: `Bearer ${CAPABILITY}` },
-      body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
-    }, response);
+    await router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/unwind/attach',
+        headers: { authorization: `Bearer ${CAPABILITY}` },
+        body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
+      },
+      response,
+    );
 
     expect(response.statusCode).toBe(409);
-    expect(finishBlocked).toHaveBeenCalledWith(expect.objectContaining({
-      jobId, leaseToken: 'identity-lease', reasonCode: 'message_mismatch',
-    }));
+    expect(finishBlocked).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId,
+        leaseToken: 'identity-lease',
+        reasonCode: 'message_mismatch',
+      }),
+    );
     expect(attachAndEnqueue).not.toHaveBeenCalled();
     expect(relayReverseMint).not.toHaveBeenCalled();
   });
@@ -4819,30 +6361,44 @@ describe("v3 mandate route authorization and execution gates", () => {
   it('durably blocks an authenticated mismatched proof under the live evidence lease', async () => {
     const jobId = 'ab'.repeat(16);
     const finishBlocked = vi.fn(() => ({
-      jobId, status: 'blocked', reasonCode: 'message_mismatch',
+      jobId,
+      status: 'blocked',
+      reasonCode: 'message_mismatch',
     }));
     const releaseEvidence = vi.fn();
     const attachAndEnqueue = vi.fn();
     const relayReverseMint = vi.fn();
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
       unwindJobs: {
         reserve: vi.fn(),
         getAuthority: vi.fn(() => ({
-          jobId, kernelAddress: KERNEL, recipientHint: OWNER,
-          state: 'awaiting_burn', capabilityHash: CAPABILITY_HASH,
+          jobId,
+          kernelAddress: KERNEL,
+          recipientHint: OWNER,
+          state: 'awaiting_burn',
+          capabilityHash: CAPABILITY_HASH,
           capabilityExpiresAt: 1_700_003_600_000,
-          userOpHash: null, unwindTxHash: null,
+          userOpHash: null,
+          unwindTxHash: null,
         })),
         claimEvidence: vi.fn(() => ({
-          jobId, kernelAddress: KERNEL, recipientHint: OWNER,
-          leaseToken: 'evidence-lease', leaseExpiresAt: 1_700_000_030_000,
+          jobId,
+          kernelAddress: KERNEL,
+          recipientHint: OWNER,
+          leaseToken: 'evidence-lease',
+          leaseExpiresAt: 1_700_000_030_000,
         })),
         renewEvidence: vi.fn(),
         releaseEvidence,
         finishBlocked,
-        finishUncertain: vi.fn(), status: vi.fn(), reconcileFromCctp: vi.fn(),
-        reconcileExpired: vi.fn(), listForResume: vi.fn(),
+        finishUncertain: vi.fn(),
+        status: vi.fn(),
+        reconcileFromCctp: vi.fn(),
+        reconcileExpired: vi.fn(),
+        listForResume: vi.fn(),
         attachAndEnqueue,
       },
       readUnwindEvidence: vi.fn(async () => {
@@ -4859,17 +6415,23 @@ describe("v3 mandate route authorization and execution gates", () => {
     });
     const response = mockRes();
 
-    await router({
-      method: 'POST', url: '/api/vf-cross/unwind/attach',
-      headers: { authorization: `Bearer ${CAPABILITY}` },
-      body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
-    }, response);
+    await router(
+      {
+        method: 'POST',
+        url: '/api/vf-cross/unwind/attach',
+        headers: { authorization: `Bearer ${CAPABILITY}` },
+        body: { jobId, userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH },
+      },
+      response,
+    );
 
     expect(response.statusCode).toBe(409);
     expect(jsonOf(response)).toEqual({ error: 'unwind evidence was rejected' });
     expect(response.body).not.toContain('private decoder detail');
     expect(finishBlocked).toHaveBeenCalledWith({
-      jobId, leaseToken: 'evidence-lease', reasonCode: 'message_mismatch',
+      jobId,
+      leaseToken: 'evidence-lease',
+      reasonCode: 'message_mismatch',
       now: 1_700_000_000_000,
     });
     expect(releaseEvidence).not.toHaveBeenCalled();
@@ -4893,18 +6455,31 @@ describe("v3 mandate route authorization and execution gates", () => {
       });
       const response = mockRes();
       const path = suffix.split('?')[0];
-      const body = path === '/unwind'
-        ? { jobId: 'ab'.repeat(16), capability: CAPABILITY, kernelAddress: KERNEL, recipientHint: OWNER }
-        : path === '/unwind/attach'
-          ? { jobId: 'ab'.repeat(16), userOpHash: USER_OP_HASH, unwindTxHash: TX_HASH }
-          : { jobId: 'ab'.repeat(16) };
+      const body =
+        path === '/unwind'
+          ? {
+              jobId: 'ab'.repeat(16),
+              capability: CAPABILITY,
+              kernelAddress: KERNEL,
+              recipientHint: OWNER,
+            }
+          : path === '/unwind/attach'
+            ? {
+                jobId: 'ab'.repeat(16),
+                userOpHash: USER_OP_HASH,
+                unwindTxHash: TX_HASH,
+              }
+            : { jobId: 'ab'.repeat(16) };
 
-      await router({
-        method: 'POST',
-        url: `/api/vf-cross${suffix}`,
-        headers: { authorization: `Bearer ${CAPABILITY}` },
-        body,
-      }, response);
+      await router(
+        {
+          method: 'POST',
+          url: `/api/vf-cross${suffix}`,
+          headers: { authorization: `Bearer ${CAPABILITY}` },
+          body,
+        },
+        response,
+      );
 
       expect(response.statusCode).toBe(400);
       expect(jsonOf(response)).toEqual({ error: 'invalid request' });
@@ -4922,7 +6497,9 @@ describe("v3 mandate route authorization and execution gates", () => {
     ['OPTIONS', '/api/vf-cross/unwind/attach'],
   ])('never exposes protected unwind authority with wildcard CORS: %s %s', async (method, url) => {
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
       publicRuntime: { baseCrossChainAvailable: true },
     });
     const response = mockRes();
@@ -4945,35 +6522,53 @@ describe("v3 mandate route authorization and execution gates", () => {
       listForResume: vi.fn(() => {
         calls.push('list');
         return [
-          { jobId: '01'.repeat(16), relayExecId: `unwind:${'01'.repeat(16)}`, state: 'relay_pending' },
-          { jobId: '02'.repeat(16), relayExecId: `unwind:${'02'.repeat(16)}`, state: 'relay_running' },
+          {
+            jobId: '01'.repeat(16),
+            relayExecId: `unwind:${'01'.repeat(16)}`,
+            state: 'relay_pending',
+          },
+          {
+            jobId: '02'.repeat(16),
+            relayExecId: `unwind:${'02'.repeat(16)}`,
+            state: 'relay_running',
+          },
         ];
       }),
       reconcileFromCctp: vi.fn(({ jobId }) => {
         calls.push(`project:${jobId}`);
         return jobId.startsWith('01')
-          ? { jobId, status: 'done', unwindTxHash: TX_HASH, mintTxHash: 'aa'.repeat(32) }
+          ? {
+              jobId,
+              status: 'done',
+              unwindTxHash: TX_HASH,
+              mintTxHash: 'aa'.repeat(32),
+            }
           : { jobId, status: 'relay_running', unwindTxHash: TX_HASH };
       }),
     };
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
-      unwindJobs, readUnwindEvidence, relayReverseMint,
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
+      unwindJobs,
+      readUnwindEvidence,
+      relayReverseMint,
       nowMs: () => 1_700_000_000_000,
-      recoveryLimit: 10, recoveryConcurrency: 1,
+      recoveryLimit: 10,
+      recoveryConcurrency: 1,
       publicRuntime: { baseCrossChainAvailable: true },
     });
 
     const result = await router.resumeUnwindJobs({ limit: 2 });
 
-    expect(calls).toEqual([
-      'expired', 'list', `project:${'01'.repeat(16)}`, `project:${'02'.repeat(16)}`,
-    ]);
+    expect(calls).toEqual(['expired', 'list', `project:${'01'.repeat(16)}`, `project:${'02'.repeat(16)}`]);
     expect(unwindJobs.reconcileExpired).toHaveBeenCalledWith({
-      now: 1_700_000_000_000, limit: 2,
+      now: 1_700_000_000_000,
+      limit: 2,
     });
     expect(unwindJobs.listForResume).toHaveBeenCalledWith({
-      now: 1_700_000_000_000, limit: 2,
+      now: 1_700_000_000_000,
+      limit: 2,
     });
     expect(result).toEqual({
       resumed: ['01'.repeat(16)],
@@ -5002,21 +6597,33 @@ describe("v3 mandate route authorization and execution gates", () => {
       reconcileFromCctp: vi.fn(({ jobId: projectedJobId }) => {
         calls.push(`project:${projectedJobId}`);
         return {
-          jobId: projectedJobId, status: 'relay_running', unwindTxHash: TX_HASH,
+          jobId: projectedJobId,
+          status: 'relay_running',
+          unwindTxHash: TX_HASH,
           mintTxHash: 'aa'.repeat(32),
         };
       }),
     };
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
-      unwindJobs, readUnwindEvidence, relayReverseMint, resumeExistingReverse,
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
+      unwindJobs,
+      readUnwindEvidence,
+      relayReverseMint,
+      resumeExistingReverse,
       nowMs: () => 1_700_000_000_000,
-      recoveryLimit: 10, recoveryConcurrency: 1,
+      recoveryLimit: 10,
+      recoveryConcurrency: 1,
       publicRuntime: { baseCrossChainAvailable: false },
     });
 
     await expect(router.resumeUnwindJobs({ limit: 2 })).resolves.toEqual({
-      resumed: [], held: [jobId], blocked: [], uncertain: [], expired: [],
+      resumed: [],
+      held: [jobId],
+      blocked: [],
+      uncertain: [],
+      expired: [],
     });
     expect(calls).toEqual([`drive:${relayExecId}`, `project:${jobId}`]);
     expect(readUnwindEvidence).not.toHaveBeenCalled();
@@ -5027,10 +6634,20 @@ describe("v3 mandate route authorization and execution gates", () => {
     const firstJob = '04'.repeat(16);
     const gatedJob = '05'.repeat(16);
     let releaseGate;
-    const gate = new Promise((resolve) => { releaseGate = resolve; });
+    const gate = new Promise((resolve) => {
+      releaseGate = resolve;
+    });
     const listForResume = vi.fn(() => [
-      { jobId: firstJob, relayExecId: `unwind:${firstJob}`, state: 'relay_pending' },
-      { jobId: gatedJob, relayExecId: `unwind:${gatedJob}`, state: 'relay_pending' },
+      {
+        jobId: firstJob,
+        relayExecId: `unwind:${firstJob}`,
+        state: 'relay_pending',
+      },
+      {
+        jobId: gatedJob,
+        relayExecId: `unwind:${gatedJob}`,
+        state: 'relay_pending',
+      },
     ]);
     const reconcileFromCctp = vi.fn(async ({ jobId }) => {
       if (jobId === firstJob) throw new Error('injected early projection failure');
@@ -5038,19 +6655,26 @@ describe("v3 mandate route authorization and execution gates", () => {
       return { jobId, status: 'relay_pending', unwindTxHash: TX_HASH };
     });
     const router = createRelayerRouter({
-      buildFarm: vi.fn(), jobs: new Map(), genId: vi.fn(),
+      buildFarm: vi.fn(),
+      jobs: new Map(),
+      genId: vi.fn(),
       unwindJobs: {
-        reconcileExpired: vi.fn(() => []), listForResume, reconcileFromCctp,
+        reconcileExpired: vi.fn(() => []),
+        listForResume,
+        reconcileFromCctp,
       },
       nowMs: () => 1_700_000_000_000,
-      recoveryLimit: 10, recoveryConcurrency: 2,
+      recoveryLimit: 10,
+      recoveryConcurrency: 2,
       publicRuntime: { baseCrossChainAvailable: true },
     });
 
     const first = router.resumeUnwindJobs({ limit: 2 });
     const firstOutcome = first.catch((error) => error);
     let firstSettled = false;
-    firstOutcome.finally(() => { firstSettled = true; });
+    firstOutcome.finally(() => {
+      firstSettled = true;
+    });
     await vi.waitFor(() => expect(reconcileFromCctp).toHaveBeenCalledTimes(2));
     await new Promise((resolve) => setImmediate(resolve));
     expect(firstSettled).toBe(false);
@@ -5065,5 +6689,4 @@ describe("v3 mandate route authorization and execution gates", () => {
     expect((await overlappingOutcome).message).toBe('injected early projection failure');
     expect(listForResume).toHaveBeenCalledTimes(1);
   });
-
 });

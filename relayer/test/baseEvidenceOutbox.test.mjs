@@ -18,48 +18,115 @@ const base = {
   caller: `0x${'22'.repeat(20)}`, poolAddress: `0x${'33'.repeat(20)}`,
   assets: '1000000', minShares: '900000',
 };
+const reconcileHandle = Object.freeze({
+  entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+  sender: base.caller,
+  nonce: '17',
+  startBlock: '4321',
+});
 const checkpoint = (status, extra = {}, observedAt = 2_000_000_000_000) => ({
   identity, phase: 'base_deposit', status, evidence: { ...base, ...extra }, observedAt,
 });
 const digests = {
-  burn: 'a'.repeat(64), expectation: 'b'.repeat(64), message: 'c'.repeat(64),
-  attestation: 'd'.repeat(64), mint: `0x${'e'.repeat(64)}`,
-  userOp: `0x${'f'.repeat(64)}`, transaction: `0x${'1'.repeat(64)}`,
+  burn: 'a'.repeat(64),
+  expectation: 'b'.repeat(64),
+  message: `0x${'c'.repeat(64)}`,
+  attestation: `0x${'d'.repeat(64)}`,
+  mint: `0x${'e'.repeat(64)}`,
+  userOp: `0x${'f'.repeat(64)}`,
+  transaction: `0x${'1'.repeat(64)}`,
 };
 const confirmedEvent = {
   address: base.yieldRouterAddress, topic0: `0x${'2'.repeat(64)}`, logIndex: '1',
   caller: base.caller, poolAddress: base.poolAddress, assets: base.assets, shares: '912345',
 };
 const supportedEvidence = [
-  ['cctp_burn:confirmed', 'cctp_burn', 'confirmed', {
-    burnTxHash: digests.burn, expectationDigest: digests.expectation, burnUnits7: '10000000',
-  }],
-  ['cctp_burn:unknown', 'cctp_burn', 'unknown', {
-    burnTxHash: digests.burn, expectationDigest: digests.expectation,
-    burnUnits7: '10000000', reasonCode: 'burn_unresolved',
-  }],
-  ['cctp_attestation:confirmed', 'cctp_attestation', 'confirmed', {
-    burnTxHash: digests.burn, expectationDigest: digests.expectation,
-    messageDigest: digests.message, attestationDigest: digests.attestation, evidenceVersion: '1',
-  }],
-  ['cctp_mint:submitted', 'cctp_mint', 'submitted', {
-    burnTxHash: digests.burn, expectationDigest: digests.expectation,
-    messageDigest: digests.message, attestationDigest: digests.attestation,
-    evidenceVersion: '1', mintTxHash: digests.mint,
-  }],
-  ['cctp_mint:confirmed', 'cctp_mint', 'confirmed', {
-    burnTxHash: digests.burn, expectationDigest: digests.expectation,
-    messageDigest: digests.message, attestationDigest: digests.attestation,
-    evidenceVersion: '1', mintTxHash: digests.mint,
-  }],
+  [
+    'cctp_burn:confirmed',
+    'cctp_burn',
+    'confirmed',
+    {
+      burnTxHash: digests.burn,
+      expectationDigest: digests.expectation,
+      burnUnits7: '10000000',
+      messageDigest: digests.message,
+      nonce: `0x${'7'.repeat(64)}`,
+    },
+  ],
+  [
+    'cctp_burn:unknown',
+    'cctp_burn',
+    'unknown',
+    {
+      burnTxHash: digests.burn,
+      expectationDigest: digests.expectation,
+      burnUnits7: '10000000',
+      reasonCode: 'burn_unresolved',
+    },
+  ],
+  [
+    'cctp_attestation:confirmed',
+    'cctp_attestation',
+    'confirmed',
+    {
+      burnTxHash: digests.burn,
+      expectationDigest: digests.expectation,
+      messageDigest: digests.message,
+      attestationDigest: digests.attestation,
+      nonce: `0x${'7'.repeat(64)}`,
+      evidenceVersion: '1',
+    },
+  ],
+  [
+    'cctp_mint:submitted',
+    'cctp_mint',
+    'submitted',
+    {
+      burnTxHash: digests.burn,
+      expectationDigest: digests.expectation,
+      messageDigest: digests.message,
+      attestationDigest: digests.attestation,
+      nonce: `0x${'7'.repeat(64)}`,
+      evidenceVersion: '1',
+      mintTxHash: digests.mint,
+    },
+  ],
+  [
+    'cctp_mint:confirmed',
+    'cctp_mint',
+    'confirmed',
+    {
+      burnTxHash: digests.burn,
+      expectationDigest: digests.expectation,
+      messageDigest: digests.message,
+      attestationDigest: digests.attestation,
+      nonce: `0x${'7'.repeat(64)}`,
+      evidenceVersion: '1',
+      mintTxHash: digests.mint,
+    },
+  ],
   ['base_deposit:submitting', 'base_deposit', 'submitting', { ...base }],
-  ['base_deposit:submitted', 'base_deposit', 'submitted', {
-    ...base, userOpHash: digests.userOp,
-  }],
-  ['base_deposit:confirmed', 'base_deposit', 'confirmed', {
-    ...base, userOpHash: digests.userOp, transactionHash: digests.transaction,
-    event: confirmedEvent,
-  }],
+  [
+    'base_deposit:submitted',
+    'base_deposit',
+    'submitted',
+    {
+      ...base,
+      userOpHash: digests.userOp,
+    },
+  ],
+  [
+    'base_deposit:confirmed',
+    'base_deposit',
+    'confirmed',
+    {
+      ...base,
+      shares: '912345',
+      userOpHash: digests.userOp,
+      transactionHash: digests.transaction,
+      event: confirmedEvent,
+    },
+  ],
   ...['failed', 'unknown', 'blocked'].map((state) => [
     `base_deposit:${state}`, 'base_deposit', state,
     {
@@ -77,16 +144,136 @@ const durableSnapshot = ({ db }) => ({
 });
 
 describe('SQLite Base evidence outbox', () => {
+  it('carries one canonical reconcile handle unchanged through submitting, unknown, and confirmed', () => {
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), {
+      now: () => 1000,
+    });
+    baseEvidenceOutbox.seed(identity, 0);
+    baseEvidenceOutbox.enqueue(checkpoint('submitting', { reconcileHandle }));
+    baseEvidenceOutbox.enqueue(
+      checkpoint('submitted', {
+        reconcileHandle,
+        userOpHash: digests.userOp,
+      }),
+    );
+    baseEvidenceOutbox.enqueue(
+      checkpoint('unknown', {
+        reconcileHandle,
+        userOpHash: digests.userOp,
+        transactionHash: digests.transaction,
+        reasonCode: 'deposit_event_missing',
+      }),
+    );
+    baseEvidenceOutbox.enqueue(
+      checkpoint('confirmed', {
+        reconcileHandle,
+        userOpHash: digests.userOp,
+        transactionHash: digests.transaction,
+        shares: confirmedEvent.shares,
+        event: confirmedEvent,
+      }),
+    );
+
+    expect(baseEvidenceOutbox.recoveryState(identity).evidence.reconcileHandle).toEqual(reconcileHandle);
+  });
+
+  it('rejects a changed reconcile handle after the submitting fence', () => {
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), {
+      now: () => 1000,
+    });
+    baseEvidenceOutbox.seed(identity, 0);
+    baseEvidenceOutbox.enqueue(checkpoint('submitting', { reconcileHandle }));
+    expect(() =>
+      baseEvidenceOutbox.enqueue(
+        checkpoint('submitted', {
+          reconcileHandle: { ...reconcileHandle, nonce: '18' },
+          userOpHash: digests.userOp,
+        }),
+      ),
+    ).toThrow(/handle|immutable|conflict/i);
+  });
+
+  it.each([
+    ['wrong EntryPoint', { entryPoint: `0x${'44'.repeat(20)}` }],
+    ['wrong sender', { sender: `0x${'44'.repeat(20)}` }],
+    ['leading-zero nonce', { nonce: '017' }],
+    ['hex startBlock', { startBlock: '0x10' }],
+  ])('rejects %s reconcile handles before durable mutation', (_label, mutation) => {
+    const stores = createSqliteStores(freshPath(), { now: () => 1000 });
+    stores.baseEvidenceOutbox.seed(identity, 0);
+    const before = durableSnapshot(stores);
+    expect(() =>
+      stores.baseEvidenceOutbox.enqueue(
+        checkpoint('submitting', {
+          reconcileHandle: { ...reconcileHandle, ...mutation },
+        }),
+      ),
+    ).toThrow(/handle|entryPoint|sender|decimal|canonical/i);
+    expect(durableSnapshot(stores)).toEqual(before);
+  });
+
   it.each(supportedEvidence)(
     'accepts the exact local %s evidence contract before durable insertion',
     (_label, phase, status, evidence) => {
       const stores = createSqliteStores(freshPath(), { now: () => 1000 });
       stores.baseEvidenceOutbox.seed(identity, 0);
-      expect(stores.baseEvidenceOutbox.enqueue(directCheckpoint(phase, status, evidence)))
-        .toMatchObject({ phase, state: status, expectedRecoveryVersion: 0 });
-      expect(stores.baseEvidenceOutbox.status(identity)).toMatchObject({ recoveryVersion: 1 });
+      expect(stores.baseEvidenceOutbox.enqueue(directCheckpoint(phase, status, evidence))).toMatchObject({
+        phase,
+        state: status,
+        expectedRecoveryVersion: 0,
+      });
+      expect(stores.baseEvidenceOutbox.status(identity)).toMatchObject({
+        recoveryVersion: 1,
+      });
     },
   );
+
+  it('permits a fenced CCTP mint to advance from submitted to blocked on a definitive outcome', () => {
+    const stores = createSqliteStores(freshPath(), { now: () => 1000 });
+    stores.baseEvidenceOutbox.seed(identity, 0);
+    stores.baseEvidenceOutbox.enqueue(
+      directCheckpoint('cctp_burn', 'confirmed', {
+        burnTxHash: digests.burn,
+        expectationDigest: digests.expectation,
+        burnUnits7: '10000000',
+        messageDigest: digests.message,
+        nonce: `0x${'7'.repeat(64)}`,
+      }),
+    );
+    stores.baseEvidenceOutbox.enqueue(
+      directCheckpoint('cctp_attestation', 'confirmed', {
+        burnTxHash: digests.burn,
+        expectationDigest: digests.expectation,
+        messageDigest: digests.message,
+        attestationDigest: digests.attestation,
+        nonce: `0x${'7'.repeat(64)}`,
+        evidenceVersion: '1',
+      }),
+    );
+    stores.baseEvidenceOutbox.enqueue(
+      directCheckpoint('cctp_mint', 'submitted', {
+        burnTxHash: digests.burn,
+        expectationDigest: digests.expectation,
+        messageDigest: digests.message,
+        attestationDigest: digests.attestation,
+        nonce: `0x${'7'.repeat(64)}`,
+        evidenceVersion: '1',
+        mintTxHash: digests.mint,
+      }),
+    );
+    expect(
+      stores.baseEvidenceOutbox.enqueue(
+        directCheckpoint('cctp_mint', 'blocked', {
+          burnTxHash: digests.burn,
+          expectationDigest: digests.expectation,
+          messageDigest: digests.message,
+          attestationDigest: digests.attestation,
+          nonce: `0x${'7'.repeat(64)}`,
+          reasonCode: 'destination_reverted',
+        }),
+      ),
+    ).toMatchObject({ phase: 'cctp_mint', state: 'blocked' });
+  });
 
   it.each([
     ['missing mandatory field', 'cctp_burn', 'confirmed', supportedEvidence[0][3], (evidence) => {
@@ -165,8 +352,16 @@ describe('SQLite Base evidence outbox', () => {
     expect(second.baseEvidenceOutbox.status(identity)).toMatchObject({
       complete: false, blocked: false, recoveryVersion: 2,
       events: [
-        { state: 'submitting', expectedRecoveryVersion: 0, deliveryStatus: 'pending' },
-        { state: 'submitted', expectedRecoveryVersion: 1, deliveryStatus: 'pending' },
+        {
+          state: 'submitting',
+          expectedRecoveryVersion: 0,
+          deliveryStatus: 'pending',
+        },
+        {
+          state: 'submitted',
+          expectedRecoveryVersion: 1,
+          deliveryStatus: 'pending',
+        },
       ],
     });
   });
@@ -243,7 +438,9 @@ describe('SQLite Base evidence outbox', () => {
   });
 
   it('exposes the exact latest durable checkpoint only through the internal recovery seam', () => {
-    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), {
+      now: () => 1000,
+    });
     baseEvidenceOutbox.seed(identity, 0);
     baseEvidenceOutbox.enqueue(checkpoint('submitting'));
     baseEvidenceOutbox.enqueue(checkpoint('submitted', { userOpHash: digests.userOp }));
@@ -259,14 +456,22 @@ describe('SQLite Base evidence outbox', () => {
   });
 
   it('makes exact replay a no-op across observation time and rejects changed immutable evidence', () => {
-    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), {
+      now: () => 1000,
+    });
     baseEvidenceOutbox.seed(identity, 0);
     const first = baseEvidenceOutbox.enqueue(checkpoint('submitting'));
-    expect(baseEvidenceOutbox.enqueue(checkpoint('submitting'))).toEqual({ ...first, duplicate: true });
-    expect(baseEvidenceOutbox.enqueue(checkpoint('submitting', {}, 2_000_000_000_001)))
-      .toEqual({ ...first, duplicate: true });
-    expect(() => baseEvidenceOutbox.enqueue(checkpoint('submitting', { assets: '1000001' })))
-      .toThrow(/conflict|immutable/i);
+    expect(baseEvidenceOutbox.enqueue(checkpoint('submitting'))).toEqual({
+      ...first,
+      duplicate: true,
+    });
+    expect(baseEvidenceOutbox.enqueue(checkpoint('submitting', {}, 2_000_000_000_001))).toEqual({
+      ...first,
+      duplicate: true,
+    });
+    expect(() => baseEvidenceOutbox.enqueue(checkpoint('submitting', { assets: '1000001' }))).toThrow(
+      /conflict|immutable/i,
+    );
     expect(baseEvidenceOutbox.status(identity).recoveryVersion).toBe(1);
   });
 
@@ -276,18 +481,28 @@ describe('SQLite Base evidence outbox', () => {
     const second = createSqliteStores(path, { now: () => 2000 });
     first.baseEvidenceOutbox.seed(identity, 0);
     first.baseEvidenceOutbox.enqueue(directCheckpoint('cctp_mint', 'confirmed', supportedEvidence[4][3]));
-    first.baseEvidenceOutbox.enqueue({ ...checkpoint('submitting'), observedAt: 1000 });
+    first.baseEvidenceOutbox.enqueue({
+      ...checkpoint('submitting'),
+      observedAt: 1000,
+    });
     first.baseEvidenceOutbox.enqueue({
       ...checkpoint('submitted', { userOpHash: digests.userOp }), observedAt: 1001,
     });
     const confirmed = checkpoint('confirmed', {
       userOpHash: digests.userOp,
       transactionHash: digests.transaction,
+      shares: confirmedEvent.shares,
       event: confirmedEvent,
     });
 
-    const winner = first.baseEvidenceOutbox.enqueue({ ...confirmed, observedAt: 1002 });
-    const replay = second.baseEvidenceOutbox.enqueue({ ...confirmed, observedAt: 2002 });
+    const winner = first.baseEvidenceOutbox.enqueue({
+      ...confirmed,
+      observedAt: 1002,
+    });
+    const replay = second.baseEvidenceOutbox.enqueue({
+      ...confirmed,
+      observedAt: 2002,
+    });
 
     expect(winner.duplicate).toBe(false);
     expect(replay).toMatchObject({ duplicate: true, state: 'confirmed' });
@@ -306,10 +521,17 @@ describe('SQLite Base evidence outbox', () => {
     first.baseEvidenceOutbox.seed(identity, 0);
     first.baseEvidenceOutbox.enqueue(checkpoint('submitting'));
     first.baseEvidenceOutbox.enqueue(checkpoint('submitted', { userOpHash: `0x${'a'.repeat(64)}` }, 2001));
-    const leased = first.baseEvidenceOutbox.leaseNext({ now: 1000, leaseMs: 100 });
+    const leased = first.baseEvidenceOutbox.leaseNext({
+      now: 1000,
+      leaseMs: 100,
+    });
     expect(leased.expectedRecoveryVersion).toBe(0);
     expect(second.baseEvidenceOutbox.leaseNext({ now: 1000, leaseMs: 100 })).toBeNull();
-    first.baseEvidenceOutbox.markDelivered({ id: leased.id, leaseToken: leased.leaseToken, now: 1001 });
+    first.baseEvidenceOutbox.markDelivered({
+      id: leased.id,
+      leaseToken: leased.leaseToken,
+      now: 1001,
+    });
     expect(second.baseEvidenceOutbox.leaseNext({ now: 1001, leaseMs: 100 }).expectedRecoveryVersion).toBe(1);
   });
 
@@ -330,14 +552,22 @@ describe('SQLite Base evidence outbox', () => {
       now: () => 1000,
     });
     await expect(worker.drain()).resolves.toBe(1);
-    expect(baseEvidenceOutbox.status(identity)).toMatchObject({ blocked: true, complete: false });
+    expect(baseEvidenceOutbox.status(identity)).toMatchObject({
+      blocked: true,
+      complete: false,
+    });
     expect(onConflict).toHaveBeenCalledOnce();
-    expect(stores.jobs.get('job-42')).toMatchObject({ status: 'blocked', evidenceConflict: true });
+    expect(stores.jobs.get('job-42')).toMatchObject({
+      status: 'blocked',
+      evidenceConflict: true,
+    });
     worker.stop();
   });
 
   it('rejects bare child status and never exposes evidence bodies, hashes, leases, or diagnostics', () => {
-    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), {
+      now: () => 1000,
+    });
     baseEvidenceOutbox.seed(identity, 0);
     baseEvidenceOutbox.enqueue(checkpoint('submitting'));
     baseEvidenceOutbox.enqueue(checkpoint('submitted', { userOpHash: `0x${'a'.repeat(64)}` }));
@@ -349,7 +579,9 @@ describe('SQLite Base evidence outbox', () => {
   });
 
   it('isolates colliding child/allocation IDs by every identity component', () => {
-    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), {
+      now: () => 1000,
+    });
     const identities = [
       identity,
       { ...identity, networkId: 'stellar-mainnet' },
@@ -363,38 +595,83 @@ describe('SQLite Base evidence outbox', () => {
     ];
     identities.forEach((candidate, index) => {
       baseEvidenceOutbox.seed(candidate, index);
-      baseEvidenceOutbox.enqueue({ ...checkpoint('submitting'), identity: candidate });
+      baseEvidenceOutbox.enqueue({
+        ...checkpoint('submitting'),
+        identity: candidate,
+      });
     });
     identities.forEach((candidate, index) => {
-      expect(baseEvidenceOutbox.status(candidate)).toMatchObject({ recoveryVersion: index + 1 });
+      expect(baseEvidenceOutbox.status(candidate)).toMatchObject({
+        recoveryVersion: index + 1,
+      });
       expect(baseEvidenceOutbox.status(candidate).events).toHaveLength(1);
     });
   });
 
   it('allows unknown reconciliation only when every previously known hash and intent fact agrees', () => {
-    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), {
+      now: () => 1000,
+    });
     const userOpHash = `0x${'a'.repeat(64)}`;
     const transactionHash = `0x${'b'.repeat(64)}`;
     baseEvidenceOutbox.seed(identity, 0);
     baseEvidenceOutbox.enqueue(checkpoint('submitting'));
     baseEvidenceOutbox.enqueue(checkpoint('submitted', { userOpHash }, 2001));
-    baseEvidenceOutbox.enqueue(checkpoint('unknown', {
-      userOpHash, transactionHash, reasonCode: 'deposit_event_missing',
-    }, 2002));
-    expect(() => baseEvidenceOutbox.enqueue(checkpoint('confirmed', {
-      userOpHash: `0x${'c'.repeat(64)}`, transactionHash,
-      event: {
-        address: base.yieldRouterAddress, topic0: `0x${'d'.repeat(64)}`, logIndex: '1',
-        caller: base.caller, poolAddress: base.poolAddress, assets: base.assets, shares: '912345',
-      },
-    }, 2003))).toThrow(/hash|reconcil|conflict/i);
-    expect(baseEvidenceOutbox.enqueue(checkpoint('confirmed', {
-      userOpHash, transactionHash,
-      event: {
-        address: base.yieldRouterAddress, topic0: `0x${'d'.repeat(64)}`, logIndex: '1',
-        caller: base.caller, poolAddress: base.poolAddress, assets: base.assets, shares: '912345',
-      },
-    }, 2003))).toMatchObject({ expectedRecoveryVersion: 3, state: 'confirmed' });
+    baseEvidenceOutbox.enqueue(
+      checkpoint(
+        'unknown',
+        {
+          userOpHash,
+          transactionHash,
+          reasonCode: 'deposit_event_missing',
+        },
+        2002,
+      ),
+    );
+    expect(() =>
+      baseEvidenceOutbox.enqueue(
+        checkpoint(
+          'confirmed',
+          {
+            userOpHash: `0x${'c'.repeat(64)}`,
+            transactionHash,
+            shares: '912345',
+            event: {
+              address: base.yieldRouterAddress,
+              topic0: `0x${'d'.repeat(64)}`,
+              logIndex: '1',
+              caller: base.caller,
+              poolAddress: base.poolAddress,
+              assets: base.assets,
+              shares: '912345',
+            },
+          },
+          2003,
+        ),
+      ),
+    ).toThrow(/hash|reconcil|conflict/i);
+    expect(
+      baseEvidenceOutbox.enqueue(
+        checkpoint(
+          'confirmed',
+          {
+            userOpHash,
+            transactionHash,
+            shares: '912345',
+            event: {
+              address: base.yieldRouterAddress,
+              topic0: `0x${'d'.repeat(64)}`,
+              logIndex: '1',
+              caller: base.caller,
+              poolAddress: base.poolAddress,
+              assets: base.assets,
+              shares: '912345',
+            },
+          },
+          2003,
+        ),
+      ),
+    ).toMatchObject({ expectedRecoveryVersion: 3, state: 'confirmed' });
 
     const unresolvedIdentity = {
       ...identity,
@@ -421,7 +698,10 @@ describe('SQLite Base evidence outbox', () => {
 
   it('uses bounded backoff, survives reopen, and dead-letters without a sixth lease', async () => {
     const path = freshPath();
-    const first = createSqliteStores(path, { now: () => 1000, outboxMaxAttempts: 2 });
+    const first = createSqliteStores(path, {
+      now: () => 1000,
+      outboxMaxAttempts: 2,
+    });
     first.baseEvidenceOutbox.seed(identity, 0);
     first.baseEvidenceOutbox.enqueue(checkpoint('submitting'));
     const worker = startBaseEvidenceOutboxWorker({
@@ -436,7 +716,10 @@ describe('SQLite Base evidence outbox', () => {
     worker.stop();
     first.db.close();
 
-    const second = createSqliteStores(path, { now: () => 2000, outboxMaxAttempts: 2 });
+    const second = createSqliteStores(path, {
+      now: () => 2000,
+      outboxMaxAttempts: 2,
+    });
     const retryWorker = startBaseEvidenceOutboxWorker({
       outbox: second.baseEvidenceOutbox,
       reporter: { reportBaseEvidence: vi.fn(async () => { throw new AgentIndexReporterRetryableError('down'); }) },
@@ -451,24 +734,44 @@ describe('SQLite Base evidence outbox', () => {
   });
 
   it('requires the exact active lease token and reports complete only after terminal delivery', () => {
-    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), {
+      now: () => 1000,
+    });
     baseEvidenceOutbox.seed(identity, 0);
     baseEvidenceOutbox.enqueue(checkpoint('submitting'));
     baseEvidenceOutbox.enqueue(checkpoint('failed', {
       userOpHash: null, transactionHash: null, reasonCode: 'pre_submit_validation',
     }, 2001));
     const first = baseEvidenceOutbox.leaseNext({ now: 1000, leaseMs: 100 });
-    expect(() => baseEvidenceOutbox.markDelivered({ id: first.id, leaseToken: 'foreign', now: 1001 }))
-      .toThrow(/lease/i);
-    baseEvidenceOutbox.markDelivered({ id: first.id, leaseToken: first.leaseToken, now: 1001 });
+    expect(() =>
+      baseEvidenceOutbox.markDelivered({
+        id: first.id,
+        leaseToken: 'foreign',
+        now: 1001,
+      }),
+    ).toThrow(/lease/i);
+    baseEvidenceOutbox.markDelivered({
+      id: first.id,
+      leaseToken: first.leaseToken,
+      now: 1001,
+    });
     expect(baseEvidenceOutbox.status(identity).complete).toBe(false);
     const terminal = baseEvidenceOutbox.leaseNext({ now: 1001, leaseMs: 100 });
-    baseEvidenceOutbox.markDelivered({ id: terminal.id, leaseToken: terminal.leaseToken, now: 1002 });
-    expect(baseEvidenceOutbox.status(identity)).toMatchObject({ complete: true, blocked: false });
+    baseEvidenceOutbox.markDelivered({
+      id: terminal.id,
+      leaseToken: terminal.leaseToken,
+      now: 1002,
+    });
+    expect(baseEvidenceOutbox.status(identity)).toMatchObject({
+      complete: true,
+      blocked: false,
+    });
   });
 
   it('never reports evidence complete before the latest delivered phase is base_deposit', () => {
-    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), { now: () => 1000 });
+    const { baseEvidenceOutbox } = createSqliteStores(freshPath(), {
+      now: () => 1000,
+    });
     baseEvidenceOutbox.seed(identity, 0);
     baseEvidenceOutbox.enqueue({
       identity, phase: 'cctp_burn', status: 'confirmed', observedAt: 1000,
@@ -477,7 +780,11 @@ describe('SQLite Base evidence outbox', () => {
       },
     });
     const leased = baseEvidenceOutbox.leaseNext({ now: 1000, leaseMs: 100 });
-    baseEvidenceOutbox.markDelivered({ id: leased.id, leaseToken: leased.leaseToken, now: 1001 });
+    baseEvidenceOutbox.markDelivered({
+      id: leased.id,
+      leaseToken: leased.leaseToken,
+      now: 1001,
+    });
     expect(baseEvidenceOutbox.status(identity)).toMatchObject({
       complete: false, latestPhase: 'cctp_burn', latestState: 'confirmed',
     });
@@ -487,9 +794,11 @@ describe('SQLite Base evidence outbox', () => {
     const stores = createSqliteStores(freshPath(), { now: () => 1000 });
     stores.baseEvidenceOutbox.seed(identity, 0);
     stores.db.exec('BEGIN IMMEDIATE');
-    expect(() => stores.baseEvidenceOutbox.enqueue(
-      checkpoint('submitting'), { transaction: false },
-    )).toThrow(/transaction/i);
+    expect(() =>
+      stores.baseEvidenceOutbox.enqueue(checkpoint('submitting'), {
+        transaction: false,
+      }),
+    ).toThrow(/transaction/i);
     stores.db.exec('ROLLBACK');
     expect(stores.baseEvidenceOutbox.status(identity)).toMatchObject({
       recoveryVersion: 0, events: [],

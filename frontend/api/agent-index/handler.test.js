@@ -22,8 +22,13 @@ import {
   handleBaseChildEvidenceRead,
   handleReporterReadiness,
   handleRecoveryRequest,
+  handleBaseRecoveryRequest,
+  handleBaseRecoveryClaim,
+  handleBaseRecoveryRenew,
+  handleBaseRecoveryRelease,
   LIVE_MANIFEST,
 } from './handler.js'
+import { selectBaseChildRecoveryAction } from './recovery.js'
 import {
   issueReceiptChallenge,
   receiptProofMessage,
@@ -380,6 +385,7 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
   const secret = 'server-reporter-secret'
   const pool = `0x${'11'.repeat(20)}`
   const kernel = `0x${'22'.repeat(20)}`
+  const entryPoint = '0x0000000071727de22e5e9d8baf0edac6f37da032'
   const messenger = `C${'D'.repeat(55)}`
   const token = `C${'E'.repeat(55)}`
   const liveCreator = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
@@ -913,23 +919,318 @@ describe('Task 9 authoritative batch and public evidence handlers', () => {
     }
     const readStore = { readPublicBaseChildEvidence: vi.fn(async () => bundle) }
     const out = await handleBaseChildEvidenceRead({ identity, store: readStore })
+    expect(Object.keys(out.body).sort()).toEqual(
+      [
+        'schemaVersion',
+        'identity',
+        'owner',
+        'agent',
+        'recoverable',
+        'recoveryVersion',
+        'intent',
+        'phases',
+        'events',
+      ].sort()
+    )
     expect(out).toMatchObject({
       status: 200,
       body: {
         schemaVersion: 1,
         identity,
+        owner: OWNER_A,
+        agent: AGENT_A,
         recoverable: true,
         recoveryVersion: 1,
+        intent: expect.objectContaining({
+          runId: 'run-batch-42',
+          grantTxHash: 'grant-batch-42',
+          bindingHash: 'binding-hash-batch-42',
+          baseJobId: identity.childId,
+        }),
         phases: [
           {
+            identity,
             phase: 'cctp_burn',
             state: 'confirmed',
+            eventId: 'a'.repeat(64),
+            recoveryVersion: 1,
+            observedAt: 2_000_000_000_100,
+            evidence: { burnTxHash: 'a'.repeat(64) },
+          },
+        ],
+        events: [
+          {
+            identity,
+            owner: OWNER_A,
+            agent: AGENT_A,
+            eventId: 'a'.repeat(64),
+            recoveryVersion: 1,
+            phase: 'cctp_burn',
+            state: 'confirmed',
+            observedAt: 2_000_000_000_100,
             evidence: { burnTxHash: 'a'.repeat(64) },
           },
         ],
       },
     })
-    expect(JSON.stringify(out.body)).not.toMatch(/private|secret|lease|intent|diagnostic|amount/i)
+    expect(JSON.stringify(out.body)).not.toMatch(
+      /private|secret|lease|diagnostic|sessionPrivateKey/i
+    )
+  })
+
+  it('accepts the relayer burn submitted fence before confirmation and keeps polling attestation', async () => {
+    const store = await readyStore()
+    const directChild = {
+      ...child(1),
+      intent: {
+        ...child(1).intent,
+        grantTxHash: 'a'.repeat(64),
+        bindingHash: 'b'.repeat(64),
+      },
+    }
+    await store.createBaseChildIntent({
+      child: directChild,
+      intentDigest: 'c'.repeat(64),
+      idempotencyKey: 'burn-submitted-fence-intent',
+    })
+    const submittedEvidence = {
+      burnTxHash: 'a'.repeat(64),
+      expectationDigest: 'b'.repeat(64),
+      burnUnits7: '1000000',
+    }
+    const submitted = {
+      schemaVersion: 1,
+      identity,
+      expectedRecoveryVersion: 0,
+      event: {
+        eventId: 'b'.repeat(64),
+        phase: 'cctp_burn',
+        state: 'submitted',
+        evidence: submittedEvidence,
+        observedAt: 2_000_000_000_200,
+      },
+    }
+    await expect(
+      handleBaseChildEvidenceWrite({ request: submitted, store, ...deps() })
+    ).resolves.toMatchObject({
+      status: 201,
+      body: { recoveryVersion: 1, identity },
+    })
+    const confirmed = {
+      ...submitted,
+      expectedRecoveryVersion: 1,
+      event: {
+        ...submitted.event,
+        eventId: 'c'.repeat(64),
+        state: 'confirmed',
+        evidence: {
+          ...submittedEvidence,
+          messageDigest: `0x${'c'.repeat(64)}`,
+          nonce: `0x${'d'.repeat(64)}`,
+        },
+        observedAt: 2_000_000_000_201,
+      },
+    }
+    await expect(
+      handleBaseChildEvidenceWrite({ request: confirmed, store, ...deps() })
+    ).resolves.toMatchObject({
+      status: 201,
+      body: { recoveryVersion: 2, identity },
+    })
+    const out = await handleBaseChildEvidenceRead({
+      identity,
+      configuredNetworkId: 'stellar-testnet',
+      store,
+    })
+    expect(selectBaseChildRecoveryAction(out.body)).toEqual({
+      action: 'poll-attestation',
+      phase: 'cctp_attestation',
+      reasonCode: 'base-attestation-pending',
+    })
+    const attestationFacts = {
+      burnTxHash: 'a'.repeat(64),
+      expectationDigest: 'b'.repeat(64),
+      messageDigest: `0x${'c'.repeat(64)}`,
+      nonce: `0x${'d'.repeat(64)}`,
+    }
+    await expect(
+      handleBaseChildEvidenceWrite({
+        request: {
+          schemaVersion: 1,
+          identity,
+          expectedRecoveryVersion: 2,
+          event: {
+            eventId: 'd'.repeat(64),
+            phase: 'cctp_attestation',
+            state: 'failed',
+            evidence: { ...attestationFacts, reasonCode: 'attestation_retryable' },
+            observedAt: 2_000_000_000_202,
+          },
+        },
+        store,
+        ...deps(),
+      })
+    ).resolves.toMatchObject({ status: 201, body: { recoveryVersion: 3, identity } })
+    await expect(
+      handleBaseChildEvidenceWrite({
+        request: {
+          schemaVersion: 1,
+          identity,
+          expectedRecoveryVersion: 3,
+          event: {
+            eventId: 'e'.repeat(64),
+            phase: 'cctp_attestation',
+            state: 'confirmed',
+            evidence: {
+              ...attestationFacts,
+              attestationDigest: `0x${'f'.repeat(64)}`,
+              evidenceVersion: '4',
+            },
+            observedAt: 2_000_000_000_203,
+          },
+        },
+        store,
+        ...deps(),
+      })
+    ).resolves.toMatchObject({ status: 201, body: { recoveryVersion: 4, identity } })
+    const confirmedAttestation = await handleBaseChildEvidenceRead({
+      identity,
+      configuredNetworkId: 'stellar-testnet',
+      store,
+    })
+    expect(selectBaseChildRecoveryAction(confirmedAttestation.body)).toEqual({
+      action: 'submit-mint',
+      phase: 'cctp_mint',
+      reasonCode: 'base-attestation-confirmed',
+    })
+  })
+
+  it('carries the nested reconcile handle through a real report and public selector bundle', async () => {
+    const store = await readyStore()
+    const child = {
+      version: 1,
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      agent: AGENT_A,
+      bindingId: 'binding-nested-42',
+      executionId: 'run-nested-42:exec:allocation-nested-1',
+      allocationId: 'allocation-nested-1',
+      childId: 'job-nested-42',
+      intent: {
+        token: 'USDC',
+        units: '1000000',
+        decimals: 6,
+        poolAddress: pool,
+        proxyTarget: 'aave-v3',
+        minShares: '900000',
+        runId: 'run-nested-42',
+        grantTxHash: '66'.repeat(32),
+        kernelAddress: kernel,
+        bindingHash: 'dd'.repeat(32),
+        baseJobId: 'job-nested-42',
+      },
+      lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 2_000_000_000_000 },
+    }
+    await store.createBaseChildIntent({
+      child,
+      intentDigest: 'ee'.repeat(32),
+      idempotencyKey: 'nested-handle-intent',
+    })
+    const childIdentity = {
+      networkId: child.networkId,
+      bindingId: child.bindingId,
+      executionId: child.executionId,
+      allocationId: child.allocationId,
+      childId: child.childId,
+    }
+    const handle = {
+      entryPoint,
+      sender: kernel,
+      nonce: '17',
+      startBlock: '4321',
+    }
+    const common = {
+      chainId: '84532',
+      yieldRouterAddress: `0x${'44'.repeat(20)}`,
+      caller: kernel,
+      poolAddress: pool,
+      assets: '1000000',
+      minShares: '900000',
+    }
+    const events = [
+      {
+        phase: 'cctp_burn',
+        state: 'confirmed',
+        evidence: {
+          burnTxHash: 'aa'.repeat(32),
+          expectationDigest: 'bb'.repeat(32),
+          burnUnits7: '1000000',
+          messageDigest: `0x${'cc'.repeat(32)}`,
+          nonce: `0x${'dd'.repeat(32)}`,
+        },
+      },
+      {
+        phase: 'cctp_attestation',
+        state: 'confirmed',
+        evidence: {
+          burnTxHash: 'aa'.repeat(32),
+          expectationDigest: 'bb'.repeat(32),
+          messageDigest: `0x${'cc'.repeat(32)}`,
+          attestationDigest: `0x${'ee'.repeat(32)}`,
+          nonce: `0x${'dd'.repeat(32)}`,
+          evidenceVersion: '2',
+        },
+      },
+      {
+        phase: 'cctp_mint',
+        state: 'confirmed',
+        evidence: {
+          burnTxHash: 'aa'.repeat(32),
+          expectationDigest: 'bb'.repeat(32),
+          messageDigest: `0x${'cc'.repeat(32)}`,
+          attestationDigest: `0x${'ee'.repeat(32)}`,
+          nonce: `0x${'dd'.repeat(32)}`,
+          evidenceVersion: '3',
+          mintTxHash: `0x${'ff'.repeat(32)}`,
+        },
+      },
+      {
+        phase: 'base_deposit',
+        state: 'submitting',
+        evidence: { ...common, reconcileHandle: handle },
+      },
+    ]
+    for (const [index, event] of events.entries()) {
+      const request = {
+        schemaVersion: 1,
+        identity: childIdentity,
+        expectedRecoveryVersion: index,
+        event: {
+          eventId: `${String(index + 1).padStart(64, '0')}`,
+          ...event,
+          observedAt: 2_000_000_000_100 + index,
+        },
+      }
+      const reportOut = await handleBaseChildEvidenceWrite({ request, store, ...deps() })
+      await expect(Promise.resolve(reportOut)).resolves.toMatchObject({
+        status: 201,
+        body: { recoveryVersion: index + 1, identity: childIdentity },
+      })
+    }
+    const out = await handleBaseChildEvidenceRead({
+      identity: childIdentity,
+      configuredNetworkId: 'stellar-testnet',
+      store,
+    })
+    expect(out.status).toBe(200)
+    const publicHandle = out.body.phases.at(-1).evidence.reconcileHandle
+    expect(publicHandle).toEqual(handle)
+    expect(out.body.phases.at(-1).evidence).not.toHaveProperty('entryPoint')
+    expect(selectBaseChildRecoveryAction(out.body)).toEqual({
+      action: 'poll-base-deposit',
+      phase: 'base_deposit',
+      reasonCode: 'base-deposit-pending',
+    })
   })
 
   it('requires all five public identity fields and maps unknown exact tuples to 404', async () => {
@@ -2592,5 +2893,349 @@ describe('handleRecoveryRequest', () => {
       authorityFacts: revoked,
     })
     expect(out.status).toBe(403)
+  })
+})
+
+describe('Base recovery claim handlers', () => {
+  const identity = {
+    networkId: 'stellar-testnet',
+    bindingId: '0123456789abcdef0123456789abcdef',
+    executionId: 'run-42:exec:run-42:bridge:aave-v3',
+    allocationId: 'run-42:bridge:aave-v3',
+    childId: 'abcdef0123456789abcdef0123456789',
+  }
+  const owner = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 44)).publicKey()
+  const session = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 45))
+  const agent = 'CAUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSS3Y4'
+  const request = {
+    executionId: identity.executionId,
+    bindingId: identity.bindingId,
+    allocationId: identity.allocationId,
+    childId: identity.childId,
+    expectedRecoveryVersion: 0,
+    leaseOwner: 'tab-0123456789abcdef',
+  }
+  const bundle = {
+    schemaVersion: 1,
+    identity,
+    owner,
+    agent,
+    recoverable: true,
+    recoveryVersion: 0,
+    intent: {
+      runId: 'run-42',
+      grantTxHash: '66'.repeat(32),
+      bindingHash: 'dd'.repeat(32),
+      baseJobId: identity.childId,
+      kernelAddress: '0x00000000000000000000000000000000000000aa',
+      poolAddress: '0x00000000000000000000000000000000000000b2',
+      proxyTarget: 'aave-v3',
+      token: 'USDC',
+      units: '1000000',
+      decimals: 6,
+      minShares: '900000',
+    },
+    phases: [],
+    events: [],
+  }
+  const authority = {
+    routerOwner: owner,
+    scope: { owner, revoked: false, expiry: 2_000_000_100 },
+    signer: session.rawPublicKey(),
+  }
+  const actionBundle = {
+    ...bundle,
+    recoveryVersion: 2,
+    phases: [
+      {
+        eventId: '1'.repeat(64),
+        identity,
+        recoveryVersion: 1,
+        phase: 'cctp_burn',
+        state: 'confirmed',
+        evidence: {
+          burnTxHash: '66'.repeat(32),
+          expectationDigest: 'dd'.repeat(32),
+          burnUnits7: '1000000',
+          messageDigest: `0x${'88'.repeat(32)}`,
+          nonce: `0x${'77'.repeat(32)}`,
+        },
+        observedAt: 2_000_000_000_001,
+      },
+      {
+        eventId: '2'.repeat(64),
+        identity,
+        recoveryVersion: 2,
+        phase: 'cctp_attestation',
+        state: 'confirmed',
+        evidence: {
+          burnTxHash: '66'.repeat(32),
+          expectationDigest: 'dd'.repeat(32),
+          messageDigest: `0x${'88'.repeat(32)}`,
+          attestationDigest: `0x${'99'.repeat(32)}`,
+          nonce: `0x${'77'.repeat(32)}`,
+          evidenceVersion: 2,
+        },
+        observedAt: 2_000_000_000_002,
+      },
+    ],
+    events: [
+      {
+        eventId: '1'.repeat(64),
+        identity,
+        owner,
+        agent,
+        recoveryVersion: 1,
+        phase: 'cctp_burn',
+        state: 'confirmed',
+        evidence: {
+          burnTxHash: '66'.repeat(32),
+          expectationDigest: 'dd'.repeat(32),
+          burnUnits7: '1000000',
+          messageDigest: `0x${'88'.repeat(32)}`,
+          nonce: `0x${'77'.repeat(32)}`,
+        },
+        observedAt: 2_000_000_000_001,
+      },
+      {
+        eventId: '2'.repeat(64),
+        identity,
+        owner,
+        agent,
+        recoveryVersion: 2,
+        phase: 'cctp_attestation',
+        state: 'confirmed',
+        evidence: {
+          burnTxHash: '66'.repeat(32),
+          expectationDigest: 'dd'.repeat(32),
+          messageDigest: `0x${'88'.repeat(32)}`,
+          attestationDigest: `0x${'99'.repeat(32)}`,
+          nonce: `0x${'77'.repeat(32)}`,
+          evidenceVersion: 2,
+        },
+        observedAt: 2_000_000_000_002,
+      },
+    ],
+  }
+  async function signedArgs(overrides = {}, bundleValue = bundle) {
+    const body = { ...request, ...overrides }
+    const challenge = {
+      challengeId: 'base-challenge-1',
+      networkId: identity.networkId,
+      owner,
+      agent,
+      requestDigest: receiptRequestDigest(body),
+      expiresAt: 2_000_000_030_000,
+      createdAt: 2_000_000_000_000,
+      consumedAt: null,
+    }
+    const store = {
+      readReceiptChallenge: vi.fn(async () => challenge),
+      consumeReceiptChallenge: vi.fn(async () => true),
+      readBaseChildRecoveryBundle: vi.fn(async () => bundleValue),
+      acquireBaseChildRecoveryLease: vi.fn(async (lease) => ({
+        acquired: true,
+        leaseToken: lease.leaseToken,
+        expiresAt: lease.now + lease.ttlMs,
+      })),
+      readBaseChildRecoveryClaim: vi.fn(async (claim) => ({
+        identity: claim.identity,
+        owner,
+        agent,
+        action: claim.action,
+        phase: 'cctp_mint',
+        evidenceVersion: claim.evidenceVersion,
+        holder: 'tab-0123456789abcdef',
+        leaseToken: claim.leaseToken,
+        acquiredAt: 2_000_000_000_000,
+        expiresAt: 2_000_000_030_000,
+      })),
+      renewBaseChildRecoveryLease: vi.fn(async () => ({
+        renewed: true,
+        expiresAt: 2_000_000_030_010,
+      })),
+      releaseBaseChildRecoveryLease: vi.fn(async () => ({ released: true })),
+    }
+    const signature = session
+      .sign(Buffer.from(receiptProofMessage(challenge)))
+      .toString('base64url')
+    return {
+      request: body,
+      proof: { challengeId: challenge.challengeId, expiresAt: challenge.expiresAt, signature },
+      store,
+      authorityReader: async () => authority,
+      now: 2_000_000_000_001,
+    }
+  }
+
+  it('claims only the exact signed full identity and returns a sanitized no-action result', async () => {
+    const args = await signedArgs()
+    const out = await handleBaseRecoveryRequest(args)
+    expect(out).toEqual({
+      status: 200,
+      body: {
+        ok: true,
+        identity,
+        action: 'no-movement',
+        phase: null,
+        reasonCode: 'base-no-movement',
+        evidenceVersion: 0,
+        lease: null,
+      },
+    })
+    expect(JSON.stringify(out.body)).not.toMatch(/intent|events|private|secret|signature|token/i)
+    expect(args.store.acquireBaseChildRecoveryLease).not.toHaveBeenCalled()
+  })
+
+  it('rejects an expanded proof envelope before challenge or child reads', async () => {
+    const args = await signedArgs()
+    args.proof.extra = 'not-signed-protocol'
+    const out = await handleBaseRecoveryRequest(args)
+    expect(out).toMatchObject({ status: 400 })
+    expect(args.store.readReceiptChallenge).not.toHaveBeenCalled()
+  })
+
+  it('rejects caller-supplied action/phase and reporter auth before any D1 read', async () => {
+    const args = await signedArgs({ action: 'burn', phase: 'cctp_burn' })
+    const out = await handleBaseRecoveryRequest(args)
+    expect(out).toMatchObject({ status: 400 })
+    expect(args.store.readReceiptChallenge).not.toHaveBeenCalled()
+    const reporter = await handleBaseRecoveryClaim({
+      body: { identity, action: 'submit-mint', evidenceVersion: 0, leaseToken: 'aa'.repeat(32) },
+      store: args.store,
+      secret: 'reporter-secret',
+      providedSecret: 'wrong',
+    })
+    expect(reporter).toEqual({ status: 401, body: { error: 'Unauthorized' } })
+    expect(args.store.readBaseChildRecoveryBundle).not.toHaveBeenCalled()
+    const malformedIdentity = await signedArgs({ executionId: 'run-42:exec:other-allocation' })
+    const malformed = await handleBaseRecoveryRequest(malformedIdentity)
+    expect(malformed).toMatchObject({ status: 400 })
+    expect(malformedIdentity.store.readReceiptChallenge).not.toHaveBeenCalled()
+  })
+
+  it('returns a 256-bit lease for an actionable Base phase and permits revoked post-burn proof', async () => {
+    const args = await signedArgs({ expectedRecoveryVersion: 2 }, actionBundle)
+    args.authorityReader = async () => ({
+      ...authority,
+      scope: { ...authority.scope, revoked: true },
+    })
+    const out = await handleBaseRecoveryRequest(args)
+    expect(out).toMatchObject({
+      status: 200,
+      body: {
+        ok: true,
+        identity,
+        action: 'submit-mint',
+        phase: 'cctp_mint',
+        reasonCode: 'base-attestation-confirmed',
+        evidenceVersion: 2,
+      },
+    })
+    expect(out.body.lease.leaseToken).toMatch(/^[0-9a-f]{64}$/)
+    expect(out.body.lease).not.toHaveProperty('action')
+  })
+
+  it('recomputes reporter claim state and keeps renew/release server-only', async () => {
+    const args = await signedArgs({ expectedRecoveryVersion: 2 }, actionBundle)
+    const body = {
+      identity,
+      action: 'submit-mint',
+      evidenceVersion: 2,
+      leaseToken: 'aa'.repeat(32),
+    }
+    const claim = await handleBaseRecoveryClaim({
+      body,
+      store: args.store,
+      secret: 'reporter-secret',
+      providedSecret: 'reporter-secret',
+      now: 2_000_000_000_010,
+    })
+    expect(claim).toMatchObject({
+      status: 200,
+      body: { ok: true, identity, action: 'submit-mint', evidenceVersion: 2 },
+    })
+    expect(claim.body.bundle).toEqual(actionBundle)
+    expect(claim.body.lease).not.toHaveProperty('agent')
+    const forgedAction = await handleBaseRecoveryClaim({
+      body: { ...body, action: 'poll-mint' },
+      store: args.store,
+      secret: 'reporter-secret',
+      providedSecret: 'reporter-secret',
+      now: 2_000_000_000_010,
+    })
+    expect(forgedAction).toEqual({ status: 404, body: { error: 'Base recovery claim not found' } })
+    const renewed = await handleBaseRecoveryRenew({
+      body: { ...body, holder: 'tab-0123456789abcdef' },
+      store: args.store,
+      secret: 'reporter-secret',
+      providedSecret: 'reporter-secret',
+      now: 2_000_000_000_010,
+      leaseTtlMs: 30_000,
+    })
+    expect(renewed).toMatchObject({ status: 200, body: { ok: true, action: 'submit-mint' } })
+    expect(args.store.renewBaseChildRecoveryLease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        now: 2_000_000_000_010,
+        ttlMs: 30_000,
+      })
+    )
+    await expect(
+      handleBaseRecoveryRenew({
+        body: { ...body, holder: 'tab-0123456789abcdef', now: 0 },
+        store: args.store,
+        secret: 'reporter-secret',
+        providedSecret: 'reporter-secret',
+      })
+    ).resolves.toMatchObject({ status: 400 })
+    expect(args.store.renewBaseChildRecoveryLease).toHaveBeenCalledOnce()
+    await expect(
+      handleBaseRecoveryRelease({
+        body,
+        store: args.store,
+        secret: 'reporter-secret',
+        providedSecret: 'reporter-secret',
+      })
+    ).resolves.toEqual({ status: 200, body: { ok: true } })
+  })
+
+  it('distinguishes an evidence-version conflict from a missing reporter claim', async () => {
+    const args = await signedArgs({ expectedRecoveryVersion: 2 }, actionBundle)
+    args.store.readBaseChildRecoveryBundle.mockResolvedValue({
+      ...actionBundle,
+      recoveryVersion: 3,
+    })
+    const out = await handleBaseRecoveryClaim({
+      body: { identity, action: 'submit-mint', evidenceVersion: 2, leaseToken: 'aa'.repeat(32) },
+      store: args.store,
+      secret: 'reporter-secret',
+      providedSecret: 'reporter-secret',
+      now: 2_000_000_000_010,
+    })
+    expect(out).toMatchObject({ status: 409, body: { code: 'version-conflict' } })
+  })
+
+  it('does not disclose or renew a claim whose immutable bridge agent subject has changed', async () => {
+    const args = await signedArgs({ expectedRecoveryVersion: 2 }, actionBundle)
+    args.store.readBaseChildRecoveryClaim.mockResolvedValue({
+      identity,
+      owner,
+      agent: 'COTHERAGENT',
+      action: 'submit-mint',
+      phase: 'cctp_mint',
+      evidenceVersion: 2,
+      holder: 'tab-0123456789abcdef',
+      leaseToken: 'aa'.repeat(32),
+      acquiredAt: 2_000_000_000_000,
+      expiresAt: 2_000_000_030_000,
+    })
+    const out = await handleBaseRecoveryClaim({
+      body: { identity, action: 'submit-mint', evidenceVersion: 2, leaseToken: 'aa'.repeat(32) },
+      store: args.store,
+      secret: 'reporter-secret',
+      providedSecret: 'reporter-secret',
+      now: 2_000_000_000_010,
+    })
+    expect(out).toEqual({ status: 404, body: { error: 'Base recovery claim not found' } })
   })
 })

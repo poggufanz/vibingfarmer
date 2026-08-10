@@ -23,6 +23,10 @@ import {
   toBaseChildRow,
   toBaseChildPhaseEventRow,
   parseBaseChildPhaseProjectionRow,
+  validateBaseRecoveryRequest,
+  validateBaseRecoveryLease,
+  BASE_RECOVERY_ACTIONS,
+  validateBaseChildPhaseEvidence,
 } from './models.js'
 
 const membership = (over = {}) => ({
@@ -203,6 +207,20 @@ describe('Task 9 Base child recovery models', () => {
     })
   })
 
+  it('accepts the relayer cctp_burn submitted checkpoint before confirmation', () => {
+    expect(
+      validateBaseChildPhaseEvidence({
+        phase: 'cctp_burn',
+        state: 'submitted',
+        evidence: {
+          burnTxHash: 'a'.repeat(64),
+          expectationDigest: 'b'.repeat(64),
+          burnUnits7: '1000000',
+        },
+      })
+    ).toBeTypeOf('string')
+  })
+
   it.each([
     ['serializedApproval', 'signed-envelope'],
     ['capabilityHash', 'capability-digest'],
@@ -333,6 +351,7 @@ describe('Task 9 Base child recovery models', () => {
             poolAddress: `0x${'33'.repeat(20)}`,
             assets: '9007199254740993000000',
             minShares: '9007199254740993000001',
+            shares: '9007199254740993000002',
             userOpHash: `0x${'44'.repeat(32)}`,
             transactionHash: `0x${'55'.repeat(32)}`,
             event: {
@@ -365,6 +384,7 @@ describe('Task 9 Base child recovery models', () => {
       },
       minShares: '9007199254740993000001',
       poolAddress: `0x${'33'.repeat(20)}`,
+      shares: '9007199254740993000002',
       transactionHash: `0x${'55'.repeat(32)}`,
       userOpHash: `0x${'44'.repeat(32)}`,
       yieldRouterAddress: `0x${'11'.repeat(20)}`,
@@ -391,6 +411,12 @@ describe('Task 9 Base child recovery models', () => {
       },
     ],
     [
+      'missing confirmed shares',
+      (evidence) => {
+        delete evidence.shares
+      },
+    ],
+    [
       'field from another state',
       (evidence) => {
         evidence.reasonCode = 'not_allowed_for_confirmed'
@@ -404,6 +430,7 @@ describe('Task 9 Base child recovery models', () => {
       poolAddress: `0x${'33'.repeat(20)}`,
       assets: '100',
       minShares: '90',
+      shares: '91',
       userOpHash: `0x${'44'.repeat(32)}`,
       transactionHash: `0x${'55'.repeat(32)}`,
       event: {
@@ -433,6 +460,295 @@ describe('Task 9 Base child recovery models', () => {
         { owner: 'GOWNER1', agent: 'CAGENT1' }
       )
     ).toThrow(/evidence|address|field/i)
+  })
+})
+
+describe('Task 14 Base recovery models', () => {
+  const identity = {
+    networkId: 'stellar-testnet',
+    bindingId: '0123456789abcdef0123456789abcdef',
+    executionId: 'run-42:exec:run-42:bridge:aave-v3',
+    allocationId: 'run-42:bridge:aave-v3',
+    childId: 'abcdef0123456789abcdef0123456789',
+  }
+
+  it('exposes the closed action vocabulary without Stellar pull actions', () => {
+    expect(BASE_RECOVERY_ACTIONS).toEqual([
+      'no-movement',
+      'poll-attestation',
+      'submit-mint',
+      'poll-mint',
+      'submit-base-deposit',
+      'poll-base-deposit',
+      'owner-action-required',
+      'complete',
+      'manual-review',
+    ])
+    expect(BASE_RECOVERY_ACTIONS).not.toContain('pull')
+    expect(BASE_RECOVERY_ACTIONS).not.toContain('burn')
+  })
+
+  it('validates the exact browser-signed Base recovery request', () => {
+    const request = {
+      executionId: identity.executionId,
+      bindingId: identity.bindingId,
+      allocationId: identity.allocationId,
+      childId: identity.childId,
+      expectedRecoveryVersion: 7,
+      leaseOwner: 'tab-0123456789abcdef',
+    }
+    expect(validateBaseRecoveryRequest(request)).toEqual(request)
+    for (const field of ['executionId', 'bindingId', 'allocationId', 'childId', 'leaseOwner']) {
+      expect(() => validateBaseRecoveryRequest({ ...request, [field]: '' })).toThrow()
+    }
+    expect(() => validateBaseRecoveryRequest({ ...request, expectedRecoveryVersion: -1 })).toThrow()
+    expect(() => validateBaseRecoveryRequest({ ...request, action: 'submit-mint' })).toThrow()
+    expect(() => validateBaseRecoveryRequest({ ...request, leaseOwner: 'x'.repeat(129) })).toThrow()
+  })
+
+  it('accepts only canonical 256-bit Base lease tokens and exact lease facts', () => {
+    const lease = {
+      identity,
+      owner: 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57',
+      action: 'submit-mint',
+      phase: 'cctp_mint',
+      evidenceVersion: 7,
+      holder: 'tab-0123456789abcdef',
+      leaseToken: 'ab'.repeat(32),
+      now: 2_000_000_000_000,
+      ttlMs: 30_000,
+    }
+    expect(validateBaseRecoveryLease(lease)).toMatchObject(lease)
+    for (const token of ['AB'.repeat(32), 'ab'.repeat(31), 'ab'.repeat(33), 'holder']) {
+      expect(() => validateBaseRecoveryLease({ ...lease, leaseToken: token })).toThrow()
+    }
+    expect(() => validateBaseRecoveryLease({ ...lease, action: 'pull' })).toThrow()
+    expect(() => validateBaseRecoveryLease({ ...lease, phase: 'pull' })).toThrow()
+    expect(() =>
+      validateBaseRecoveryLease({ ...lease, action: 'submit-mint', phase: 'base_deposit' })
+    ).toThrow()
+    expect(() => validateBaseRecoveryLease({ ...lease, holder: 'x'.repeat(129) })).toThrow()
+  })
+
+  it('preserves the exact Base submitting reconcile handle instead of permitting a replayable gap', () => {
+    const evidence = {
+      chainId: '84532',
+      yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
+      kernelAddress: '0x00000000000000000000000000000000000000aa',
+      caller: '0x00000000000000000000000000000000000000aa',
+      poolAddress: '0x00000000000000000000000000000000000000b2',
+      assets: '1000000',
+      minShares: '900000',
+      reconcileHandle: {
+        entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+        sender: '0x00000000000000000000000000000000000000aa',
+        nonce: '17',
+        startBlock: '123',
+      },
+    }
+    expect(
+      validateBaseChildPhaseEvidence({ phase: 'base_deposit', state: 'submitting', evidence })
+    ).toBeTypeOf('string')
+    expect(() =>
+      validateBaseChildPhaseEvidence({
+        phase: 'base_deposit',
+        state: 'submitting',
+        evidence: {
+          ...evidence,
+          reconcileHandle: { ...evidence.reconcileHandle, startBlock: undefined },
+        },
+      })
+    ).toThrow()
+    expect(() =>
+      validateBaseChildPhaseEvidence({
+        phase: 'base_deposit',
+        state: 'submitting',
+        evidence: { ...evidence, entryPoint: evidence.reconcileHandle.entryPoint },
+      })
+    ).toThrow()
+    expect(() =>
+      validateBaseChildPhaseEvidence({
+        phase: 'base_deposit',
+        state: 'submitting',
+        evidence: {
+          ...evidence,
+          reconcileHandle: {
+            ...evidence.reconcileHandle,
+            entryPoint: '0x00000000000000000000000000000000000000e1',
+          },
+        },
+      })
+    ).toThrow()
+    for (const mutate of [
+      { sender: '0x00000000000000000000000000000000000000bb' },
+      { nonce: '0x11' },
+      { startBlock: '0123' },
+    ]) {
+      expect(() =>
+        validateBaseChildPhaseEvidence({
+          phase: 'base_deposit',
+          state: 'submitting',
+          evidence: {
+            ...evidence,
+            reconcileHandle: { ...evidence.reconcileHandle, ...mutate },
+          },
+        })
+      ).toThrow()
+    }
+  })
+
+  it('accepts CCTP pending/unknown evidence with one immutable message and nonce', () => {
+    const base = {
+      burnTxHash: 'a'.repeat(64),
+      expectationDigest: 'b'.repeat(64),
+      messageDigest: `0x${'c'.repeat(64)}`,
+      nonce: `0x${'d'.repeat(64)}`,
+    }
+    expect(
+      validateBaseChildPhaseEvidence({
+        phase: 'cctp_attestation',
+        state: 'submitted',
+        evidence: base,
+      })
+    ).toBeTypeOf('string')
+    expect(
+      validateBaseChildPhaseEvidence({
+        phase: 'cctp_mint',
+        state: 'unknown',
+        evidence: { ...base, attestationDigest: `0x${'e'.repeat(64)}` },
+      })
+    ).toBeTypeOf('string')
+    expect(
+      validateBaseChildPhaseEvidence({
+        phase: 'cctp_mint',
+        state: 'submitted',
+        evidence: { ...base, attestationDigest: `0x${'e'.repeat(64)}`, evidenceVersion: '2' },
+      })
+    ).toBeTypeOf('string')
+  })
+
+  it('requires canonical 0x-prefixed CCTP message and attestation digests', () => {
+    expect(() =>
+      validateBaseChildPhaseEvidence({
+        phase: 'cctp_attestation',
+        state: 'submitted',
+        evidence: {
+          burnTxHash: 'a'.repeat(64),
+          expectationDigest: 'b'.repeat(64),
+          messageDigest: 'c'.repeat(64),
+          nonce: `0x${'d'.repeat(64)}`,
+        },
+      })
+    ).toThrow(/messageDigest|digest/i)
+    expect(() =>
+      validateBaseChildPhaseEvidence({
+        phase: 'cctp_mint',
+        state: 'submitted',
+        evidence: {
+          burnTxHash: 'a'.repeat(64),
+          expectationDigest: 'b'.repeat(64),
+          messageDigest: `0x${'c'.repeat(64)}`,
+          attestationDigest: 'e'.repeat(64),
+          nonce: `0x${'d'.repeat(64)}`,
+          evidenceVersion: '2',
+        },
+      })
+    ).toThrow(/attestationDigest|digest/i)
+  })
+
+  it('accepts a Base unknown state only with its exact persisted reconcile identity', () => {
+    const evidence = {
+      chainId: '84532',
+      yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
+      kernelAddress: '0x00000000000000000000000000000000000000aa',
+      caller: '0x00000000000000000000000000000000000000aa',
+      poolAddress: '0x00000000000000000000000000000000000000b2',
+      assets: '1000000',
+      minShares: '900000',
+      reconcileHandle: {
+        entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+        sender: '0x00000000000000000000000000000000000000aa',
+        nonce: '17',
+        startBlock: '123',
+      },
+    }
+    expect(
+      validateBaseChildPhaseEvidence({ phase: 'base_deposit', state: 'unknown', evidence })
+    ).toBeTypeOf('string')
+    expect(
+      validateBaseChildPhaseEvidence({
+        phase: 'base_deposit',
+        state: 'unknown',
+        evidence: { ...evidence, userOpHash: `0x${'b'.repeat(64)}` },
+      })
+    ).toBeTypeOf('string')
+  })
+
+  it('accepts the relayer Base unknown checkpoint with nullable hashes and a reason code', () => {
+    const evidence = {
+      chainId: '84532',
+      yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
+      caller: '0x00000000000000000000000000000000000000aa',
+      poolAddress: '0x00000000000000000000000000000000000000b2',
+      assets: '1000000',
+      minShares: '900000',
+      userOpHash: null,
+      transactionHash: null,
+      reasonCode: 'send_result_unknown',
+      reconcileHandle: {
+        entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+        sender: '0x00000000000000000000000000000000000000aa',
+        nonce: '17',
+        startBlock: '123',
+      },
+    }
+    expect(
+      validateBaseChildPhaseEvidence({ phase: 'base_deposit', state: 'unknown', evidence })
+    ).toBeTypeOf('string')
+  })
+
+  it('accepts the relayer Base blocked checkpoint without inventing Kernel custody proof', () => {
+    const evidence = {
+      chainId: '84532',
+      yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
+      caller: '0x00000000000000000000000000000000000000aa',
+      poolAddress: '0x00000000000000000000000000000000000000b2',
+      assets: '1000000',
+      minShares: '900000',
+      userOpHash: null,
+      transactionHash: null,
+      reasonCode: 'mandate_held_after_mint',
+    }
+    expect(
+      validateBaseChildPhaseEvidence({ phase: 'base_deposit', state: 'blocked', evidence })
+    ).toBeTypeOf('string')
+  })
+
+  it('accepts definitive burn revert and mandate-inactive Kernel-custody evidence', () => {
+    expect(
+      validateBaseChildPhaseEvidence({
+        phase: 'cctp_burn',
+        state: 'failed',
+        evidence: { reasonCode: 'burn_reverted' },
+      })
+    ).toBeTypeOf('string')
+    expect(
+      validateBaseChildPhaseEvidence({
+        phase: 'base_deposit',
+        state: 'blocked',
+        evidence: {
+          chainId: '84532',
+          yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
+          kernelAddress: '0x00000000000000000000000000000000000000aa',
+          caller: '0x00000000000000000000000000000000000000aa',
+          poolAddress: '0x00000000000000000000000000000000000000b2',
+          assets: '1000000',
+          minShares: '900000',
+          reasonCode: 'mandate_inactive',
+          kernelCustodyConfirmed: true,
+        },
+      })
+    ).toBeTypeOf('string')
   })
 })
 

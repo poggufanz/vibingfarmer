@@ -70,7 +70,15 @@ import {
   requestRecoveryAction,
   resolveRecoveryCredential,
 } from './strategy/recoveryClient.js'
-import { projectRecoveryReceipt } from './strategy/receiptProjection.js'
+import { projectBaseRecoveryBundle, projectRecoveryReceipt } from './strategy/receiptProjection.js'
+import {
+  createBaseRecoveryActionRunner,
+  executeBaseRecovery,
+  pollBaseRecoveryEvidence,
+  readBaseRecoveryEvidence,
+  requestBaseRecoveryClaim,
+} from './strategy/baseRecoveryClient.js'
+import { baseRecoveryIdentityKey } from './strategy/baseRecoveryIdentity.js'
 import { readContract } from './stellar/client.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS, BASE_POOL_CATALOG } from './config.js'
 import {
@@ -883,6 +891,82 @@ export function createRecoveryActionRunner({
   }
 }
 
+/**
+ * Convert one failed Base receipt outcome into an exact public recovery projection. The identity
+ * must already exist on the Task-13 outcome; this boundary never reconstructs it from run IDs,
+ * allocation positions, or job IDs.
+ */
+export async function projectBaseOutcomeRecovery({
+  outcome,
+  owner,
+  signal,
+  readEvidence = readBaseRecoveryEvidence,
+  projectEvidence = projectBaseRecoveryBundle,
+}) {
+  let key
+  try {
+    key = baseRecoveryIdentityKey(outcome?.identity)
+  } catch {
+    return null
+  }
+  try {
+    const bundle = await readEvidence({ identity: outcome.identity, signal })
+    if (bundle?.owner !== owner) throw new Error('Base evidence owner mismatch')
+    const projection = projectEvidence(bundle)
+    if (baseRecoveryIdentityKey(projection?.identity) !== key) {
+      throw new Error('Base evidence identity mismatch')
+    }
+    return { key, projection }
+  } catch (error) {
+    if (error?.name === 'AbortError') return null
+    const publicEvidence = outcome?.evidence ?? {}
+    const phases = {}
+    if (/^[0-9a-f]{64}$/.test(publicEvidence.burnHash || '')) {
+      phases.cctp_burn = {
+        state: 'unknown',
+        evidence: { burnTxHash: publicEvidence.burnHash },
+      }
+    }
+    if (/^0x[0-9a-f]{64}$/.test(publicEvidence.mintTxHash || '')) {
+      phases.cctp_mint = {
+        state: 'unknown',
+        evidence: { mintTxHash: publicEvidence.mintTxHash },
+      }
+    }
+    const userOpHash = /^0x[0-9a-f]{64}$/.test(publicEvidence.userOpHash || '')
+      ? publicEvidence.userOpHash
+      : null
+    const transactionHash = /^0x[0-9a-f]{64}$/.test(publicEvidence.depositTxHash || '')
+      ? publicEvidence.depositTxHash
+      : null
+    if (userOpHash || transactionHash) {
+      phases.base_deposit = {
+        state: 'unknown',
+        evidence: {
+          ...(userOpHash ? { userOpHash } : {}),
+          ...(transactionHash ? { transactionHash } : {}),
+        },
+      }
+    }
+    return {
+      key,
+      projection: {
+        action: 'manual-review',
+        phase: null,
+        reasonCode: 'base-evidence-unavailable',
+        identity: outcome.identity,
+        version: 0,
+        phases,
+        custody: {
+          location:
+            typeof outcome.custody?.location === 'string' ? outcome.custody.location : 'unknown',
+          confirmed: outcome.custody?.confirmed === true,
+        },
+      },
+    }
+  }
+}
+
 // Final review, Fix 2: the cached envelope's SHAPE, not just its data, can go stale across a
 // deploy. A pre-Task-10 cache stamped `discovery.agents[].baseChildren` nowhere at all; under the
 // current `sourceUnknown = discovery?.status !== 'complete'` predicate (readOwnerMoney.js:635) a
@@ -1257,6 +1341,9 @@ const App = () => {
   const [recoveryPendingAllocations, setRecoveryPendingAllocations] = useS(() => new Set())
   const recoveryMappingsRef = useR(new Map())
   const recoveryRunnerRef = useR(null)
+  const [baseRecoveryByIdentity, setBaseRecoveryByIdentity] = useS({})
+  const [baseRecoveryPendingIdentities, setBaseRecoveryPendingIdentities] = useS(() => new Set())
+  const baseRecoveryRunnerRef = useR(null)
   const recoveryLeaseOwnerRef = useR(
     `vf-recovery-${globalThis.crypto?.randomUUID?.() || Date.now()}`
   )
@@ -2667,6 +2754,9 @@ const App = () => {
       setRunReceipt(null)
       setRecoveryByAllocation({})
       setRecoveryPendingAllocations(new Set())
+      setBaseRecoveryByIdentity({})
+      setBaseRecoveryPendingIdentities(new Set())
+      baseRecoveryRunnerRef.current = null
       recoveryMappingsRef.current = new Map()
       setExecMap({})
       setOpenAgentId(null)
@@ -3882,6 +3972,9 @@ const App = () => {
     setRunEvents([])
     setRecoveryByAllocation({})
     setRecoveryPendingAllocations(new Set())
+    setBaseRecoveryByIdentity({})
+    setBaseRecoveryPendingIdentities(new Set())
+    baseRecoveryRunnerRef.current = null
     recoveryMappingsRef.current = new Map()
 
     const orch = new OrchestratorAgent({
@@ -3969,8 +4062,9 @@ const App = () => {
     return dispatchPromise
   }
 
-  // Project every failed settled lane from durable evidence. Base children deliberately receive
-  // only a blocked display projection; no Stellar identity mapping is ever created for them.
+  // Project every failed settled lane from its own durable evidence authority. Base children are
+  // keyed only by the exact five-field identity returned in the Task-13 receipt; they never enter
+  // the Stellar allocation map and this effect never fabricates execution/child identifiers.
   useE(() => {
     const plan = strategyFlow.plan
     const captured = activeAccount
@@ -3981,48 +4075,33 @@ const App = () => {
       if (agent.kind !== 'bridge') continue
       for (const child of agent.children || []) parentByChild.set(child.allocationId, agent)
     }
+    const controller = new AbortController()
     Promise.all(
       (runReceipt.allocations || [])
         .filter((outcome) => outcome?.executionStatus === 'failed')
         .map(async (outcome) => {
           const parent = parentByChild.get(outcome.allocationId)
           if (parent) {
-            return [
-              outcome.allocationId,
-              projectRecoveryReceipt({
-                receipt: null,
-                version: 0,
-                identity: {
-                  executionId: `${plan.runId}:exec:${outcome.allocationId}`,
-                  allocationId: outcome.allocationId,
-                  parentAllocationId: parent.allocationId,
-                  childId: outcome.allocationId,
-                },
-                baseResult: {
-                  allocationId: outcome.allocationId,
-                  jobId: outcome.evidence?.jobId ?? null,
-                },
-                strandedBridge:
-                  outcome.custody?.location === 'agent'
-                    ? {
-                        pulled: true,
-                        bridgeAgentAddress: outcome.evidence?.bridgeAgentAddress ?? null,
-                      }
-                    : null,
-              }),
-            ]
+            const projected = await projectBaseOutcomeRecovery({
+              outcome,
+              owner: captured.address,
+              signal: controller.signal,
+            })
+            if (activeAccountRef.current !== captured || !projected) return null
+            return { kind: 'base', ...projected }
           }
           const mapping = recoveryMappingsRef.current.get(outcome.allocationId)
           if (!mapping) {
-            return [
-              outcome.allocationId,
-              {
+            return {
+              kind: 'stellar',
+              key: outcome.allocationId,
+              projection: {
                 action: 'manual-review',
                 phase: null,
                 reason: 'The authoritative in-memory agent mapping is unavailable.',
                 route: { allocationId: outcome.allocationId, source: 'unmapped' },
               },
-            ]
+            }
           }
           try {
             const authoritative = await readRecoveryReceipt({
@@ -4032,28 +4111,44 @@ const App = () => {
               allocationId: mapping.allocationId,
             })
             assertCurrentActiveAccount({ captured, current: activeAccountRef.current })
-            return [
-              outcome.allocationId,
-              projectRecoveryReceipt({ ...authoritative, identity: mapping }),
-            ]
+            return {
+              kind: 'stellar',
+              key: outcome.allocationId,
+              projection: projectRecoveryReceipt({ ...authoritative, identity: mapping }),
+            }
           } catch (error) {
-            return [
-              outcome.allocationId,
-              {
+            return {
+              kind: 'stellar',
+              key: outcome.allocationId,
+              projection: {
                 action: 'manual-review',
                 phase: null,
                 reason: error?.message || 'Recovery evidence could not be read.',
                 route: { allocationId: outcome.allocationId, source: 'read-failed' },
               },
-            ]
+            }
           }
         })
     ).then((entries) => {
       if (!alive || activeAccountRef.current !== captured) return
-      setRecoveryByAllocation(Object.fromEntries(entries))
+      setRecoveryByAllocation(
+        Object.fromEntries(
+          entries
+            .filter((entry) => entry?.kind === 'stellar' && entry.key)
+            .map((entry) => [entry.key, entry.projection])
+        )
+      )
+      setBaseRecoveryByIdentity(
+        Object.fromEntries(
+          entries
+            .filter((entry) => entry?.kind === 'base' && entry.key)
+            .map((entry) => [entry.key, entry.projection])
+        )
+      )
     })
     return () => {
       alive = false
+      controller.abort()
     }
   }, [runReceipt, strategyFlow.plan, activeAccount])
 
@@ -4102,6 +4197,56 @@ const App = () => {
   async function onRecoverAllocation(allocationId) {
     try {
       return await recoveryRunnerRef.current.run(allocationId)
+    } catch {
+      return null
+    }
+  }
+
+  if (!baseRecoveryRunnerRef.current) {
+    baseRecoveryRunnerRef.current = createBaseRecoveryActionRunner({
+      getActiveAccount: () => activeAccountRef.current,
+      getSignal: () => moneyOwnerAbortRef.current?.signal,
+      getMandateId: ({ evidence }) => {
+        const mandate = readBaseMandate(evidence.owner)
+        if (mandate?.stellarOwner !== evidence.owner || typeof mandate?.mandateId !== 'string') {
+          throw new Error('The active Base mandate is unavailable.')
+        }
+        return mandate.mandateId
+      },
+      readEvidence: readBaseRecoveryEvidence,
+      projectEvidence: projectBaseRecoveryBundle,
+      requestClaim: requestBaseRecoveryClaim,
+      executeRecovery: executeBaseRecovery,
+      pollEvidence: pollBaseRecoveryEvidence,
+      resolveCredential: (args) =>
+        resolveRecoveryCredential({ ...args, vault: SOROBAN_ACTIVE_VAULT_ADDRESS }),
+      onProjection: (identityKey, projected) =>
+        setBaseRecoveryByIdentity((previous) => ({
+          ...previous,
+          [identityKey]: projected,
+        })),
+      onPending: (identityKey, pending) =>
+        setBaseRecoveryPendingIdentities((previous) => {
+          const next = new Set(previous)
+          if (pending) next.add(identityKey)
+          else next.delete(identityKey)
+          return next
+        }),
+      onError: (_identityKey, error) =>
+        addLog({
+          event: 'AgentFailed',
+          agent: 'base-recovery',
+          meta: `Base recovery requires attention (${error?.code || 'base-recovery-failed'}).`,
+        }),
+      leaseOwner: recoveryLeaseOwnerRef.current,
+      pollLimit: 6,
+      pollIntervalMs: 2_000,
+    })
+  }
+
+  async function onRecoverBaseChild(identity) {
+    try {
+      return await baseRecoveryRunnerRef.current.run(identity)
     } catch {
       return null
     }
@@ -4180,6 +4325,9 @@ const App = () => {
           recoveryByAllocation,
           recoveryPendingAllocations,
           onRecoverAllocation,
+          baseRecoveryByIdentity,
+          baseRecoveryPendingIdentities,
+          onRecoverBaseChild,
           onViewMoney,
           onMakeAnotherDeposit,
           // Task 7 (Pocket Crew design alignment) -- the done-state "Watch the crew" action.
@@ -4315,6 +4463,9 @@ const App = () => {
     setRunReceipt(null)
     setRecoveryByAllocation({})
     setRecoveryPendingAllocations(new Set())
+    setBaseRecoveryByIdentity({})
+    setBaseRecoveryPendingIdentities(new Set())
+    baseRecoveryRunnerRef.current = null
     recoveryMappingsRef.current = new Map()
     setRunId(`run-${Date.now()}`)
     baseSetupSucceededRef.current = false

@@ -247,6 +247,60 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     expect(JSON.stringify(out)).not.toContain('sessionKey')
   })
 
+  it('returns the exact Agent Index five-field identity supplied by completed child evidence', async () => {
+    const bindingId = '0123456789abcdef0123456789abcdef'
+    const childId = 'abcdef0123456789abcdef0123456789'
+    const allocationId = 'run-identity:bridge:aave-v3'
+    const deps = okDeps()
+    deps.readStoredMandate.mockReturnValue(storedMandate({ bindingId }))
+    deps.getMandateStatus.mockResolvedValue(
+      activeEvidence({
+        bindingId,
+        expected: { ...activeEvidence().expected, bindingId },
+      })
+    )
+    deps.runFarmFlow.mockImplementation(async ({ allocations, runId }) => ({
+      burnHash: 'BURN',
+      jobId: childId,
+      finalStatus: 'done',
+      associationDelivery: { complete: true, blocked: false },
+      evidenceDelivery: { complete: true, blocked: false },
+      allocations: allocations.map((allocation) => ({
+        allocationId: allocation.allocationId,
+        bindingId,
+        executionId: `${runId}:exec:${allocation.allocationId}`,
+        childId,
+        userOpHash: `0x${'11'.repeat(32)}`,
+        mintTxHash: `0x${'22'.repeat(32)}`,
+        depositTxHash: `0x${'33'.repeat(32)}`,
+        recoveryVersion: 7,
+        success: true,
+        finalStatus: 'done',
+        custody: { location: 'base', confirmed: true, checkedAt: 1 },
+      })),
+    }))
+
+    const out = await run({
+      deps,
+      runId: 'run-identity',
+      baseVaults: [
+        {
+          ...baseVaults[0],
+          allocationId,
+          allocationAmount: { token: 'USDC', units: '100000000', decimals: 6 },
+        },
+      ],
+    })
+
+    expect(out.allocations[0].identity).toEqual({
+      networkId: 'stellar-testnet',
+      bindingId,
+      executionId: `run-identity:exec:${allocationId}`,
+      allocationId,
+      childId,
+    })
+  })
+
   it('[F] carries a failed child bridge, kernel, job, attestation, and recovery evidence through the receipt without a key', async () => {
     const deps = okDeps()
     const allocationId = 'run-f-real:bridge:pool-a'

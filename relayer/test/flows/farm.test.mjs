@@ -35,13 +35,16 @@ const FORWARD_EXPECTATION = {
 const BURN_FORWARD = 'aa'.repeat(32);
 
 function buildFlow({
-  mintResult = { status: 'minted', mintTxHash: '0xmint' }, callOrder = [], recoveryEvidence = null,
+  mintResult = { status: 'minted', mintTxHash: '0xmint' },
+  callOrder = [],
+  recoveryEvidence = null,
 } = {}) {
   const watcher = {
-    relayMint: vi.fn(async () => { callOrder.push('relayMint'); return mintResult; }),
-    getRecoveryEvidence: recoveryEvidence
-      ? vi.fn(() => recoveryEvidence)
-      : undefined,
+    relayMint: vi.fn(async () => {
+      callOrder.push('relayMint');
+      return mintResult;
+    }),
+    getRecoveryEvidence: recoveryEvidence ? vi.fn(() => recoveryEvidence) : undefined,
   };
   const orchestrator = {
     dispatchDeposits: vi.fn(async () => {
@@ -49,7 +52,11 @@ function buildFlow({
       return [{ status: 'fulfilled', pool: '0xPoolA' }];
     }),
   };
-  const flow = createFarmFlow({ watcher, orchestrator, domains: { stellar: 27, base: 6 } });
+  const flow = createFarmFlow({
+    watcher,
+    orchestrator,
+    domains: { stellar: 27, base: 6 },
+  });
   return { flow, watcher, orchestrator, callOrder };
 }
 
@@ -63,12 +70,70 @@ const farmArgs = (overrides = {}) => ({
 });
 
 describe('farm', () => {
+  it('reconciles a Base unknown row with its durable handle without dispatching a replacement', async () => {
+    const { flow, orchestrator } = buildFlow();
+    const allocation = {
+      identity: {
+        networkId: 'stellar-testnet',
+        bindingId: 'binding-42',
+        executionId: 'run-42:exec:unknown',
+        allocationId: 'unknown',
+        childId: 'child-42',
+      },
+      caller: '0x00000000000000000000000000000000000000aa',
+      pool: '0x00000000000000000000000000000000000000b2',
+      amount: 100n,
+      minShares: 90n,
+    };
+    const reconcileHandle = {
+      entryPoint: '0x0000000071727de22e5e9d8baf0edac6f37da032',
+      sender: allocation.caller,
+      nonce: '17',
+      startBlock: '4321',
+    };
+    orchestrator.reconcileBaseDeposit = vi.fn(async (input) => ({
+      identity: input.allocation.identity,
+      status: 'fulfilled',
+      userOpHash: input.userOpHash,
+      reconcileHandle: input.reconcileHandle,
+    }));
+
+    const results = await flow.recoverDeposits({
+      approval: 'approval-blob',
+      children: [
+        {
+          allocation,
+          recovery: {
+            phase: 'base_deposit',
+            state: 'unknown',
+            evidence: { userOpHash: `0x${'ab'.repeat(32)}`, reconcileHandle },
+          },
+        },
+      ],
+      onCheckpoint: vi.fn(),
+    });
+
+    expect(orchestrator.reconcileBaseDeposit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allocation,
+        reconcileHandle,
+        userOpHash: `0x${'ab'.repeat(32)}`,
+      }),
+    );
+    expect(orchestrator.dispatchDeposits).not.toHaveBeenCalled();
+    expect(results).toMatchObject([{ status: 'fulfilled' }]);
+  });
+
   it('recovers mixed children in order by confirming submitted and dispatching only never-started', async () => {
     const callOrder = [];
     const { flow, orchestrator } = buildFlow({ callOrder });
     orchestrator.reconcileSubmittedDeposit = vi.fn(async (_approval, allocation, hash) => {
       callOrder.push(`confirm:${allocation.identity.allocationId}:${hash}`);
-      return { identity: allocation.identity, status: 'fulfilled', userOpHash: hash };
+      return {
+        identity: allocation.identity,
+        status: 'fulfilled',
+        userOpHash: hash,
+      };
     });
     orchestrator.dispatchDeposits.mockImplementation(async (_approval, allocations) => {
       callOrder.push(`dispatch:${allocations[0].identity.allocationId}`);
@@ -76,11 +141,16 @@ describe('farm', () => {
     });
     const allocation = (id) => ({
       identity: {
-        networkId: 'stellar-testnet', bindingId: 'binding-42',
-        executionId: `run-42:exec:${id}`, allocationId: id, childId: 'child-42',
+        networkId: 'stellar-testnet',
+        bindingId: 'binding-42',
+        executionId: `run-42:exec:${id}`,
+        allocationId: id,
+        childId: 'child-42',
       },
       caller: '0x00000000000000000000000000000000000000aa',
-      pool: '0x00000000000000000000000000000000000000b2', amount: 100n, minShares: 90n,
+      pool: '0x00000000000000000000000000000000000000b2',
+      amount: 100n,
+      minShares: 90n,
     });
     const submittedHash = `0x${'ab'.repeat(32)}`;
     const onCheckpoint = vi.fn(async () => {});
@@ -88,19 +158,27 @@ describe('farm', () => {
     const result = await flow.recoverDeposits({
       approval: 'approval-blob',
       children: [
-        { allocation: allocation('confirmed'), recovery: { phase: 'base_deposit', state: 'confirmed' } },
-        { allocation: allocation('submitted'), recovery: {
-          phase: 'base_deposit', state: 'submitted', evidence: { userOpHash: submittedHash },
-        } },
-        { allocation: allocation('fresh'), recovery: { phase: 'cctp_mint', state: 'confirmed' } },
+        {
+          allocation: allocation('confirmed'),
+          recovery: { phase: 'base_deposit', state: 'confirmed' },
+        },
+        {
+          allocation: allocation('submitted'),
+          recovery: {
+            phase: 'base_deposit',
+            state: 'submitted',
+            evidence: { userOpHash: submittedHash },
+          },
+        },
+        {
+          allocation: allocation('fresh'),
+          recovery: { phase: 'cctp_mint', state: 'confirmed' },
+        },
       ],
       onCheckpoint,
     });
 
-    expect(callOrder).toEqual([
-      `confirm:submitted:${submittedHash}`,
-      'dispatch:fresh',
-    ]);
+    expect(callOrder).toEqual([`confirm:submitted:${submittedHash}`, 'dispatch:fresh']);
     expect(orchestrator.reconcileSubmittedDeposit).toHaveBeenCalledTimes(1);
     expect(orchestrator.dispatchDeposits).toHaveBeenCalledTimes(1);
     expect(orchestrator.dispatchDeposits.mock.calls[0][1]).toEqual([allocation('fresh')]);
@@ -114,17 +192,28 @@ describe('farm', () => {
       orchestrator.reconcileSubmittedDeposit = vi.fn();
       const allocation = (id) => ({
         identity: {
-          networkId: 'stellar-testnet', bindingId: 'binding-42',
-          executionId: `run-42:exec:${id}`, allocationId: id, childId: 'child-42',
+          networkId: 'stellar-testnet',
+          bindingId: 'binding-42',
+          executionId: `run-42:exec:${id}`,
+          allocationId: id,
+          childId: 'child-42',
         },
         caller: '0x00000000000000000000000000000000000000aa',
-        pool: '0x00000000000000000000000000000000000000b2', amount: 100n, minShares: 90n,
+        pool: '0x00000000000000000000000000000000000000b2',
+        amount: 100n,
+        minShares: 90n,
       });
       const results = await flow.recoverDeposits({
         approval: 'approval-blob',
         children: [
-          { allocation: allocation('ambiguous'), recovery: { phase: 'base_deposit', state } },
-          { allocation: allocation('fresh'), recovery: { phase: 'cctp_mint', state: 'confirmed' } },
+          {
+            allocation: allocation('ambiguous'),
+            recovery: { phase: 'base_deposit', state },
+          },
+          {
+            allocation: allocation('fresh'),
+            recovery: { phase: 'cctp_mint', state: 'confirmed' },
+          },
         ],
         onCheckpoint: vi.fn(),
       });
@@ -132,13 +221,18 @@ describe('farm', () => {
       expect(orchestrator.reconcileSubmittedDeposit).not.toHaveBeenCalled();
       expect(orchestrator.dispatchDeposits).not.toHaveBeenCalled();
       expect(results.map(({ status }) => status)).toEqual(['uncertain', 'held']);
+      expect(results[0].reasonCode).toBe('reconcile_handle_missing');
     },
   );
 
   it('adds the watcher safe recovery summary only to the awaited mint checkpoint', async () => {
     const recoveryEvidence = {
-      burnTxHash: BURN_FORWARD, expectationDigest: 'expectation', messageDigest: 'message',
-      attestationDigest: 'attestation', evidenceVersion: '1', mintTxHash: '0xmint',
+      burnTxHash: BURN_FORWARD,
+      expectationDigest: 'expectation',
+      messageDigest: 'message',
+      attestationDigest: 'attestation',
+      evidenceVersion: '1',
+      mintTxHash: '0xmint',
     };
     const { flow, watcher } = buildFlow({ recoveryEvidence });
     const onMintConfirmed = vi.fn();
@@ -147,52 +241,76 @@ describe('farm', () => {
 
     expect(watcher.getRecoveryEvidence).toHaveBeenCalledWith('exec-1');
     expect(onMintConfirmed).toHaveBeenCalledWith({
-      status: 'minted', mintTxHash: '0xmint', evidence: recoveryEvidence,
+      status: 'minted',
+      mintTxHash: '0xmint',
+      evidence: recoveryEvidence,
     });
-    expect(result.mintResult).toEqual({ status: 'minted', mintTxHash: '0xmint' });
+    expect(result.mintResult).toEqual({
+      status: 'minted',
+      mintTxHash: '0xmint',
+    });
   });
 
   it('forwards the exact deposit checkpoint callback and allocation identity after mint persistence', async () => {
     const callOrder = [];
     const { flow, orchestrator } = buildFlow({ callOrder });
     const identity = {
-      networkId: 'stellar-testnet', bindingId: 'binding-42',
+      networkId: 'stellar-testnet',
+      bindingId: 'binding-42',
       executionId: 'run-42:exec:run-42:bridge:aave-v3',
-      allocationId: 'run-42:bridge:aave-v3', childId: 'child-42',
+      allocationId: 'run-42:bridge:aave-v3',
+      childId: 'child-42',
     };
-    const allocations = [{
-      identity, caller: '0x00000000000000000000000000000000000000aa',
-      pool: '0x00000000000000000000000000000000000000b2', amount: 100n, minShares: 90n,
-    }];
+    const allocations = [
+      {
+        identity,
+        caller: '0x00000000000000000000000000000000000000aa',
+        pool: '0x00000000000000000000000000000000000000b2',
+        amount: 100n,
+        minShares: 90n,
+      },
+    ];
     const onDepositCheckpoint = vi.fn(async () => {});
 
-    await flow.farm(farmArgs({
-      allocations,
-      onMintConfirmed: async () => callOrder.push('mint-persisted'),
-      onDepositCheckpoint,
-    }));
+    await flow.farm(
+      farmArgs({
+        allocations,
+        onMintConfirmed: async () => callOrder.push('mint-persisted'),
+        onDepositCheckpoint,
+      }),
+    );
 
     expect(callOrder).toEqual(['relayMint', 'mint-persisted', 'dispatchDeposits']);
-    expect(orchestrator.dispatchDeposits).toHaveBeenCalledWith(
-      'approval-blob', allocations, { onCheckpoint: onDepositCheckpoint },
-    );
+    expect(orchestrator.dispatchDeposits).toHaveBeenCalledWith('approval-blob', allocations, {
+      onCheckpoint: onDepositCheckpoint,
+    });
   });
   it('publishes watcher-confirmed mint progress before dispatching deposits', async () => {
     const callOrder = [];
     const { flow, watcher } = buildFlow({ callOrder });
 
-    const result = await flow.farm(farmArgs({
-      onMintConfirmed: vi.fn(async (mintResult) => {
-        expect(mintResult).toEqual({ status: 'minted', mintTxHash: '0xmint' });
-        callOrder.push('onMintConfirmed');
+    const result = await flow.farm(
+      farmArgs({
+        onMintConfirmed: vi.fn(async (mintResult) => {
+          expect(mintResult).toEqual({
+            status: 'minted',
+            mintTxHash: '0xmint',
+          });
+          callOrder.push('onMintConfirmed');
+        }),
       }),
-    }));
+    );
 
     expect(callOrder).toEqual(['relayMint', 'onMintConfirmed', 'dispatchDeposits']);
-    expect(result.mintResult).toEqual({ status: 'minted', mintTxHash: '0xmint' });
+    expect(result.mintResult).toEqual({
+      status: 'minted',
+      mintTxHash: '0xmint',
+    });
     expect(result.depositResults).toEqual([{ status: 'fulfilled', pool: '0xPoolA' }]);
     expect(watcher.relayMint).toHaveBeenCalledWith({
-      sourceDomain: 27, burnTxHash: BURN_FORWARD, execId: 'exec-1',
+      sourceDomain: 27,
+      burnTxHash: BURN_FORWARD,
+      execId: 'exec-1',
       expectation: FORWARD_EXPECTATION,
     });
   });
@@ -203,13 +321,25 @@ describe('farm', () => {
   it('echoes runId/bridgeAgent/grantTxHash through untouched, defaulting to null when omitted', async () => {
     const { flow } = buildFlow();
 
-    const withContext = await flow.farm(farmArgs({
-      runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT',
-    }));
-    expect(withContext).toMatchObject({ runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT' });
+    const withContext = await flow.farm(
+      farmArgs({
+        runId: 'run-42',
+        bridgeAgent: 'CBRIDGE',
+        grantTxHash: 'HGRANT',
+      }),
+    );
+    expect(withContext).toMatchObject({
+      runId: 'run-42',
+      bridgeAgent: 'CBRIDGE',
+      grantTxHash: 'HGRANT',
+    });
 
     const withoutContext = await flow.farm(farmArgs());
-    expect(withoutContext).toMatchObject({ runId: null, bridgeAgent: null, grantTxHash: null });
+    expect(withoutContext).toMatchObject({
+      runId: null,
+      bridgeAgent: null,
+      grantTxHash: null,
+    });
   });
 
   // Regression caught (plan mismatch #3): farm called relayMint with no expectation, so the
@@ -224,8 +354,7 @@ describe('farm', () => {
 
   it('refuses to call the watcher at all without an expectation', async () => {
     const { flow, watcher, orchestrator } = buildFlow();
-    await expect(flow.farm(farmArgs({ expectation: undefined })))
-      .rejects.toMatchObject({ code: 'RELAY_VALIDATION' });
+    await expect(flow.farm(farmArgs({ expectation: undefined }))).rejects.toMatchObject({ code: 'RELAY_VALIDATION' });
     expect(watcher.relayMint).not.toHaveBeenCalled();
     expect(orchestrator.dispatchDeposits).not.toHaveBeenCalled();
   });
@@ -251,8 +380,7 @@ describe('farm', () => {
   ])('refuses to dispatch deposits when the watcher returns %s', async (_label, mintResult) => {
     const onMintConfirmed = vi.fn();
     const { flow, orchestrator } = buildFlow({ mintResult });
-    await expect(flow.farm(farmArgs({ onMintConfirmed })))
-      .rejects.toMatchObject({ code: 'FARM_MINT_UNCONFIRMED' });
+    await expect(flow.farm(farmArgs({ onMintConfirmed }))).rejects.toMatchObject({ code: 'FARM_MINT_UNCONFIRMED' });
     expect(orchestrator.dispatchDeposits).not.toHaveBeenCalled();
     // the progress callback only ever fires with CONFIRMED mint evidence
     expect(onMintConfirmed).not.toHaveBeenCalled();

@@ -5,6 +5,8 @@ import {
   AgentIndexBatchPermanentError,
   AgentIndexBatchRetryableError,
   AgentIndexEvidenceConflictError,
+  AgentIndexRecoveryLeaseConflictError,
+  AgentIndexRecoveryVersionConflictError,
   AgentIndexReporterRetryableError,
   createAgentIndexReporter,
 } from '../src/agentIndexReporter.mjs';
@@ -27,7 +29,12 @@ describe('durable Base child reporter protocol', () => {
       runId: 'run-42', grantTxHash: 'grant-hash', kernelAddress: `0x${'22'.repeat(20)}`,
       bindingHash: 'binding-hash-42', baseJobId: 'job-42',
     },
-    lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 2_000_000_000_000 },
+    lifecycle: {
+      sequence: 0,
+      status: 'planned',
+      evidence: {},
+      observedAt: 2_000_000_000_000,
+    },
   };
   const identity = {
     networkId: child.networkId,
@@ -54,7 +61,11 @@ describe('durable Base child reporter protocol', () => {
   };
 
   it('commits one exact ordered Task 9 intent batch and binds the 201 request digest and identities', async () => {
-    const batch = { idempotencyKey: 'burn-intent-42', burnUnits7: '10000000', children: [child] };
+    const batch = {
+      idempotencyKey: 'burn-intent-42',
+      burnUnits7: '10000000',
+      children: [child],
+    };
     const requestDigest = createHash('sha256').update(canonicalJson(batch)).digest('hex');
     const fetchImpl = vi.fn(async () => ({
       ok: true,
@@ -111,10 +122,10 @@ describe('durable Base child reporter protocol', () => {
     const reporter = createAgentIndexReporter({
       endpoint: 'https://index.example/api/agent-index', secret: SECRET, fetchImpl: success,
     });
-    await expect(reporter.reportBaseEvidence(evidence)).resolves.toMatchObject({ recoveryVersion: 1 });
-    expect(success.mock.calls[0][0]).toBe(
-      'https://index.example/api/agent-index?action=base-child-evidence'
-    );
+    await expect(reporter.reportBaseEvidence(evidence)).resolves.toMatchObject({
+      recoveryVersion: 1,
+    });
+    expect(success.mock.calls[0][0]).toBe('https://index.example/api/agent-index?action=base-child-evidence');
 
     const conflict = createAgentIndexReporter({
       endpoint: 'https://index.example/api/agent-index', secret: SECRET,
@@ -132,7 +143,11 @@ describe('durable Base child reporter protocol', () => {
     ['batch recovery version', (ack) => { delete ack.children[0].recoveryVersion; }],
     ['batch extra field', (ack) => { ack.internal = true; }],
   ])('rejects a non-exact %s acknowledgement', async (_label, mutate) => {
-    const batch = { idempotencyKey: 'burn-intent-42', burnUnits7: '10000000', children: [child] };
+    const batch = {
+      idempotencyKey: 'burn-intent-42',
+      burnUnits7: '10000000',
+      children: [child],
+    };
     const acknowledgement = {
       acknowledged: true, schemaVersion: 1, idempotencyKey: batch.idempotencyKey,
       requestDigest: createHash('sha256').update(canonicalJson(batch)).digest('hex'),
@@ -141,8 +156,13 @@ describe('durable Base child reporter protocol', () => {
     };
     mutate(acknowledgement);
     const reporter = createAgentIndexReporter({
-      endpoint: 'https://index.example/api/agent-index', secret: SECRET,
-      fetchImpl: vi.fn(async () => ({ ok: true, status: 201, json: async () => acknowledgement })),
+      endpoint: 'https://index.example/api/agent-index',
+      secret: SECRET,
+      fetchImpl: vi.fn(async () => ({
+        ok: true,
+        status: 201,
+        json: async () => acknowledgement,
+      })),
     });
     await expect(reporter.commitIntentBatch(batch)).rejects.toThrow(/acknowledgement/i);
   });
@@ -152,7 +172,11 @@ describe('durable Base child reporter protocol', () => {
     [503, AgentIndexBatchRetryableError],
     [400, AgentIndexBatchPermanentError],
   ])('classifies batch HTTP %s for durable intent recovery', async (status, ErrorType) => {
-    const batch = { idempotencyKey: 'burn-intent-42', burnUnits7: '10000000', children: [child] };
+    const batch = {
+      idempotencyKey: 'burn-intent-42',
+      burnUnits7: '10000000',
+      children: [child],
+    };
     const reporter = createAgentIndexReporter({
       endpoint: 'https://index.example/api/agent-index', secret: SECRET,
       fetchImpl: vi.fn(async () => ({ ok: false, status })),
@@ -165,15 +189,24 @@ describe('durable Base child reporter protocol', () => {
     ['negative duplicates', { written: 2, duplicates: -1 }],
     ['count sum mismatch', { written: 0, duplicates: 0 }],
   ])('permanently rejects %s in a batch acknowledgement', async (_label, counts) => {
-    const batch = { idempotencyKey: 'burn-intent-42', burnUnits7: '10000000', children: [child] };
+    const batch = {
+      idempotencyKey: 'burn-intent-42',
+      burnUnits7: '10000000',
+      children: [child],
+    };
     const acknowledgement = {
       acknowledged: true, schemaVersion: 1, idempotencyKey: batch.idempotencyKey,
       requestDigest: createHash('sha256').update(canonicalJson(batch)).digest('hex'),
       children: [{ identity: recoveryIdentity, recoveryVersion: 0 }], ...counts,
     };
     const reporter = createAgentIndexReporter({
-      endpoint: 'https://index.example/api/agent-index', secret: SECRET,
-      fetchImpl: vi.fn(async () => ({ ok: true, status: 201, json: async () => acknowledgement })),
+      endpoint: 'https://index.example/api/agent-index',
+      secret: SECRET,
+      fetchImpl: vi.fn(async () => ({
+        ok: true,
+        status: 201,
+        json: async () => acknowledgement,
+      })),
     });
     await expect(reporter.commitIntentBatch(batch)).rejects.toBeInstanceOf(AgentIndexBatchPermanentError);
   });
@@ -204,8 +237,13 @@ describe('durable Base child reporter protocol', () => {
     };
     mutate(acknowledgement);
     const reporter = createAgentIndexReporter({
-      endpoint: 'https://index.example/api/agent-index', secret: SECRET,
-      fetchImpl: vi.fn(async () => ({ ok: true, status: 201, json: async () => acknowledgement })),
+      endpoint: 'https://index.example/api/agent-index',
+      secret: SECRET,
+      fetchImpl: vi.fn(async () => ({
+        ok: true,
+        status: 201,
+        json: async () => acknowledgement,
+      })),
     });
     await expect(reporter.reportBaseEvidence(request)).rejects.toThrow(/acknowledgement/i);
   });
@@ -279,8 +317,28 @@ describe('durable Base child reporter protocol', () => {
     ['reporter 401', { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) }, /401/],
     ['D1 failure', { ok: false, status: 503, json: async () => ({ error: 'unavailable' }) }, /503/],
     ['malformed acknowledgement', { ok: true, status: 201, json: async () => ({ ok: true }) }, /acknowledgement/i],
-    ['schema mismatch', { ok: true, status: 201, json: async () => ({ acknowledged: true, identity, schemaVersion: 2 }) }, /schema/i],
-    ['identity mismatch', { ok: true, status: 201, json: async () => ({ acknowledged: true, identity: { ...identity, childId: 'other' }, schemaVersion: 1 }) }, /identity/i],
+    [
+      'schema mismatch',
+      {
+        ok: true,
+        status: 201,
+        json: async () => ({ acknowledged: true, identity, schemaVersion: 2 }),
+      },
+      /schema/i,
+    ],
+    [
+      'identity mismatch',
+      {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          acknowledged: true,
+          identity: { ...identity, childId: 'other' },
+          schemaVersion: 1,
+        }),
+      },
+      /identity/i,
+    ],
   ])('fails closed on %s', async (_label, response, expected) => {
     const reporter = createAgentIndexReporter({
       endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1,
@@ -311,15 +369,20 @@ describe('durable Base child reporter protocol', () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ acknowledged: true, identity, sequence: 1, schemaVersion: 1 }),
+      json: async () => ({
+        acknowledged: true,
+        identity,
+        sequence: 1,
+        schemaVersion: 1,
+      }),
     }));
     const reporter = createAgentIndexReporter({
       endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1, fetchImpl,
     });
-    await expect(reporter.reportLifecycle(request)).resolves.toMatchObject({ sequence: 1 });
-    expect(fetchImpl.mock.calls[0][0]).toBe(
-      'https://index.example/api/agent-index?action=base-child-lifecycle'
-    );
+    await expect(reporter.reportLifecycle(request)).resolves.toMatchObject({
+      sequence: 1,
+    });
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://index.example/api/agent-index?action=base-child-lifecycle');
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual(request);
   });
 
@@ -332,7 +395,11 @@ describe('durable Base child reporter protocol', () => {
       json: async () => ({
         ready: true,
         schemaVersion: 1,
-        stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
+        stores: {
+          executionReceipts: true,
+          baseChildIntents: true,
+          baseRecoveryEvidence: true,
+        },
       }),
     }));
     const reporter = createAgentIndexReporter({
@@ -342,7 +409,11 @@ describe('durable Base child reporter protocol', () => {
     await expect(reporter.probe()).resolves.toEqual({
       ready: true,
       schemaVersion: 1,
-      stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
+      stores: {
+        executionReceipts: true,
+        baseChildIntents: true,
+        baseRecoveryEvidence: true,
+      },
     });
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://index.example/api/agent-index?action=base-child-ready',
@@ -363,7 +434,11 @@ describe('durable Base child reporter protocol', () => {
       endpoint: 'https://index.example/api/agent-index',
       secret: SECRET,
       schemaVersion: 1,
-      fetchImpl: async () => ({ ok: true, status: 200, json: async () => acknowledgement }),
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => acknowledgement,
+      }),
     });
 
     await expect(reporter.probe({ baseCrossChainAvailable: false }))
@@ -372,16 +447,337 @@ describe('durable Base child reporter protocol', () => {
 
   it.each([
     ['unauthorized', { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) }],
-    ['schema mismatch', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 2, stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true } }) }],
-    ['store unavailable', { ok: true, status: 200, json: async () => ({ ready: false, schemaVersion: 1, stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true } }) }],
-    ['receipt store missing', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 1, stores: { baseChildIntents: true, baseRecoveryEvidence: true } }) }],
-    ['Base-child store missing', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 1, stores: { executionReceipts: true, baseRecoveryEvidence: true } }) }],
-    ['recovery evidence store missing', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 1, stores: { executionReceipts: true, baseChildIntents: true } }) }],
+    [
+      'schema mismatch',
+      {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ready: true,
+          schemaVersion: 2,
+          stores: {
+            executionReceipts: true,
+            baseChildIntents: true,
+            baseRecoveryEvidence: true,
+          },
+        }),
+      },
+    ],
+    [
+      'store unavailable',
+      {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ready: false,
+          schemaVersion: 1,
+          stores: {
+            executionReceipts: true,
+            baseChildIntents: true,
+            baseRecoveryEvidence: true,
+          },
+        }),
+      },
+    ],
+    [
+      'receipt store missing',
+      {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ready: true,
+          schemaVersion: 1,
+          stores: { baseChildIntents: true, baseRecoveryEvidence: true },
+        }),
+      },
+    ],
+    [
+      'Base-child store missing',
+      {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ready: true,
+          schemaVersion: 1,
+          stores: { executionReceipts: true, baseRecoveryEvidence: true },
+        }),
+      },
+    ],
+    [
+      'recovery evidence store missing',
+      {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ready: true,
+          schemaVersion: 1,
+          stores: { executionReceipts: true, baseChildIntents: true },
+        }),
+      },
+    ],
   ])('fails the readiness probe on %s', async (_label, response) => {
     const reporter = createAgentIndexReporter({
       endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1,
       fetchImpl: vi.fn(async () => response),
     });
     await expect(reporter.probe()).rejects.toThrow(/reporter|schema|ready|HTTP/i);
+  });
+
+  it('reads one exact full-identity recovery claim and validates the closed response', async () => {
+    const claimIdentity = {
+      networkId: 'stellar-testnet',
+      bindingId: '0123456789abcdef0123456789abcdef',
+      executionId: 'run-42:exec:run-42:bridge:aave-v3',
+      allocationId: 'run-42:bridge:aave-v3',
+      childId: 'abcdef0123456789abcdef0123456789',
+    };
+    const bundle = {
+      schemaVersion: 1,
+      identity: claimIdentity,
+      owner: `G${'A'.repeat(55)}`,
+      agent: `C${'B'.repeat(55)}`,
+      recoverable: true,
+      recoveryVersion: 7,
+      intent: {},
+      phases: {},
+      events: [],
+    };
+    const fetchImpl = vi.fn(async (_url, init) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        identity: claimIdentity,
+        action: 'submit-mint',
+        phase: 'cctp_mint',
+        reasonCode: 'base-attestation-confirmed',
+        evidenceVersion: 7,
+        lease: {
+          identity: claimIdentity,
+          owner: `G${'A'.repeat(55)}`,
+          action: 'submit-mint',
+          phase: 'cctp_mint',
+          evidenceVersion: 7,
+          holder: 'tab-42',
+          leaseToken: 'a'.repeat(64),
+          acquiredAt: 2_000_000_000_000,
+          expiresAt: 2_000_000_030_000,
+        },
+        bundle,
+      }),
+    }));
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index',
+      secret: SECRET,
+      fetchImpl,
+    });
+
+    await expect(
+      reporter.readBaseRecoveryClaim({
+        identity: claimIdentity,
+        action: 'submit-mint',
+        evidenceVersion: 7,
+        leaseToken: 'a'.repeat(64),
+      }),
+    ).resolves.toMatchObject({
+      action: 'submit-mint',
+      phase: 'cctp_mint',
+      evidenceVersion: 7,
+      bundle,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://index.example/api/agent-index?action=base-recovery-claim');
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      identity: claimIdentity,
+      action: 'submit-mint',
+      evidenceVersion: 7,
+      leaseToken: 'a'.repeat(64),
+    });
+  });
+
+  it('rejects a claim acknowledgement that returns a different lease token', async () => {
+    const claimIdentity = {
+      networkId: 'stellar-testnet',
+      bindingId: '0123456789abcdef0123456789abcdef',
+      executionId: 'run-42:exec:run-42:bridge:aave-v3',
+      allocationId: 'run-42:bridge:aave-v3',
+      childId: 'abcdef0123456789abcdef0123456789',
+    };
+    const owner = `G${'A'.repeat(55)}`;
+    const response = {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        identity: claimIdentity,
+        action: 'submit-mint',
+        phase: 'cctp_mint',
+        reasonCode: 'base-attestation-confirmed',
+        evidenceVersion: 7,
+        lease: {
+          identity: claimIdentity,
+          owner,
+          action: 'submit-mint',
+          phase: 'cctp_mint',
+          evidenceVersion: 7,
+          holder: 'tab-42',
+          leaseToken: 'b'.repeat(64),
+          acquiredAt: 2_000_000_000_000,
+          expiresAt: 2_000_000_030_000,
+        },
+        bundle: {
+          schemaVersion: 1,
+          identity: claimIdentity,
+          owner,
+          agent: `C${'B'.repeat(55)}`,
+          recoverable: true,
+          recoveryVersion: 7,
+          intent: {},
+          phases: {},
+          events: [],
+        },
+      }),
+    };
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index',
+      secret: SECRET,
+      fetchImpl: vi.fn(async () => response),
+    });
+    await expect(
+      reporter.readBaseRecoveryClaim({
+        identity: claimIdentity,
+        action: 'submit-mint',
+        evidenceVersion: 7,
+        leaseToken: 'a'.repeat(64),
+      }),
+    ).rejects.toThrow(/lease token/i);
+  });
+
+  it('rejects a renew acknowledgement that returns a different lease holder', async () => {
+    const identity = {
+      networkId: 'stellar-testnet',
+      bindingId: '0123456789abcdef0123456789abcdef',
+      executionId: 'run-42:exec:run-42:bridge:aave-v3',
+      allocationId: 'run-42:bridge:aave-v3',
+      childId: 'abcdef0123456789abcdef0123456789',
+    };
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index',
+      secret: SECRET,
+      fetchImpl: vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          identity,
+          action: 'submit-mint',
+          phase: 'cctp_mint',
+          evidenceVersion: 7,
+          lease: {
+            holder: 'other-tab',
+            leaseToken: 'a'.repeat(64),
+            expiresAt: 2_000_000_030_000,
+          },
+        }),
+      })),
+    });
+    await expect(
+      reporter.renewBaseRecoveryClaim({
+        identity,
+        action: 'submit-mint',
+        evidenceVersion: 7,
+        holder: 'tab-42',
+        leaseToken: 'a'.repeat(64),
+      }),
+    ).rejects.toThrow(/lease token or timing|holder/i);
+  });
+
+  it('posts exact recovery renew/release envelopes and classifies stale conflicts', async () => {
+    const identity = {
+      networkId: 'stellar-testnet',
+      bindingId: '0123456789abcdef0123456789abcdef',
+      executionId: 'run-42:exec:run-42:bridge:aave-v3',
+      allocationId: 'run-42:bridge:aave-v3',
+      childId: 'abcdef0123456789abcdef0123456789',
+    };
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.includes('base-recovery-renew')) {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({ code: 'version-conflict' }),
+        };
+      }
+      if (url.includes('base-recovery-release')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          identity,
+          action: 'submit-mint',
+          evidenceVersion: 7,
+        }),
+      };
+    });
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index',
+      secret: SECRET,
+      fetchImpl,
+    });
+    const common = {
+      identity,
+      action: 'submit-mint',
+      evidenceVersion: 7,
+      leaseToken: 'b'.repeat(64),
+    };
+    await expect(
+      reporter.renewBaseRecoveryClaim({
+        ...common,
+        holder: 'tab-42',
+      }),
+    ).rejects.toBeInstanceOf(AgentIndexRecoveryVersionConflictError);
+    await expect(reporter.releaseBaseRecoveryClaim(common)).resolves.toEqual({
+      ok: true,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      ...common,
+      holder: 'tab-42',
+    });
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual(common);
+  });
+
+  it('classifies an Agent Index lease conflict separately from retryable delivery', async () => {
+    const identity = {
+      networkId: 'stellar-testnet',
+      bindingId: '0123456789abcdef0123456789abcdef',
+      executionId: 'run-42:exec:run-42:bridge:aave-v3',
+      allocationId: 'run-42:bridge:aave-v3',
+      childId: 'abcdef0123456789abcdef0123456789',
+    };
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index',
+      secret: SECRET,
+      fetchImpl: vi.fn(async () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({ code: 'lease-conflict' }),
+      })),
+    });
+    await expect(
+      reporter.releaseBaseRecoveryClaim({
+        identity,
+        action: 'submit-mint',
+        evidenceVersion: 7,
+        leaseToken: 'c'.repeat(64),
+      }),
+    ).rejects.toBeInstanceOf(AgentIndexRecoveryLeaseConflictError);
   });
 });

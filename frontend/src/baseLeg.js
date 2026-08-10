@@ -26,6 +26,7 @@ import { defaultMakePublicClient } from './wallet/passkeyBase.js'
 import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
 import { isVerifiedBaseMandateStatus } from './base/mandateStatus.js'
 import { BASE_CROSS_CHAIN_AVAILABLE, BASE_CROSS_CHAIN_UNAVAILABLE_REASON } from './base/config.js'
+import { requireBaseRecoveryIdentity } from './strategy/baseRecoveryIdentity.js'
 
 const PUBLIC_SENSITIVE =
   /secret|private|capability|bearer|authorization|cookie|wallet|passkey|signedxdr|approval|session/i
@@ -398,6 +399,19 @@ export async function executeBaseLeg({
         (result.allocations || []).find(
           (entry) => entry?.allocationId === allocation.allocationId
         ) || null
+      let identity = null
+      try {
+        identity = requireBaseRecoveryIdentity({
+          networkId: 'stellar-testnet',
+          bindingId: remote?.bindingId,
+          executionId: remote?.executionId,
+          allocationId: remote?.allocationId,
+          childId: remote?.childId,
+        })
+        if (identity.allocationId !== allocation.allocationId) identity = null
+      } catch {
+        identity = null
+      }
       const childError = !remote
         ? 'Base evidence is unavailable for this allocation.'
         : result.success === false
@@ -411,6 +425,7 @@ export async function executeBaseLeg({
         !childError
       return {
         allocationId: allocation.allocationId || `${runId ?? 'run'}-${i}`,
+        ...(identity ? { identity } : {}),
         bindingId: remote?.bindingId || null,
         executionId: remote?.executionId || null,
         childId: remote?.childId || null,

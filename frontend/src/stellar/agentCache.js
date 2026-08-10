@@ -60,8 +60,9 @@ function readAll(storage) {
 function writeAll(all, storage) {
   try {
     resolveStorage(storage).setItem(CACHE_KEY, JSON.stringify(all))
+    return true
   } catch {
-    /* quota/serialization failure — cache is best-effort, never fatal */
+    return false
   }
 }
 
@@ -92,7 +93,7 @@ export function saveCachedAgent({ owner, vault, network, entry, storage }) {
   const key = cacheKeyFor({ owner, vault, network })
   const list = Array.isArray(all[key]) ? all[key] : []
   all[key] = [...list.filter((e) => e.agentAddress !== entry.agentAddress), entry]
-  writeAll(all, storage)
+  return writeAll(all, storage)
 }
 
 /** On-chain scope read via the agent's own getter; null on any RPC/decode failure. */

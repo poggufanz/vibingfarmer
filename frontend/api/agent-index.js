@@ -22,6 +22,10 @@ import {
   handleRecoveryLeaseAcquire,
   handleRecoveryLeaseRelease,
   handleRecoveryRequest,
+  handleBaseRecoveryRequest,
+  handleBaseRecoveryClaim,
+  handleBaseRecoveryRenew,
+  handleBaseRecoveryRelease,
 } from './agent-index/handler.js'
 import { AgentIndexUnavailableError, AgentIndexValidationError } from './agent-index/models.js'
 import { scanRpcEventsPage } from './agent-index/indexer.js'
@@ -417,6 +421,50 @@ export default async function handler(req, res) {
       store,
       authorityReader,
     })
+    return json(res, out.status, out.body)
+  }
+
+  // Base recovery is a distinct browser proof action. It never falls through to the Stellar
+  // receipt selector (where an absent receipt is allowed to pull once).
+  if (req.method === 'POST' && action === 'base-recovery-request') {
+    if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-base-recovery' }))
+      return
+    const { store, authorityReader } = await receiptDependencies(req)
+    const out = await handleBaseRecoveryRequest({
+      request: req.body?.request,
+      proof: req.body?.proof,
+      store,
+      authorityReader,
+    })
+    return json(res, out.status, out.body)
+  }
+
+  // These actions are reporter-only server-to-server redemption of a browser claim. Authenticate
+  // before constructing D1 so a wrong bearer cannot learn whether a child/lease exists.
+  if (
+    req.method === 'POST' &&
+    ['base-recovery-claim', 'base-recovery-renew', 'base-recovery-release'].includes(action)
+  ) {
+    const gate = await reporterAuthenticationGate({
+      secret: REPORTER_SECRET(req),
+      providedSecret: bearer(req),
+    })
+    if (gate) return json(res, gate.status, gate.body)
+    if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-base-recovery' }))
+      return
+    const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
+    const args = {
+      body: req.body,
+      store,
+      secret: REPORTER_SECRET(req),
+      providedSecret: bearer(req),
+    }
+    const out =
+      action === 'base-recovery-claim'
+        ? await handleBaseRecoveryClaim(args)
+        : action === 'base-recovery-renew'
+          ? await handleBaseRecoveryRenew(args)
+          : await handleBaseRecoveryRelease(args)
     return json(res, out.status, out.body)
   }
 

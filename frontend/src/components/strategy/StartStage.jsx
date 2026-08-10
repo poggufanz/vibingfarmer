@@ -61,6 +61,7 @@ import { usePocketTransition } from '../../design/usePocketTransition.js'
 import { SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
 import { StrategyReceipt } from './StrategyReceipt.jsx'
 import { CREW_PERSONAS, personaForOrdinal } from '../../crew/personas.js'
+import { baseRecoveryIdentityKey } from '../../strategy/baseRecoveryIdentity.js'
 
 const TOKEN_SYMBOLS = Object.freeze({
   [SOROBAN_TOKEN_ADDRESS]: 'USDC',
@@ -288,7 +289,42 @@ function latestConfirmedRecoveryHash(receipt) {
 // the strongest terminal verdict: a completed Stellar deposit with receipt-confirmed vault
 // custody. This single derived receipt feeds both the lane and StrategyReceipt, preventing a
 // recovered allocation from remaining failed/held in one view while appearing complete in another.
-function foldRecoveryReceipt(receipt, recoveryByAllocation) {
+function confirmedBaseRecoveryProjection(projection, identityKey) {
+  if (!projection || projection.action !== 'complete') return false
+  try {
+    if (baseRecoveryIdentityKey(projection.identity) !== identityKey) return false
+  } catch {
+    return false
+  }
+  const phase = projection.phases?.base_deposit
+  const evidence = phase?.evidence
+  const event = evidence?.event
+  return (
+    Number.isSafeInteger(projection.version) &&
+    projection.version >= 0 &&
+    phase?.state === 'confirmed' &&
+    Number.isSafeInteger(phase.recoveryVersion) &&
+    phase.recoveryVersion > 0 &&
+    phase.recoveryVersion <= projection.version &&
+    projection.custody?.location === 'base-proxy' &&
+    projection.custody.confirmed === true &&
+    /^0x[0-9a-f]{64}$/.test(evidence?.userOpHash || '') &&
+    /^0x[0-9a-f]{64}$/.test(evidence?.transactionHash || '') &&
+    /^(0|[1-9]\d*)$/.test(evidence?.assets || '') &&
+    /^[1-9]\d*$/.test(evidence?.shares || '') &&
+    event &&
+    /^0x[0-9a-f]{40}$/.test(event.address || '') &&
+    /^0x[0-9a-f]{64}$/.test(event.topic0 || '') &&
+    typeof event.logIndex === 'string' &&
+    /^(0|[1-9]\d*)$/.test(event.logIndex) &&
+    /^0x[0-9a-f]{40}$/.test(event.caller || '') &&
+    /^0x[0-9a-f]{40}$/.test(event.poolAddress || '') &&
+    event.assets === evidence.assets &&
+    event.shares === evidence.shares
+  )
+}
+
+function foldRecoveryReceipt(receipt, recoveryByAllocation, baseRecoveryByIdentity) {
   if (!receipt) return receipt
   const replacements = new Map()
   for (const outcome of receipt.allocations || []) {
@@ -299,6 +335,45 @@ function foldRecoveryReceipt(receipt, recoveryByAllocation) {
       projection.custody?.location !== 'stellar-vault' ||
       projection.custody.confirmed !== true
     ) {
+      let identityKey = null
+      try {
+        identityKey = baseRecoveryIdentityKey(outcome.identity)
+      } catch {
+        identityKey = null
+      }
+      const baseProjection = identityKey
+        ? baseRecoveryByIdentity instanceof Map
+          ? baseRecoveryByIdentity.get(identityKey)
+          : baseRecoveryByIdentity?.[identityKey]
+        : null
+      if (!identityKey || !confirmedBaseRecoveryProjection(baseProjection, identityKey)) continue
+      const evidence = baseProjection.phases.base_deposit.evidence
+      replacements.set(outcome.allocationId, {
+        ...outcome,
+        networkContext: {
+          ...outcome.networkContext,
+          currentCustodyNetwork: 'base-sepolia',
+          transit: false,
+        },
+        executionStatus: 'succeeded',
+        custody: {
+          location: 'base-proxy',
+          confirmed: true,
+          checkedAt: baseProjection.phases.base_deposit.observedAt ?? null,
+          amount: outcome.amount,
+          reason: null,
+          source: 'receipt',
+        },
+        txHash: evidence.transactionHash,
+        error: null,
+        evidence: {
+          ...outcome.evidence,
+          allocationId: outcome.allocationId,
+          recoveryVersion: baseProjection.version,
+          userOpHash: evidence.userOpHash,
+          depositTxHash: evidence.transactionHash,
+        },
+      })
       continue
     }
     const txHash = latestConfirmedRecoveryHash(projection.receipt)
@@ -324,12 +399,23 @@ function foldRecoveryReceipt(receipt, recoveryByAllocation) {
   const replace = (outcome) => replacements.get(outcome.allocationId) || outcome
   const allocations = receipt.allocations.map(replace)
   const stellarResults = (receipt.branches?.stellar?.results || []).map(replace)
+  const baseResults = (receipt.branches?.base?.results || []).map(replace)
   const stellarStatus =
     stellarResults.length > 0 && stellarResults.every((row) => row.executionStatus === 'succeeded')
       ? 'succeeded'
       : stellarResults.length > 0 && stellarResults.every((row) => row.executionStatus === 'failed')
         ? 'failed'
         : 'partial'
+  const baseStatus =
+    baseResults.length > 0 && baseResults.every((row) => row.executionStatus === 'succeeded')
+      ? 'succeeded'
+      : baseResults.length > 0 && baseResults.every((row) => row.executionStatus === 'failed')
+        ? 'failed'
+        : baseResults.some((row) => row.executionStatus === 'pending')
+          ? 'in-transit'
+          : baseResults.length > 0
+            ? 'partial'
+            : (receipt.branches?.base?.status ?? 'not-planned')
   return {
     ...receipt,
     allocations,
@@ -339,6 +425,11 @@ function foldRecoveryReceipt(receipt, recoveryByAllocation) {
         ...receipt.branches?.stellar,
         status: stellarStatus,
         results: stellarResults,
+      },
+      base: {
+        ...receipt.branches?.base,
+        status: baseStatus,
+        results: baseResults,
       },
     },
   }
@@ -354,6 +445,7 @@ function bridgeChildRows(children, allocationById) {
     const failed = outcome?.executionStatus === 'failed'
     return {
       allocationId: child.allocationId,
+      identity: outcome?.identity || null,
       proxyTarget: child.proxyTarget,
       destination: child.destination,
       failed,
@@ -427,8 +519,36 @@ function summarizeLanes(lanes) {
 }
 
 function recoveryControl(projection, pending, { baseChild = false } = {}) {
-  if (!projection) return { label: 'Checking status', disabled: true }
-  if (baseChild || projection.action === 'blocked-reconcile') {
+  if (!projection) {
+    return { label: baseChild ? 'Checking Base status' : 'Checking status', disabled: true }
+  }
+  if (baseChild) {
+    const labels = {
+      'no-movement': 'No Base movement confirmed',
+      'poll-attestation': 'Check attestation',
+      'submit-mint': 'Resume transfer to Base',
+      'poll-mint': 'Check Base arrival',
+      'submit-base-deposit': 'Deposit from Base account',
+      'poll-base-deposit': 'Check Base deposit',
+      'recovery-in-progress': 'Recovery in progress',
+      'manual-review': 'Manual review',
+      'owner-action-required': 'Action needed in Base account',
+      complete: 'Complete',
+    }
+    const actionable = new Set([
+      'poll-attestation',
+      'submit-mint',
+      'poll-mint',
+      'submit-base-deposit',
+      'poll-base-deposit',
+    ])
+    return {
+      label: labels[projection.action] || 'Manual review',
+      disabled: pending || !actionable.has(projection.action),
+      hidden: projection.action === 'complete',
+    }
+  }
+  if (projection.action === 'blocked-reconcile') {
     return { label: 'Manual review', disabled: true }
   }
   const labels = {
@@ -494,6 +614,9 @@ export function StartStage({
   recoveryByAllocation = {},
   recoveryPendingAllocations = new Set(),
   onRecoverAllocation,
+  baseRecoveryByIdentity = {},
+  baseRecoveryPendingIdentities = new Set(),
+  onRecoverBaseChild,
   onViewMoney,
   onMakeAnotherDeposit,
   onViewCrew,
@@ -517,8 +640,8 @@ export function StartStage({
   const capDisplay = useMemo(() => buildAmountDisplayMap(plan.agents, 'allocation'), [plan.agents])
 
   const effectiveReceipt = useMemo(
-    () => foldRecoveryReceipt(receipt, recoveryByAllocation),
-    [receipt, recoveryByAllocation]
+    () => foldRecoveryReceipt(receipt, recoveryByAllocation, baseRecoveryByIdentity),
+    [receipt, recoveryByAllocation, baseRecoveryByIdentity]
   )
 
   const lanes = useMemo(
@@ -617,10 +740,20 @@ export function StartStage({
                           const childDisplay = display?.children?.find(
                             (c) => c.allocationId === child.allocationId
                           )
-                          const projection = recoveryByAllocation[child.allocationId]
+                          let identityKey = null
+                          try {
+                            identityKey = baseRecoveryIdentityKey(child.identity)
+                          } catch {
+                            identityKey = null
+                          }
+                          const projection = identityKey
+                            ? baseRecoveryByIdentity instanceof Map
+                              ? baseRecoveryByIdentity.get(identityKey)
+                              : baseRecoveryByIdentity[identityKey]
+                            : { action: 'manual-review' }
                           const control = recoveryControl(
                             projection,
-                            recoveryPendingAllocations.has(child.allocationId),
+                            identityKey != null && baseRecoveryPendingIdentities.has(identityKey),
                             { baseChild: true }
                           )
                           return (
@@ -635,12 +768,16 @@ export function StartStage({
                               </span>
                               {child.custodyLabel && <span> {child.custodyLabel}</span>}
                               {child.error && <span role="alert"> {child.error}</span>}
-                              {child.failed && (
+                              {child.failed && !control.hidden && (
                                 <button
                                   type="button"
                                   className="pc-button pc-button--secondary"
                                   disabled={control.disabled}
-                                  onClick={() => onRecoverAllocation?.(child.allocationId)}
+                                  onClick={() => {
+                                    if (!control.disabled && child.identity) {
+                                      onRecoverBaseChild?.(child.identity)
+                                    }
+                                  }}
                                 >
                                   {control.label}
                                 </button>

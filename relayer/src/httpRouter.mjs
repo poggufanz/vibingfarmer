@@ -35,7 +35,16 @@ import { buildForwardFarmIntent } from './farmIntent.mjs';
 import {
   AgentIndexBatchConflictError,
   AgentIndexBatchPermanentError,
+  AgentIndexRecoveryConflictError,
+  AgentIndexRecoveryLeaseConflictError,
+  AgentIndexRecoveryVersionConflictError,
+  AgentIndexReporterRetryableError,
 } from './agentIndexReporter.mjs';
+import {
+  computeBaseRecoveryWorkId,
+  selectBaseChildRecoveryAction,
+  validateBaseRecoveryRequest,
+} from './baseRecovery.mjs';
 
 async function ensureBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return;
@@ -125,6 +134,68 @@ function requireExactFields(value, allowed, label) {
   if (unexpected) throw new Error(`unexpected ${label} field: ${unexpected}`);
 }
 
+function sameBaseRecoveryIdentity(actual, expected) {
+  return ['networkId', 'bindingId', 'executionId', 'allocationId', 'childId']
+    .every((field) => actual?.[field] === expected?.[field]);
+}
+
+export function sameRecoveryFarmIntentFacts({ intent, bundle, authority, identity, mandateId }) {
+  if (!intent || !bundle?.intent || !Array.isArray(intent.intent?.allocations)
+      || !Array.isArray(intent.batch?.children) || typeof intent.relayExecId !== 'string'
+      || !intent.relayExecId) return false;
+  const allocation = intent.intent.allocations.find((candidate) => (
+    candidate?.allocationId === identity.allocationId
+    && candidate?.executionId === identity.executionId
+    && candidate?.childId === identity.childId
+  ));
+  const child = intent.batch.children.find((candidate) => (
+    candidate?.networkId === identity.networkId
+    && candidate?.bindingId === identity.bindingId
+    && candidate?.executionId === identity.executionId
+    && candidate?.allocationId === identity.allocationId
+    && candidate?.childId === identity.childId
+  ));
+  const expected = bundle.intent;
+  const mandate = intent.intent.mandate;
+  const run = intent.intent.run;
+  const same = (left, right) => String(left ?? '').toLowerCase() === String(right ?? '').toLowerCase();
+  return intent.jobId === identity.childId
+    && intent.mandateId === mandateId
+    && intent.stellarOwner === authority.stellarOwner
+    && same(intent.kernelAddress, authority.kernelAddress)
+    && intent.bindingId === identity.bindingId
+    && intent.bindingHash === authority.bindingHash
+    && intent.bindingHash === expected.bindingHash
+    && expected.bindingHash === authority.bindingHash
+    && mandate?.mandateId === mandateId
+    && mandate?.stellarOwner === authority.stellarOwner
+    && same(mandate?.kernelAddress, authority.kernelAddress)
+    && mandate?.bindingId === identity.bindingId
+    && mandate?.bindingHash === expected.bindingHash
+    && run?.runId === expected.runId
+    && run?.grantTxHash === expected.grantTxHash
+    && allocation?.token === expected.token
+    && allocation?.units === expected.units
+    && allocation?.decimals === expected.decimals
+    && same(allocation?.poolAddress, expected.poolAddress)
+    && allocation?.proxyTarget === expected.proxyTarget
+    && allocation?.minShares === expected.minShares
+    && child?.owner === bundle.owner
+    && child?.agent === bundle.agent
+    && child?.intent?.token === expected.token
+    && child?.intent?.units === expected.units
+    && child?.intent?.decimals === expected.decimals
+    && same(child?.intent?.poolAddress, expected.poolAddress)
+    && child?.intent?.proxyTarget === expected.proxyTarget
+    && child?.intent?.minShares === expected.minShares
+    && child?.intent?.runId === expected.runId
+    && child?.intent?.grantTxHash === expected.grantTxHash
+    && same(child?.intent?.kernelAddress, expected.kernelAddress)
+    && child?.intent?.bindingHash === expected.bindingHash
+    && child?.intent?.baseJobId === expected.baseJobId
+    && expected.baseJobId === identity.childId;
+}
+
 // Fix loop 2, Fix 1: shared by /farm and /farm/attach (and, transitively, the `_attach` burn-hash
 // comparison at handleFarmAttach — both writers of attachedBurnTxHash now go through this same
 // guard) so the two entry points cannot drift back to a truthiness-only check. A non-string value
@@ -191,6 +262,7 @@ export function createRelayerRouter({
   nowSeconds = () => Math.floor(Date.now() / 1000),
   poolTargets = new Map(), agentIndexReporter = null, associationOutbox = null,
   baseEvidenceOutbox = null, farmIntents = null, cctpRelays = null,
+  baseRecoveryWorks = null, baseRecoveryExecutor = null, baseRecoveryMandateGate = null,
   relayForwardMint = null, recoveryLimit = 100, recoveryConcurrency = 4,
   forwardFarmDeployment = null,
   unwindJobs = null, readUnwindEvidence = null, relayReverseMint = null,
@@ -205,11 +277,14 @@ export function createRelayerRouter({
   const activeMandateActivations = new Map();
   const activeMandateRegistrations = new Map();
   const activeIntentDeliveries = new Map();
+  const activeBaseRecoveryWork = new Map();
+  let activeBaseRecoveryResume = null;
   let activeFarmResumeV2 = null;
   let activeUnwindResume = null;
   const baseUnavailable = (res) => sendJson(
     res, 503, { error: 'Base cross-chain execution is unavailable' },
   );
+  const BASE_SEND_RECOVERY_ACTIONS = new Set(['submit-mint', 'submit-base-deposit']);
   const unwindAttachStackReady = () => UNWIND_STORE_METHODS.every(
     (method) => typeof unwindJobs?.[method] === 'function',
   )
@@ -1179,6 +1254,38 @@ export function createRelayerRouter({
     return activeFarmResumeV2;
   }
 
+  async function resumeBaseRecoveryJobs({ limit = recoveryLimit } = {}) {
+    if (!baseRecoveryWorks || typeof baseRecoveryWorks.listRecoverable !== 'function') {
+      return { resumed: [], held: [], blocked: [], uncertain: [] };
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+      throw new Error('Base recovery bounds are invalid');
+    }
+    if (activeBaseRecoveryResume) return activeBaseRecoveryResume;
+    activeBaseRecoveryResume = (async () => {
+      const records = baseRecoveryWorks.listRecoverable({ now: Date.now(), limit });
+      const result = { resumed: [], held: [], blocked: [], uncertain: [] };
+      if (!baseRecoveryExecutor?.run) {
+        result.held.push(...records.map((record) => record.workId));
+        return result;
+      }
+      for (const record of records) {
+        try {
+          const outcome = await baseRecoveryExecutor.run(record.workId);
+          const state = outcome?.state;
+          if (state === 'done') result.resumed.push(record.workId);
+          else if (state === 'uncertain') result.uncertain.push(record.workId);
+          else if (state === 'blocked' || state === 'owner_action_required') result.blocked.push(record.workId);
+          else result.held.push(record.workId);
+        } catch {
+          result.held.push(record.workId);
+        }
+      }
+      return result;
+    })().finally(() => { activeBaseRecoveryResume = null; });
+    return activeBaseRecoveryResume;
+  }
+
   async function resumeFarmIntentsV2() {
     if (!Number.isSafeInteger(recoveryLimit) || recoveryLimit < 1 || recoveryLimit > 1_000
         || !Number.isSafeInteger(recoveryConcurrency) || recoveryConcurrency < 1 || recoveryConcurrency > 32) {
@@ -1605,6 +1712,198 @@ export function createRelayerRouter({
       status: 'awaiting_burn',
       schemaVersion: record.acknowledgement.schemaVersion,
     });
+  }
+
+  function scheduleBaseRecoveryWork(record, claim) {
+    if (!baseRecoveryExecutor || typeof baseRecoveryExecutor.run !== 'function'
+        || !record?.workId || activeBaseRecoveryWork.has(record.workId)) return;
+    const running = Promise.resolve()
+      .then(() => baseRecoveryExecutor.run(record.workId, { claim }))
+      .catch(() => null)
+      .finally(() => activeBaseRecoveryWork.delete(record.workId));
+    activeBaseRecoveryWork.set(record.workId, running);
+  }
+
+  async function handleFarmRecover(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    const body = req.body || {};
+    // Capability authentication is deliberately first. This prevents a caller from learning
+    // whether a child/work row exists by probing malformed or cross-mandate identities.
+    const authenticated = await authenticateMandateAuthority(
+      req,
+      body.mandateId,
+      { activeOnly: false },
+    );
+    if (!authenticated) return unauthorized(res);
+    let request;
+    try {
+      request = validateBaseRecoveryRequest(body);
+    } catch {
+      return sendJson(res, 400, { error: 'invalid Base recovery request' });
+    }
+    if (request.identity.networkId !== networkId) {
+      return sendJson(res, 400, { error: 'invalid Base recovery request' });
+    }
+    if (BASE_SEND_RECOVERY_ACTIONS.has(request.action) && !baseExecutionAvailable) {
+      return baseUnavailable(res);
+    }
+    if (!baseRecoveryWorks || typeof baseRecoveryWorks.enqueue !== 'function'
+        || !agentIndexReporter?.readBaseRecoveryClaim) {
+      return sendJson(res, 503, { error: 'Base recovery is unavailable' });
+    }
+
+    let claim;
+    try {
+      claim = await agentIndexReporter.readBaseRecoveryClaim({
+        identity: request.identity,
+        action: request.action,
+        evidenceVersion: request.evidenceVersion,
+        leaseToken: request.leaseToken,
+      });
+    } catch (error) {
+      if (error instanceof AgentIndexRecoveryVersionConflictError) {
+        return sendJson(res, 409, {
+          error: 'Base recovery evidence version conflict', code: 'version-conflict',
+        });
+      }
+      if (error instanceof AgentIndexRecoveryLeaseConflictError) {
+        return sendJson(res, 409, {
+          error: 'Base recovery lease conflict', code: 'lease-conflict',
+        });
+      }
+      if (error instanceof AgentIndexRecoveryConflictError) {
+        return sendJson(res, 409, { error: 'Base recovery claim conflict' });
+      }
+      if (error?.code === 'REPORTER_RETRYABLE' || error instanceof AgentIndexReporterRetryableError) {
+        return sendJson(res, 503, { error: 'Base recovery is temporarily unavailable' });
+      }
+      return sendJson(res, 503, { error: 'Base recovery claim is unavailable' });
+    }
+    let claimReleased = false;
+    const releaseRecoveryClaim = async () => {
+      if (claimReleased || typeof agentIndexReporter.releaseBaseRecoveryClaim !== 'function') return;
+      claimReleased = true;
+      try {
+        await agentIndexReporter.releaseBaseRecoveryClaim({
+          identity: request.identity,
+          action: request.action,
+          evidenceVersion: request.evidenceVersion,
+          leaseToken: request.leaseToken,
+        });
+      } catch {
+        // The primary conflict/storage result remains authoritative if release races an expiry.
+      }
+    };
+    const releaseThen = async (status, body) => {
+      await releaseRecoveryClaim();
+      return sendJson(res, status, body);
+    };
+    const claimIdentity = claim?.identity;
+    if (!claim || !sameBaseRecoveryIdentity(claimIdentity, request.identity)
+        || claim.action !== request.action
+        || claim.evidenceVersion !== request.evidenceVersion
+        || claim.bundle?.recoveryVersion !== request.evidenceVersion
+        || !sameBaseRecoveryIdentity(claim.bundle?.identity, request.identity)
+        || !claim.bundle) {
+      return releaseThen(409, { error: 'Base recovery claim conflict' });
+    }
+    const bundleSelection = selectBaseChildRecoveryAction(claim.bundle);
+    if (bundleSelection.action !== request.action || bundleSelection.phase !== claim.phase) {
+      return releaseThen(409, { error: 'Base recovery evidence changed' });
+    }
+    if (!['poll-attestation', 'submit-mint', 'poll-mint', 'submit-base-deposit', 'poll-base-deposit']
+      .includes(bundleSelection.action)) {
+      return releaseThen(409, { error: 'Base recovery action is not actionable' });
+    }
+    const authority = authenticated.authority;
+    const bundleOwner = claim.bundle.owner;
+    const bundleKernel = claim.bundle.intent?.kernelAddress;
+    if (bundleOwner !== authority.stellarOwner
+        || String(bundleKernel || '').toLowerCase() !== String(authority.kernelAddress || '').toLowerCase()
+        || request.identity.bindingId !== authority.bindingId
+        || claim.bundle.intent?.bindingHash !== authority.bindingHash) {
+      await releaseRecoveryClaim();
+      return unauthorized(res);
+    }
+    // A recovery claim is never sufficient by itself: the durable forward-farm authority is the
+    // second immutable linkage. Missing local intent is fail-closed and cannot be replaced by a
+    // child/job-derived execution id or a null digest.
+    let farmIntentDigest = null;
+    if (!farmIntents || typeof farmIntents.getByJob !== 'function') {
+      return releaseThen(503, { error: 'Base recovery authority is unavailable' });
+    }
+    {
+      let intent;
+      try {
+        intent = farmIntents.getByJob({ mandateId: body.mandateId, jobId: request.identity.childId });
+      } catch {
+        return releaseThen(503, { error: 'Base recovery authority is unavailable' });
+      }
+      if (!sameRecoveryFarmIntentFacts({
+        intent, bundle: claim.bundle, authority, identity: request.identity, mandateId: body.mandateId,
+      })) return releaseThen(409, { error: 'Base recovery authority conflict' });
+      farmIntentDigest = intent.intentDigest;
+    }
+    if (typeof farmIntentDigest !== 'string' || !/^[0-9a-f]{64}$/.test(farmIntentDigest)) {
+      return releaseThen(409, { error: 'Base recovery authority conflict' });
+    }
+
+    const workId = computeBaseRecoveryWorkId({
+      identity: request.identity,
+      evidenceVersion: request.evidenceVersion,
+      action: request.action,
+    });
+    let record;
+    try {
+      record = baseRecoveryWorks.enqueue({
+        workId,
+        identity: request.identity,
+        evidenceVersion: request.evidenceVersion,
+        action: request.action,
+        mandateId: body.mandateId,
+        farmJobId: request.identity.childId,
+        farmIntentDigest,
+        leaseToken: request.leaseToken,
+        claimToken: request.leaseToken,
+        now: nowMs(),
+      });
+    } catch (error) {
+      if (error?.code === 'BASE_RECOVERY_WORK_CONFLICT') {
+        return releaseThen(409, { error: 'immutable Base recovery work conflict' });
+      }
+      return releaseThen(503, { error: 'Base recovery work is unavailable' });
+    }
+    try {
+      if (typeof baseRecoveryWorks.reattachProven === 'function') {
+        const reattached = baseRecoveryWorks.reattachProven({
+          workId,
+          claimToken: request.leaseToken,
+          proven: true,
+          now: nowMs(),
+        });
+        if (reattached) record = reattached;
+      } else if (record?.state === 'held' && typeof baseRecoveryWorks.reopenHeld === 'function') {
+        const reopened = baseRecoveryWorks.reopenHeld({
+          workId,
+          claimToken: request.leaseToken,
+          proven: true,
+          now: nowMs(),
+        });
+        if (reopened) record = reopened;
+      }
+    } catch {
+      return releaseThen(503, { error: 'Base recovery work is unavailable' });
+    }
+    const response = {
+      accepted: true,
+      workId,
+      identity: request.identity,
+      action: request.action,
+      evidenceVersion: request.evidenceVersion,
+      status: record?.state ?? 'pending',
+    };
+    sendJson(res, 202, response);
+    scheduleBaseRecoveryWork(record ?? { workId }, claim);
   }
 
   async function handleFarmAttach(req, res) {
@@ -2114,7 +2413,7 @@ export function createRelayerRouter({
     const path = subPath(req);
     const parsedUrl = new URL(req.url, 'http://local');
     if (req.method === 'POST'
-        && ['/unwind', '/unwind/attach', '/status'].includes(path)
+        && ['/unwind', '/unwind/attach', '/status', '/farm/recover'].includes(path)
         && parsedUrl.search.length > 0) {
       res.setHeader('Cache-Control', 'no-store');
       return sendJson(res, 400, { error: 'invalid request' });
@@ -2125,6 +2424,7 @@ export function createRelayerRouter({
     if (req.method === 'POST' && path === '/mandate/status') return handleMandateStatus(req, res);
     if (req.method === 'POST' && path === '/mandate/revoke') return handleMandateRevoke(req, res);
     if (req.method === 'POST' && path === '/farm') return handleFarm(req, res);
+    if (req.method === 'POST' && path === '/farm/recover') return handleFarmRecover(req, res);
     if (req.method === 'POST' && path === '/farm/attach') return handleFarmAttach(req, res);
     if (req.method === 'POST' && path === '/status') return handleStatus(req, res);
     if (req.method === 'POST' && path === '/unwind') return handleUnwind(req, res);
@@ -2139,6 +2439,7 @@ export function createRelayerRouter({
   };
   relayerRouter.resumeMandateActivations = resumeMandateActivations;
   relayerRouter.resumeFarmJobs = resumeFarmJobs;
+  relayerRouter.resumeBaseRecoveryJobs = resumeBaseRecoveryJobs;
   relayerRouter.resumeUnwindJobs = resumeUnwindJobs;
   return relayerRouter;
 }

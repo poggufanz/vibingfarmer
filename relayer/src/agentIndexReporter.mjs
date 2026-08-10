@@ -31,6 +31,28 @@ const EVIDENCE_ACK_FIELDS = new Set([
   'recoveryVersion', 'evidenceDigest', 'reportDigest', 'written', 'duplicates',
 ]);
 const RECOVERY_IDENTITY_FIELD_SET = new Set(RECOVERY_IDENTITY_FIELDS);
+const BASE_RECOVERY_ACTIONS = new Set([
+  'poll-attestation', 'submit-mint', 'poll-mint',
+  'submit-base-deposit', 'poll-base-deposit',
+]);
+const BASE_RECOVERY_PHASES = new Set(['cctp_attestation', 'cctp_mint', 'base_deposit']);
+const RECOVERY_CLAIM_FIELDS = new Set([
+  'identity', 'action', 'evidenceVersion', 'leaseToken',
+]);
+const RECOVERY_RENEW_FIELDS = new Set([
+  'identity', 'action', 'evidenceVersion', 'holder', 'leaseToken',
+]);
+// These are the public shapes emitted by the Agent Index reporter-only handlers.  Keep claim,
+// renew, and release separate: release intentionally returns no identity facts, while claim
+// includes the closed bundle and renew only returns the refreshed lease.
+const RECOVERY_CLAIM_ACK_FIELDS = new Set([
+  'ok', 'identity', 'action', 'phase', 'reasonCode', 'evidenceVersion', 'lease', 'bundle',
+]);
+const RECOVERY_RENEW_ACK_FIELDS = new Set([
+  'ok', 'identity', 'action', 'phase', 'evidenceVersion', 'lease',
+]);
+const RECOVERY_RELEASE_ACK_FIELDS = new Set(['ok']);
+const RECOVERY_TOKEN_RE = /^[0-9a-f]{64}$/;
 
 export class AgentIndexReporterError extends Error {
   constructor(message, { status = null, code = 'REPORTER_PERMANENT', cause } = {}) {
@@ -54,6 +76,15 @@ export class AgentIndexBatchPermanentError extends AgentIndexReporterError {
 }
 export class AgentIndexBatchConflictError extends AgentIndexReporterError {
   constructor(message, options = {}) { super(message, { ...options, code: 'BATCH_CONFLICT' }); }
+}
+export class AgentIndexRecoveryConflictError extends AgentIndexReporterError {
+  constructor(message, options = {}) { super(message, { ...options, code: 'RECOVERY_CONFLICT' }); }
+}
+export class AgentIndexRecoveryVersionConflictError extends AgentIndexRecoveryConflictError {
+  constructor(message, options = {}) { super(message, { ...options, code: 'RECOVERY_VERSION_CONFLICT' }); }
+}
+export class AgentIndexRecoveryLeaseConflictError extends AgentIndexRecoveryConflictError {
+  constructor(message, options = {}) { super(message, { ...options, code: 'RECOVERY_LEASE_CONFLICT' }); }
 }
 
 export const BASE_SEPOLIA_POOL_TARGETS = new Map([
@@ -120,6 +151,134 @@ function recoveryIdentity(value) {
 
 function sameRecoveryIdentity(actual, expected) {
   return RECOVERY_IDENTITY_FIELDS.every((field) => actual?.[field] === expected?.[field]);
+}
+
+function validateRecoveryClaimRequest(request, { renewal = false } = {}) {
+  const fields = renewal ? RECOVERY_RENEW_FIELDS : RECOVERY_CLAIM_FIELDS;
+  exactObject(request, fields, renewal ? 'Base recovery renewal' : 'Base recovery claim');
+  const identity = recoveryIdentity(request.identity);
+  if (!BASE_RECOVERY_ACTIONS.has(request.action)) {
+    throw new Error('Base recovery action is invalid');
+  }
+  if (!Number.isSafeInteger(request.evidenceVersion) || request.evidenceVersion < 0) {
+    throw new Error('evidenceVersion must be a non-negative safe integer');
+  }
+  if (!RECOVERY_TOKEN_RE.test(request.leaseToken || '')) {
+    throw new Error('leaseToken must be 64 lowercase hex characters');
+  }
+  if (renewal && (typeof request.holder !== 'string' || !request.holder)) {
+    throw new Error('recovery lease holder is required');
+  }
+  rejectSensitiveRecovery(request);
+  return { ...request, identity };
+}
+
+// `rejectSensitive` intentionally rejects leaseToken for every legacy reporter envelope. Recovery
+// requests are the one authenticated server-to-server exception: the token is accepted only at
+// the exact top-level field and any recursively nested secret/private material remains forbidden.
+function rejectSensitiveRecovery(value, path = '$', seen = new WeakSet(), root = true) {
+  if (value == null || typeof value !== 'object') return;
+  if (seen.has(value)) throw new Error(`circular recovery reporter payload at ${path}`);
+  seen.add(value);
+  for (const [key, entry] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const allowedTopLevelToken = root && key === 'leaseToken';
+    if (!allowedTopLevelToken && (
+      normalized.includes('secret') || normalized.includes('private')
+      || normalized.includes('sessionkey') || normalized.includes('serializedapproval')
+      || normalized.includes('capability') || normalized.includes('bearer')
+      || normalized.includes('leasetoken') || normalized.includes('authorization')
+      || normalized.includes('wallet') || normalized.includes('passkey')
+      || normalized.includes('diagnostic') || normalized.includes('endpoint')
+      || normalized === 'approval' || normalized === 'mandate'
+    )) {
+      throw new Error(`secret/private/approval property rejected at ${path}.${key}`);
+    }
+    rejectSensitiveRecovery(entry, `${path}.${key}`, seen, false);
+  }
+  seen.delete(value);
+}
+
+function validateRecoveryLeaseAcknowledgement(
+  acknowledgement,
+  expectedIdentity,
+  expectedAction,
+  expectedVersion,
+  schemaVersion,
+  { bundle = false, expectedLeaseToken = null, expectedHolder = null } = {},
+) {
+  const fields = bundle ? RECOVERY_CLAIM_ACK_FIELDS : RECOVERY_RENEW_ACK_FIELDS;
+  exactObject(
+    acknowledgement,
+    fields,
+    'Base recovery acknowledgement',
+  );
+  if (acknowledgement.ok !== true
+      || !sameRecoveryIdentity(acknowledgement.identity, expectedIdentity)
+      || acknowledgement.action !== expectedAction
+      || acknowledgement.evidenceVersion !== expectedVersion) {
+    throw new Error('Base recovery acknowledgement identity/version mismatch');
+  }
+  try {
+    exactObject(acknowledgement.identity, RECOVERY_IDENTITY_FIELD_SET, 'recovery acknowledgement identity');
+  } catch (error) {
+    throw new Error('Base recovery acknowledgement identity mismatch', { cause: error });
+  }
+  const phase = acknowledgement.phase;
+  if (!BASE_RECOVERY_PHASES.has(phase)) throw new Error('Base recovery acknowledgement phase is invalid');
+  const leaseFields = bundle
+    ? new Set([
+      'identity', 'owner', 'action', 'phase', 'evidenceVersion', 'holder',
+      'leaseToken', 'acquiredAt', 'expiresAt',
+    ])
+    : new Set(['holder', 'leaseToken', 'expiresAt']);
+  exactObject(acknowledgement.lease, leaseFields, 'recovery lease');
+  if (bundle) {
+    if (!sameRecoveryIdentity(acknowledgement.lease.identity, expectedIdentity)
+        || acknowledgement.lease.owner == null
+        || acknowledgement.lease.action !== expectedAction
+        || acknowledgement.lease.phase !== phase
+        || acknowledgement.lease.evidenceVersion !== expectedVersion) {
+      throw new Error('Base recovery acknowledgement lease identity mismatch');
+    }
+    exactObject(acknowledgement.lease.identity, RECOVERY_IDENTITY_FIELD_SET, 'recovery lease identity');
+    if (typeof acknowledgement.lease.owner !== 'string' || !acknowledgement.lease.owner) {
+      throw new Error('Base recovery acknowledgement lease owner is invalid');
+    }
+  }
+  if (typeof acknowledgement.lease.holder !== 'string' || !acknowledgement.lease.holder
+      || !RECOVERY_TOKEN_RE.test(acknowledgement.lease.leaseToken || '')
+      || (expectedLeaseToken !== null
+        && acknowledgement.lease.leaseToken !== expectedLeaseToken)
+      || (expectedHolder !== null
+        && acknowledgement.lease.holder !== expectedHolder)
+      || (bundle && (!Number.isSafeInteger(acknowledgement.lease.acquiredAt)
+        || acknowledgement.lease.acquiredAt < 0))
+      || !Number.isSafeInteger(acknowledgement.lease.expiresAt)
+      || acknowledgement.lease.expiresAt < 0) {
+    throw new Error('Base recovery acknowledgement lease token or timing is invalid');
+  }
+  if (bundle && (typeof acknowledgement.reasonCode !== 'string' || !acknowledgement.reasonCode)) {
+    throw new Error('Base recovery acknowledgement reason is invalid');
+  }
+  if (bundle) {
+    if (!acknowledgement.bundle || typeof acknowledgement.bundle !== 'object'
+        || Array.isArray(acknowledgement.bundle)) {
+      throw new Error('Base recovery acknowledgement bundle is invalid');
+    }
+    rejectSensitiveRecovery(acknowledgement.bundle);
+  }
+  return acknowledgement;
+}
+
+function validateRecoveryReleaseAcknowledgement(
+  acknowledgement, expectedIdentity, expectedAction, expectedVersion, schemaVersion,
+) {
+  exactObject(acknowledgement, RECOVERY_RELEASE_ACK_FIELDS, 'Base recovery release acknowledgement');
+  if (acknowledgement.ok !== true) {
+    throw new Error('Base recovery release acknowledgement is invalid');
+  }
+  return acknowledgement;
 }
 
 function validateEvidenceReport(request, schemaVersion) {
@@ -434,6 +593,107 @@ export function createAgentIndexReporter({
     );
   }
 
+  function recoveryConflictError(status, payload) {
+    const rawCode = String(payload?.code || payload?.reasonCode || payload?.errorCode || '').toLowerCase();
+    if (rawCode.includes('version') || rawCode.includes('stale')) {
+      return new AgentIndexRecoveryVersionConflictError(
+        'Agent Index Base recovery evidence version is stale', { status: 409 },
+      );
+    }
+    if (rawCode.includes('lease') || rawCode.includes('holder') || rawCode.includes('token')) {
+      return new AgentIndexRecoveryLeaseConflictError(
+        'Agent Index Base recovery lease is held or stale', { status: 409 },
+      );
+    }
+    return new AgentIndexRecoveryConflictError(
+      'Agent Index Base recovery claim conflicts with durable evidence', { status },
+    );
+  }
+
+  async function postRecovery(action, request, expectedStatus, { includeBundle = false } = {}) {
+    if (!endpoint || !secret) throw new Error('agent index reporter is not configured');
+    let response;
+    try {
+      response = await fetchWithTimeout(fetchImpl, actionUrl(endpoint, action), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${secret}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request),
+      }, timeoutMs);
+    } catch (cause) {
+      throw new AgentIndexReporterRetryableError(
+        'agent index Base recovery delivery is unavailable', { cause },
+      );
+    }
+    let payload = null;
+    if (response?.status !== expectedStatus || !response?.ok) {
+      try { payload = await response.json(); } catch {}
+      if (response?.status === 409) throw recoveryConflictError(409, payload);
+      const status = response?.status ?? null;
+      if ([408, 425, 429].includes(status) || (status ?? 0) >= 500 || status == null) {
+        throw new AgentIndexReporterRetryableError(
+          'agent index Base recovery delivery is temporarily unavailable', { status },
+        );
+      }
+      throw new AgentIndexReporterError(
+        `agent index Base recovery delivery was rejected with HTTP ${status ?? 'unknown'}`,
+        { status },
+      );
+    }
+    try {
+      payload = await response.json();
+    } catch (cause) {
+      throw new AgentIndexReporterError(
+        'agent index Base recovery acknowledgement is malformed', { cause },
+      );
+    }
+    const expectedIdentity = request.identity;
+    if (action === 'base-recovery-release') {
+      return validateRecoveryReleaseAcknowledgement(
+        payload,
+        expectedIdentity,
+        request.action,
+        request.evidenceVersion,
+        schemaVersion,
+      );
+    }
+    return validateRecoveryLeaseAcknowledgement(
+      payload,
+      expectedIdentity,
+      request.action,
+      request.evidenceVersion,
+      schemaVersion,
+      {
+        bundle: includeBundle,
+        expectedLeaseToken: request.leaseToken,
+        expectedHolder: action === 'base-recovery-renew' ? request.holder : null,
+      },
+    );
+  }
+
+  async function readBaseRecoveryClaim(request) {
+    const validated = validateRecoveryClaimRequest(request);
+    return postRecovery('base-recovery-claim', validated, 200, { includeBundle: true });
+  }
+
+  async function renewBaseRecoveryClaim(request) {
+    const validated = validateRecoveryClaimRequest(request, { renewal: true });
+    return postRecovery('base-recovery-renew', validated, 200);
+  }
+
+  async function releaseBaseRecoveryClaim(request) {
+    const validated = validateRecoveryClaimRequest(request);
+    return postRecovery('base-recovery-release', validated, 200);
+  }
+
+  // Explicit aliases make the lease lifecycle obvious to callers while retaining the claim names
+  // used by the Task 14 protocol. All aliases share the same strict one-fetch implementation.
+  const readBaseRecoveryLease = readBaseRecoveryClaim;
+  const renewBaseRecoveryLease = renewBaseRecoveryClaim;
+  const releaseBaseRecoveryLease = releaseBaseRecoveryClaim;
+
   async function probe({ baseCrossChainAvailable = true } = {}) {
     if (!endpoint || !secret) throw new Error('agent index reporter is not configured');
     const response = await fetchWithTimeout(fetchImpl, actionUrl(endpoint, 'base-child-ready'), {
@@ -472,5 +732,7 @@ export function createAgentIndexReporter({
 
   return Object.freeze({
     commitIntent, commitIntentBatch, reportLifecycle, reportBaseEvidence, probe,
+    readBaseRecoveryClaim, renewBaseRecoveryClaim, releaseBaseRecoveryClaim,
+    readBaseRecoveryLease, renewBaseRecoveryLease, releaseBaseRecoveryLease,
   });
 }

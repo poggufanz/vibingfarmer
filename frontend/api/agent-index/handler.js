@@ -1,7 +1,7 @@
 // Pure, DI-friendly route logic for /api/agent-index — no req/res, no real D1/RPC construction
 // (that glue lives in ../agent-index.js, which is untested by design: everything worth testing
 // here is testable without touching a network or a real Cloudflare binding).
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
 import { ingestAgentIndexPage, coverageProof } from './indexer.js'
 import { commitBackfillAudit } from './backfill.js'
@@ -21,7 +21,7 @@ import {
   receiptProofMessage,
   receiptRequestDigest,
 } from './executionReceipts.js'
-import { selectRecoveryAction } from './recovery.js'
+import { selectBaseChildRecoveryAction, selectRecoveryAction } from './recovery.js'
 import { D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE } from './store.js'
 import {
   AgentIndexConflictError,
@@ -31,6 +31,8 @@ import {
   assertNoSensitiveProperties,
   baseChildBatchDigest,
   baseChildRecoveryIdentity,
+  BASE_RECOVERY_ACTIONS,
+  validateBaseRecoveryRequest,
   validateBaseChildPhaseEvidence,
 } from './models.js'
 import {
@@ -564,6 +566,426 @@ export async function handleRecoveryRequest({
   }
 }
 
+const BASE_RECOVERY_ACTION_PHASE = Object.freeze({
+  'poll-attestation': 'cctp_attestation',
+  'submit-mint': 'cctp_mint',
+  'poll-mint': 'cctp_mint',
+  'submit-base-deposit': 'base_deposit',
+  'poll-base-deposit': 'base_deposit',
+})
+const BASE_RECOVERY_CLAIM_FIELDS = new Set(['identity', 'action', 'evidenceVersion', 'leaseToken'])
+const BASE_RECOVERY_RENEW_FIELDS = new Set([
+  'identity',
+  'action',
+  'evidenceVersion',
+  'holder',
+  'leaseToken',
+])
+const BASE_RECOVERY_RELEASE_FIELDS = new Set([
+  'identity',
+  'action',
+  'evidenceVersion',
+  'leaseToken',
+])
+
+function validateBaseRecoveryExactObject(value, fields, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AgentIndexValidationError(`${label} must be an object`)
+  }
+  const keys = Object.keys(value)
+  if (
+    keys.length !== fields.size ||
+    keys.some((key) => !fields.has(key)) ||
+    [...fields].some((key) => !Object.prototype.hasOwnProperty.call(value, key))
+  ) {
+    throw new AgentIndexValidationError(`Invalid ${label}`)
+  }
+}
+
+function validateBaseRecoveryClaimBody(body, fields = BASE_RECOVERY_CLAIM_FIELDS) {
+  validateBaseRecoveryExactObject(body, fields, 'Base recovery claim')
+  const identity = baseChildRecoveryIdentity(body.identity)
+  if (!BASE_RECOVERY_ACTIONS.includes(body.action) || !BASE_RECOVERY_ACTION_PHASE[body.action]) {
+    throw new AgentIndexValidationError('Base recovery claim action is not claimable')
+  }
+  if (!Number.isSafeInteger(body.evidenceVersion) || body.evidenceVersion < 0) {
+    throw new AgentIndexValidationError('Base recovery claim evidence version is invalid')
+  }
+  if (typeof body.leaseToken !== 'string' || !/^[0-9a-f]{64}$/.test(body.leaseToken)) {
+    throw new AgentIndexValidationError('Base recovery claim lease token is invalid')
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'holder')) {
+    if (typeof body.holder !== 'string' || body.holder.length === 0 || body.holder.length > 128) {
+      throw new AgentIndexValidationError('Base recovery claim holder is invalid')
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'now')) {
+    if (!Number.isSafeInteger(body.now) || body.now < 0) {
+      throw new AgentIndexValidationError('Base recovery claim time is invalid')
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'ttlMs')) {
+    if (!Number.isSafeInteger(body.ttlMs) || body.ttlMs <= 0) {
+      throw new AgentIndexValidationError('Base recovery claim TTL is invalid')
+    }
+  }
+  return { ...body, identity }
+}
+
+function baseRecoveryClaimFailure(error) {
+  const failure = agentIndexFailure(error)
+  if (failure.status === 400) return { status: 400, body: { error: 'Invalid Base recovery claim' } }
+  if (failure.status === 401 || failure.status === 403) {
+    return { status: 403, body: { error: 'Base recovery authorization failed' } }
+  }
+  if (failure.status === 409) return failure
+  return failure
+}
+
+function baseRecoveryPublicClaim({ identity, action, phase, reasonCode, evidenceVersion, lease }) {
+  return { ok: true, identity, action, phase, reasonCode, evidenceVersion, lease }
+}
+
+function baseRecoveryReporterLease(claim) {
+  if (!claim) return null
+  return {
+    identity: claim.identity,
+    owner: claim.owner,
+    action: claim.action,
+    phase: claim.phase,
+    evidenceVersion: claim.evidenceVersion,
+    holder: claim.holder,
+    leaseToken: claim.leaseToken,
+    acquiredAt: claim.acquiredAt,
+    expiresAt: claim.expiresAt,
+  }
+}
+
+function baseRecoveryLeaseToken() {
+  return randomBytes(32).toString('hex')
+}
+
+/**
+ * Browser proof-gated Base recovery claim.  The caller signs only the full child identity and
+ * expected version; selector action/phase and every lease fact are recomputed from D1 evidence.
+ */
+export async function handleBaseRecoveryRequest({
+  request,
+  proof,
+  store,
+  authorityReader,
+  now = Date.now(),
+  leaseTtlMs = 30_000,
+}) {
+  if (!store)
+    return { status: 503, body: { error: 'Base recovery store unavailable', configured: false } }
+  try {
+    const parsed = validateBaseRecoveryRequest(request)
+    validateBaseRecoveryExactObject(
+      proof,
+      new Set(['challengeId', 'expiresAt', 'signature']),
+      'Base recovery proof'
+    )
+    if (
+      !store.readReceiptChallenge ||
+      !store.consumeReceiptChallenge ||
+      !store.readBaseChildRecoveryBundle ||
+      !store.acquireBaseChildRecoveryLease
+    ) {
+      throw new AgentIndexUnavailableError('Base recovery store is unavailable')
+    }
+    if (typeof authorityReader !== 'function')
+      throw new AgentIndexUnavailableError('Base recovery authority is not configured')
+    if (
+      !Number.isSafeInteger(now) ||
+      now < 0 ||
+      !Number.isSafeInteger(leaseTtlMs) ||
+      leaseTtlMs <= 0
+    ) {
+      throw new AgentIndexValidationError('Base recovery claim time is invalid')
+    }
+    const challenge = await store.readReceiptChallenge({ challengeId: proof?.challengeId })
+    if (!challenge)
+      throw new ReceiptAuthError('proof', 'Base recovery proof challenge does not exist')
+    if (challenge.consumedAt != null)
+      throw new ReceiptAuthError('replay', 'Base recovery proof challenge was already consumed')
+    if (now >= challenge.expiresAt)
+      throw new ReceiptAuthError('expired', 'Base recovery proof challenge expired')
+    if (challenge.requestDigest !== receiptRequestDigest(parsed))
+      throw new ReceiptAuthError('proof', 'Base recovery proof challenge request digest mismatch')
+    const currentAuthority = validateRecoveryAuthority({
+      facts: await readRecoveryAuthority(authorityReader, {
+        networkId: challenge.networkId,
+        owner: challenge.owner,
+        agent: challenge.agent,
+      }),
+      owner: challenge.owner,
+    })
+    verifyRecoveryProof({ challenge, proof, publicKey: currentAuthority.signerPublicKey })
+    const identity = {
+      networkId: challenge.networkId,
+      bindingId: parsed.bindingId,
+      executionId: parsed.executionId,
+      allocationId: parsed.allocationId,
+      childId: parsed.childId,
+    }
+    const bundle = await store.readBaseChildRecoveryBundle(identity)
+    if (
+      !bundle ||
+      bundle.owner !== challenge.owner ||
+      bundle.agent !== challenge.agent ||
+      !baseChildRecoveryIdentity(bundle.identity) ||
+      Object.entries(identity).some(([key, value]) => bundle.identity[key] !== value)
+    ) {
+      throw new ReceiptAuthError('authority', 'Base recovery child is not available to this signer')
+    }
+    const decision = selectBaseChildRecoveryAction(bundle)
+    const consumed = await store.consumeReceiptChallenge({
+      challenge,
+      consumeToken: randomUUID(),
+      now,
+    })
+    if (!consumed)
+      throw new ReceiptAuthError('replay', 'Base recovery proof challenge was already consumed')
+    if (parsed.expectedRecoveryVersion !== bundle.recoveryVersion) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          code: 'version-conflict',
+          error: 'Base recovery evidence version has moved on since the caller observed it',
+          evidenceVersion: bundle.recoveryVersion,
+        },
+      }
+    }
+    if (!decision.phase) {
+      return {
+        status: 200,
+        body: baseRecoveryPublicClaim({
+          identity,
+          action: decision.action,
+          phase: null,
+          reasonCode: decision.reasonCode,
+          evidenceVersion: bundle.recoveryVersion,
+          lease: null,
+        }),
+      }
+    }
+    const leaseToken = baseRecoveryLeaseToken()
+    const leaseResult = await store.acquireBaseChildRecoveryLease({
+      identity,
+      owner: challenge.owner,
+      action: decision.action,
+      phase: decision.phase,
+      evidenceVersion: bundle.recoveryVersion,
+      holder: parsed.leaseOwner,
+      leaseToken,
+      now,
+      ttlMs: leaseTtlMs,
+    })
+    if (!leaseResult?.acquired) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          code: leaseResult?.code === 'version-conflict' ? 'version-conflict' : 'lease-conflict',
+          error:
+            leaseResult?.code === 'version-conflict'
+              ? 'Base recovery evidence version has moved on since the caller observed it'
+              : 'Base recovery lease is already held',
+          ...(leaseResult?.currentVersion != null
+            ? { evidenceVersion: leaseResult.currentVersion }
+            : {}),
+        },
+      }
+    }
+    return {
+      status: 200,
+      body: baseRecoveryPublicClaim({
+        identity,
+        action: decision.action,
+        phase: decision.phase,
+        reasonCode: decision.reasonCode,
+        evidenceVersion: bundle.recoveryVersion,
+        lease: {
+          holder: parsed.leaseOwner,
+          leaseToken: leaseResult.leaseToken,
+          expiresAt: leaseResult.expiresAt,
+        },
+      }),
+    }
+  } catch (error) {
+    return baseRecoveryClaimFailure(error)
+  }
+}
+
+async function readAndRecomputeBaseClaim({ body, store, now }) {
+  const claim = await store.readBaseChildRecoveryClaim({
+    ...body,
+    now,
+    includeVersionConflict: true,
+  })
+  if (!claim) return null
+  if (claim.conflict === 'version') return claim
+  const bundle = await store.readBaseChildRecoveryBundle(body.identity)
+  if (
+    !bundle ||
+    claim.owner !== bundle.owner ||
+    claim.agent !== bundle.agent ||
+    !baseChildRecoveryIdentity(bundle.identity) ||
+    Object.entries(body.identity).some(([key, value]) => bundle.identity[key] !== value)
+  )
+    return null
+  if (
+    bundle.recoveryVersion !== body.evidenceVersion ||
+    claim.evidenceVersion !== body.evidenceVersion
+  ) {
+    return { conflict: 'version', currentVersion: bundle.recoveryVersion }
+  }
+  const decision = selectBaseChildRecoveryAction(bundle)
+  if (
+    decision.action !== body.action ||
+    decision.phase !== BASE_RECOVERY_ACTION_PHASE[body.action] ||
+    (decision.phase == null && BASE_RECOVERY_ACTION_PHASE[body.action] != null)
+  )
+    return null
+  return { claim, bundle, decision }
+}
+
+/** Reporter-only exact claim read; never mounted as a public GET. */
+export async function handleBaseRecoveryClaim({
+  body,
+  store,
+  secret,
+  providedSecret,
+  now = Date.now(),
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  try {
+    const parsed = validateBaseRecoveryClaimBody(body)
+    if (!store?.readBaseChildRecoveryClaim || !store?.readBaseChildRecoveryBundle)
+      throw new AgentIndexUnavailableError('Base recovery claim store is unavailable')
+    const result = await readAndRecomputeBaseClaim({ body: parsed, store, now })
+    if (!result) return { status: 404, body: { error: 'Base recovery claim not found' } }
+    if (result.conflict === 'version')
+      return {
+        status: 409,
+        body: {
+          error: 'Base recovery evidence version has moved on',
+          code: 'version-conflict',
+          evidenceVersion: result.currentVersion,
+        },
+      }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        identity: parsed.identity,
+        action: result.decision.action,
+        phase: result.decision.phase,
+        reasonCode: result.decision.reasonCode,
+        evidenceVersion: result.bundle.recoveryVersion,
+        lease: baseRecoveryReporterLease(result.claim),
+        bundle: result.bundle,
+      },
+    }
+  } catch (error) {
+    return baseRecoveryClaimFailure(error)
+  }
+}
+
+export async function handleBaseRecoveryRenew({
+  body,
+  store,
+  secret,
+  providedSecret,
+  now = Date.now(),
+  leaseTtlMs = 30_000,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  try {
+    if (
+      !Number.isSafeInteger(now) ||
+      now < 0 ||
+      !Number.isSafeInteger(leaseTtlMs) ||
+      leaseTtlMs <= 0
+    ) {
+      throw new AgentIndexValidationError('Base recovery renewal timing is invalid')
+    }
+    const parsed = validateBaseRecoveryClaimBody(body, BASE_RECOVERY_RENEW_FIELDS)
+    if (
+      !store?.readBaseChildRecoveryClaim ||
+      !store?.readBaseChildRecoveryBundle ||
+      !store?.renewBaseChildRecoveryLease
+    )
+      throw new AgentIndexUnavailableError('Base recovery claim store is unavailable')
+    const result = await readAndRecomputeBaseClaim({ body: parsed, store, now })
+    if (!result)
+      return {
+        status: 409,
+        body: { error: 'Base recovery claim is stale', code: 'version-conflict' },
+      }
+    if (result.conflict === 'version')
+      return {
+        status: 409,
+        body: {
+          error: 'Base recovery evidence version has moved on',
+          code: 'version-conflict',
+          evidenceVersion: result.currentVersion,
+        },
+      }
+    const renewed = await store.renewBaseChildRecoveryLease({
+      ...parsed,
+      phase: result.decision.phase,
+      now,
+      ttlMs: leaseTtlMs,
+    })
+    if (!renewed?.renewed)
+      return {
+        status: 409,
+        body: { error: 'Base recovery lease is no longer held', code: 'lease-conflict' },
+      }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        identity: parsed.identity,
+        action: parsed.action,
+        phase: result.decision.phase,
+        evidenceVersion: parsed.evidenceVersion,
+        lease: {
+          holder: parsed.holder,
+          leaseToken: parsed.leaseToken,
+          expiresAt: renewed.expiresAt,
+        },
+      },
+    }
+  } catch (error) {
+    return baseRecoveryClaimFailure(error)
+  }
+}
+
+export async function handleBaseRecoveryRelease({ body, store, secret, providedSecret }) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  try {
+    const parsed = validateBaseRecoveryClaimBody(body, BASE_RECOVERY_RELEASE_FIELDS)
+    if (!store?.releaseBaseChildRecoveryLease)
+      throw new AgentIndexUnavailableError('Base recovery claim store is unavailable')
+    const released = await store.releaseBaseChildRecoveryLease(parsed)
+    return released?.released
+      ? { status: 200, body: { ok: true } }
+      : {
+          status: 409,
+          body: { error: 'Base recovery lease release conflict', code: 'lease-conflict' },
+        }
+  } catch (error) {
+    return baseRecoveryClaimFailure(error)
+  }
+}
+
 export async function handleBaseChildIntent({
   child,
   configuredNetworkId,
@@ -729,6 +1151,7 @@ export async function handleBaseChildEvidenceWrite({
 const PUBLIC_EVIDENCE_FIELDS = new Set([
   'burnTxHash',
   'expectationDigest',
+  'burnUnits7',
   'messageDigest',
   'attestationDigest',
   'evidenceVersion',
@@ -739,15 +1162,18 @@ const PUBLIC_EVIDENCE_FIELDS = new Set([
   'blockHash',
   'chainId',
   'kernelAddress',
+  'yieldRouterAddress',
   'yieldRouter',
+  'caller',
   'poolAddress',
   'assets',
   'minShares',
   'shares',
-  'sender',
   'nonce',
-  'entryPoint',
+  'reconcileHandle',
   'reasonCode',
+  'custodyLocation',
+  'kernelCustodyConfirmed',
   'token',
   'units',
   'decimals',
@@ -756,33 +1182,154 @@ const PUBLIC_EVIDENCE_FIELDS = new Set([
   'attestationHash',
   'mintRecipient',
   'logIndex',
+  'event',
+  'custody',
 ])
 
-function publicEvidence(value) {
+const PUBLIC_BASE_INTENT_FIELDS = [
+  'runId',
+  'grantTxHash',
+  'bindingHash',
+  'baseJobId',
+  'kernelAddress',
+  'poolAddress',
+  'proxyTarget',
+  'token',
+  'units',
+  'decimals',
+  'minShares',
+]
+const PUBLIC_BASE_EVENT_FIELDS = [
+  'eventId',
+  'identity',
+  'owner',
+  'agent',
+  'recoveryVersion',
+  'phase',
+  'state',
+  'evidence',
+  'observedAt',
+]
+
+function publicBaseScalar(value) {
+  return value === null || ['string', 'number', 'boolean'].includes(typeof value)
+}
+
+function publicBaseEvent(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   const output = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (!PUBLIC_EVIDENCE_FIELDS.has(key)) continue
-    if (entry === null || ['string', 'number', 'boolean'].includes(typeof entry))
-      output[key] = entry
+  for (const field of [
+    'address',
+    'topic0',
+    'logIndex',
+    'caller',
+    'poolAddress',
+    'assets',
+    'shares',
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(value, field) && publicBaseScalar(value[field])) {
+      output[field] = value[field]
+    }
   }
   return output
 }
 
+function publicBaseReconcileHandle(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const output = {}
+  for (const field of ['entryPoint', 'sender', 'nonce', 'startBlock']) {
+    if (Object.prototype.hasOwnProperty.call(value, field) && publicBaseScalar(value[field])) {
+      output[field] = value[field]
+    }
+  }
+  return Object.keys(output).length === 4 ? output : null
+}
+
+function publicEvidence(value, phase) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const output = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (!PUBLIC_EVIDENCE_FIELDS.has(key)) continue
+    if (key === 'nonce' && phase === 'base_deposit') continue
+    if (key === 'event') {
+      output[key] = publicBaseEvent(entry)
+      continue
+    }
+    if (key === 'reconcileHandle') {
+      const handle = publicBaseReconcileHandle(entry)
+      if (handle) output[key] = handle
+      continue
+    }
+    if (key === 'custody') {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        const custody = {}
+        for (const field of ['location', 'confirmed']) {
+          if (
+            Object.prototype.hasOwnProperty.call(entry, field) &&
+            publicBaseScalar(entry[field])
+          ) {
+            custody[field] = entry[field]
+          }
+        }
+        output[key] = custody
+      }
+      continue
+    }
+    if (publicBaseScalar(entry)) output[key] = entry
+  }
+  return output
+}
+
+function publicBaseIntent(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const output = {}
+  for (const field of PUBLIC_BASE_INTENT_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(value, field) && publicBaseScalar(value[field])) {
+      output[field] = value[field]
+    }
+  }
+  return output
+}
+
+function publicBaseIdentity(value, fallback) {
+  return baseChildRecoveryIdentity(value ?? fallback)
+}
+
 export function publicBaseChildEvidenceSummary(bundle) {
+  const identity = baseChildRecoveryIdentity(bundle.identity)
   return {
     schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
-    identity: baseChildRecoveryIdentity(bundle.identity),
+    identity,
+    owner: typeof bundle.owner === 'string' ? bundle.owner : '',
+    agent: typeof bundle.agent === 'string' ? bundle.agent : '',
     recoverable: bundle.recoverable === true,
     recoveryVersion: bundle.recoveryVersion,
+    intent: publicBaseIntent(bundle.intent),
     phases: (bundle.phases ?? []).map((phase) => ({
+      identity: publicBaseIdentity(phase.identity, identity),
       phase: phase.phase,
       state: phase.state,
       eventId: phase.eventId,
       recoveryVersion: phase.recoveryVersion,
       observedAt: phase.observedAt,
-      evidence: publicEvidence(phase.evidence),
+      evidence: publicEvidence(phase.evidence, phase.phase),
     })),
+    events: (bundle.events ?? []).map((event) => {
+      const output = {}
+      for (const field of PUBLIC_BASE_EVENT_FIELDS) {
+        if (field === 'identity') {
+          output.identity = publicBaseIdentity(event.identity, identity)
+        } else if (field === 'evidence') {
+          output.evidence = publicEvidence(event.evidence, event.phase)
+        } else if (
+          Object.prototype.hasOwnProperty.call(event, field) &&
+          publicBaseScalar(event[field])
+        ) {
+          output[field] = event[field]
+        }
+      }
+      return output
+    }),
   }
 }
 

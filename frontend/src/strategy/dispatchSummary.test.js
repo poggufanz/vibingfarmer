@@ -41,6 +41,55 @@ const permission = () => ({
 })
 
 describe('buildDispatchReceipt', () => {
+  it('preserves only the exact five-field Base child identity needed by Task 14 recovery', () => {
+    const identity = {
+      networkId: 'stellar-testnet',
+      bindingId: '0123456789abcdef0123456789abcdef',
+      executionId: 'run-mixed-8:exec:run-mixed-8:bridge:base-a',
+      allocationId: 'run-mixed-8:bridge:base-a',
+      childId: 'abcdef0123456789abcdef0123456789',
+    }
+    const receipt = buildDispatchReceipt({
+      plan: plan(),
+      permission: permission(),
+      branches: {
+        stellar: { results: [] },
+        base: {
+          status: 'failed',
+          results: [
+            {
+              allocationId: identity.allocationId,
+              identity: { ...identity },
+              success: false,
+              error: 'base_deposit_failed',
+              burnHash: '66'.repeat(32),
+              mintTxHash: `0x${'aa'.repeat(32)}`,
+              userOpHash: `0x${'bb'.repeat(32)}`,
+              depositTxHash: `0x${'cc'.repeat(32)}`,
+              custody: { location: 'base-kernel', confirmed: true, checkedAt: 110 },
+            },
+          ],
+        },
+      },
+    })
+
+    const outcome = receipt.allocations.find((row) => row.allocationId === identity.allocationId)
+    expect(outcome.identity).toEqual(identity)
+    expect(Object.keys(outcome.identity)).toEqual([
+      'networkId',
+      'bindingId',
+      'executionId',
+      'allocationId',
+      'childId',
+    ])
+    expect(outcome.evidence).toMatchObject({
+      burnHash: '66'.repeat(32),
+      mintTxHash: `0x${'aa'.repeat(32)}`,
+      userOpHash: `0x${'bb'.repeat(32)}`,
+      depositTxHash: `0x${'cc'.repeat(32)}`,
+    })
+  })
+
   it('returns one partial receipt when Stellar rejects after the grant but Base custody succeeds', () => {
     const receipt = buildDispatchReceipt({
       plan: plan(),

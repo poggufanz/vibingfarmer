@@ -12,6 +12,13 @@ const MANDATE_COOKIE = `__Host-vf-mandate-${MANDATE_ID}`
 const OTHER_COOKIE = `__Host-vf-mandate-${OTHER_ID}`
 const UNWIND_COOKIE = `__Host-vf-unwind-${JOB_ID}`
 const VALID_SET_COOKIE = `${MANDATE_COOKIE}=${CAPABILITY}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`
+const BASE_RECOVERY_IDENTITY = Object.freeze({
+  networkId: 'stellar-testnet',
+  bindingId: '0123456789abcdef0123456789abcdef',
+  executionId: 'run-42:exec:run-42:bridge:aave-v3',
+  allocationId: 'run-42:bridge:aave-v3',
+  childId: 'abcdef0123456789abcdef0123456789',
+})
 let requestSequence = 1
 const farmBody = () => ({
   requestId: JOB_ID,
@@ -23,6 +30,13 @@ const farmBody = () => ({
   runId: 'run-42',
   grantTxHash: 'aa'.repeat(32),
   allocations: [],
+})
+const farmRecoveryBody = () => ({
+  mandateId: MANDATE_ID,
+  identity: { ...BASE_RECOVERY_IDENTITY },
+  action: 'submit-mint',
+  evidenceVersion: 7,
+  leaseToken: '88'.repeat(32),
 })
 
 function registrationBody(overrides = {}) {
@@ -162,6 +176,83 @@ describe('capability-cookie proxy', () => {
   beforeEach(() => {
     process.env.RELAYER_ORIGIN = 'https://relayer.example.com'
     process.env.RELAYER_PROXY_KEY = 'proxy-key'
+  })
+
+  it('forwards one exact capability-authenticated Base recovery request on the fixed path', async () => {
+    const body = farmRecoveryBody()
+    const { res, fetchImpl } = await requestThrough({
+      req: fakeReq({
+        url: '/api/vf-cross/farm/recover',
+        body,
+        cookie: `${MANDATE_COOKIE}=${CAPABILITY}`,
+        authorization: 'Bearer browser-forged',
+      }),
+      response: upstream({ status: 202, body: { accepted: true } }),
+    })
+
+    expect(res.statusCode).toBe(202)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('https://relayer.example.com/api/vf-cross/farm/recover')
+    expect(init.method).toBe('POST')
+    expect(init.headers.authorization).toBe(`Bearer ${CAPABILITY}`)
+    expect(init.headers).not.toHaveProperty('cookie')
+    expect(JSON.parse(init.body)).toEqual(body)
+    expect(`${url}${init.body}${res.body}`).not.toContain('browser-forged')
+  })
+
+  it.each([
+    ['extra outer message', (body) => ({ ...body, message: 'aa' })],
+    [
+      'extra nested kernel',
+      (body) => ({
+        ...body,
+        identity: { ...body.identity, kernelAddress: '0x' + '11'.repeat(20) },
+      }),
+    ],
+    [
+      'uppercase binding',
+      (body) => ({ ...body, identity: { ...body.identity, bindingId: 'AA'.repeat(16) } }),
+    ],
+    [
+      'mismatched execution mapping',
+      (body) => ({ ...body, identity: { ...body.identity, executionId: 'run-other:exec:child' } }),
+    ],
+    ['unsafe action', (body) => ({ ...body, action: 'burn-again' })],
+    ['negative version', (body) => ({ ...body, evidenceVersion: -1 })],
+    ['uppercase token', (body) => ({ ...body, leaseToken: 'AA'.repeat(32) })],
+    ['body capability', (body) => ({ ...body, capability: CAPABILITY })],
+  ])('rejects malformed Base recovery bodies locally: %s', async (_label, mutate) => {
+    const fetchImpl = vi.fn()
+    const { res } = await requestThrough({
+      req: fakeReq({
+        url: '/api/vf-cross/farm/recover',
+        body: mutate(farmRecoveryBody()),
+        cookie: `${MANDATE_COOKIE}=${CAPABILITY}`,
+      }),
+      fetchImpl,
+    })
+
+    expect(res.statusCode).toBe(400)
+    expect(res.getHeader('cache-control')).toBe('no-store')
+    expect(res.body).toBe(JSON.stringify({ error: 'invalid request' }))
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('rejects a Base recovery capability in the query before the tunnel', async () => {
+    const fetchImpl = vi.fn()
+    const { res } = await requestThrough({
+      req: fakeReq({
+        url: `/api/vf-cross/farm/recover?capability=${CAPABILITY}`,
+        body: farmRecoveryBody(),
+        cookie: `${MANDATE_COOKIE}=${CAPABILITY}`,
+      }),
+      fetchImpl,
+    })
+
+    expect(res.statusCode).toBe(400)
+    expect(res.getHeader('cache-control')).toBe('no-store')
+    expect(res.body).not.toContain(CAPABILITY)
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('forwards one exact canonical registration cookie and no alternate upstream headers', async () => {

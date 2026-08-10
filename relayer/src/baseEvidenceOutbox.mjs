@@ -1,11 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import {
-  AgentIndexEvidenceConflictError,
-  AgentIndexReporterRetryableError,
-} from './agentIndexReporter.mjs';
+import { AgentIndexEvidenceConflictError, AgentIndexReporterRetryableError } from './agentIndexReporter.mjs';
 import {
   BASE_EVIDENCE_PHASES,
   BASE_EVIDENCE_STATES,
+  normalizeReconcileHandle,
   validateBaseEvidence,
 } from './baseEvidenceValidation.mjs';
 
@@ -126,10 +124,16 @@ function allowedTransition(latestPhase, latestState, phase, state) {
       && latestState === 'confirmed';
   }
   const transitions = {
-    submitting: new Set(['submitted', 'failed', 'unknown']),
-    submitted: new Set(['confirmed', 'failed', 'unknown']),
+    submitting: new Set(['submitted', 'confirmed', 'failed', 'unknown', 'blocked']),
+    submitted: new Set(['confirmed', 'failed', 'unknown', 'blocked']),
     unknown: new Set(['confirmed']),
   };
+  // Attestation reads may transiently be reported failed before a later owner proves the
+  // same immutable message/nonce.  Keep this phase-specific; a failed mint/deposit is never
+  // revived by the generic transition table.
+  if (phase === 'cctp_attestation' && latestState === 'failed' && state === 'confirmed') {
+    return true;
+  }
   return transitions[latestState]?.has(state) === true;
 }
 
@@ -158,7 +162,10 @@ export function createBaseEvidenceOutbox(db, {
       if (existing.next_recovery_version !== recoveryVersion || existing.job_id !== jobId) {
         throw new Error('immutable Base evidence head conflict');
       }
-      return { duplicate: true, recoveryVersion: existing.next_recovery_version };
+      return {
+        duplicate: true,
+        recoveryVersion: existing.next_recovery_version,
+      };
     }
     db.prepare(`
       INSERT INTO base_evidence_heads
@@ -206,23 +213,67 @@ export function createBaseEvidenceOutbox(db, {
       if (!allowedTransition(head.latest_phase, head.latest_state, checkpoint.phase, checkpoint.status)) {
         throw new Error('Base evidence phase/state transition is out of order');
       }
-      if (head.latest_phase === checkpoint.phase && head.latest_state === 'unknown'
-          && checkpoint.status === 'confirmed') {
-        const previous = db.prepare(`
+      if (head.latest_phase === checkpoint.phase && ['cctp_attestation', 'cctp_mint'].includes(checkpoint.phase)) {
+        const previous = db
+          .prepare(
+            `
           SELECT report_json FROM base_evidence_outbox
           WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?
           ORDER BY expected_recovery_version DESC LIMIT 1
         `).get(...values);
         const known = previous ? JSON.parse(previous.report_json).event.evidence : {};
-        const immutableKnown = [
-          'chainId', 'yieldRouterAddress', 'caller', 'poolAddress', 'assets', 'minShares',
-          'userOpHash', 'transactionHash',
-        ];
-        if (immutableKnown.some((field) => (
-          known[field] !== undefined && known[field] !== null
-            && checkpoint.evidence[field] !== known[field]
-        ))) {
-          throw new Error('unknown reconciliation conflicts with known hash or intent evidence');
+        for (const field of ['burnTxHash', 'expectationDigest', 'messageDigest', 'attestationDigest', 'nonce']) {
+          if (
+            known[field] != null &&
+            checkpoint.evidence[field] != null &&
+            canonicalJson(known[field]) !== canonicalJson(checkpoint.evidence[field])
+          ) {
+            throw new Error('CCTP immutable message evidence conflicts with prior checkpoint');
+          }
+        }
+      }
+      if (head.latest_phase === 'base_deposit' && checkpoint.phase === 'base_deposit') {
+        const previous = db
+          .prepare(
+            `
+          SELECT report_json FROM base_evidence_outbox
+          WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?
+          ORDER BY expected_recovery_version DESC LIMIT 1
+        `,
+          )
+          .get(...values);
+        const known = previous ? JSON.parse(previous.report_json).event.evidence : {};
+        const knownHandle = known.reconcileHandle ?? null;
+        const checkpointHandle = checkpoint.evidence.reconcileHandle ?? null;
+        if (
+          (knownHandle === null) !== (checkpointHandle === null) ||
+          (knownHandle !== null && canonicalJson(checkpointHandle) !== canonicalJson(knownHandle))
+        ) {
+          throw new Error('reconcile handle is immutable across Base deposit checkpoints');
+        }
+        if (head.latest_state === 'unknown' && checkpoint.status === 'confirmed') {
+          const immutableKnown = [
+            'chainId',
+            'yieldRouterAddress',
+            'caller',
+            'poolAddress',
+            'assets',
+            'minShares',
+            'userOpHash',
+            'transactionHash',
+            'reconcileHandle',
+          ];
+          if (
+            immutableKnown.some(
+              (field) =>
+                known[field] !== undefined &&
+                known[field] !== null &&
+                (checkpoint.evidence[field] === undefined ||
+                  canonicalJson(checkpoint.evidence[field]) !== canonicalJson(known[field])),
+            )
+          ) {
+            throw new Error('unknown reconciliation conflicts with known hash or intent evidence');
+          }
         }
       }
       const expectedRecoveryVersion = head.next_recovery_version;
@@ -434,7 +485,13 @@ export function createBaseEvidenceOutbox(db, {
     });
   }
   function markDead({ id, leaseToken: token, now: at = now(), reasonCode = 'permanent_failure' }) {
-    return transition({ id, leaseToken: token, status: 'dead', at, reasonCode });
+    return transition({
+      id,
+      leaseToken: token,
+      status: 'dead',
+      at,
+      reasonCode,
+    });
   }
   function markConflict({ id, leaseToken: token, now: at = now(), block }) {
     db.exec('BEGIN IMMEDIATE');
@@ -457,8 +514,16 @@ export function createBaseEvidenceOutbox(db, {
     const head = db.prepare(`SELECT * FROM base_evidence_heads
       WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?`)
       .get(...values);
-    if (!head) return { complete: false, blocked: false, recoveryVersion: null, events: [] };
-    const rows = db.prepare(`SELECT expected_recovery_version,resulting_recovery_version,phase,state,
+    if (!head)
+      return {
+        complete: false,
+        blocked: false,
+        recoveryVersion: null,
+        events: [],
+      };
+    const rows = db
+      .prepare(
+        `SELECT expected_recovery_version,resulting_recovery_version,phase,state,
       delivery_status,attempts FROM base_evidence_outbox
       WHERE network_id=? AND binding_id=? AND execution_id=? AND allocation_id=? AND child_id=?
       ORDER BY expected_recovery_version`).all(...values);
@@ -500,6 +565,11 @@ export function createBaseEvidenceOutbox(db, {
       ORDER BY expected_recovery_version DESC LIMIT 1`).get(...values);
     if (!latest) throw new Error('Base evidence head has no durable checkpoint');
     const report = JSON.parse(latest.report_json);
+    if (report.event.evidence?.reconcileHandle) {
+      report.event.evidence.reconcileHandle = normalizeReconcileHandle(report.event.evidence.reconcileHandle, {
+        sender: report.event.evidence.caller,
+      });
+    }
     return {
       identity,
       recoveryVersion: head.next_recovery_version,
@@ -541,7 +611,11 @@ export function startBaseEvidenceOutboxWorker({
         try {
           await reporter.reportBaseEvidence(leased.report);
           try {
-            outbox.markDelivered({ id: leased.id, leaseToken: leased.leaseToken, now: now() });
+            outbox.markDelivered({
+              id: leased.id,
+              leaseToken: leased.leaseToken,
+              now: now(),
+            });
           } catch {
             // D1 may already have committed. Preserve the leased immutable report for redelivery.
           }
