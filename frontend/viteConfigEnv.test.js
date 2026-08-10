@@ -86,7 +86,8 @@ describe('vite.config.js dev-server env passthrough + fs boundary', () => {
       const indexMiddleware = registrations.find(
         ({ path }) => path === '/api/agent-index'
       ).middleware
-      expect(indexMiddleware).toBe(unavailable)
+      expect(indexMiddleware).toEqual(expect.any(Function))
+      expect(indexMiddleware).not.toBe(unavailable)
       const response = {
         statusCode: 200,
         headers: {},
@@ -106,6 +107,70 @@ describe('vite.config.js dev-server env passthrough + fs boundary', () => {
       expect(response.statusCode).toBe(503)
       expect(JSON.parse(response.body).error).toMatch(/^Agent index requires Pages\+D1/)
       expect(next).not.toHaveBeenCalled()
+    }
+  })
+
+  it('lets only the mounted browser recovery module reach Vite transforms', async () => {
+    const configFn = (await import('./vite.config.js')).default
+    const config = configFn({ mode: 'test' })
+    for (const hookName of ['configureServer', 'configurePreviewServer']) {
+      const registrations = []
+      config.plugins[1][hookName]({
+        middlewares: { use: (path, middleware) => registrations.push({ path, middleware }) },
+      })
+      const indexMiddleware = registrations.find(
+        ({ path }) => path === '/api/agent-index'
+      ).middleware
+
+      const recoveryNext = vi.fn()
+      const recoveryResponse = {
+        statusCode: 200,
+        headers: {},
+        setHeader() {},
+        end() {},
+      }
+      indexMiddleware(
+        { method: 'GET', url: '/recovery.js?v=dev-cache-key' },
+        recoveryResponse,
+        recoveryNext
+      )
+      expect(recoveryNext).toHaveBeenCalledOnce()
+      expect(recoveryResponse.statusCode).toBe(200)
+
+      for (const url of ['/recovery.js/extra', '/other.js', '/?action=receipt-challenge']) {
+        const res = {
+          statusCode: 200,
+          headers: {},
+          body: '',
+          setHeader(key, value) {
+            this.headers[key.toLowerCase()] = value
+          },
+          end(body = '') {
+            this.body = body
+          },
+        }
+        const next = vi.fn()
+        indexMiddleware({ method: 'GET', url }, res, next)
+        expect(res.statusCode).toBe(503)
+        expect(res.headers['cache-control']).toBe('no-store')
+        expect(JSON.parse(res.body).error).toMatch(/^Agent index requires Pages\+D1/)
+        expect(next).not.toHaveBeenCalled()
+      }
+
+      const postNext = vi.fn()
+      const postResponse = {
+        statusCode: 200,
+        headers: {},
+        setHeader() {},
+        end() {},
+      }
+      indexMiddleware(
+        { method: 'POST', url: '/recovery.js?v=dev-cache-key' },
+        postResponse,
+        postNext
+      )
+      expect(postResponse.statusCode).toBe(503)
+      expect(postNext).not.toHaveBeenCalled()
     }
   })
 })

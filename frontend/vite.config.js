@@ -15,6 +15,20 @@ import agentIndexViteUnavailable from './api/agent-index-vite-unavailable.js'
 
 const vfCrossViteProxy = withJsonBody(vfCrossProxy)
 
+// Connect strips the mounted `/api/agent-index` prefix before invoking this middleware. The
+// browser imports the pure recovery decision module at `/api/agent-index/recovery.js`, so allow
+// only that exact GET path (plus Vite's cache-busting query) to continue into Vite's transform
+// pipeline. Every other Agent Index request remains fail-closed at the generic 503 handler,
+// including arbitrary `.js`-looking paths.
+function agentIndexViteUnavailableMiddleware(req, res, next) {
+  const requestUrl = typeof req?.url === 'string' ? req.url : ''
+  const requestPath = requestUrl.split('?', 1)[0]
+  if (req?.method === 'GET' && requestPath === '/recovery.js' && typeof next === 'function') {
+    return next()
+  }
+  return agentIndexViteUnavailable(req, res, next)
+}
+
 // Repo root (parent of frontend/) — needed below so the dev server's fs.allow boundary covers
 // frontend/src/stellar/vaultReads.js's cross-package import of keeper/src/apr.js.
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -94,7 +108,7 @@ export default defineConfig(({ mode }) => {
     name: 'api-proxy',
     configureServer(s) {
       s.middlewares.use('/api/vf-cross', vfCrossViteProxy)
-      s.middlewares.use('/api/agent-index', agentIndexViteUnavailable)
+      s.middlewares.use('/api/agent-index', agentIndexViteUnavailableMiddleware)
       s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
@@ -104,7 +118,7 @@ export default defineConfig(({ mode }) => {
     },
     configurePreviewServer(s) {
       s.middlewares.use('/api/vf-cross', vfCrossViteProxy)
-      s.middlewares.use('/api/agent-index', agentIndexViteUnavailable)
+      s.middlewares.use('/api/agent-index', agentIndexViteUnavailableMiddleware)
       s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
