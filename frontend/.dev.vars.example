@@ -6,12 +6,13 @@
 # In production set the SAME keys as encrypted env vars in the Cloudflare Pages
 # dashboard (Settings → Variables and Secrets), or via `wrangler pages secret put`.
 
-# Mark the deployment as production so the API proxies never trust localhost origins.
-NODE_ENV=production
+# Mark this local Pages Functions runtime as development so localhost origins are available.
+NODE_ENV=development
 
 # Origin allowlist for the /api/* proxies. Set to your Pages URL(s), comma-separated.
 # e.g. https://vibing-farmer.pages.dev,https://your-custom-domain.com
-ALLOWED_ORIGIN=https://vibing-farmer.pages.dev
+ALLOWED_ORIGIN=http://localhost:5173
+ALLOWED_EXTENSION_ORIGINS=
 
 # DeepSeek — server-side AI key (read by /api/ai). OPTIONAL / host-funded.
 # The app is BYOK-first (users paste their own key in Settings). Set this only for an
@@ -73,7 +74,7 @@ TRANSAK_REFERRER_DOMAIN=vibing-farmer.pages.dev
 
 # Cross-chain relayer proxy (production). Tunnel hostname of the relayer VM + the shared secret
 # the relayer requires on x-vf-relayer-key (must equal the VM's RELAYER_PROXY_KEY).
-RELAYER_ORIGIN=https://vf-relayer.example.com
+RELAYER_ORIGIN=http://localhost:8788
 RELAYER_PROXY_KEY=change-me
 
 # ─── Agent index historical backfill (Pocket Crew My Money Task 4, read by

@@ -237,15 +237,30 @@ jobs:
           VITE_ZERODEV_PASSKEY_SERVER_URL: ${{ secrets.VITE_ZERODEV_PASSKEY_SERVER_URL }}
       - name: Readiness check (no secrets -- confirms the build produced output before touching traffic)
         run: test -f dist/index.html
-      - name: Apply D1 migrations before publishing Functions
+      # Preview must have its own externally provisioned D1. The committed Wrangler preview
+      # binding is an unprovisioned sentinel and this check intentionally fails before Wrangler
+      # can run if the environment secret is absent, malformed, or production's ID.
+      - name: Require distinct preview D1 before migration
+        if: github.event_name == 'push' && github.ref_name != 'main'
+        run: node scripts/runtime-config.mjs assert-preview-d1
+        env:
+          PREVIEW_D1_DATABASE_ID: ${{ secrets.PREVIEW_D1_DATABASE_ID }}
+      - name: Apply preview D1 migrations before publishing Functions
+        if: github.event_name == 'push' && github.ref_name != 'main'
+        run: npm run d1:migrate:preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIEW_D1_DATABASE_ID: ${{ secrets.PREVIEW_D1_DATABASE_ID }}
+      - name: Apply production D1 migrations before publishing Functions
+        if: github.event_name == 'release' || github.ref_name == 'main'
+        run: npm run d1:migrate:production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Deploy production Pages bundle
+        if: github.event_name == 'release' || github.ref_name == 'main'
         uses: cloudflare/wrangler-action@v3
-        with:
-          wranglerVersion: "4.100.0"
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: frontend
-          command: d1 migrations apply vf-gate --remote
-      - uses: cloudflare/wrangler-action@v3
         with:
           # Pin to the version in frontend/package.json devDependencies — the
           # action defaults to latest, and 4.110 breaks preview-env Functions
@@ -256,4 +271,13 @@ jobs:
           workingDirectory: frontend
           # On a release, ref_name is the tag (v1.15.0-beta) — passing that would alias the
           # deploy as a preview branch instead of updating Production, so pin it to main.
-          command: pages deploy ./dist --project-name=vibing-farmer --branch=${{ github.event_name == 'release' && 'main' || github.ref_name }}
+          command: pages deploy ./dist --project-name=vibing-farmer --branch=main
+      - name: Deploy preview Pages bundle
+        if: github.event_name == 'push' && github.ref_name != 'main'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          wranglerVersion: "4.100.0"
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          command: pages deploy ./dist --config /tmp/vibing-farmer-wrangler-preview.jsonc --project-name=vibing-farmer --env preview --branch=${{ github.ref_name }}

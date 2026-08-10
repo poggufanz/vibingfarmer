@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Keypair, Networks, StrKey, rpc } from '@stellar/stellar-sdk'
 
@@ -18,6 +20,36 @@ vi.mock('../src/stellar/client.js', async (importOriginal) => ({
 import handler from './agent-index.js'
 import { receiptProofMessage, receiptRequestDigest } from './agent-index/executionReceipts.js'
 import { AgentIndexConflictError } from './agent-index/models.js'
+
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
+const RATE_LIMIT_MIGRATION = readFileSync(
+  new URL('../migrations/0010_vf_cross_rate_limits.sql', import.meta.url),
+  'utf8'
+)
+
+function testRateDb() {
+  const database = new DatabaseSync(':memory:')
+  database.exec(RATE_LIMIT_MIGRATION)
+  return {
+    prepare(sql) {
+      return {
+        bind(...params) {
+          return {
+            async first() {
+              return database.prepare(sql).get(...params)
+            },
+            async run() {
+              return database.prepare(sql).run(...params)
+            },
+            async all() {
+              return { results: database.prepare(sql).all(...params) }
+            },
+          }
+        },
+      }
+    },
+  }
+}
 
 const OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 21)).publicKey()
 const OTHER_OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 22)).publicKey()
@@ -52,9 +84,10 @@ function mockRes() {
 }
 
 let ipOrdinal = 0
+let rateDb
 function env(overrides = {}) {
   return {
-    VF_DB: { binding: 'test-d1' },
+    VF_DB: rateDb ?? testRateDb(),
     SOROBAN_RPC_URL: 'https://rpc.example.test',
     // Keep this fixture isolated from vite.config.js loading a developer's `.env.local` plural
     // router list into process.env. Individual plural-router tests override it explicitly.
@@ -76,6 +109,7 @@ function mockReq({ method = 'GET', url = '/api/agent-index', body, requestEnv = 
     env: requestEnv,
     headers: {
       'x-real-ip': ip ?? `198.51.100.${++ipOrdinal}`,
+      'cf-connecting-ip': ip ?? `198.51.100.${ipOrdinal}`,
       authorization: 'Bearer server-reporter-secret',
     },
   }
@@ -301,13 +335,14 @@ function authorityCalls() {
   return mocked.readContract.mock.calls.map(([{ contract, method }]) => [contract, method])
 }
 
-async function call(request) {
+async function call(request, options) {
   const res = mockRes()
-  await handler(request, res)
+  await handler(request, res, options)
   return { res, body: JSON.parse(res.body) }
 }
 
 beforeEach(() => {
+  rateDb = testRateDb()
   mocked.store = fakeStore()
   mocked.createStore.mockReset().mockImplementation(() => mocked.store)
   mocked.readContract.mockReset()
@@ -1029,6 +1064,48 @@ describe('/api/agent-index Base recovery routes', () => {
 })
 
 describe('/api/agent-index operational evidence routes', () => {
+  it('awaits the cross-chain limiter before reporter authentication or D1/RPC work', async () => {
+    let resolveLimit
+    const pending = new Promise((resolve) => {
+      resolveLimit = resolve
+    })
+    const rateLimitImpl = vi.fn(async (_req, _res, policy) => {
+      expect(policy).toMatchObject({ max: 30, bucket: 'agent-index:POST base-child-intent-batch' })
+      await pending
+      return true
+    })
+    const req = mockReq({
+      method: 'POST',
+      url: '/api/agent-index?action=base-child-intent-batch',
+      body: childBatch(),
+    })
+    const callPromise = call(req, { rateLimitImpl })
+    await Promise.resolve()
+    expect(mocked.createStore).not.toHaveBeenCalled()
+    expect(mocked.readContract).not.toHaveBeenCalled()
+    resolveLimit()
+    await callPromise
+    expect(rateLimitImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not authenticate or touch dependencies after a cross-chain limiter denial', async () => {
+    const rateLimitImpl = vi.fn(async (_req, res) => {
+      res.statusCode = 429
+      res.end(JSON.stringify({ error: 'Too many requests' }))
+      return false
+    })
+    const req = mockReq({
+      method: 'POST',
+      url: '/api/agent-index?action=base-child-intent-batch',
+      body: childBatch(),
+    })
+    req.headers.authorization = 'Bearer wrong-secret'
+    const out = await call(req, { rateLimitImpl })
+    expect(out.res.statusCode).toBe(429)
+    expect(mocked.createStore).not.toHaveBeenCalled()
+    expect(mocked.readContract).not.toHaveBeenCalled()
+  })
+
   it('routes one authoritative Base child batch with request-scoped authority facts', async () => {
     const messenger = `C${'D'.repeat(55)}`
     const token = `C${'E'.repeat(55)}`
@@ -1158,7 +1235,7 @@ describe('/api/agent-index operational evidence routes', () => {
     expect(mocked.store.readPublicBaseChildEvidence).not.toHaveBeenCalled()
   })
 
-  it('rate limits public evidence reads in their tighter bucket before store access', async () => {
+  it('rate limits public evidence reads in their durable public-read bucket before store access', async () => {
     const query = new URLSearchParams({
       action: 'base-child-evidence',
       network: NETWORK,
@@ -1168,7 +1245,7 @@ describe('/api/agent-index operational evidence routes', () => {
       child: 'job-route-batch',
     })
     let out
-    for (let attempt = 0; attempt < 21; attempt += 1) {
+    for (let attempt = 0; attempt < 241; attempt += 1) {
       const req = mockReq({
         url: `/api/agent-index?${query}`,
         ip: '203.0.113.249',
@@ -1177,7 +1254,7 @@ describe('/api/agent-index operational evidence routes', () => {
       out = await call(req)
     }
     expect(out.res.statusCode).toBe(429)
-    expect(mocked.store.readPublicBaseChildEvidence).toHaveBeenCalledTimes(20)
+    expect(mocked.store.readPublicBaseChildEvidence).toHaveBeenCalledTimes(240)
   })
 
   it('rejects a batch bearer before RPC authority reads', async () => {
@@ -1196,7 +1273,7 @@ describe('/api/agent-index operational evidence routes', () => {
   })
 
   it.each(['base-child-intent-batch', 'base-child-evidence'])(
-    'authenticates %s before protected quota and every dependency',
+    'authenticates %s after strict quota and before every dependency',
     async (action) => {
       const latest = vi.spyOn(rpc.Server.prototype, 'getLatestLedger')
       const ip = action === 'base-child-intent-batch' ? '203.0.113.251' : '203.0.113.252'
@@ -1225,7 +1302,8 @@ describe('/api/agent-index operational evidence routes', () => {
         },
       }
       const body = action === 'base-child-intent-batch' ? childBatch() : evidence
-      for (let attempt = 0; attempt < 121; attempt += 1) {
+      const statuses = []
+      for (let attempt = 0; attempt < 31; attempt += 1) {
         const req = mockReq({
           method: 'POST',
           url: `/api/agent-index?action=${action}`,
@@ -1234,8 +1312,10 @@ describe('/api/agent-index operational evidence routes', () => {
         })
         req.headers.authorization = 'Bearer wrong-secret'
         const denied = await call(req)
-        expect(denied.res.statusCode).toBe(401)
+        statuses.push(denied.res.statusCode)
       }
+      expect(statuses.slice(0, 30).every((status) => status === 401)).toBe(true)
+      expect(statuses[30]).toBe(429)
       expect(mocked.createStore).not.toHaveBeenCalled()
       expect(mocked.readContract).not.toHaveBeenCalled()
       expect(latest).not.toHaveBeenCalled()
@@ -1265,7 +1345,7 @@ describe('/api/agent-index operational evidence routes', () => {
           method: 'POST',
           url: `/api/agent-index?action=${action}`,
           body,
-          ip,
+          ip: action === 'base-child-intent-batch' ? '203.0.113.253' : '203.0.113.254',
           requestEnv: env({
             SOROBAN_CCTP_TOKEN_MESSENGER: messenger,
             SOROBAN_CCTP_USDC_ADDRESS: token,

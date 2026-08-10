@@ -60,17 +60,21 @@ function fakeReq({
   origin = 'http://localhost:5173',
   cookie,
   authorization,
+  requestEnv,
 } = {}) {
   const headers = { origin, 'content-type': 'application/json' }
   if (cookie !== undefined) headers.cookie = cookie
   if (authorization !== undefined) headers.authorization = authorization
-  return {
+  if (requestEnv !== undefined) headers['cf-connecting-ip'] = '198.51.100.42'
+  const req = {
     method,
     url,
     body,
     headers,
     socket: { remoteAddress: `1.2.3.${requestSequence++}` },
   }
+  if (requestEnv !== undefined) req.env = requestEnv
+  return req
 }
 
 function fakeRes() {
@@ -102,10 +106,10 @@ function upstream({ status = 200, body = {}, setCookies = [], headers = {} } = {
   }
 }
 
-async function requestThrough({ req = fakeReq(), response = upstream(), fetchImpl } = {}) {
+async function requestThrough({ req = fakeReq(), response = upstream(), fetchImpl, rateLimitImpl } = {}) {
   const fetchSpy = fetchImpl ?? vi.fn(async () => response)
   const res = fakeRes()
-  await handler(req, res, { fetchImpl: fetchSpy })
+  await handler(req, res, { fetchImpl: fetchSpy, rateLimitImpl })
   return { res, fetchImpl: fetchSpy }
 }
 
@@ -145,14 +149,14 @@ describe('/api/vf-cross proxy', () => {
   it('rate-limits one client before it can fan out relayer requests', async () => {
     const fetchImpl = vi.fn(async () => upstream({ body: { ok: true } }))
     let last
-    for (let attempt = 0; attempt < 31; attempt += 1) {
+    for (let attempt = 0; attempt < 241; attempt += 1) {
       const req = fakeReq({ method: 'GET', url: '/api/vf-cross/config', body: undefined })
       req.socket.remoteAddress = '9.9.9.9'
       const result = await requestThrough({ req, fetchImpl })
       last = result.res
     }
     expect(last.statusCode).toBe(429)
-    expect(fetchImpl).toHaveBeenCalledTimes(30)
+    expect(fetchImpl).toHaveBeenCalledTimes(240)
   })
 
   it('keeps public config bodyless and does not require a capability cookie', async () => {
@@ -169,6 +173,138 @@ describe('/api/vf-cross proxy', () => {
   it('_test.subPath preserves only the fixed relayer sub-path', () => {
     expect(_test.subPath('/api/vf-cross/mandate/status')).toBe('/mandate/status')
     expect(_test.subPath('/api/vf-cross')).toBe('/')
+  })
+
+  it('preserves the exact encoded query on a full Pages URL', async () => {
+    const { res, fetchImpl } = await requestThrough({
+      req: fakeReq({ method: 'GET', url: '/api/vf-cross/config?cursor=a%2Bb&limit=2', body: undefined }),
+      response: upstream({ body: { ok: true } }),
+    })
+    expect(res.statusCode).toBe(200)
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'https://relayer.example.com/api/vf-cross/config?cursor=a%2Bb&limit=2'
+    )
+  })
+
+  it('preserves the exact encoded query after Vite trims the mount prefix', async () => {
+    const { res, fetchImpl } = await requestThrough({
+      req: fakeReq({ method: 'GET', url: '/config?cursor=a%2Bb&limit=2', body: undefined }),
+      response: upstream({ body: { ok: true } }),
+    })
+    expect(res.statusCode).toBe(200)
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'https://relayer.example.com/api/vf-cross/config?cursor=a%2Bb&limit=2'
+    )
+  })
+
+  it('allows harmless config query parameters while preserving their spelling', async () => {
+    const { res, fetchImpl } = await requestThrough({
+      req: fakeReq({ method: 'GET', url: '/api/vf-cross/config?cursor=a%2Bb&limit=2', body: undefined }),
+      response: upstream({ body: { ok: true } }),
+    })
+    expect(res.statusCode).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a bare proxy root slash before its query string', async () => {
+    const { res, fetchImpl } = await requestThrough({
+      req: fakeReq({ method: 'GET', url: '/api/vf-cross?limit=2', body: undefined }),
+      response: upstream({ body: { ok: true } }),
+    })
+    expect(res.statusCode).toBe(200)
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://relayer.example.com/api/vf-cross/?limit=2')
+  })
+
+  it('does not forward a browser-only hash fragment', async () => {
+    const { res, fetchImpl } = await requestThrough({
+      req: fakeReq({ method: 'GET', url: '/api/vf-cross/config?cursor=x#browser-only', body: undefined }),
+      response: upstream({ body: { ok: true } }),
+    })
+    expect(res.statusCode).toBe(200)
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'https://relayer.example.com/api/vf-cross/config?cursor=x'
+    )
+  })
+
+  it('reads the relayer origin from each Pages request environment', async () => {
+    const first = await requestThrough({
+      req: fakeReq({
+        method: 'GET',
+        url: '/api/vf-cross/config',
+        body: undefined,
+        requestEnv: { RELAYER_ORIGIN: 'https://relayer-a.example' },
+      }),
+      response: upstream({ body: { ok: true } }),
+      rateLimitImpl: vi.fn(async () => true),
+    })
+    const second = await requestThrough({
+      req: fakeReq({
+        method: 'GET',
+        url: '/api/vf-cross/config',
+        body: undefined,
+        requestEnv: { RELAYER_ORIGIN: 'https://relayer-b.example' },
+      }),
+      response: upstream({ body: { ok: true } }),
+      rateLimitImpl: vi.fn(async () => true),
+    })
+    expect(first.fetchImpl.mock.calls[0][0]).toBe('https://relayer-a.example/api/vf-cross/config')
+    expect(second.fetchImpl.mock.calls[0][0]).toBe('https://relayer-b.example/api/vf-cross/config')
+  })
+
+  it('fails closed instead of using a stale process environment in Pages mode', async () => {
+    process.env.RELAYER_ORIGIN = 'https://stale.example'
+    const { res, fetchImpl } = await requestThrough({
+      req: fakeReq({
+        method: 'GET',
+        url: '/api/vf-cross/config',
+        body: undefined,
+        requestEnv: {},
+      }),
+      fetchImpl: vi.fn(),
+    })
+    expect(res.statusCode).toBe(503)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('awaits the route limiter before opening the relayer dependency', async () => {
+    let resolveLimit
+    const pending = new Promise((resolve) => {
+      resolveLimit = resolve
+    })
+    const rateLimitImpl = vi.fn(async (_req, _res, policy) => {
+      expect(policy).toMatchObject({ max: 240, bucket: 'vf-cross:GET /config' })
+      await pending
+      return true
+    })
+    const fetchImpl = vi.fn(async () => upstream({ body: { ok: true } }))
+    const call = requestThrough({
+      req: fakeReq({ method: 'GET', url: '/api/vf-cross/config', body: undefined }),
+      fetchImpl,
+      rateLimitImpl,
+    })
+    await Promise.resolve()
+    expect(fetchImpl).not.toHaveBeenCalled()
+    resolveLimit()
+    const { res } = await call
+    expect(res.statusCode).toBe(200)
+    expect(rateLimitImpl).toHaveBeenCalledTimes(1)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not open the relayer when the awaited route limiter denies', async () => {
+    const fetchImpl = vi.fn()
+    const rateLimitImpl = vi.fn(async (_req, res) => {
+      res.statusCode = 429
+      res.end(JSON.stringify({ error: 'Too many requests' }))
+      return false
+    })
+    const { res } = await requestThrough({
+      req: fakeReq({ method: 'GET', url: '/api/vf-cross/config', body: undefined }),
+      fetchImpl,
+      rateLimitImpl,
+    })
+    expect(res.statusCode).toBe(429)
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 })
 

@@ -12,7 +12,14 @@
 // Browser-supplied Cookie/Authorization headers are always stripped; upstream bodies/headers
 // that echo a capability are never reflected; every upstream Set-Cookie that is not the one
 // exact validated contract fails closed.
-import { applyCors, rateLimit } from './_guard.js'
+import { applyCors } from './_guard.js'
+import { durableRateLimit, resolveVfCrossLimit } from './durableRateLimit.js'
+
+function setting(req, key, fallback = '') {
+  if (req?.env && Object.prototype.hasOwnProperty.call(req.env, key)) return req.env[key]
+  if (req?.env) return fallback
+  return process.env[key] ?? fallback
+}
 
 const TIMEOUT_MS = 30_000 // relayer's per-request work is async (fire-and-forget jobs), so responses are quick
 const MAX_CAPABILITY_AGE_SECONDS = 2_592_000 // the relayer's 30-day cookie cap
@@ -57,6 +64,7 @@ const FARM_FIELDS = [
 // (legacy GET status paths, health probes, admin routes, wrong methods) is refused locally.
 // `cookieIssue` marks the routes whose upstream response may carry a Set-Cookie at all.
 const ROUTES = {
+  'GET /': { auth: null },
   'GET /config': { auth: null },
   'POST /mandate': { auth: null, cookieIssue: 'register' },
   'POST /unwind': {
@@ -84,9 +92,16 @@ const ROUTES = {
 }
 
 function subPath(url) {
-  const pathname = new URL(url, 'http://local').pathname
-  const i = pathname.indexOf('/api/vf-cross')
-  return (i >= 0 ? pathname.slice(i + '/api/vf-cross'.length) : pathname) || '/'
+  const parsed = new URL(url, 'http://local')
+  const mount = '/api/vf-cross'
+  const { pathname } = parsed
+  const suffix =
+    pathname === mount
+      ? ''
+      : pathname.startsWith(`${mount}/`)
+        ? pathname.slice(mount.length)
+        : pathname
+  return `${suffix || '/'}${parsed.search}`
 }
 
 function sendJson(res, status, body) {
@@ -226,9 +241,14 @@ function validateUpstreamSetCookie(setCookie, { kind, id, issue, expectedCapabil
   )
 }
 
-export default async function handler(req, res, { fetchImpl = fetch } = {}) {
+export default async function handler(
+  req,
+  res,
+  { fetchImpl = fetch, rateLimitImpl = durableRateLimit } = {}
+) {
   const path = subPath(req.url)
-  const route = ROUTES[`${req.method} ${path}`]
+  const parsedPath = path.split('?')[0]
+  const route = ROUTES[`${req.method} ${parsedPath}`]
   if (route?.noStore) res.setHeader('Cache-Control', 'no-store')
 
   if (!applyCors(req, res)) return
@@ -236,13 +256,18 @@ export default async function handler(req, res, { fetchImpl = fetch } = {}) {
     res.statusCode = 204
     return res.end('')
   }
-  if (!rateLimit(req, res, { max: 30, windowMs: 60_000, bucket: 'vf-cross' })) return
-
-  if (new URL(req.url, 'http://local').search)
+  if (
+    new URL(req.url, 'http://local').search &&
+    !(req.method === 'GET' && (parsedPath === '/' || parsedPath === '/config'))
+  )
     return sendJson(res, 400, { error: 'invalid request' })
   if (!route) return sendJson(res, 404, { error: 'not found' })
 
-  const origin = process.env.RELAYER_ORIGIN
+  const policy = resolveVfCrossLimit({ method: req.method, path: parsedPath })
+  if (!policy) return sendJson(res, 404, { error: 'not found' })
+  if (!(await rateLimitImpl(req, res, policy))) return
+
+  const origin = setting(req, 'RELAYER_ORIGIN')
   if (!origin) return sendJson(res, 503, { error: 'relayer not configured' })
 
   // Registration must name the mandate its cookie will be bound to; protected routes must name
@@ -293,7 +318,7 @@ export default async function handler(req, res, { fetchImpl = fetch } = {}) {
     method: req.method,
     headers: {
       'content-type': 'application/json',
-      'x-vf-relayer-key': process.env.RELAYER_PROXY_KEY || '',
+      'x-vf-relayer-key': setting(req, 'RELAYER_PROXY_KEY'),
     },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   }

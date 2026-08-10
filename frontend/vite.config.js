@@ -9,6 +9,8 @@ import stellarRelayProxy from './api/stellar-relay.js'
 import faucetProxy from './api/faucet.js'
 import vfRouter from './api/vf/_router.js'
 import onrampSessionProxy from './api/onramp-session.js'
+import vfCrossProxy from './api/vf-cross.js'
+import agentIndexViteUnavailable from './api/agent-index-vite-unavailable.js'
 
 // Repo root (parent of frontend/) — needed below so the dev server's fs.allow boundary covers
 // frontend/src/stellar/vaultReads.js's cross-package import of keeper/src/apr.js.
@@ -35,9 +37,19 @@ const appVersion = (() => {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '') // all vars (incl. non-VITE server-side)
-  if (env.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = env.DEEPSEEK_API_KEY
-  if (env.TAVILY_API_KEY) process.env.TAVILY_API_KEY = env.TAVILY_API_KEY
-  if (env.ALLOWED_ORIGIN) process.env.ALLOWED_ORIGIN = env.ALLOWED_ORIGIN
+  const passthrough = [
+    'DEEPSEEK_API_KEY',
+    'TAVILY_API_KEY',
+    'ALLOWED_ORIGIN',
+    'ALLOWED_EXTENSION_ORIGINS',
+    'NODE_ENV',
+    'TRUST_PROXY_HOPS',
+    'RELAYER_ORIGIN',
+    'RELAYER_PROXY_KEY',
+  ]
+  for (const key of passthrough) {
+    if (env[key]) process.env[key] = env[key]
+  }
 
   // Soroban gasless relay (sub-project 2) — server-side only, never in the client bundle.
   if (env.STELLAR_RELAYER_SECRET) process.env.STELLAR_RELAYER_SECRET = env.STELLAR_RELAYER_SECRET
@@ -78,6 +90,8 @@ export default defineConfig(({ mode }) => {
   const apiProxyPlugin = {
     name: 'api-proxy',
     configureServer(s) {
+      s.middlewares.use('/api/vf-cross', vfCrossProxy)
+      s.middlewares.use('/api/agent-index', agentIndexViteUnavailable)
       s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
@@ -86,6 +100,8 @@ export default defineConfig(({ mode }) => {
       s.middlewares.use('/api/onramp-session', onrampSessionProxy)
     },
     configurePreviewServer(s) {
+      s.middlewares.use('/api/vf-cross', vfCrossProxy)
+      s.middlewares.use('/api/agent-index', agentIndexViteUnavailable)
       s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)

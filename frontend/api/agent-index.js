@@ -31,6 +31,7 @@ import { AgentIndexUnavailableError, AgentIndexValidationError } from './agent-i
 import { scanRpcEventsPage } from './agent-index/indexer.js'
 import { createOwnerReadCursorCodec } from './agent-index/readCursor.js'
 import { rateLimit } from './_guard.js'
+import { durableRateLimit, resolveAgentIndexCrossLimit } from './durableRateLimit.js'
 import { symbolScVal } from '../src/stellar/scval.js'
 import { readContract } from '../src/stellar/client.js'
 import { NETWORK_PASSPHRASE as TRANSACTION_NETWORK_PASSPHRASE } from '../src/stellar/config.js'
@@ -297,9 +298,14 @@ async function buildEventSource(source, server, sdkMod) {
   }
 }
 
-export default async function handler(req, res) {
+export default async function handler(req, res, { rateLimitImpl = durableRateLimit } = {}) {
   const url = new URL(req.url, 'http://local')
   const action = url.searchParams.get('action') || ''
+
+  // Cross-chain actions are durably limited before reporter authentication, RPC construction, or
+  // any D1 business-store work. Unknown actions remain outside this policy and return 404 below.
+  const crossPolicy = resolveAgentIndexCrossLimit({ method: req.method, action })
+  if (crossPolicy && !(await rateLimitImpl(req, res, crossPolicy))) return
 
   if (req.method === 'GET' && action === 'receipt') {
     res.setHeader('Access-Control-Allow-Origin', '*')
@@ -319,14 +325,6 @@ export default async function handler(req, res) {
 
   if (req.method === 'GET' && action === 'base-child-evidence') {
     res.setHeader('Access-Control-Allow-Origin', '*')
-    if (
-      !rateLimit(req, res, {
-        max: 20,
-        windowMs: 60_000,
-        bucket: 'agent-index-base-evidence-read',
-      })
-    )
-      return
     const network = configuredNetwork(req)
     if (!network) {
       return json(res, 503, { error: 'Agent-index dependency unavailable' })
@@ -427,8 +425,6 @@ export default async function handler(req, res) {
   // Base recovery is a distinct browser proof action. It never falls through to the Stellar
   // receipt selector (where an absent receipt is allowed to pull once).
   if (req.method === 'POST' && action === 'base-recovery-request') {
-    if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-base-recovery' }))
-      return
     const { store, authorityReader } = await receiptDependencies(req)
     const out = await handleBaseRecoveryRequest({
       request: req.body?.request,
@@ -450,8 +446,6 @@ export default async function handler(req, res) {
       providedSecret: bearer(req),
     })
     if (gate) return json(res, gate.status, gate.body)
-    if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-base-recovery' }))
-      return
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
     const args = {
       body: req.body,
@@ -469,7 +463,6 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST' && action === 'lease-acquire') {
-    if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-lease' })) return
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
     const out = await handleRecoveryLeaseAcquire({
       lease: req.body,
@@ -482,7 +475,6 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST' && action === 'lease-release') {
-    if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-lease' })) return
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
     const out = await handleRecoveryLeaseRelease({
       lease: req.body,
@@ -500,7 +492,6 @@ export default async function handler(req, res) {
       providedSecret: bearer(req),
     })
     if (gate) return json(res, gate.status, gate.body)
-    if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-child' })) return
     const { store, network, authorityReader } = await baseChildDependencies(req)
     const out = await handleBaseChildIntentBatch({
       batch: req.body,
@@ -522,7 +513,6 @@ export default async function handler(req, res) {
       providedSecret: bearer(req),
     })
     if (gate) return json(res, gate.status, gate.body)
-    if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-child' })) return
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
     const out = await handleBaseChildEvidenceWrite({
       request: req.body,
@@ -535,7 +525,6 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST' && action === 'base-child-ready') {
-    if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-child' })) return
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
     const out = await handleReporterReadiness({
       store,
@@ -562,8 +551,6 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST' && action === 'associate') {
-    if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-associate' }))
-      return
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
     const sdkMod = await import('@stellar/stellar-sdk')
     const server = new sdkMod.rpc.Server(RPC_URL(req))
