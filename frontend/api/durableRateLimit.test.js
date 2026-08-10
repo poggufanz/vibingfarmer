@@ -149,6 +149,27 @@ describe('durable fixed-window rate limiter', () => {
     ])
   })
 
+  it('preserves the existing window when the server clock moves backward', async () => {
+    let now = 60_000
+    const d1 = realD1()
+    const limiter = createDurableRateLimiter({ now: () => now })
+    const req = request({ db: d1, pages: true })
+    expect(await limiter(req, response(), LIMIT)).toBe(true)
+
+    now = 59_999
+    expect(await limiter(req, response(), LIMIT)).toBe(true)
+    const denied = response()
+    expect(await limiter(req, denied, LIMIT)).toBe(false)
+    expect(denied.headers['retry-after']).toBe('61')
+    expect(
+      d1.database
+        .prepare(
+          'SELECT window_start_ms, request_count, updated_at_ms FROM vf_cross_rate_limits WHERE route_bucket = ?'
+        )
+        .get('default')
+    ).toEqual({ window_start_ms: 60_000, request_count: 3, updated_at_ms: 60_000 })
+  })
+
   it('does not move the reset trajectory when denied calls repeat', async () => {
     let now = 10_000
     const d1 = realD1()
@@ -226,6 +247,37 @@ describe('durable fixed-window rate limiter', () => {
       )
     ).toBe(false)
     expect(res.statusCode).toBe(503)
+  })
+
+  it('fails closed when D1 RETURNING facts do not match the requested bucket and update', async () => {
+    const base = {
+      route_bucket: 'default',
+      client_ip: '198.51.100.7',
+      window_start_ms: 0,
+      request_count: 1,
+      updated_at_ms: 10_000,
+    }
+    for (const malformed of [
+      { ...base, route_bucket: 'other-bucket' },
+      { ...base, client_ip: '198.51.100.8' },
+      { ...base, window_start_ms: 60_000 },
+      { ...base, updated_at_ms: 9_999 },
+    ]) {
+      const d1 = {
+        prepare: vi.fn(() => ({
+          bind: vi.fn(() => ({ first: vi.fn(async () => malformed) })),
+        })),
+      }
+      const res = response()
+      expect(
+        await createDurableRateLimiter({ now: () => 10_000 })(
+          request({ db: d1, pages: true }),
+          res,
+          LIMIT
+        )
+      ).toBe(false)
+      expect(res.statusCode).toBe(503)
+    }
   })
 
   it('fails closed for missing or invalid authoritative Pages IP', async () => {

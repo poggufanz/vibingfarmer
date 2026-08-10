@@ -82,13 +82,17 @@ export const RATE_LIMIT_UPSERT_SQL = `
     (route_bucket, client_ip, window_start_ms, request_count, updated_at_ms)
   VALUES (?, ?, ?, 1, ?)
   ON CONFLICT(route_bucket, client_ip) DO UPDATE SET
-    window_start_ms = excluded.window_start_ms,
-    request_count = CASE
-      WHEN vf_cross_rate_limits.window_start_ms = excluded.window_start_ms
-      THEN vf_cross_rate_limits.request_count + 1
-      ELSE 1
+    window_start_ms = CASE
+      WHEN excluded.window_start_ms > vf_cross_rate_limits.window_start_ms
+      THEN excluded.window_start_ms
+      ELSE vf_cross_rate_limits.window_start_ms
     END,
-    updated_at_ms = excluded.updated_at_ms
+    request_count = CASE
+      WHEN excluded.window_start_ms > vf_cross_rate_limits.window_start_ms
+      THEN 1
+      ELSE vf_cross_rate_limits.request_count + 1
+    END,
+    updated_at_ms = MAX(vf_cross_rate_limits.updated_at_ms, excluded.updated_at_ms)
   RETURNING route_bucket, client_ip, window_start_ms, request_count, updated_at_ms
 `
 
@@ -102,18 +106,44 @@ function requestOptions(options = {}) {
   return { max, windowMs, bucket }
 }
 
-function validCounterRow(row) {
-  return (
-    row &&
-    typeof row.route_bucket === 'string' &&
-    typeof row.client_ip === 'string' &&
-    Number.isSafeInteger(Number(row.window_start_ms)) &&
-    Number(row.window_start_ms) >= 0 &&
-    Number.isSafeInteger(Number(row.request_count)) &&
-    Number(row.request_count) >= 1 &&
-    Number.isSafeInteger(Number(row.updated_at_ms)) &&
-    Number(row.updated_at_ms) >= 0
+function validCounterRow(row, expected = {}) {
+  if (
+    !(
+      row &&
+      typeof row.route_bucket === 'string' &&
+      typeof row.client_ip === 'string' &&
+      Number.isSafeInteger(Number(row.window_start_ms)) &&
+      Number(row.window_start_ms) >= 0 &&
+      Number.isSafeInteger(Number(row.request_count)) &&
+      Number(row.request_count) >= 1 &&
+      Number.isSafeInteger(Number(row.updated_at_ms)) &&
+      Number(row.updated_at_ms) >= 0
+    )
   )
+    return false
+
+  const windowStartMs = Number(row.window_start_ms)
+  const requestCount = Number(row.request_count)
+  const updatedAtMs = Number(row.updated_at_ms)
+  const hasExistingIncrement = requestCount >= 2
+  if (expected.bucket !== undefined && row.route_bucket !== expected.bucket) return false
+  if (expected.ip !== undefined && row.client_ip !== expected.ip) return false
+  if (
+    expected.nowMs !== undefined &&
+    updatedAtMs !== expected.nowMs &&
+    !(updatedAtMs > expected.nowMs && hasExistingIncrement)
+  )
+    return false
+  if (expected.windowStartMs !== undefined) {
+    // A strictly newer request starts a new window. A clock rollback may legitimately return an
+    // existing newer window, but only after the atomic upsert incremented that row (never a fresh
+    // count-one row from an unexpected future window).
+    const isRequestedWindow = windowStartMs === expected.windowStartMs
+    const isExistingNewerWindow = windowStartMs > expected.windowStartMs && requestCount >= 2
+    if (!isRequestedWindow && !isExistingNewerWindow) return false
+  }
+  if (expected.windowMs !== undefined && windowStartMs % expected.windowMs !== 0) return false
+  return true
 }
 
 /**
@@ -157,7 +187,16 @@ export function createDurableRateLimiter({ now = Date.now, memoryLimit = rateLim
         .prepare(RATE_LIMIT_UPSERT_SQL)
         .bind(policy.bucket, ip, windowStartMs, nowMs)
         .first()
-      if (!validCounterRow(row)) throw new Error('malformed rate-limit row')
+      if (
+        !validCounterRow(row, {
+          bucket: policy.bucket,
+          ip,
+          windowStartMs,
+          nowMs,
+          windowMs: policy.windowMs,
+        })
+      )
+        throw new Error('malformed rate-limit row')
     } catch {
       sendUnavailable(res)
       return false

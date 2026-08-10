@@ -37,13 +37,21 @@ async function readBodyWithinLimit(request) {
       const chunk = value instanceof Uint8Array ? value : new Uint8Array(value)
       total += chunk.byteLength
       if (total > MAX_REQUEST_BODY_BYTES) {
-        await reader.cancel()
+        // A client can race the boundary with a stream whose cancellation rejects. The byte
+        // ceiling remains authoritative even when the transport refuses cancellation.
+        try {
+          await reader.cancel()
+        } catch {
+          /* still over the hard limit */
+        }
         return { tooLarge: true }
       }
       chunks.push(chunk)
     }
   } catch {
-    return { text: '' }
+    // Never turn a transport/read failure into an empty JSON object: that would invoke the
+    // business handler after a failed boundary read. The adapter maps this to a generic 400.
+    return { error: 'stream' }
   }
   const bytes = new Uint8Array(total)
   let offset = 0
@@ -86,6 +94,7 @@ export function toPagesFunction(handler) {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       const read = await readBodyWithinLimit(request)
       if (read.tooLarge) return jsonResponse(413, { error: 'Request body too large' })
+      if (read.error) return jsonResponse(400, { error: 'Invalid request' })
       try {
         body = read.text ? JSON.parse(read.text) : {}
       } catch {

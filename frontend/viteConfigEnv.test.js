@@ -80,8 +80,12 @@ describe('vite.config.js dev-server env passthrough + fs boundary', () => {
       expect(registrations.map(({ path }) => path)).toEqual(
         expect.arrayContaining(['/api/vf-cross', '/api/agent-index'])
       )
-      expect(registrations.find(({ path }) => path === '/api/vf-cross').middleware).toBe(vfCross)
-      const indexMiddleware = registrations.find(({ path }) => path === '/api/agent-index').middleware
+      const crossMiddleware = registrations.find(({ path }) => path === '/api/vf-cross').middleware
+      expect(crossMiddleware).toEqual(expect.any(Function))
+      expect(crossMiddleware).not.toBe(vfCross)
+      const indexMiddleware = registrations.find(
+        ({ path }) => path === '/api/agent-index'
+      ).middleware
       expect(indexMiddleware).toBe(unavailable)
       const response = {
         statusCode: 200,
@@ -94,7 +98,11 @@ describe('vite.config.js dev-server env passthrough + fs boundary', () => {
         },
       }
       const next = vi.fn()
-      indexMiddleware({ method: 'GET', url: '/api/agent-index?action=receipt-challenge' }, response, next)
+      indexMiddleware(
+        { method: 'GET', url: '/api/agent-index?action=receipt-challenge' },
+        response,
+        next
+      )
       expect(response.statusCode).toBe(503)
       expect(JSON.parse(response.body).error).toMatch(/^Agent index requires Pages\+D1/)
       expect(next).not.toHaveBeenCalled()

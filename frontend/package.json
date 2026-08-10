@@ -18,6 +18,7 @@
     "d1:migrate:local": "wrangler d1 migrations apply vf-gate --local",
     "d1:migrate:preview": "node scripts/runtime-config.mjs assert-preview-d1 && node scripts/runtime-config.mjs write-preview-config && wrangler d1 migrations apply vf-gate --config /tmp/vibing-farmer-wrangler-preview.jsonc --env preview --remote",
     "d1:migrate:production": "wrangler d1 migrations apply vf-gate --remote",
+    "d1:cleanup:rate-limits": "node scripts/cleanup-rate-limits.mjs",
     "pages:deploy:preview": "npm run build && npm run d1:migrate:preview && wrangler pages deploy ./dist --config /tmp/vibing-farmer-wrangler-preview.jsonc --project-name=vibing-farmer --env preview --branch=dev",
     "pages:deploy:production": "npm run build && npm run d1:migrate:production && wrangler pages deploy ./dist --project-name=vibing-farmer --branch=main",
     "pages:deploy": "npm run pages:deploy:production",

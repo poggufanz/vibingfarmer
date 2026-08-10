@@ -10,7 +10,10 @@ import faucetProxy from './api/faucet.js'
 import vfRouter from './api/vf/_router.js'
 import onrampSessionProxy from './api/onramp-session.js'
 import vfCrossProxy from './api/vf-cross.js'
+import { withJsonBody } from './api/_viteAdapter.js'
 import agentIndexViteUnavailable from './api/agent-index-vite-unavailable.js'
+
+const vfCrossViteProxy = withJsonBody(vfCrossProxy)
 
 // Repo root (parent of frontend/) — needed below so the dev server's fs.allow boundary covers
 // frontend/src/stellar/vaultReads.js's cross-package import of keeper/src/apr.js.
@@ -90,7 +93,7 @@ export default defineConfig(({ mode }) => {
   const apiProxyPlugin = {
     name: 'api-proxy',
     configureServer(s) {
-      s.middlewares.use('/api/vf-cross', vfCrossProxy)
+      s.middlewares.use('/api/vf-cross', vfCrossViteProxy)
       s.middlewares.use('/api/agent-index', agentIndexViteUnavailable)
       s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
@@ -100,7 +103,7 @@ export default defineConfig(({ mode }) => {
       s.middlewares.use('/api/onramp-session', onrampSessionProxy)
     },
     configurePreviewServer(s) {
-      s.middlewares.use('/api/vf-cross', vfCrossProxy)
+      s.middlewares.use('/api/vf-cross', vfCrossViteProxy)
       s.middlewares.use('/api/agent-index', agentIndexViteUnavailable)
       s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)

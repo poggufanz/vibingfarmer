@@ -9,3 +9,8 @@ CREATE TABLE vf_cross_rate_limits (
   updated_at_ms INTEGER NOT NULL,
   PRIMARY KEY (route_bucket, client_ip)
 );
+
+-- Retention runs in bounded scheduled batches. This index keeps the stale-row selection bounded
+-- by updated_at_ms instead of requiring a lifetime scan/sort as the table grows.
+CREATE INDEX vf_cross_rate_limits_updated_at_idx
+  ON vf_cross_rate_limits (updated_at_ms);

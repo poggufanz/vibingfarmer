@@ -44,13 +44,19 @@ const NETWORK_ID_BY_PASSPHRASE = new Map([
   [PUBLIC_PASSPHRASE, 'stellar-mainnet'],
 ])
 
+function hasPagesEnv(req) {
+  return req?.env !== undefined && req?.env !== null && typeof req.env === 'object'
+}
+
 function setting(req, key, fallback = '') {
-  if (req.env && Object.prototype.hasOwnProperty.call(req.env, key)) return req.env[key]
+  if (hasPagesEnv(req)) {
+    return Object.prototype.hasOwnProperty.call(req.env, key) ? req.env[key] : fallback
+  }
   return process.env[key] ?? fallback
 }
 
 const RPC_URL = (req) => setting(req, 'SOROBAN_RPC_URL', 'https://soroban-testnet.stellar.org')
-const INGEST_SECRET = () => process.env.AGENT_INDEX_INGEST_SECRET || ''
+const INGEST_SECRET = (req) => setting(req, 'AGENT_INDEX_INGEST_SECRET')
 const REPORTER_SECRET = (req) => setting(req, 'AGENT_INDEX_REPORTER_SECRET')
 const CURSOR_SECRET = (req) => setting(req, 'AGENT_INDEX_CURSOR_SECRET')
 const POOL_TARGETS = new Map([
@@ -540,7 +546,7 @@ export default async function handler(req, res, { rateLimitImpl = durableRateLim
     const sdkMod = await import('@stellar/stellar-sdk')
     const server = new sdkMod.rpc.Server(RPC_URL(req))
     const out = await handleIngest({
-      secret: INGEST_SECRET(),
+      secret: INGEST_SECRET(req),
       providedSecret: bearer(req),
       store,
       eventSourceFor: (source) => buildEventSource(source, server, sdkMod),

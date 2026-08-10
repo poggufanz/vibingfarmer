@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { parse as parseDotenv } from 'dotenv'
 import { experimental_readRawConfig } from 'wrangler'
 import {
+  PRODUCTION_D1_DATABASE_ID,
   PREVIEW_D1_SENTINEL,
   validatePreviewDatabaseId,
   writePreviewConfig,
@@ -23,12 +24,15 @@ function migrationFiles() {
 }
 
 function apply(db, files) {
-  for (const name of files) db.exec(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8'))
+  for (const name of files)
+    db.exec(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8'))
 }
 
 describe('runtime commands and Wrangler bindings', () => {
   it('builds Pages first and exposes explicit local/preview/production D1 commands', async () => {
-    const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    const { scripts } = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+    )
     expect(tokens(scripts['pages:dev'])).toEqual(
       expect.arrayContaining(['npm', 'run', 'build', 'wrangler', 'pages', 'dev', '--port', '5173'])
     )
@@ -55,7 +59,10 @@ describe('runtime commands and Wrangler bindings', () => {
 
   it('fails closed before Wrangler until an externally supplied distinct preview D1 ID exists', () => {
     expect(validatePreviewDatabaseId(undefined)).toEqual({ ok: false, reason: 'missing' })
-    expect(validatePreviewDatabaseId(PREVIEW_D1_SENTINEL)).toEqual({ ok: false, reason: 'sentinel' })
+    expect(validatePreviewDatabaseId(PREVIEW_D1_SENTINEL)).toEqual({
+      ok: false,
+      reason: 'sentinel',
+    })
     expect(validatePreviewDatabaseId('ec1a48cf-bd50-49a3-88b0-c07a12329fd8')).toEqual({
       ok: false,
       reason: 'production-id',
@@ -63,6 +70,17 @@ describe('runtime commands and Wrangler bindings', () => {
     expect(validatePreviewDatabaseId('11111111-2222-4333-8444-555555555555')).toEqual({
       ok: true,
     })
+  })
+
+  it('normalizes UUID case before production/sentinel checks and pins the production ID to Wrangler', async () => {
+    expect(validatePreviewDatabaseId(PRODUCTION_D1_DATABASE_ID.toUpperCase())).toEqual({
+      ok: false,
+      reason: 'production-id',
+    })
+    const { rawConfig } = await experimental_readRawConfig({ config: 'wrangler.jsonc' })
+    expect(PRODUCTION_D1_DATABASE_ID).toBe(
+      rawConfig.d1_databases.find((entry) => entry.binding === 'VF_DB').database_id.toLowerCase()
+    )
   })
 
   it('materializes the externally supplied preview ID without changing the tracked config', async () => {
@@ -120,7 +138,10 @@ describe('runtime commands and Wrangler bindings', () => {
   })
 
   it('keeps preview CI migrations behind the external-ID gate and never runs production remote migration there', () => {
-    const workflow = readFileSync(new URL('../../.github/workflows/frontend.yml', import.meta.url), 'utf8')
+    const workflow = readFileSync(
+      new URL('../../.github/workflows/frontend.yml', import.meta.url),
+      'utf8'
+    )
     expect(workflow).toContain('runtime-config.mjs assert-preview-d1')
     expect(workflow).toContain('d1:migrate:preview')
     expect(workflow).toContain('d1:migrate:production')
@@ -130,7 +151,9 @@ describe('runtime commands and Wrangler bindings', () => {
       'pages deploy ./dist --config /tmp/vibing-farmer-wrangler-preview.jsonc --project-name=vibing-farmer --env preview'
     )
     expect(workflow).toContain('--config /tmp/vibing-farmer-wrangler-preview.jsonc')
-    expect(workflow).toContain('command: pages deploy ./dist --project-name=vibing-farmer --branch=main')
+    expect(workflow).toContain(
+      'command: pages deploy ./dist --project-name=vibing-farmer --branch=main'
+    )
   })
 })
 
@@ -157,8 +180,12 @@ describe('ordered migrations', () => {
     ).run()
     apply(db, files.slice(7))
     expect(db.prepare('SELECT owner FROM api_keys WHERE id = ?').get('legacy').owner).toBe('owner')
-    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'base_child_recovery_leases'").get()).toBeTruthy()
-    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'vf_cross_rate_limits'").get()).toBeTruthy()
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE name = 'base_child_recovery_leases'").get()
+    ).toBeTruthy()
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE name = 'vf_cross_rate_limits'").get()
+    ).toBeTruthy()
   })
 
   it('makes a pre-0010 database fail closed until migration 0010 is applied', async () => {
@@ -166,13 +193,28 @@ describe('ordered migrations', () => {
     apply(db, migrationFiles().slice(0, 9))
     const d1 = {
       prepare(sql) {
-        return { bind(...params) { return { first: async () => db.prepare(sql).get(...params) } } }
+        return {
+          bind(...params) {
+            return { first: async () => db.prepare(sql).get(...params) }
+          },
+        }
       },
     }
     const { createDurableRateLimiter } = await import('../api/durableRateLimit.js')
     const req = { env: { VF_DB: d1 }, headers: { 'cf-connecting-ip': '198.51.100.7' } }
-    const res = { statusCode: 200, headers: {}, setHeader(k, v) { this.headers[k] = v }, end(b) { this.body = b } }
-    expect(await createDurableRateLimiter({ now: () => 10_000 })(req, res, { max: 30, windowMs: 60_000 })).toBe(false)
+    const res = {
+      statusCode: 200,
+      headers: {},
+      setHeader(k, v) {
+        this.headers[k] = v
+      },
+      end(b) {
+        this.body = b
+      },
+    }
+    expect(
+      await createDurableRateLimiter({ now: () => 10_000 })(req, res, { max: 30, windowMs: 60_000 })
+    ).toBe(false)
     expect(res.statusCode).toBe(503)
   })
 })

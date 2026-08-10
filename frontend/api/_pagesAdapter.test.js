@@ -102,6 +102,45 @@ describe('Cloudflare Pages Node-style adapter', () => {
     expect(handler).not.toHaveBeenCalled()
   })
 
+  it('still returns 413 when cancelling an over-limit stream rejects', async () => {
+    const handler = vi.fn((_req, res) => res.end('{}'))
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('x'.repeat(LIMIT)))
+        controller.enqueue(new TextEncoder().encode('y'))
+      },
+      cancel() {
+        return Promise.reject(new Error('stream cancellation failed'))
+      },
+    })
+    const request = new Request('https://app.example/api/test', {
+      method: 'POST',
+      body: stream,
+      duplex: 'half',
+    })
+    const response = await toPagesFunction(handler)({ request, env: {} })
+    expect(response.status).toBe(413)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('fails closed on a stream read error without invoking the handler', async () => {
+    const handler = vi.fn((_req, res) => res.end('{}'))
+    const stream = new ReadableStream({
+      pull() {
+        throw new Error('stream read failed')
+      },
+    })
+    const request = new Request('https://app.example/api/test', {
+      method: 'POST',
+      body: stream,
+      duplex: 'half',
+    })
+    const response = await toPagesFunction(handler)({ request, env: {} })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'Invalid request' })
+    expect(handler).not.toHaveBeenCalled()
+  })
+
   it('counts UTF-8 bytes rather than JavaScript characters', async () => {
     let seen
     const body = JSON.stringify({ value: 'é'.repeat(20_000) })

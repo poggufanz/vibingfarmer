@@ -1064,6 +1064,72 @@ describe('/api/agent-index Base recovery routes', () => {
 })
 
 describe('/api/agent-index operational evidence routes', () => {
+  it('keeps reporter configuration request-local across sequential Pages requests', async () => {
+    const oldReporterSecret = process.env.AGENT_INDEX_REPORTER_SECRET
+    process.env.AGENT_INDEX_REPORTER_SECRET = 'stale-process-reporter-secret'
+    try {
+      const first = await call(
+        mockReq({
+          method: 'POST',
+          url: '/api/agent-index?action=base-child-ready',
+          requestEnv: env({ AGENT_INDEX_REPORTER_SECRET: 'server-reporter-secret' }),
+        })
+      )
+      expect(first.res.statusCode).toBe(200)
+
+      const laterEnv = env()
+      delete laterEnv.AGENT_INDEX_REPORTER_SECRET
+      const later = await call(
+        mockReq({
+          method: 'POST',
+          url: '/api/agent-index?action=base-child-ready',
+          requestEnv: laterEnv,
+        })
+      )
+      expect(later.res.statusCode).toBe(503)
+      expect(later.body).toEqual({ error: 'Agent-index writer is not configured' })
+    } finally {
+      if (oldReporterSecret === undefined) delete process.env.AGENT_INDEX_REPORTER_SECRET
+      else process.env.AGENT_INDEX_REPORTER_SECRET = oldReporterSecret
+    }
+  })
+
+  it('reads the ingest secret from each Pages request and fails closed when it is absent later', async () => {
+    const oldIngestSecret = process.env.AGENT_INDEX_INGEST_SECRET
+    process.env.AGENT_INDEX_INGEST_SECRET = 'stale-process-ingest-secret'
+    try {
+      const firstEnv = env({ AGENT_INDEX_INGEST_SECRET: 'request-ingest-secret' })
+      const firstRequest = mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=ingest',
+        body: {},
+        requestEnv: firstEnv,
+      })
+      firstRequest.headers.authorization = 'Bearer request-ingest-secret'
+      const first = await call(firstRequest)
+      expect(first.res.statusCode).toBe(200)
+
+      const laterEnv = env()
+      delete laterEnv.AGENT_INDEX_INGEST_SECRET
+      const laterRequest = mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=ingest',
+        body: {},
+        requestEnv: laterEnv,
+      })
+      laterRequest.headers.authorization = 'Bearer request-ingest-secret'
+      const later = await call(laterRequest)
+      expect(later.res.statusCode).toBe(503)
+      expect(later.body).toEqual({
+        error: 'Agent index ingest not configured',
+        configured: false,
+      })
+    } finally {
+      if (oldIngestSecret === undefined) delete process.env.AGENT_INDEX_INGEST_SECRET
+      else process.env.AGENT_INDEX_INGEST_SECRET = oldIngestSecret
+    }
+  })
+
   it('awaits the cross-chain limiter before reporter authentication or D1/RPC work', async () => {
     let resolveLimit
     const pending = new Promise((resolve) => {
