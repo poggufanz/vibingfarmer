@@ -1867,26 +1867,40 @@ describe('Task 14 bounded Base recovery startup composition', () => {
     );
   });
 
-  it.each([
-    ['pollAttestation', 'poll-attestation'],
-    ['submitMint', 'submit-mint'],
-    ['pollMint', 'poll-mint'],
-    ['submitBaseDeposit', 'submit-base-deposit'],
-    ['pollBaseDeposit', 'poll-base-deposit'],
-  ])(
-    'default-denies concrete %s recovery when Base availability is closed',
-    async (operationName, action) => {
+  it.each([false, undefined, null, 'false', {}])(
+    'default-denies all concrete recovery when Base availability is not exactly true: %p',
+    async (baseAvailable) => {
       const injected = vi.fn(async () => ({ state: 'done' }));
       const operations = serverModule.createConcreteBaseRecoveryOperations({
-        config: { base: { baseCrossChainAvailable: false } },
-        watcher: { [operationName]: injected },
-        override: { [operationName]: injected },
+        config: { base: { baseCrossChainAvailable: baseAvailable } },
+        watcher: {
+          pollAttestation: injected,
+          submitMint: injected,
+          pollMint: injected,
+          submitBaseDeposit: injected,
+          pollBaseDeposit: injected,
+        },
+        override: {
+          pollAttestation: injected,
+          submitMint: injected,
+          pollMint: injected,
+          submitBaseDeposit: injected,
+          pollBaseDeposit: injected,
+        },
       });
 
-      await expect(operations[operationName]({ action })).resolves.toMatchObject({
-        state: 'held',
-        reasonCode: 'base-execution-unavailable',
-      });
+      for (const [operationName, action] of [
+        ['pollAttestation', 'poll-attestation'],
+        ['submitMint', 'submit-mint'],
+        ['pollMint', 'poll-mint'],
+        ['submitBaseDeposit', 'submit-base-deposit'],
+        ['pollBaseDeposit', 'poll-base-deposit'],
+      ]) {
+        await expect(operations[operationName]({ action })).resolves.toMatchObject({
+          state: 'held',
+          reasonCode: 'base-execution-unavailable',
+        });
+      }
       expect(injected).not.toHaveBeenCalled();
     },
   );
@@ -1896,6 +1910,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
     const operations = serverModule.createConcreteBaseRecoveryOperations({
       config: {
         base: {
+          baseCrossChainAvailable: true,
           chain: { id: 84532 },
           yieldRouterAddress: `0x${'11'.repeat(20)}`,
         },
@@ -2229,7 +2244,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
       reconcileOne,
     };
     const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: { base: { walletClient: { writeContract: send } } },
+      config: { base: { baseCrossChainAvailable: true, walletClient: { writeContract: send } } },
       cctpRelays,
       farmIntents: { getByJob: () => ({ relayExecId: 'exec-1' }) },
     });
@@ -2257,7 +2272,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
       release,
     };
     const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: {},
+      config: { base: { baseCrossChainAvailable: true } },
       cctpRelays,
       farmIntents: { getByJob: () => ({ relayExecId: 'exec-1' }) },
     });
@@ -2284,7 +2299,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
       claim: vi.fn(() => null),
     };
     const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: {},
+      config: { base: { baseCrossChainAvailable: true } },
       cctpRelays,
       farmIntents: { getByJob: () => ({ relayExecId: 'exec-1' }) },
     });
@@ -2309,7 +2324,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
       }),
     };
     const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: {},
+      config: { base: { baseCrossChainAvailable: true } },
       cctpRelays,
       farmIntents: { getByJob: () => ({ relayExecId: 'exec-1' }) },
     });
@@ -2337,7 +2352,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
       release: vi.fn(),
     };
     const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: {},
+      config: { base: { baseCrossChainAvailable: true } },
       cctpRelays,
       baseEvidenceOutbox: { enqueue },
       farmIntents: { getByJob: () => ({ relayExecId: 'exec-1' }) },
@@ -2426,7 +2441,10 @@ describe('Task 14 bounded Base recovery startup composition', () => {
     const cctpRelays = { get: vi.fn(() => relay), claim, release: vi.fn() };
     const operations = serverModule.createConcreteBaseRecoveryOperations({
       config: {
-        base: { publicClient: { waitForTransactionReceipt: confirm } },
+        base: {
+          baseCrossChainAvailable: true,
+          publicClient: { waitForTransactionReceipt: confirm },
+        },
       },
       cctpRelays,
       baseEvidenceOutbox: { enqueue },
@@ -2465,7 +2483,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
     };
     const claim = vi.fn();
     const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: {},
+      config: { base: { baseCrossChainAvailable: true } },
       cctpRelays: { get: vi.fn(() => relay), claim },
       baseEvidenceOutbox: { enqueue },
       farmIntents: { getByJob: () => ({ relayExecId: 'exec-1' }) },
@@ -2497,7 +2515,10 @@ describe('Task 14 bounded Base recovery startup composition', () => {
     const cctpRelays = { get: vi.fn(() => relay), claim, release: vi.fn() };
     const operations = serverModule.createConcreteBaseRecoveryOperations({
       config: {
-        base: { publicClient: { waitForTransactionReceipt: confirm } },
+        base: {
+          baseCrossChainAvailable: true,
+          publicClient: { waitForTransactionReceipt: confirm },
+        },
       },
       cctpRelays,
       baseEvidenceOutbox: { enqueue },
@@ -2538,7 +2559,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
       evidenceVersion: 1,
     };
     const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: {},
+      config: { base: { baseCrossChainAvailable: true } },
       cctpRelays: { get: vi.fn(() => relay), claim },
       baseEvidenceOutbox: { enqueue },
       farmIntents: { getByJob: () => ({ relayExecId: 'exec-1' }) },
@@ -2580,7 +2601,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
       nonceHex: '0x' + '77'.repeat(32),
     };
     const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: {},
+      config: { base: { baseCrossChainAvailable: true } },
       cctpRelays: { get: vi.fn(() => relay), claim: vi.fn() },
       baseEvidenceOutbox: { enqueue },
       farmIntents: { getByJob: () => ({ relayExecId: 'exec-1' }) },
@@ -2632,6 +2653,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
     const operations = serverModule.createConcreteBaseRecoveryOperations({
       config: {
         base: {
+          baseCrossChainAvailable: true,
           publicClient: {
             waitForTransactionReceipt: vi.fn(async () => ({
               status: 'reverted',
@@ -2664,7 +2686,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
       reasonCode: 'user-operation-pending',
     }));
     const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: {},
+      config: { base: { baseCrossChainAvailable: true } },
       buildMandateActivator: () => ({ reconcileBaseDeposit }),
       baseEvidenceOutbox: { enqueue: vi.fn() },
     });
@@ -2713,7 +2735,7 @@ describe('Task 14 bounded Base recovery startup composition', () => {
       });
     });
     const operations = serverModule.createConcreteBaseRecoveryOperations({
-      config: {},
+      config: { base: { baseCrossChainAvailable: true } },
       buildMandateActivator: () => ({ reconcileBaseDeposit }),
     });
     const result = await operations.pollBaseDeposit({

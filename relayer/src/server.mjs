@@ -623,7 +623,7 @@ export function createConcreteBaseRecoveryOperations({
   override = {},
 }) {
   const now = () => Date.now();
-  const baseExecutionAvailable = config?.base?.baseCrossChainAvailable !== false;
+  const baseExecutionAvailable = config?.base?.baseCrossChainAvailable === true;
   const baseExecutionUnavailable = async () => recoveryOperationResult('held', 'base-execution-unavailable');
 
   async function withCctpLease(context, action) {
