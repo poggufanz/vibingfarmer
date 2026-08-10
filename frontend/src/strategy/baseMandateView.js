@@ -18,7 +18,7 @@ function nonEmpty(value) {
 function viewStatus({ mandate, stellarOwner, kernelAddress, relayerOrigin, now }) {
   if (!mandate || mandate.status === 'missing') return 'missing'
   if (mandate.status === 'revoked') return 'revoked'
-  const expiry = mandate.expiresAt
+  const expiry = mandate.validUntilSeconds
   if (mandate.status === 'expired' || (Number.isFinite(expiry) && expiry <= now)) {
     return 'expired'
   }
@@ -42,8 +42,9 @@ function viewStatus({ mandate, stellarOwner, kernelAddress, relayerOrigin, now }
 }
 
 /**
- * Translate a canonical BaseMandateStatusV2 into novice-readable strategy data. It copies only
- * public mandate metadata and never returns a session private key.
+ * Translate a canonical secret-free BaseMandateStatusV3 record into novice-readable strategy
+ * data. It copies only public mandate metadata (`validUntilSeconds`, binding identity, public
+ * evidence) and never returns a capability or session private key.
  */
 export function toBaseMandateView({ mandate, stellarOwner, kernelAddress, relayerOrigin }) {
   const publicMandate = mandate ? publicBaseMandateEvidence(mandate) : null
@@ -60,7 +61,7 @@ export function toBaseMandateView({ mandate, stellarOwner, kernelAddress, relaye
   const bindingHash = details.bindingHash ?? null
   const sessionKeyAddress = details.sessionKeyAddress ?? null
   const mandateKernel = details.kernelAddress ?? null
-  const expiresAt = details.expiresAt ?? null
+  const validUntilSeconds = details.validUntilSeconds ?? null
 
   return {
     status,
@@ -79,7 +80,7 @@ export function toBaseMandateView({ mandate, stellarOwner, kernelAddress, relaye
     destination: 'allowlisted Base Sepolia custody proxies',
     sessionKeyAddress,
     kernelAddress: mandateKernel,
-    expiresAt,
+    validUntilSeconds,
     bindingId,
     bindingHash,
     evidence: publicMandate,
@@ -88,6 +89,6 @@ export function toBaseMandateView({ mandate, stellarOwner, kernelAddress, relaye
       'Deleting or revoking the VF relayer copy does not invalidate another copied key before the on-chain timestamp policy expires.',
     outageCopy:
       'If the relayer has an outage, Base is unavailable until its health check succeeds.',
-    technicalDisclosure: `The relayer holds the session key. The Stellar owner to Base kernel association is an application-level association, not a cryptographic binding. Binding ID: ${bindingId ?? 'unavailable'}. Binding hash: ${bindingHash ?? 'unavailable'}. Session key address: ${sessionKeyAddress ?? 'unavailable'}. Base kernel: ${mandateKernel ?? 'unavailable'}. Expiry: ${expiresAt ?? 'unavailable'}. You must renew before expiry. Deleting or revoking the VF relayer copy does not invalidate another copied key before the on-chain timestamp policy expires. During a relayer outage, Base is unavailable.`,
+    technicalDisclosure: `The relayer holds the session key. The Stellar owner to Base kernel association is an application-level association, not a cryptographic binding. Binding ID: ${bindingId ?? 'unavailable'}. Binding hash: ${bindingHash ?? 'unavailable'}. Session key address: ${sessionKeyAddress ?? 'unavailable'}. Base kernel: ${mandateKernel ?? 'unavailable'}. Expiry: ${validUntilSeconds ?? 'unavailable'}. You must renew before expiry. Deleting or revoking the VF relayer copy does not invalidate another copied key before the on-chain timestamp policy expires. During a relayer outage, Base is unavailable.`,
   }
 }

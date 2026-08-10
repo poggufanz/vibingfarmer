@@ -1,10 +1,16 @@
 # Cloudflare Pages security headers (applied to every response).
-# Intentionally NO Content-Security-Policy: the app loads Google Fonts, ESM
-# modules, a canvas force-graph, and talks to RPC/proxy endpoints — a strict CSP
-# would need per-source tuning before it ships. Add one deliberately, don't guess.
+# The CSP below is the reviewed runtime inventory for the cross-chain hardening
+# capability transport (Task 6): connect-src lists only the origins the app
+# actually talks to (same-origin APIs; Stellar RPC/Horizon/Friendbot; Base
+# Sepolia/ZeroDev; DeFiLlama; Blockscout; CoinGecko; Venice/DeepSeek/Tavily;
+# Telegram/Discord; the SDF smart-account indexer). style-src keeps
+# 'unsafe-inline' — the smallest allowance compatible with the app's inline
+# styles and Transak's injected style element. frame-src allows Transak
+# staging/production only. No '*' and no 'unsafe-eval' anywhere.
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Content-Security-Policy: default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-src https://global-stg.transak.com https://global.transak.com; connect-src 'self' https://soroban-testnet.stellar.org https://horizon-testnet.stellar.org https://friendbot.stellar.org https://sepolia.base.org https://rpc.zerodev.app https://passkeys.zerodev.app https://yields.llama.fi https://api.llama.fi https://coins.llama.fi https://base-sepolia.blockscout.com https://api.coingecko.com https://api.venice.ai https://api.deepseek.com https://api.tavily.com https://api.telegram.org https://discord.com https://smart-account-indexer.sdf-ecosystem.workers.dev

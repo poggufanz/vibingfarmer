@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Keypair } from '@stellar/stellar-sdk'
-import { createAgentIndexStore } from './store.js'
+import { createAgentIndexStore as createProductionAgentIndexStore } from './store.js'
 import {
   applyAuthenticatedReceiptMutation,
   issueReceiptChallenge,
@@ -22,10 +22,12 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'migrations')
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
+const createAgentIndexStore = (db) =>
+  createProductionAgentIndexStore(db, { enableLegacyBaseChildWrites: true })
 
 function applyMigrations(sqlite) {
   const migrations = readdirSync(MIGRATIONS_DIR)
-    .filter((name) => /^000[2-6]_.*\.sql$/.test(name))
+    .filter((name) => /^000[2-8]_.*\.sql$/.test(name))
     .sort()
   expect(migrations.map((name) => name.slice(0, 4))).toEqual([
     '0002',
@@ -33,6 +35,8 @@ function applyMigrations(sqlite) {
     '0004',
     '0005',
     '0006',
+    '0007',
+    '0008',
   ])
   for (const migration of migrations) {
     sqlite.exec(readFileSync(join(MIGRATIONS_DIR, migration), 'utf8'))
@@ -212,20 +216,27 @@ beforeEach(() => {
 })
 
 describe('execution receipt migrations and projection repository', () => {
-  it('loads migrations 0002 through 0006 numerically on a fresh database', () => {
+  it('loads migrations 0002 through 0008 numerically on a fresh database', () => {
     const tables = db._raw
       .prepare(
         `SELECT name FROM sqlite_master
          WHERE type = 'table' AND name IN
            ('execution_receipts','execution_phase_attempts','execution_receipt_challenges',
-            'execution_recovery_leases','base_child_intents','base_child_lifecycle_events')
+            'execution_recovery_leases','base_child_intents','base_child_lifecycle_events',
+            'base_child_intent_batches','base_child_intent_batch_items',
+            'base_child_phase_events','base_child_phase_projection','base_child_recovery_leases')
          ORDER BY name`
       )
       .all()
       .map(({ name }) => name)
     expect(tables).toEqual([
+      'base_child_intent_batch_items',
+      'base_child_intent_batches',
       'base_child_intents',
       'base_child_lifecycle_events',
+      'base_child_phase_events',
+      'base_child_phase_projection',
+      'base_child_recovery_leases',
       'execution_phase_attempts',
       'execution_receipt_challenges',
       'execution_receipts',
@@ -814,13 +825,15 @@ describe('recovery leases', () => {
 
 describe('immutable Base child intents', () => {
   function child(childId, units = '1000000') {
+    const allocationId = `allocation-${childId}`
     return {
       version: 1,
       networkId: NETWORK,
       owner: OWNER_G,
       agent: AGENT,
       bindingId: 'binding-shared',
-      allocationId: 'allocation-base',
+      executionId: `run-child:exec:${allocationId}`,
+      allocationId,
       childId,
       intent: {
         token: 'USDC',
@@ -828,6 +841,7 @@ describe('immutable Base child intents', () => {
         decimals: 6,
         poolAddress: `0x${'11'.repeat(20)}`,
         proxyTarget: 'aave-v3',
+        minShares: '0',
         runId: 'run-child',
         grantTxHash: 'grant-child',
         kernelAddress: `0x${'22'.repeat(20)}`,
@@ -885,6 +899,7 @@ describe('immutable Base child intents', () => {
       networkId: NETWORK,
       owner: OWNER_G,
       bindingId: original.bindingId,
+      executionId: original.executionId,
       allocationId: original.allocationId,
       childId: original.childId,
     }
@@ -934,6 +949,7 @@ describe('immutable Base child intents', () => {
           networkId: NETWORK,
           owner: OWNER_G,
           bindingId: original.bindingId,
+          executionId: original.executionId,
           allocationId: original.allocationId,
           childId: original.childId,
         },

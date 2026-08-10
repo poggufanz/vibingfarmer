@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import {
   buildRecoveryAllocationMappings,
   createAccountScopedRecoveryConfig,
   createRecoveryActionRunner,
+  projectBaseOutcomeRecovery,
 } from './app.jsx'
 import { StartStage as _StartStage } from './components/strategy/StartStage.jsx'
 import { projectRecoveryReceipt } from './strategy/receiptProjection.js'
+import { createBaseRecoveryActionRunner } from './strategy/baseRecoveryClient.js'
+import { baseRecoveryIdentityKey } from './strategy/baseRecoveryIdentity.js'
 import {
   appendPhase,
   confirmCustody,
@@ -59,6 +62,122 @@ function projection(action = 'deposit') {
 }
 
 const RECOVERY_AMOUNT = Object.freeze({ token: 'CTOKEN', units: '7000000', decimals: 7 })
+
+// Deliberately use a historical execution/allocation pair that cannot be reconstructed from the
+// plan's runId or array position. The second identity shares the allocationId but differs in every
+// other identity component that a weak pending map could accidentally omit.
+const BASE_IDENTITY = Object.freeze({
+  networkId: 'stellar-testnet',
+  bindingId: '0123456789abcdef0123456789abcdef',
+  executionId: 'historical-run:exec:shared-base-allocation',
+  allocationId: 'shared-base-allocation',
+  childId: 'abcdef0123456789abcdef0123456789',
+})
+const COLLISION_IDENTITY = Object.freeze({
+  networkId: 'stellar-testnet',
+  bindingId: 'fedcba9876543210fedcba9876543210',
+  executionId: 'newer-run:exec:shared-base-allocation',
+  allocationId: 'shared-base-allocation',
+  childId: '11111111111111111111111111111111',
+})
+const BASE_OWNER = 'GBASEOWNER'
+const BASE_AGENT = 'GBASEBRIDGE'
+const BASE_MANDATE_ID = '0123456789abcdef0123456789abcdef'
+
+function baseEvidence(
+  identity,
+  { recoveryVersion = 1, owner = BASE_OWNER, agent = BASE_AGENT } = {}
+) {
+  return {
+    schemaVersion: 1,
+    identity,
+    owner,
+    agent,
+    recoverable: true,
+    recoveryVersion,
+    intent: {
+      runId: identity.executionId.split(':exec:')[0],
+      grantTxHash: '66'.repeat(32),
+      bindingHash: '77'.repeat(32),
+      baseJobId: identity.childId,
+      kernelAddress: '0x00000000000000000000000000000000000000aa',
+      poolAddress: '0x00000000000000000000000000000000000000b2',
+      proxyTarget: 'aave-v3',
+      token: 'USDC',
+      units: '1000000',
+      decimals: 6,
+      minShares: '900000',
+    },
+    phases: [],
+    events: [],
+  }
+}
+
+function baseProjection(identity, overrides = {}) {
+  return {
+    action: 'submit-mint',
+    phase: 'cctp_mint',
+    reasonCode: 'base-attestation-confirmed',
+    identity,
+    version: 1,
+    phases: {},
+    custody: { location: 'cctp-transit', confirmed: true },
+    ...overrides,
+  }
+}
+
+function baseRunnerHarness(overrides = {}) {
+  const active = { version: 1, address: BASE_OWNER, epoch: 1 }
+  const claim = (identity = BASE_IDENTITY, version = 1) => ({
+    identity,
+    action: 'submit-mint',
+    phase: 'cctp_mint',
+    reasonCode: 'base-attestation-confirmed',
+    evidenceVersion: version,
+    lease: {
+      holder: 'tab-base',
+      leaseToken: '11'.repeat(32),
+      expiresAt: 9e15,
+    },
+  })
+  const accepted = (identity = BASE_IDENTITY) => ({
+    accepted: true,
+    workId: '22'.repeat(32),
+    identity,
+    action: 'submit-mint',
+    evidenceVersion: 1,
+    status: 'pending',
+  })
+  const deps = {
+    getActiveAccount: vi.fn(() => active),
+    getMandateId: vi.fn(() => BASE_MANDATE_ID),
+    readEvidence: vi.fn(async ({ identity }) => baseEvidence(identity)),
+    projectEvidence: vi.fn((evidence) =>
+      baseProjection(evidence.identity, { version: evidence.recoveryVersion })
+    ),
+    requestClaim: vi.fn(async ({ identity }) => claim(identity)),
+    executeRecovery: vi.fn(async ({ claim: currentClaim }) => accepted(currentClaim.identity)),
+    pollEvidence: vi.fn(async ({ identity }) => ({
+      status: 'advanced',
+      bundle: baseEvidence(identity, { recoveryVersion: 2 }),
+    })),
+    // This callback is deliberately passed through requestClaim, just like the production bridge
+    // credential seam. The Base runner must not discover or invoke the Stellar recovery executor.
+    resolveCredential: vi.fn(async ({ agentAddress }) => ({
+      agentAddress,
+      publicKey: 'GSESSION',
+      sign: vi.fn(),
+    })),
+    onProjection: vi.fn(),
+    onPending: vi.fn(),
+    onError: vi.fn(),
+    leaseOwner: 'tab-base',
+    pollLimit: 2,
+    pollIntervalMs: 0,
+    ...overrides,
+  }
+  return { active, claim, accepted, deps }
+}
 
 function producedReceipt(overrides = {}) {
   return createAllocationReceipt({
@@ -725,5 +844,321 @@ describe('createAccountScopedRecoveryConfig', () => {
     expect(onEvent).toHaveBeenCalledWith('receipt-before-switch', {
       allocationId: PLAN.agents[0].allocationId,
     })
+  })
+})
+
+describe('Base recovery app controller seams', () => {
+  it('projects only the exact identity carried by the failed Task-13 outcome and never synthesizes one', async () => {
+    const readEvidence = vi.fn(async ({ identity }) => baseEvidence(identity))
+    const projectEvidence = vi.fn((evidence) => baseProjection(evidence.identity))
+    const outcome = {
+      allocationId: BASE_IDENTITY.allocationId,
+      identity: BASE_IDENTITY,
+      custody: { location: 'cctp-transit', confirmed: true },
+    }
+
+    await expect(
+      projectBaseOutcomeRecovery({
+        outcome,
+        owner: BASE_OWNER,
+        readEvidence,
+        projectEvidence,
+      })
+    ).resolves.toEqual({
+      key: baseRecoveryIdentityKey(BASE_IDENTITY),
+      projection: baseProjection(BASE_IDENTITY),
+    })
+    expect(readEvidence).toHaveBeenCalledWith({ identity: BASE_IDENTITY, signal: undefined })
+
+    readEvidence.mockClear()
+    await expect(
+      projectBaseOutcomeRecovery({
+        outcome: { allocationId: BASE_IDENTITY.allocationId, custody: outcome.custody },
+        owner: BASE_OWNER,
+        readEvidence,
+        projectEvidence,
+      })
+    ).resolves.toBeNull()
+    expect(readEvidence).not.toHaveBeenCalled()
+  })
+
+  it('preserves already-known public Base hashes and Kernel custody when the Agent Index read is unavailable', async () => {
+    const burnTxHash = '66'.repeat(32)
+    const mintTxHash = `0x${'aa'.repeat(32)}`
+    const userOpHash = `0x${'bb'.repeat(32)}`
+    const transactionHash = `0x${'cc'.repeat(32)}`
+
+    await expect(
+      projectBaseOutcomeRecovery({
+        outcome: {
+          allocationId: BASE_IDENTITY.allocationId,
+          identity: BASE_IDENTITY,
+          custody: { location: 'base-kernel', confirmed: true },
+          evidence: {
+            burnHash: burnTxHash,
+            mintTxHash,
+            userOpHash,
+            depositTxHash: transactionHash,
+          },
+        },
+        owner: BASE_OWNER,
+        readEvidence: vi.fn(async () => {
+          throw new Error('poisoned capability=must-not-surface')
+        }),
+      })
+    ).resolves.toMatchObject({
+      key: baseRecoveryIdentityKey(BASE_IDENTITY),
+      projection: {
+        action: 'manual-review',
+        reasonCode: 'base-evidence-unavailable',
+        custody: { location: 'base-kernel', confirmed: true },
+        phases: {
+          cctp_burn: { evidence: { burnTxHash } },
+          cctp_mint: { evidence: { mintTxHash } },
+          base_deposit: { evidence: { userOpHash, transactionHash } },
+        },
+      },
+    })
+  })
+
+  it('uses the failed outcome identity verbatim and keeps the original bridge credential seam separate from Stellar recovery', async () => {
+    const credentialArgs = []
+    const stellarRecoverAllocation = vi.fn(() => {
+      throw new Error('Stellar recovery must never execute for a Base child.')
+    })
+    const { deps } = baseRunnerHarness({
+      recoverAllocation: stellarRecoverAllocation,
+      requestClaim: vi.fn(async (args) => {
+        const credential = await args.resolveCredential({
+          networkId: args.identity.networkId,
+          owner: args.owner,
+          agentAddress: args.agentAddress,
+        })
+        credentialArgs.push({ args, credential })
+        return {
+          identity: args.identity,
+          action: 'submit-mint',
+          phase: 'cctp_mint',
+          reasonCode: 'base-attestation-confirmed',
+          evidenceVersion: args.expectedRecoveryVersion,
+          lease: {
+            holder: args.leaseOwner,
+            leaseToken: '11'.repeat(32),
+            expiresAt: 9e15,
+          },
+        }
+      }),
+    })
+    const runner = createBaseRecoveryActionRunner(deps)
+
+    await expect(runner.run(BASE_IDENTITY)).resolves.toMatchObject({
+      identity: BASE_IDENTITY,
+      action: 'submit-mint',
+    })
+
+    const key = baseRecoveryIdentityKey(BASE_IDENTITY)
+    expect(deps.readEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ identity: BASE_IDENTITY })
+    )
+    expect(deps.requestClaim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        identity: BASE_IDENTITY,
+        owner: BASE_OWNER,
+        agentAddress: BASE_AGENT,
+        evidence: expect.objectContaining({ identity: BASE_IDENTITY }),
+      })
+    )
+    expect(deps.executeRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({ claim: expect.objectContaining({ identity: BASE_IDENTITY }) })
+    )
+    expect(deps.pollEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ identity: BASE_IDENTITY })
+    )
+    expect(credentialArgs).toHaveLength(1)
+    expect(credentialArgs[0].args.identity).toEqual(BASE_IDENTITY)
+    expect(credentialArgs[0].args.agentAddress).toBe(BASE_AGENT)
+    expect(deps.resolveCredential).toHaveBeenCalledWith({
+      networkId: BASE_IDENTITY.networkId,
+      owner: BASE_OWNER,
+      agentAddress: BASE_AGENT,
+    })
+    expect(stellarRecoverAllocation).not.toHaveBeenCalled()
+    expect(deps.onProjection.mock.calls.every(([publishedKey]) => publishedKey === key)).toBe(true)
+  })
+
+  it('keeps same-allocation historical Base children isolated by their complete identity key', async () => {
+    const gates = new Map(
+      [BASE_IDENTITY, COLLISION_IDENTITY].map((identity) => {
+        let release
+        const promise = new Promise((resolve) => {
+          release = resolve
+        })
+        return [identity.executionId, { promise, release }]
+      })
+    )
+    const published = new Map()
+    const { deps } = baseRunnerHarness({
+      requestClaim: vi.fn(async ({ identity }) => {
+        await gates.get(identity.executionId).promise
+        return {
+          identity,
+          action: 'submit-mint',
+          phase: 'cctp_mint',
+          reasonCode: 'base-attestation-confirmed',
+          evidenceVersion: 1,
+          lease: {
+            holder: 'tab-base',
+            leaseToken: '11'.repeat(32),
+            expiresAt: 9e15,
+          },
+        }
+      }),
+      executeRecovery: vi.fn(async ({ claim }) => ({
+        accepted: true,
+        workId: claim.identity.childId.padEnd(64, '0'),
+        identity: claim.identity,
+        action: claim.action,
+        evidenceVersion: 1,
+        status: 'pending',
+      })),
+      onProjection: vi.fn((key, projection) => published.set(key, projection)),
+    })
+    const runner = createBaseRecoveryActionRunner(deps)
+
+    const first = runner.run(BASE_IDENTITY)
+    const second = runner.run(COLLISION_IDENTITY)
+    expect(first).not.toBe(second)
+    await waitFor(() => expect(deps.requestClaim).toHaveBeenCalledTimes(2))
+    gates.get(BASE_IDENTITY.executionId).release()
+    gates.get(COLLISION_IDENTITY.executionId).release()
+    await Promise.all([first, second])
+
+    const firstKey = baseRecoveryIdentityKey(BASE_IDENTITY)
+    const secondKey = baseRecoveryIdentityKey(COLLISION_IDENTITY)
+    expect(firstKey).not.toBe(secondKey)
+    expect(published).toHaveProperty('size', 2)
+    expect(published.get(firstKey).identity).toEqual(BASE_IDENTITY)
+    expect(published.get(secondKey).identity).toEqual(COLLISION_IDENTITY)
+    expect(deps.onPending.mock.calls).toEqual(
+      expect.arrayContaining([
+        [firstKey, true],
+        [secondKey, true],
+        [firstKey, false],
+        [secondKey, false],
+      ])
+    )
+  })
+
+  it('suppresses Base projections, errors, and pending cleanup after an account epoch switch', async () => {
+    let releaseRead
+    const readBarrier = new Promise((resolve) => {
+      releaseRead = resolve
+    })
+    const { active, deps } = baseRunnerHarness({
+      readEvidence: vi.fn(async ({ identity }) => {
+        await readBarrier
+        return baseEvidence(identity)
+      }),
+    })
+    const runner = createBaseRecoveryActionRunner(deps)
+    const pending = runner.run(BASE_IDENTITY)
+    await Promise.resolve()
+    active.epoch = 2
+    releaseRead()
+
+    await expect(pending).rejects.toMatchObject({ code: 'active-account-changed' })
+    expect(deps.onProjection).not.toHaveBeenCalled()
+    expect(deps.onError).not.toHaveBeenCalled()
+    expect(deps.onPending.mock.calls).toEqual([[baseRecoveryIdentityKey(BASE_IDENTITY), true]])
+    expect(deps.requestClaim).not.toHaveBeenCalled()
+    expect(deps.executeRecovery).not.toHaveBeenCalled()
+  })
+
+  it('passes the exact Base child identity from a failed receipt row to StartStage callback props', () => {
+    const plan = {
+      runId: 'historical-run',
+      planFingerprint: 'BASE-APP-RECOVERY',
+      amount: { token: 'USDC', units: '1000000', decimals: 6 },
+      agents: [
+        {
+          allocationId: 'historical-run:bridge:base',
+          kind: 'bridge',
+          hostNetworkId: 'stellar-testnet',
+          allocation: { token: 'USDC', units: '1000000', decimals: 6 },
+          cap: { token: 'USDC', units: '1000000', decimals: 6 },
+          periodSeconds: 3600,
+          expiry: 2_000_000_000,
+          destination: 'Base Sepolia bridge',
+          children: [
+            {
+              allocationId: BASE_IDENTITY.allocationId,
+              proxyTarget: 'aave-v3',
+              destination: 'aave-v3',
+              allocation: { token: 'USDC', units: '1000000', decimals: 6 },
+            },
+          ],
+        },
+      ],
+      truth: { agentIsolationCount: 1, stellarVenueCount: 1, baseUsesProxyVaults: true },
+    }
+    const outcome = {
+      allocationId: BASE_IDENTITY.allocationId,
+      identity: BASE_IDENTITY,
+      amount: { token: 'USDC', units: '1000000', decimals: 6 },
+      networkContext: {
+        executionNetwork: 'stellar-testnet',
+        destinationNetwork: 'base-sepolia',
+        currentCustodyNetwork: 'base-sepolia',
+        transit: false,
+      },
+      executionStatus: 'failed',
+      custody: { location: 'base-kernel', confirmed: true, checkedAt: 1 },
+      txHash: null,
+      error: 'Base deposit needs recovery.',
+      evidence: { allocationId: BASE_IDENTITY.allocationId },
+    }
+    const receipt = {
+      version: 1,
+      runId: plan.runId,
+      planFingerprint: plan.planFingerprint,
+      permission: {
+        mode: 'fresh',
+        status: 'confirmed',
+        confirmationCount: 1,
+        txHash: 'HGRANT',
+        grantReceiptFingerprint: 'FP',
+        expiryLedger: 9_001,
+        agentAddresses: ['CBRIDGE'],
+      },
+      branches: {
+        stellar: { status: 'not-planned', results: [] },
+        base: { status: 'failed', results: [outcome] },
+      },
+      allocations: [outcome],
+    }
+    const onRecoverAllocation = vi.fn()
+    const onRecoverBaseChild = vi.fn()
+    const key = baseRecoveryIdentityKey(BASE_IDENTITY)
+
+    render(
+      <_StartStage
+        plan={plan}
+        permission={receipt.permission}
+        receipt={receipt}
+        baseRecoveryByIdentity={{
+          [key]: baseProjection(BASE_IDENTITY, { action: 'submit-mint', version: 7 }),
+        }}
+        baseRecoveryPendingIdentities={new Set()}
+        onRecoverAllocation={onRecoverAllocation}
+        onRecoverBaseChild={onRecoverBaseChild}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Resume transfer to Base' })
+    expect(button.disabled).toBe(false)
+    fireEvent.click(button)
+    expect(onRecoverBaseChild).toHaveBeenCalledOnce()
+    expect(onRecoverBaseChild).toHaveBeenCalledWith(BASE_IDENTITY)
+    expect(onRecoverAllocation).not.toHaveBeenCalled()
   })
 })

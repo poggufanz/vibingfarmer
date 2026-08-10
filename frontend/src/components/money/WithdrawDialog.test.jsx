@@ -525,7 +525,7 @@ describe('WithdrawDialog — partial exit, delegates its correctness gate to pla
   })
 })
 
-describe('WithdrawDialog — Base full unwind: honest known set + allowedPool-skip caveat, full-unwind only', () => {
+describe('WithdrawDialog — Base full unwind: honest known set + knownPool exit semantics, full-unwind only', () => {
   const discovery = discoveryWith([activeRow('CAGENT1')])
   const agents = [positionAgent('CAGENT1', 1_0000000n)]
 
@@ -542,7 +542,35 @@ describe('WithdrawDialog — Base full unwind: honest known set + allowedPool-sk
     expect(screen.queryByRole('tab', { name: /base/i })).toBeNull()
   })
 
-  it('surfaces the allowedPool skip limitation honestly, and never claims a full sweep guarantee', () => {
+  it('keeps historical Base positions represented but disables the tab and CTA under the deployment gate', () => {
+    const onConfirmBase = vi.fn()
+    render(
+      <WithdrawDialog
+        open
+        agents={agents}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+        basePlan={{
+          available: false,
+          unavailableReason:
+            'Base cross-chain actions are temporarily unavailable while the hardened deployment is verified.',
+          positions: [{ pool: '0xPOOL1', poolName: 'Historical Aave USDC', assets: 5_000000 }],
+        }}
+        onConfirmBase={onConfirmBase}
+      />
+    )
+
+    const tab = screen.getByRole('tab', { name: /base full unwind/i })
+    expect(tab.disabled).toBe(true)
+    expect(tab.getAttribute('aria-describedby')).toBe('withdraw-base-unavailable')
+    expect(screen.getByRole('status').textContent).toMatch(/temporarily unavailable/i)
+    expect(screen.queryByRole('button', { name: /withdraw everything from base/i })).toBeNull()
+    fireEvent.click(tab)
+    expect(onConfirmBase).not.toHaveBeenCalled()
+  })
+
+  it('explains that disabling new deposits does not block a knownPool exit', () => {
     const basePlan = {
       available: true,
       positions: [{ pool: '0xPOOL1', poolName: 'Aave USDC', assets: 5_000000 }],
@@ -560,12 +588,9 @@ describe('WithdrawDialog — Base full unwind: honest known set + allowedPool-sk
     fireEvent.click(screen.getByRole('tab', { name: /base full unwind/i }))
     expect(screen.getByText(/aave usdc/i)).toBeTruthy()
     expect(screen.getByText(/5\.00 usdc/i)).toBeTruthy()
-    // Mutation guard: a version that describes the skip as loss ("funds are lost"/"balance becomes
-    // zero") instead of "stays on Base, untouched" would fail this -- not just presence of the word
-    // "skip".
-    expect(screen.getByText(/skips that pool/i)).toBeTruthy()
-    expect(screen.getByText(/not shown as zero/i)).toBeTruthy()
-    expect(screen.getByText(/stays on base, untouched/i)).toBeTruthy()
+    expect(screen.getByText(/known.pool record/i)).toBeTruthy()
+    expect(screen.getByText(/disabled pool remains sweepable/i)).toBeTruthy()
+    expect(screen.queryByText(/skips that pool/i)).toBeNull()
     expect(screen.queryByText(/partial base withdrawal isn't available/i)).toBeTruthy()
   })
 

@@ -1,18 +1,41 @@
 // @vitest-environment jsdom
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const mountedHarness = vi.hoisted(() => ({
   accountListener: null,
   initialAccount: null,
   routeProps: null,
+  crewRouteProps: null,
+  sidebarProps: null,
   moneyRouteProps: null,
+  withdrawDialogProps: null,
+  stopAccessDialogProps: null,
+  recoveryPanelProps: null,
+  renderRealMoneyRoute: false,
+  baseWithdrawScreenMount: null,
   orchestratorConfig: null,
   dispatch: null,
   movement: null,
 }))
+
+const cctpRecovery = vi.hoisted(() => ({
+  resume: vi.fn(),
+}))
+
+vi.mock('./components.jsx', async (importOriginal) => {
+  const actual = await importOriginal()
+  const { createElement } = await import('react')
+  return {
+    ...actual,
+    Sidebar: (props) => {
+      mountedHarness.sidebarProps = props
+      return createElement(actual.Sidebar, props)
+    },
+  }
+})
 
 vi.mock('./stellar/index.js', () => ({
   connectActiveAccount: vi.fn(async () => mountedHarness.initialAccount),
@@ -24,6 +47,10 @@ vi.mock('./stellar/index.js', () => ({
   }),
   revokeAgentOnChain: vi.fn(),
   subscribeAgentRevoked: vi.fn(() => () => {}),
+}))
+
+vi.mock('./cctp/resumeTransfers.js', () => ({
+  resumePendingCctpTransfers: (...args) => cctpRecovery.resume(...args),
 }))
 
 vi.mock('./components/strategy/StrategyRoute.jsx', async () => {
@@ -45,16 +72,64 @@ vi.mock('./components/strategy/StrategyRoute.jsx', async () => {
   }
 })
 
-vi.mock('./components/money/MyMoneyRoute.jsx', async () => {
+vi.mock('./components/money/MyMoneyRoute.jsx', async (importOriginal) => {
+  const actual = await importOriginal()
   const { createElement } = await import('react')
   return {
     MyMoneyRoute: (props) => {
       mountedHarness.moneyRouteProps = props
+      if (mountedHarness.renderRealMoneyRoute) return createElement(actual.MyMoneyRoute, props)
       return createElement(
         'output',
         { 'data-testid': 'mounted-money-state' },
         JSON.stringify({ owner: props.account?.address ?? null, agentCount: props.agents.length })
       )
+    },
+  }
+})
+
+vi.mock('./components/crew/CrewRoute.jsx', async () => {
+  const { createElement } = await import('react')
+  return {
+    CrewRoute: (props) => {
+      mountedHarness.crewRouteProps = props
+      return createElement('output', { 'data-testid': 'mounted-crew-state' }, 'crew')
+    },
+  }
+})
+
+vi.mock('./components/money/WithdrawDialog.jsx', async (importOriginal) => {
+  const actual = await importOriginal()
+  const { createElement } = await import('react')
+  return {
+    ...actual,
+    WithdrawDialog: (props) => {
+      mountedHarness.withdrawDialogProps = props
+      return createElement(actual.WithdrawDialog, props)
+    },
+  }
+})
+
+vi.mock('./components/money/StopAccessDialog.jsx', async (importOriginal) => {
+  const actual = await importOriginal()
+  const { createElement } = await import('react')
+  return {
+    ...actual,
+    StopAccessDialog: (props) => {
+      mountedHarness.stopAccessDialogProps = props
+      return createElement(actual.StopAccessDialog, props)
+    },
+  }
+})
+
+vi.mock('./components/money/RecoveryPanel.jsx', async (importOriginal) => {
+  const actual = await importOriginal()
+  const { createElement } = await import('react')
+  return {
+    ...actual,
+    RecoveryPanel: (props) => {
+      mountedHarness.recoveryPanelProps = props
+      return createElement(actual.RecoveryPanel, props)
     },
   }
 })
@@ -123,6 +198,22 @@ vi.mock('./base/dashboardPositions.js', () => ({
   loadDeviceBasePositions: vi.fn(async () => []),
   loadIndexedBasePositions: vi.fn(async () => []),
 }))
+vi.mock('./base/readPositions.js', () => ({
+  readIdleUsdc: vi.fn(),
+}))
+vi.mock('./wallet/passkeyBridge.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  ensureBaseOwner: vi.fn(),
+}))
+vi.mock('./screens/Withdraw.jsx', async () => {
+  const { createElement } = await import('react')
+  return {
+    default: () => {
+      mountedHarness.baseWithdrawScreenMount?.()
+      return createElement('output', { 'data-testid': 'base-withdraw-screen' })
+    },
+  }
+})
 vi.mock('./stellar/keeperEvents.js', () => ({ fetchKeeperEvents: vi.fn(async () => []) }))
 vi.mock('./positionsStore.js', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -139,10 +230,28 @@ vi.mock('./stellar/partialWithdraw.js', () => ({
   ensureExitSigner: vi.fn(),
   partialWithdraw: vi.fn(),
 }))
+vi.mock('./stellar/exit.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  sweepAgents: vi.fn(),
+}))
 vi.mock('./base/relayerClient.js', async (importOriginal) => ({
   ...(await importOriginal()),
   getMandateStatus: vi.fn(),
 }))
+vi.mock('./wallet/baseBinding.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    readBaseMandate: vi.fn((...args) => actual.readBaseMandate(...args)),
+  }
+})
+vi.mock('./mergeFlowHelpers.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    buildBaseLegContext: vi.fn((...args) => actual.buildBaseLegContext(...args)),
+  }
+})
 vi.mock('./strategy/mergedCatalog.js', async (importOriginal) => ({
   ...(await importOriginal()),
   checkRelayerHealth: vi.fn(async () => true),
@@ -163,11 +272,18 @@ import { preflightPermission } from './strategy/reusePreflight.js'
 import { discoverOwnerScopes } from './stellar/ownerDiscovery.js'
 import { readOwnerMoney } from './money/readOwnerMoney.js'
 import { ensureExitSigner, partialWithdraw } from './stellar/partialWithdraw.js'
+import { sweepAgents } from './stellar/exit.js'
+import { revokeAgentOnChain } from './stellar/index.js'
 import { getMandateStatus } from './base/relayerClient.js'
-import { baseMandateStorageKey } from './wallet/baseBinding.js'
+import { baseMandateStorageKey, readBaseMandate } from './wallet/baseBinding.js'
+import { buildBaseLegContext } from './mergeFlowHelpers.js'
 import { BASE_POOL_CATALOG } from './config.js'
 import { readLifeboatState } from './stellar/vaultReads.js'
 import { grantMandate } from './stellar/lifeboat.js'
+import { loadDeviceBasePositions, loadIndexedBasePositions } from './base/dashboardPositions.js'
+import { readIdleUsdc } from './base/readPositions.js'
+import { ensureBaseOwner } from './wallet/passkeyBridge.js'
+import { connectActiveAccount } from './stellar/index.js'
 
 const G = Object.freeze({
   version: 1,
@@ -181,7 +297,8 @@ const C = Object.freeze({ ...G, kind: 'C', address: 'COWNER', connectorId: 'vf-w
 const BASE_KERNEL = `0x${'11'.repeat(20)}`
 const BASE_SESSION = '0x1563915e194D8CfBA1943570603F7606A3115508'
 const BASE_RELAYER_ORIGIN = 'https://relayer.test'
-const BASE_EXPIRES_AT_MS = 2_000_000_000_000
+const BASE_MANDATE_ID = 'ab'.repeat(16)
+const BASE_VALID_UNTIL_SECONDS = 2_000_000_000
 // Captured from the relayer evaluator with the production 10,000-USDC cap, this test's exact
 // 40-USDC allocation, and the producer harness's `0xfeed` encoded calls.
 const BASE_PERMISSION_ID = '0x4086748b'
@@ -222,7 +339,8 @@ function moneyReads(agents = []) {
 
 function activeBaseWireEvidence() {
   return {
-    version: 2,
+    version: 3,
+    mandateId: BASE_MANDATE_ID,
     status: 'active',
     reasonCodes: [],
     stellarOwner: G.address,
@@ -231,7 +349,7 @@ function activeBaseWireEvidence() {
     sessionKeyAddress: BASE_SESSION,
     bindingId: 'binding-test',
     bindingHash: '761ae6f804c1c9774dc3d91678a4752f46259cb6ffa346c996bef372675c0725',
-    expiresAt: BASE_EXPIRES_AT_MS,
+    validUntilSeconds: BASE_VALID_UNTIL_SECONDS,
     expected: {
       chainId: 84532,
       relayerOrigin: BASE_RELAYER_ORIGIN,
@@ -257,7 +375,7 @@ function activeBaseWireEvidence() {
       policyDigest: 'fde7fc639b0f3b04ed2722c20868f2b2c06707d8b3e56398f7bc6f3b35c65ffa',
       bindingId: 'binding-test',
       bindingHash: '761ae6f804c1c9774dc3d91678a4752f46259cb6ffa346c996bef372675c0725',
-      expiresAt: BASE_EXPIRES_AT_MS,
+      validUntilSeconds: BASE_VALID_UNTIL_SECONDS,
     },
     observed: {
       blockNumber: '101',
@@ -272,7 +390,11 @@ function activeBaseWireEvidence() {
         policyData: BASE_POLICY_DATA,
         digest: '3570159502324ec8b94b984b62452c9fc026c937bffde96e83472c2d4d26655f',
       },
-      preparedCallDigest: '24bac97411885d34f4d8248c2a7f5110611280ae97fbaa74e82809425163c490',
+      activation: {
+        userOpHash: `0x${'33'.repeat(32)}`,
+        txHash: `0x${'44'.repeat(32)}`,
+        activatedAt: Math.floor(Date.now() / 1000) - 10,
+      },
     },
     checks: {
       chain: true,
@@ -284,10 +406,9 @@ function activeBaseWireEvidence() {
       binding: true,
       origin: true,
       implementation: true,
-      allocation: true,
       freshness: true,
       reconstruction: true,
-      prepared: true,
+      activation: true,
     },
   }
 }
@@ -302,6 +423,80 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
+async function prepareLargeOwnerActionRead() {
+  const { readOwnerMoney: actualReadOwnerMoney } = await vi.importActual(
+    './money/readOwnerMoney.js'
+  )
+  const agentAddress = 'CAGENT1'
+  const amount = { token: 'USDC', units: '10000000000000000', decimals: 7 }
+  const visibleAgent = {
+    address: agentAddress,
+    amount,
+    custody: { location: 'stellar-vault' },
+    custodyBreakdown: [{ location: 'stellar-vault', amount }],
+    executionStatus: 'confirmed',
+    problems: [],
+  }
+  const rows = Array.from({ length: 501 }, (_, index) => ({
+    address: index === 0 ? agentAddress : `COLD${String(index).padStart(3, '0')}`,
+    scopeReadStatus: 'ok',
+    vault: 'CVAULT',
+    revoked: false,
+    expiry: 9_999_999_999,
+    authorized: true,
+    association: 'unknown',
+    baseChildren: [],
+  }))
+  const started = []
+  let actionPhase = false
+  let readBarrier = null
+  const rpc = async () => {
+    started.push(started.length)
+    return 0n
+  }
+
+  discoverOwnerScopes.mockResolvedValue(discoveryWith(rows))
+  readOwnerMoney.mockImplementation(async (args) => {
+    if (!actionPhase || args.owner !== G.address) return moneyReads([visibleAgent])
+    if (readBarrier) await readBarrier
+    return actualReadOwnerMoney({
+      ...args,
+      stellar: {
+        readVaultShares: rpc,
+        readTokenBalance: rpc,
+        readPricePerShare: rpc,
+        readSupplyAprBps: async () => null,
+      },
+      base: {
+        loadIndexedBasePositions: async () => ({ status: 'empty', accounts: [] }),
+      },
+    })
+  })
+
+  return {
+    agentAddress,
+    visibleAgent,
+    started,
+    beginActionReads() {
+      actionPhase = true
+    },
+    holdActionReads(promise) {
+      readBarrier = promise
+    },
+  }
+}
+
+function renderMoneyApp() {
+  return render(
+    <MemoryRouter
+      initialEntries={['/home']}
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
+      <App />
+    </MemoryRouter>
+  )
+}
+
 function mountedState() {
   return JSON.parse(screen.getByTestId('mounted-app-state').textContent)
 }
@@ -313,7 +508,14 @@ beforeEach(() => {
   mountedHarness.accountListener = null
   mountedHarness.initialAccount = G
   mountedHarness.routeProps = null
+  mountedHarness.crewRouteProps = null
+  mountedHarness.sidebarProps = null
   mountedHarness.moneyRouteProps = null
+  mountedHarness.withdrawDialogProps = null
+  mountedHarness.stopAccessDialogProps = null
+  mountedHarness.recoveryPanelProps = null
+  mountedHarness.renderRealMoneyRoute = false
+  mountedHarness.baseWithdrawScreenMount = vi.fn()
   mountedHarness.orchestratorConfig = null
   mountedHarness.dispatch = deferred()
   mountedHarness.movement = {
@@ -330,14 +532,429 @@ beforeEach(() => {
     redeemHash: 'HREDEEM',
     transferHash: 'HTRANSFER',
   })
+  sweepAgents.mockReset().mockResolvedValue({ errors: [], txHashes: [] })
+  revokeAgentOnChain.mockReset().mockResolvedValue({ status: 'SUCCESS', hash: 'HREVOKE' })
   getMandateStatus.mockReset().mockResolvedValue(null)
   readLifeboatState.mockReset().mockResolvedValue(null)
   grantMandate.mockClear()
+  loadDeviceBasePositions.mockReset().mockResolvedValue([])
+  loadIndexedBasePositions.mockReset().mockResolvedValue({ status: 'empty', accounts: [] })
+  readIdleUsdc.mockReset()
+  ensureBaseOwner.mockReset()
+  readBaseMandate.mockClear()
+  buildBaseLegContext.mockClear()
+  cctpRecovery.resume.mockReset().mockResolvedValue({
+    owner: G.address,
+    resumed: [],
+    held: [],
+    terminal: [],
+    uncertain: [],
+    blocked: [],
+  })
 })
 
 afterEach(() => cleanup())
 
 describe('active account application state', () => {
+  it('starts CCTP recovery only after installing the restored owner, with read-only narrow dependencies', async () => {
+    const restore = deferred()
+    connectActiveAccount.mockReturnValueOnce(restore.promise)
+
+    renderMoneyApp()
+    expect(cctpRecovery.resume).not.toHaveBeenCalled()
+
+    await act(async () => {
+      restore.resolve(G)
+      await restore.promise
+    })
+    await waitFor(() => expect(mountedHarness.moneyRouteProps?.account?.address).toBe(G.address))
+    await waitFor(() => expect(cctpRecovery.resume).toHaveBeenCalledTimes(1))
+
+    const [owner, options] = cctpRecovery.resume.mock.calls[0]
+    expect(owner).toBe(G.address)
+    expect(options.signal).toBeInstanceOf(AbortSignal)
+    expect(options.reconcileUnwindUserOp).toBeTypeOf('function')
+    expect(Object.keys(options).sort()).toEqual([
+      'pollForwardStatus',
+      'pollUnwindStatus',
+      'postFarmAttach',
+      'postFarmIntent',
+      'postUnwindAttach',
+      'reconcileUnwindUserOp',
+      'signal',
+    ])
+    for (const forbidden of [
+      'account',
+      'sign',
+      'wallet',
+      'passkey',
+      'kernel',
+      'capability',
+      'sendUserOperation',
+    ]) {
+      expect(options).not.toHaveProperty(forbidden)
+    }
+  })
+
+  it('aborts recovery for a replaced owner and App teardown while giving the new owner its own scan', async () => {
+    const view = renderMoneyApp()
+    await waitFor(() => expect(cctpRecovery.resume).toHaveBeenCalledTimes(1))
+    const firstSignal = cctpRecovery.resume.mock.calls[0][1].signal
+
+    await act(async () => mountedHarness.accountListener(C))
+    await waitFor(() => expect(cctpRecovery.resume).toHaveBeenCalledTimes(2))
+    const secondCall = cctpRecovery.resume.mock.calls[1]
+    expect(firstSignal.aborted).toBe(true)
+    expect(secondCall[0]).toBe(C.address)
+    expect(secondCall[1].signal.aborted).toBe(false)
+
+    view.unmount()
+    expect(secondCall[1].signal.aborted).toBe(true)
+  })
+
+  it('keeps real /home Base history visible but every unavailable withdraw/recovery entry inert', async () => {
+    mountedHarness.renderRealMoneyRoute = true
+    const amount = { token: 'USDC', units: '50000000', decimals: 7 }
+    const agentAddress = `C${'B'.repeat(55)}`
+    const agentPool = '0x1111111111111111111111111111111111111112'
+    const historyPool = '0x1111111111111111111111111111111111111113'
+    const historyOnlyMarker = 'Device loader history 8472'
+    const historicalPosition = {
+      pool: historyPool,
+      poolName: historyOnlyMarker,
+      shares: 5_500_000n,
+      assets: 5_250_000n,
+      minAssets: 5_223_750n,
+    }
+    const agent = {
+      address: agentAddress,
+      amount,
+      custody: { location: 'base-proxy' },
+      custodyBreakdown: [
+        {
+          location: 'base-proxy',
+          amount,
+          kernelAddress: '0x2222222222222222222222222222222222222222',
+          poolAddress: agentPool,
+          poolName: 'Agent custody decoy',
+          asset: 'USDC',
+          coverageReason: null,
+        },
+      ],
+      executionStatus: 'failed',
+      problems: ['base-execution-failed'],
+    }
+    discoverOwnerScopes.mockResolvedValue(
+      discoveryWith([{ address: agentAddress, scopeReadStatus: 'ok', revoked: false, expiry: 0 }])
+    )
+    readOwnerMoney.mockResolvedValue(moneyReads([agent]))
+    loadDeviceBasePositions.mockResolvedValue([historicalPosition])
+
+    renderMoneyApp()
+
+    await waitFor(() => expect(mountedHarness.moneyRouteProps?.model?.state).toBe('problem'))
+    await waitFor(() =>
+      expect(mountedHarness.withdrawDialogProps?.basePlan?.positions).toEqual([historicalPosition])
+    )
+    expect(loadDeviceBasePositions).toHaveBeenCalledWith({ stellarOwner: G.address })
+    const history = screen.getByRole('region', { name: 'Historical Base positions' })
+    expect(within(history).getByText(historyOnlyMarker)).toBeTruthy()
+    expect(within(history).getByText('5.25 USDC')).toBeTruthy()
+    expect(within(history).getByText(/temporarily unavailable/i)).toBeTruthy()
+    const recover = screen.getByRole('button', { name: 'Recover Base account' })
+    expect(recover.disabled).toBe(true)
+    expect(document.getElementById('recover-base-unavailable').textContent).toMatch(
+      /temporarily unavailable/i
+    )
+    fireEvent.click(recover)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review problem' }))
+    const baseTab = await screen.findByRole('tab', { name: /base full unwind/i })
+    expect(baseTab.disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: /withdraw everything from base/i })).toBeNull()
+    fireEvent.click(baseTab)
+
+    const baseStorageBefore = Object.keys(localStorage)
+      .filter((key) => key.startsWith('vf_base'))
+      .sort()
+    await act(async () => mountedHarness.moneyRouteProps.onRecoverBase())
+
+    expect(ensureBaseOwner).not.toHaveBeenCalled()
+    expect(loadIndexedBasePositions).not.toHaveBeenCalled()
+    expect(readIdleUsdc).not.toHaveBeenCalled()
+    expect(mountedHarness.baseWithdrawScreenMount).not.toHaveBeenCalled()
+    expect(
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith('vf_base'))
+        .sort()
+    ).toEqual(baseStorageBefore)
+    expect(mountedHarness.withdrawDialogProps.basePlan).toMatchObject({
+      available: false,
+      positions: [historicalPosition],
+    })
+  })
+
+  it('builds one unfiltered Crew projection for the route and sidebar without wiring Withdraw', async () => {
+    const assignedAddress = `C${'S'.repeat(55)}`
+    const pendingAddress = `C${'P'.repeat(55)}`
+    const strandedAddress = `C${'F'.repeat(55)}`
+    const productiveAmount = { token: 'USDC', units: '1000000000', decimals: 7 }
+    const assignedRow = {
+      address: assignedAddress,
+      creator: 'CINDEXCREATOR',
+      createdLedger: 1200,
+      createdTxHash: 'create-assigned',
+      runId: 'run-assigned',
+      runOrdinal: 0,
+      provenance: {
+        source: 'router-event',
+        providerId: 'rpc',
+        endpointClass: 'live',
+        generation: 'agent-v3',
+      },
+      discoverySources: ['agent-index-api'],
+      scopeReadStatus: 'ok',
+      vault: 'CVAULT',
+      revoked: false,
+      expiry: 0,
+      authorized: true,
+      baseChildren: [],
+    }
+    const pendingRow = {
+      ...assignedRow,
+      address: pendingAddress,
+      creator: null,
+      createdLedger: null,
+      createdTxHash: null,
+      runId: null,
+      runOrdinal: null,
+      provenance: null,
+      discoverySources: ['rpc-router-events'],
+    }
+    const productiveAgent = (address) => ({
+      address,
+      scope: { state: 'known', value: { vault: 'CVAULT', revoked: false } },
+      amount: productiveAmount,
+      custody: { location: 'stellar-vault' },
+      custodyBreakdown: [{ location: 'stellar-vault', amount: productiveAmount }],
+      executionStatus: 'succeeded',
+      problems: [],
+    })
+    const strandedAgent = {
+      ...productiveAgent(strandedAddress),
+      custody: { location: 'agent' },
+      custodyBreakdown: [{ location: 'agent', amount: productiveAmount }],
+      executionStatus: 'failed',
+    }
+
+    discoverOwnerScopes.mockResolvedValue({
+      ...discoveryWith([assignedRow, pendingRow, { ...assignedRow, address: strandedAddress }]),
+      status: 'partial',
+    })
+    readOwnerMoney.mockResolvedValue(
+      moneyReads([productiveAgent(assignedAddress), productiveAgent(pendingAddress), strandedAgent])
+    )
+
+    render(
+      <MemoryRouter
+        initialEntries={['/agent']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <App />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => expect(mountedHarness.crewRouteProps).not.toBeNull())
+    await waitFor(() => expect(mountedHarness.crewRouteProps?.crew?.productiveAgentCount).toBe(2))
+    const projectedCrew = mountedHarness.crewRouteProps.crew
+    expect(projectedCrew.personas).toHaveLength(3)
+    expect(projectedCrew.personas[0].children.map((row) => row.agent.address)).toEqual([
+      assignedAddress,
+    ])
+    expect(projectedCrew.pendingAssignments.map((row) => row.agent.address)).toEqual([
+      pendingAddress,
+    ])
+    expect(projectedCrew.personas.flatMap((entry) => entry.children)).not.toContainEqual(
+      expect.objectContaining({ agent: expect.objectContaining({ address: strandedAddress }) })
+    )
+    expect(mountedHarness.sidebarProps.agentCount).toBe(projectedCrew.activeCount)
+    expect(mountedHarness.sidebarProps.agentCount).toBe(1)
+    expect(mountedHarness.crewRouteProps.onWithdrawAgent).toBeUndefined()
+  })
+
+  it('projects owner-wide Base value and coverage changes from the full money envelope', async () => {
+    const newerAddress = `C${'N'.repeat(55)}`
+    const oldestAddress = `C${'O'.repeat(55)}`
+    const discoveryRow = (address, runOrdinal, createdLedger) => ({
+      address,
+      creator: 'CINDEXCREATOR',
+      createdLedger,
+      createdTxHash: `create-${runOrdinal}`,
+      runId: `run-${runOrdinal}`,
+      runOrdinal,
+      grantTxHash: `grant-${runOrdinal}`,
+      provenance: {
+        source: 'router-event',
+        providerId: 'rpc',
+        endpointClass: 'live',
+        generation: 'agent-v3',
+      },
+      discoverySources: ['agent-index-api'],
+      scopeReadStatus: 'ok',
+      vault: 'CVAULT',
+      revoked: false,
+      expiry: 0,
+      authorized: true,
+      baseChildren: [],
+    })
+    const baseAgent = (address, units) => {
+      const amount = { token: 'USDC', units, decimals: 7 }
+      return {
+        address,
+        scope: { state: 'known', value: { vault: 'CVAULT', revoked: false } },
+        vaultShares: {
+          state: 'known',
+          amount: { token: 'USDC', units: '0', decimals: 7 },
+        },
+        idleToken: {
+          state: 'known',
+          amount: { token: 'USDC', units: '0', decimals: 7 },
+        },
+        amount,
+        custody: { location: 'base-proxy' },
+        custodyBreakdown: [
+          {
+            location: 'base-proxy',
+            amount,
+            kernelAddress: '0xKeRnEl',
+            poolAddress: '0xPoOl',
+            asset: 'USDC',
+            coverageReason: null,
+          },
+        ],
+        executionStatus: 'succeeded',
+        problems: [],
+      }
+    }
+    const agents = [baseAgent(newerAddress, '300000000'), baseAgent(oldestAddress, '700000000')]
+    const envelope = (units, groupState, coverage) => ({
+      ...moneyReads(agents),
+      networkId: 'stellar-testnet',
+      stellarSubtotalUnits: 0n,
+      baseSubtotalUnits: BigInt(units),
+      baseGroups: [
+        {
+          groupKey: '84532:0xkernel:0xpool:usdc',
+          kernelAddress: '0xkernel',
+          poolAddress: '0xpool',
+          asset: 'usdc',
+          amount: { token: 'USDC', units, decimals: 7 },
+          coverage: {
+            state: groupState,
+            problems: groupState === 'complete' ? [] : ['base-read-unavailable'],
+          },
+        },
+      ],
+      associationCoverage: coverage,
+      baseSourceCoverage: { state: 'complete' },
+      basePositionCoverage:
+        groupState === 'complete'
+          ? { state: 'complete', reasons: [] }
+          : { state: 'unknown', reasons: ['unavailable'] },
+    })
+
+    discoverOwnerScopes.mockResolvedValue(
+      discoveryWith([discoveryRow(newerAddress, 0, 200), discoveryRow(oldestAddress, 1, 100)])
+    )
+    readOwnerMoney
+      .mockReset()
+      .mockResolvedValueOnce(
+        envelope('1000000000', 'partial', {
+          state: 'unknown',
+          reasons: ['unavailable'],
+        })
+      )
+      // Reuse the exact same agents array: only owner-wide value/coverage changes. This catches a
+      // Crew memo keyed solely on moneyRead.agents as well as an App that drops the envelope.
+      .mockResolvedValue(envelope('1250000000', 'complete', { state: 'complete', reasons: [] }))
+
+    render(
+      <MemoryRouter
+        initialEntries={['/agent']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <App />
+      </MemoryRouter>
+    )
+
+    await waitFor(() =>
+      expect(mountedHarness.crewRouteProps?.crew?.totals).toEqual([
+        { token: 'USDC', units: '1000000000', decimals: 7 },
+      ])
+    )
+    expect(mountedHarness.crewRouteProps.crew.status).toBe('partial')
+    expect(mountedHarness.sidebarProps.agentCount).toBe(
+      mountedHarness.crewRouteProps.crew.activeCount
+    )
+
+    await act(async () => {
+      await mountedHarness.withdrawDialogProps.onConfirmPartial({
+        ok: true,
+        mode: 'partial',
+        agentAddress: newerAddress,
+        amount: { token: 'USDC', units: '1', decimals: 7 },
+      })
+    })
+
+    await waitFor(() =>
+      expect(mountedHarness.crewRouteProps?.crew?.totals).toEqual([
+        { token: 'USDC', units: '1250000000', decimals: 7 },
+      ])
+    )
+    expect(mountedHarness.crewRouteProps.crew.status).toBe('complete')
+    expect(mountedHarness.sidebarProps.agentCount).toBe(
+      mountedHarness.crewRouteProps.crew.activeCount
+    )
+  })
+
+  it('starts an owner action after React StrictMode replays mount effects', async () => {
+    render(
+      <React.StrictMode>
+        <MemoryRouter
+          initialEntries={['/home']}
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
+          <App />
+        </MemoryRouter>
+      </React.StrictMode>
+    )
+    await waitFor(() =>
+      expect(mountedHarness.withdrawDialogProps?.account).toEqual({
+        kind: G.kind,
+        address: G.address,
+      })
+    )
+
+    let actionPromise
+    await act(async () => {
+      actionPromise = mountedHarness.withdrawDialogProps.onConfirmPartial({
+        ok: true,
+        mode: 'partial',
+        agentAddress: 'CAGENT1',
+        amount: { token: 'USDC', units: '10000000', decimals: 7 },
+      })
+      await expect(actionPromise).resolves.toBeUndefined()
+    })
+
+    expect(partialWithdraw).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: G.address,
+        agentAddress: 'CAGENT1',
+        activeAccount: G,
+      })
+    )
+  })
+
   it('projects a renewed lifeboat expiry into the mounted money model', async () => {
     let lifeboat = {
       derisked: false,
@@ -569,26 +1186,235 @@ describe('active account application state', () => {
     expect(request.getCurrentActiveAccount()).toBe(G)
   })
 
-  it('mounted App rechecks a reviewed Base mandate immediately before grant and blocks every movement when it was revoked', async () => {
-    const reviewedEvidence = activeBaseWireEvidence()
-    let remoteEvidence = reviewedEvidence
-    getMandateStatus.mockImplementation(async () => remoteEvidence)
-    localStorage.setItem(
-      baseMandateStorageKey(G.address),
-      JSON.stringify({
-        version: 2,
-        stellarOwner: G.address,
-        kernelAddress: BASE_KERNEL,
-        serializedApproval: 'APPROVAL',
-        sessionKeyAddress: BASE_SESSION,
-        relayerOrigin: BASE_RELAYER_ORIGIN,
-        expiresAt: BASE_EXPIRES_AT_MS / 1000,
-        status: 'active',
-        bindingId: reviewedEvidence.bindingId,
-        bindingHash: reviewedEvidence.bindingHash,
-        createdAt: Math.floor(Date.now() / 1000),
-      })
+  it('aborts a 501-row action reconciliation on account replacement before queued RPCs start', async () => {
+    const { readOwnerMoney: actualReadOwnerMoney } = await vi.importActual(
+      './money/readOwnerMoney.js'
     )
+    const agentAddress = 'CAGENT1'
+    const amount = { token: 'USDC', units: '10000000000000000', decimals: 7 }
+    const visibleAgent = {
+      address: agentAddress,
+      amount,
+      custody: { location: 'stellar-vault' },
+      custodyBreakdown: [{ location: 'stellar-vault', amount }],
+      executionStatus: 'confirmed',
+      problems: [],
+    }
+    const rows = Array.from({ length: 501 }, (_, index) => ({
+      address: index === 0 ? agentAddress : `COLD${String(index).padStart(3, '0')}`,
+      scopeReadStatus: 'ok',
+      vault: 'CVAULT',
+      revoked: false,
+      expiry: 9_999_999_999,
+      authorized: true,
+      association: 'unknown',
+      baseChildren: [],
+    }))
+    const gates = Array.from({ length: 8 }, deferred)
+    const started = []
+    let actionPhase = false
+    let oldReadSettled = false
+    const heldRpc = async () => {
+      const index = started.length
+      started.push(index)
+      if (index < gates.length) await gates[index].promise
+      return 0n
+    }
+
+    discoverOwnerScopes.mockResolvedValue(discoveryWith(rows))
+    readOwnerMoney.mockImplementation((args) => {
+      if (!actionPhase || args.owner !== G.address)
+        return Promise.resolve(moneyReads([visibleAgent]))
+      return actualReadOwnerMoney({
+        ...args,
+        stellar: {
+          readVaultShares: heldRpc,
+          readTokenBalance: heldRpc,
+          readPricePerShare: heldRpc,
+          readSupplyAprBps: async () => null,
+        },
+        base: {
+          loadIndexedBasePositions: async () => ({ status: 'empty', accounts: [] }),
+        },
+      }).finally(() => {
+        oldReadSettled = true
+      })
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={['/home']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <App />
+      </MemoryRouter>
+    )
+    await waitFor(() => expect(mountedHarness.moneyRouteProps?.agents).toEqual([visibleAgent]))
+
+    actionPhase = true
+    await act(async () => mountedHarness.moneyRouteProps.onAction('review-problem'))
+    fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+    fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+    fireEvent.change(screen.getByRole('textbox', { name: /amount/i }), {
+      target: { value: '1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /withdraw this amount/i }))
+
+    await waitFor(() => expect(started).toHaveLength(8))
+    await act(async () => mountedHarness.accountListener(C))
+    for (const gate of gates) gate.resolve()
+    await waitFor(() => expect(oldReadSettled).toBe(true))
+
+    expect(started).toHaveLength(8)
+    expect(mountedHarness.moneyRouteProps.account.address).toBe(C.address)
+  })
+
+  it('uses the partial action epoch when a switch happens before VF_SUBMISSION_UNKNOWN', async () => {
+    const probe = await prepareLargeOwnerActionRead()
+    const withdraw = deferred()
+    const unknown = Object.assign(new Error('withdraw response was lost'), {
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+    })
+    partialWithdraw.mockReturnValueOnce(withdraw.promise)
+    renderMoneyApp()
+    await waitFor(() =>
+      expect(mountedHarness.moneyRouteProps?.agents).toEqual([probe.visibleAgent])
+    )
+
+    probe.beginActionReads()
+    let actionPromise
+    await act(async () => {
+      actionPromise = mountedHarness.withdrawDialogProps.onConfirmPartial({
+        ok: true,
+        mode: 'partial',
+        agentAddress: probe.agentAddress,
+        amount: { token: 'USDC', units: '10000000', decimals: 7 },
+      })
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(partialWithdraw).toHaveBeenCalledOnce())
+
+    await act(async () => {
+      mountedHarness.accountListener(C)
+      withdraw.reject(unknown)
+      await actionPromise.catch(() => {})
+    })
+
+    expect(probe.started).toHaveLength(0)
+  })
+
+  it.each(['full', 'partial', 'revoke'])(
+    'does not resume %s action work after App teardown',
+    async (kind) => {
+      const probe = await prepareLargeOwnerActionRead()
+      const pending = deferred()
+      if (kind === 'full') sweepAgents.mockReturnValueOnce(pending.promise)
+      if (kind === 'partial') partialWithdraw.mockReturnValueOnce(pending.promise)
+      if (kind === 'revoke') revokeAgentOnChain.mockReturnValueOnce(pending.promise)
+
+      const view = renderMoneyApp()
+      await waitFor(() =>
+        expect(mountedHarness.moneyRouteProps?.agents).toEqual([probe.visibleAgent])
+      )
+      probe.beginActionReads()
+
+      let actionPromise
+      await act(async () => {
+        if (kind === 'full') {
+          actionPromise = mountedHarness.withdrawDialogProps.onConfirmFull({
+            ok: true,
+            targets: [{ address: probe.agentAddress }],
+          })
+        } else if (kind === 'partial') {
+          actionPromise = mountedHarness.withdrawDialogProps.onConfirmPartial({
+            ok: true,
+            mode: 'partial',
+            agentAddress: probe.agentAddress,
+            amount: { token: 'USDC', units: '10000000', decimals: 7 },
+          })
+        } else {
+          actionPromise = mountedHarness.stopAccessDialogProps.onConfirmRevoke({
+            ok: true,
+            agentAddress: probe.agentAddress,
+          })
+        }
+        await Promise.resolve()
+      })
+      const pendingMock =
+        kind === 'full' ? sweepAgents : kind === 'partial' ? partialWithdraw : revokeAgentOnChain
+      await waitFor(() => expect(pendingMock).toHaveBeenCalledOnce())
+
+      const storageSet = vi.spyOn(Storage.prototype, 'setItem')
+      view.unmount()
+      storageSet.mockClear()
+      discoverOwnerScopes.mockClear()
+      await act(async () => {
+        if (kind === 'full') pending.resolve({ errors: [null], txHashes: ['HFULL'] })
+        if (kind === 'partial') pending.resolve({ status: 'SUCCESS', hash: 'HPARTIAL' })
+        if (kind === 'revoke') pending.resolve({ status: 'SUCCESS', hash: 'HREVOKE' })
+        await actionPromise.catch(() => {})
+      })
+
+      expect(probe.started).toHaveLength(0)
+      expect(discoverOwnerScopes).not.toHaveBeenCalled()
+      expect(storageSet).not.toHaveBeenCalled()
+      storageSet.mockRestore()
+    }
+  )
+
+  it('does not refresh, persist, or start RPCs when status reconciliation resumes after teardown', async () => {
+    const probe = await prepareLargeOwnerActionRead()
+    const unknown = Object.assign(new Error('withdraw response was lost'), {
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+    })
+    partialWithdraw.mockRejectedValueOnce(unknown)
+    const view = renderMoneyApp()
+    await waitFor(() =>
+      expect(mountedHarness.moneyRouteProps?.agents).toEqual([probe.visibleAgent])
+    )
+
+    await act(async () => {
+      await mountedHarness.withdrawDialogProps.onConfirmPartial({
+        ok: true,
+        mode: 'partial',
+        agentAddress: probe.agentAddress,
+        amount: { token: 'USDC', units: '10000000', decimals: 7 },
+      })
+    })
+    await waitFor(() => expect(mountedHarness.recoveryPanelProps.open).toBe(true))
+
+    const pendingRead = deferred()
+    probe.beginActionReads()
+    probe.holdActionReads(pendingRead.promise)
+    readOwnerMoney.mockClear()
+    let statusPromise
+    await act(async () => {
+      statusPromise = mountedHarness.recoveryPanelProps.onCheckStatus()
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(readOwnerMoney).toHaveBeenCalledOnce())
+
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem')
+    view.unmount()
+    storageSet.mockClear()
+    discoverOwnerScopes.mockClear()
+    await act(async () => {
+      pendingRead.resolve()
+      await statusPromise.catch(() => {})
+    })
+
+    expect(probe.started).toHaveLength(0)
+    expect(discoverOwnerScopes).not.toHaveBeenCalled()
+    expect(storageSet).not.toHaveBeenCalled()
+    storageSet.mockRestore()
+  })
+
+  it('gates a crafted reviewed bridge before mandate/storage/context/orchestrator work when Base is unavailable', async () => {
+    const reviewedEvidence = activeBaseWireEvidence()
+    getMandateStatus.mockImplementation(async () => reviewedEvidence)
+    localStorage.setItem(baseMandateStorageKey(G.address), JSON.stringify(reviewedEvidence))
 
     render(
       <MemoryRouter
@@ -602,7 +1428,7 @@ describe('active account application state', () => {
 
     const pool = BASE_POOL_CATALOG[0]
     const plan = normalizeStrategyPlan({
-      runId: 'run-mounted-mandate-recheck',
+      runId: 'run-mounted-unavailable-bridge',
       risk: 'low',
       stellarUnits: 0n,
       baseAllocations: [
@@ -617,69 +1443,52 @@ describe('active account application state', () => {
       ],
     })
     await act(async () => {
-      mountedHarness.routeProps.onAcceptPlan({ plan, fingerprint: 'PLAN-BASE-RECHECK' })
+      mountedHarness.routeProps.onAcceptPlan({ plan, fingerprint: 'PLAN-UNAVAILABLE-BRIDGE' })
     })
     await waitFor(() => expect(mountedState().stage).toBe('protect'))
     await act(async () => {
       await mountedHarness.routeProps.protectProps.onRetryPreflight({ durationSeconds: 3600 })
     })
 
-    const reviewedStatusCalls = getMandateStatus.mock.calls.length
-    remoteEvidence = {
-      ...reviewedEvidence,
-      status: 'revoked',
-      reasonCodes: ['PERMISSION_REVOKED'],
-      observed: {
-        ...reviewedEvidence.observed,
-        permission: {
-          permissionId: BASE_PERMISSION_ID,
-          permissionFlag: '0x0000',
-          signer: `0x${'00'.repeat(20)}`,
-          policyData: [],
-          digest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
-        },
-        preparedCallDigest: null,
-      },
-      checks: {
-        ...reviewedEvidence.checks,
-        permission: false,
-        reconstruction: false,
-        prepared: false,
-      },
-    }
-    let confirmation
-    await act(async () => {
-      confirmation = mountedHarness.routeProps.protectProps.onRequestGrant()
-      confirmation.catch(() => {})
-      await Promise.resolve()
-    })
-    await waitFor(() =>
-      expect(getMandateStatus.mock.calls.length).toBeGreaterThan(reviewedStatusCalls)
-    )
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    readBaseMandate.mockClear()
+    getMandateStatus.mockClear()
+    buildBaseLegContext.mockClear()
+    preflightPermission.mockClear()
+    mountedHarness.orchestratorConfig = null
+    Object.values(mountedHarness.movement).forEach((movement) => movement.mockClear())
+    const unreachableDispatch = Promise.reject(new Error('dispatch must be unreachable'))
+    unreachableDispatch.catch(() => {})
+    mountedHarness.dispatch = { promise: unreachableDispatch }
+    const storageGet = vi.spyOn(Storage.prototype, 'getItem')
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem')
+    const storageRemove = vi.spyOn(Storage.prototype, 'removeItem')
 
-    expect(getMandateStatus).toHaveBeenLastCalledWith('APPROVAL', {
-      stellarOwner: G.address,
-      kernelAddress: BASE_KERNEL,
-      allocation: {
-        allocationId: plan.agents[0].children[0].allocationId,
-        poolAddress: pool.address,
-        amount: { token: 'USDC', units: '40000000', decimals: 6 },
-        minShares: '0',
-      },
-    })
-    expect(mountedHarness.orchestratorConfig).toBeNull()
-    expect(mountedHarness.movement.grant).not.toHaveBeenCalled()
-    expect(mountedHarness.movement.pull).not.toHaveBeenCalled()
-    expect(mountedHarness.movement.burn).not.toHaveBeenCalled()
-    expect(mountedHarness.movement.farmPost).not.toHaveBeenCalled()
-    await expect(confirmation).rejects.toMatchObject({
-      phase: 'preflight',
-      code: 'VF_BASE_MANDATE_CHANGED',
-    })
+    try {
+      let confirmation
+      await act(async () => {
+        confirmation = mountedHarness.routeProps.protectProps.onRequestGrant()
+        confirmation.catch(() => {})
+        await Promise.resolve()
+      })
+
+      await expect(confirmation).rejects.toMatchObject({ code: 'BASE_CROSS_CHAIN_UNAVAILABLE' })
+      expect(readBaseMandate).not.toHaveBeenCalled()
+      expect(getMandateStatus).not.toHaveBeenCalled()
+      expect(buildBaseLegContext).not.toHaveBeenCalled()
+      expect(preflightPermission).not.toHaveBeenCalled()
+      expect(storageGet).not.toHaveBeenCalledWith(baseMandateStorageKey(G.address))
+      expect(storageSet).not.toHaveBeenCalled()
+      expect(storageRemove).not.toHaveBeenCalled()
+      expect(mountedHarness.orchestratorConfig).toBeNull()
+      expect(mountedHarness.movement.grant).not.toHaveBeenCalled()
+      expect(mountedHarness.movement.pull).not.toHaveBeenCalled()
+      expect(mountedHarness.movement.burn).not.toHaveBeenCalled()
+      expect(mountedHarness.movement.farmPost).not.toHaveBeenCalled()
+    } finally {
+      storageGet.mockRestore()
+      storageSet.mockRestore()
+      storageRemove.mockRestore()
+    }
   })
 
   it('mounted App drops stale orchestrator events and completion after a network epoch switch', async () => {

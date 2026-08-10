@@ -24,8 +24,74 @@ import { BASE_POOL_CATALOG } from './config.js'
 import { estimateMinShares as defaultEstimateMinShares } from './base/quotes.js'
 import { defaultMakePublicClient } from './wallet/passkeyBase.js'
 import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
-import { sanitizeReceiptData } from './strategy/dispatchSummary.js'
-import { isVerifiedBaseMandateStatus, toMandateStatusAllocation } from './base/mandateStatus.js'
+import { isVerifiedBaseMandateStatus } from './base/mandateStatus.js'
+import { BASE_CROSS_CHAIN_AVAILABLE, BASE_CROSS_CHAIN_UNAVAILABLE_REASON } from './base/config.js'
+import { requireBaseRecoveryIdentity } from './strategy/baseRecoveryIdentity.js'
+
+const PUBLIC_SENSITIVE =
+  /secret|private|capability|bearer|authorization|cookie|wallet|passkey|signedxdr|approval|session/i
+
+// This is intentionally stricter than dispatchSummary's legacy receipt sanitizer: Base-leg
+// failures can contain SDK error objects, so this boundary must never copy arbitrary dependency
+// data into receipts, events, or UI state.
+function publicEvidence(value, seen = new WeakSet()) {
+  if (value == null) return value
+  if (typeof value === 'bigint') return value.toString()
+  if (typeof value === 'string') return PUBLIC_SENSITIVE.test(value) ? null : value
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value !== 'object' || seen.has(value)) return null
+  if (Object.getPrototypeOf(value) !== Object.prototype && !Array.isArray(value)) return null
+  seen.add(value)
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => publicEvidence(entry, seen))
+      .filter(
+        (entry) =>
+          entry !== null &&
+          !(Array.isArray(entry) && entry.length === 0) &&
+          !(
+            entry &&
+            typeof entry === 'object' &&
+            !Array.isArray(entry) &&
+            Object.keys(entry).length === 0
+          )
+      )
+  }
+  const projection = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (PUBLIC_SENSITIVE.test(key)) continue
+    const safe = publicEvidence(entry, seen)
+    if (safe !== null) projection[key] = safe
+  }
+  return projection
+}
+
+function baseFailureCode(stage) {
+  return stage === 'burn'
+    ? 'base_burn_unavailable'
+    : stage === 'mandate'
+      ? 'base_mandate_unavailable'
+      : 'base_farm_unavailable'
+}
+
+function publicCustody(remote) {
+  const custody = remote?.custody
+  if (
+    custody &&
+    typeof custody === 'object' &&
+    typeof custody.location === 'string' &&
+    typeof custody.confirmed === 'boolean' &&
+    (custody.checkedAt === null || Number.isSafeInteger(custody.checkedAt))
+  ) {
+    return {
+      location: custody.location,
+      confirmed: custody.confirmed,
+      checkedAt: custody.checkedAt,
+    }
+  }
+  return { location: 'unknown', confirmed: false, checkedAt: null }
+}
 
 function unknownSubmissionRecoveryPhase(stage) {
   if (stage === 'pull') return { phase: 'pull', action: 'reconcile-pull' }
@@ -33,6 +99,35 @@ function unknownSubmissionRecoveryPhase(stage) {
     return { phase: 'cctp_burn', action: 'reconcile-cctp-burn' }
   }
   return { phase: 'unknown', action: 'reconcile-unknown-base-submission' }
+}
+
+function hasCompleteDeliveredEvidence(result, expectedAllocations, { bindingId, runId, jobId }) {
+  if (result.associationDelivery?.complete !== true || result.associationDelivery?.blocked === true)
+    return false
+  if (result.evidenceDelivery?.complete !== true || result.evidenceDelivery?.blocked === true)
+    return false
+  if (
+    !Array.isArray(result.allocations) ||
+    result.allocations.length !== expectedAllocations.length
+  )
+    return false
+  return expectedAllocations.every((allocation) => {
+    const matches = result.allocations.filter(
+      (entry) => entry?.allocationId === allocation.allocationId
+    )
+    const entry = matches[0]
+    return (
+      matches.length === 1 &&
+      entry?.bindingId === bindingId &&
+      entry?.executionId === `${runId}:exec:${allocation.allocationId}` &&
+      entry?.childId === jobId &&
+      /^0x[0-9a-f]{64}$/.test(entry.userOpHash || '') &&
+      /^0x[0-9a-f]{64}$/.test(entry.mintTxHash || '') &&
+      /^0x[0-9a-f]{64}$/.test(entry.depositTxHash || '') &&
+      Number.isSafeInteger(entry.recoveryVersion) &&
+      entry.recoveryVersion >= 0
+    )
+  })
 }
 
 /**
@@ -67,6 +162,25 @@ export async function executeBaseLeg({
   onEvent = () => {},
   deps = {},
 }) {
+  // Global deployment authority fence: this precedes dependency selection, mandate reads,
+  // quoting, client creation, pulls, and burns. Keep executeBaseLeg's settled-result contract.
+  if (!BASE_CROSS_CHAIN_AVAILABLE) {
+    return {
+      success: false,
+      runId,
+      grantTxHash,
+      stage: 'availability',
+      error: BASE_CROSS_CHAIN_UNAVAILABLE_REASON,
+      custody: { location: 'owner', confirmed: true, checkedAt: null },
+      bridgeAgent: bridgeAgentAddress || null,
+      kernelAddress: kernelAddress || null,
+      jobId: null,
+      attestation: null,
+      recovery: null,
+      allocations: [],
+    }
+  }
+
   // ponytail: `deps = {}` default only covers undefined; an explicit `deps: null` would throw
   // synchronously on the destructure below, outside the try — guard normalizes both.
   const {
@@ -76,7 +190,7 @@ export async function executeBaseLeg({
     makePublicClient = defaultMakePublicClient,
     runAgentPull = defaultRunAgentPull,
     runAgentBurn = defaultRunAgentBurn,
-    // VF Wallet Task 6: owner+kernel-scoped v2 mandate (wallet/baseBinding.js), not the legacy
+    // VF Wallet Task 6: owner+kernel-scoped v3 mandate (wallet/baseBinding.js), never the legacy
     // global vf_base_mandate record — the whole point of this task is that a mismatched owner or
     // kernel fails closed HERE, before any funds move, rather than trusting storage content alone.
     readStoredMandate = readBaseMandate,
@@ -98,7 +212,11 @@ export async function executeBaseLeg({
   const bridgeAllocationId = `${runId || 'unrun'}:bridge:base`
   const safeEmit = (name, data) => {
     try {
-      onEvent(name, { ...data, allocationId: bridgeAllocationId })
+      const event = publicEvidence(data)
+      onEvent(name, {
+        ...(event && typeof event === 'object' && !Array.isArray(event) ? event : {}),
+        allocationId: bridgeAllocationId,
+      })
     } catch {
       // onEvent is caller UI glue — a broken listener must never abort a settled leg.
     }
@@ -184,34 +302,36 @@ export async function executeBaseLeg({
       }))
     )
 
-    // Last browser-side gate before runFarmFlow is allowed to durably commit an intent and burn.
-    // The quote supplies the actual minShares, so this verifies and prepares precisely the calls
-    // that this run will submit rather than a broad/no-op probe.
-    for (const allocation of quotedAllocations) {
-      const exactAllocation = toMandateStatusAllocation({
-        allocationId: allocation.allocationId || bridgeAllocationId,
-        poolAddress: allocation.pool,
-        units: allocation.amountBaseUnits,
-        minShares: allocation.minShares,
+    // Last browser-side gate before runFarmFlow is allowed to durably commit an intent and burn:
+    // exactly ONE amount-free live status check, performed after every allocation's live quote and
+    // immediately before the farm dispatch. The mandate is named by its public mandateId only —
+    // no allocation, pool, amount, or minShares crosses this boundary (the relayer's v3
+    // activation evidence already binds the policy); pending/uncertain/revoked/expired/mismatch/
+    // unknown/malformed evidence, or a transport failure, all fail closed HERE before money moves.
+    let evidence = null
+    try {
+      evidence = await getMandateStatus(storedMandate.mandateId, {
+        stellarOwner: connectedAddress,
+        kernelAddress,
       })
-      let evidence = null
-      try {
-        evidence = await getMandateStatus(storedMandate.serializedApproval, {
-          stellarOwner: connectedAddress,
-          kernelAddress,
-          allocation: exactAllocation,
-        })
-      } catch {
-        evidence = null
-      }
-      if (!isVerifiedBaseMandateStatus(evidence)) {
-        throw new Error('The stored Base mandate is no longer valid.')
-      }
+    } catch {
+      evidence = null
+    }
+    if (!isVerifiedBaseMandateStatus(evidence)) {
+      throw new Error('The stored Base mandate is no longer valid.')
+    }
+    if (
+      (evidence.expected?.bindingId !== undefined &&
+        evidence.expected.bindingId !== storedMandate.bindingId) ||
+      (evidence.expected?.bindingHash !== undefined &&
+        evidence.expected.bindingHash !== storedMandate.bindingHash)
+    ) {
+      throw new Error('The stored Base mandate binding evidence changed.')
     }
     safeEmit('baseleg-mandate', {
       status: 'done',
       sessionKeyAddress: storedMandate.sessionKeyAddress,
-      expiry: storedMandate.expiry,
+      validUntilSeconds: storedMandate.validUntilSeconds,
       reused: true,
     })
 
@@ -232,7 +352,9 @@ export async function executeBaseLeg({
       stellarWallet: { address: connectedAddress },
       baseRecipientAddress: ownerAddress,
       sessionKeyAddress: storedMandate.sessionKeyAddress,
-      serializedApproval: storedMandate.serializedApproval,
+      mandateId: storedMandate.mandateId,
+      bindingId: storedMandate.bindingId,
+      bindingHash: storedMandate.bindingHash,
       allocations: quotedAllocations,
       burnUnits7,
       // Threaded through to postFarm's owner-bound wire contract. The bridge agent is the
@@ -267,20 +389,46 @@ export async function executeBaseLeg({
         },
       },
     })
-    const custodyFor = (remote = {}) => {
-      if (remote.custody?.location) return remote.custody
-      return { location: 'unknown', confirmed: false, checkedAt: null }
-    }
+    const deliveryComplete = hasCompleteDeliveredEvidence(result, quotedAllocations, {
+      bindingId: storedMandate.bindingId,
+      runId,
+      jobId: result.jobId,
+    })
     const childResults = quotedAllocations.map((allocation, i) => {
       const remote =
         (result.allocations || []).find(
           (entry) => entry?.allocationId === allocation.allocationId
-        ) || {}
-      const childError =
-        remote.error || (result.success === false ? result.error || 'Base leg failed.' : null)
-      const childSuccess = remote.success !== false && remote.finalStatus !== 'error' && !childError
+        ) || null
+      let identity = null
+      try {
+        identity = requireBaseRecoveryIdentity({
+          networkId: 'stellar-testnet',
+          bindingId: remote?.bindingId,
+          executionId: remote?.executionId,
+          allocationId: remote?.allocationId,
+          childId: remote?.childId,
+        })
+        if (identity.allocationId !== allocation.allocationId) identity = null
+      } catch {
+        identity = null
+      }
+      const childError = !remote
+        ? 'Base evidence is unavailable for this allocation.'
+        : result.success === false
+          ? 'base_farm_unavailable'
+          : null
+      const childSuccess =
+        deliveryComplete &&
+        Boolean(remote) &&
+        remote.success !== false &&
+        remote.finalStatus !== 'error' &&
+        !childError
       return {
         allocationId: allocation.allocationId || `${runId ?? 'run'}-${i}`,
+        ...(identity ? { identity } : {}),
+        bindingId: remote?.bindingId || null,
+        executionId: remote?.executionId || null,
+        childId: remote?.childId || null,
         amount: allocation.allocationAmount || {
           token: 'USDC',
           units: String(allocation.amountBaseUnits),
@@ -290,22 +438,22 @@ export async function executeBaseLeg({
         jobId: result.jobId || null,
         bridgeAgentAddress,
         kernelAddress: ownerAddress,
-        attestation: sanitizeReceiptData(
-          remote.attestation || result.attestation || result.attestationState || null
+        attestation: publicEvidence(
+          remote?.attestation || result.attestation || result.attestationState || null
         ),
-        recovery: sanitizeReceiptData(remote.recovery || result.recovery || null),
-        finalStatus: remote.finalStatus || result.finalStatus || null,
-        mintTxHash: remote.mintTxHash || null,
-        depositTxHash: remote.depositTxHash || null,
-        custody: custodyFor(remote),
+        recovery: publicEvidence(remote?.recovery || result.recovery || null),
+        finalStatus: remote?.finalStatus || result.finalStatus || null,
+        mintTxHash: remote?.mintTxHash || null,
+        depositTxHash: remote?.depositTxHash || null,
+        userOpHash: remote?.userOpHash || null,
+        recoveryVersion: remote?.recoveryVersion ?? null,
+        custody: publicCustody(remote),
         success: childSuccess,
         error: childError,
       }
     })
     const success = result.success !== false && childResults.every((child) => child.success)
-    const error = success
-      ? null
-      : result.error || childResults.find((child) => child.error)?.error || 'Base leg failed.'
+    const error = success ? null : baseFailureCode(result.stage || 'farm')
     return {
       success,
       runId,
@@ -316,38 +464,38 @@ export async function executeBaseLeg({
       baseAccount: ownerAddress,
       bridgeAgentAddress,
       kernelAddress: ownerAddress,
-      stage: success ? undefined : result.stage || 'farm',
+      stage: success ? undefined : 'farm',
       error,
-      attestation: sanitizeReceiptData(result.attestation || result.attestationState || null),
-      recovery: sanitizeReceiptData(result.recovery || null),
+      attestation: publicEvidence(result.attestation || result.attestationState || null),
+      recovery: publicEvidence(result.recovery || null),
       allocations: childResults,
     }
   } catch (err) {
     // A dependency can reject with anything (bare string, null, plain object) — never assume
     // Error shape, or reading .message here would itself throw and break the never-throws contract.
-    const message = err instanceof Error ? err.message : String(err)
     const failureEvidence = err && typeof err === 'object' ? err : {}
     const submissionUnknown = failureEvidence.code === 'VF_SUBMISSION_UNKNOWN'
-    const reportedStage = failureEvidence.stage || stage
+    const reportedStage = ['pull', 'burn', 'cctp_burn'].includes(failureEvidence.stage)
+      ? failureEvidence.stage
+      : stage
     const reconciliation = unknownSubmissionRecoveryPhase(reportedStage)
+    const error = submissionUnknown ? 'base_submission_unknown' : baseFailureCode(reportedStage)
     const uncertaintyRecovery = submissionUnknown
       ? {
           action: reconciliation.action,
           phase: reconciliation.phase,
-          reason: message,
+          reasonCode: 'submission_unknown',
           evidence: {
-            submission: failureEvidence.submission || 'unknown',
+            submission: 'unknown',
             stage: reconciliation.phase,
             ...(reportedStage !== reconciliation.phase ? { reportedStage } : {}),
             ...(failureEvidence.result !== undefined
-              ? { result: sanitizeReceiptData(failureEvidence.result) }
+              ? { result: publicEvidence(failureEvidence.result) }
               : {}),
           },
         }
       : null
-    const failureRecovery = sanitizeReceiptData(
-      failureEvidence.recovery || uncertaintyRecovery || null
-    )
+    const failureRecovery = publicEvidence(failureEvidence.recovery || uncertaintyRecovery || null)
     // Stranded-funds observability: once the pull confirmed, the bridge agent is holding the
     // owner's USDC — surface that + the recovery handle (bridgeAgentAddress, for an owner_withdraw
     // sweep) in BOTH the event and the return value, so a pull-ok/burn-fails outcome is never
@@ -368,18 +516,18 @@ export async function executeBaseLeg({
       finalStatus: 'error',
       stage,
       custody: failureCustody,
-      error: message,
+      error,
       bridgeAgentAddress: bridgeAgentAddress || null,
       kernelAddress: kernelAddress || null,
       jobId: failureEvidence.jobId || null,
-      attestation: sanitizeReceiptData(
+      attestation: publicEvidence(
         failureEvidence.attestation || failureEvidence.attestationState || null
       ),
       recovery: failureRecovery,
     }))
     safeEmit('baseleg-failed', {
       stage,
-      error: message,
+      error,
       custody: failureCustody,
       recovery: failureRecovery,
       ...strandedFunds,
@@ -389,14 +537,14 @@ export async function executeBaseLeg({
       runId,
       grantTxHash,
       stage,
-      error: message,
+      error,
       custody: failureCustody,
       // Preserve the established recovery signal: bridgeAgentAddress appears only once a pull
       // actually stranded funds. `bridgeAgent` still identifies the deployed agent for receipts.
       bridgeAgent: bridgeAgentAddress || null,
       kernelAddress: kernelAddress || null,
       jobId: failureEvidence.jobId || null,
-      attestation: sanitizeReceiptData(
+      attestation: publicEvidence(
         failureEvidence.attestation || failureEvidence.attestationState || null
       ),
       recovery: failureRecovery,

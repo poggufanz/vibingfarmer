@@ -29,12 +29,14 @@ import {
   fetchMyMoneySnapshot,
   guardedMoneyFetch,
   moneyFetchArgs,
+  replaceMoneyFetchAbortController,
   toKeeperHeartbeatEvents,
   hasLiveScopeForVault,
 } from './app.jsx'
 import { buildMyMoneyModel } from './money/myMoneyModel.js'
 import { nextReconciliationToken } from './money/freshness.js'
 import { classifyKeeperAutomation } from './money/automationEvidence.js'
+import { readOwnerMoney } from './money/readOwnerMoney.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -239,6 +241,25 @@ describe('fetchMyMoneySnapshot — read-only by construction', () => {
     expect(submit).not.toHaveBeenCalled()
   })
 
+  it('threads one abort signal through discovery and money hydration', async () => {
+    const controller = new AbortController()
+    const discovery = { status: 'complete', agents: [] }
+    const discoverScopes = vi.fn(async () => discovery)
+    const readMoney = vi.fn(async () => ({ status: 'complete', agents: [], checkedAt: 1 }))
+
+    await fetchMyMoneySnapshot({
+      owner: 'GA',
+      signal: controller.signal,
+      discoverScopes,
+      readMoney,
+    })
+
+    expect(discoverScopes).toHaveBeenCalledWith({ owner: 'GA', signal: controller.signal })
+    expect(readMoney).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: 'GA', discovery, signal: controller.signal })
+    )
+  })
+
   it('a reload with a warm cache renders the cache marked stale (never current) BEFORE the fresh read resolves', () => {
     // This is the actual reload contract app.jsx's own effect implements: the FIRST render after
     // a reload/reconnect has nothing fresh yet, so it feeds buildMyMoneyModel the CACHED
@@ -264,6 +285,87 @@ describe('fetchMyMoneySnapshot — read-only by construction', () => {
     })
     expect(model.state).toBe('stale')
     expect(model.freshness).toBe('stale')
+  })
+})
+
+describe('owner-switch money cancellation — aborts work, not only stale commits', () => {
+  async function waitUntil(predicate) {
+    for (let attempts = 0; attempts < 100; attempts += 1) {
+      if (predicate()) return
+      await Promise.resolve()
+    }
+    throw new Error('condition was not reached')
+  }
+
+  it('aborts the prior owner controller and prevents its queued money RPCs from starting', async () => {
+    const controllerRef = { current: null }
+    const oldController = replaceMoneyFetchAbortController(controllerRef)
+    const gates = Array.from({ length: 8 }, () => {
+      let resolve
+      const promise = new Promise((res) => {
+        resolve = res
+      })
+      return { promise, resolve }
+    })
+    const started = []
+    const rpc = async () => {
+      const call = started.length
+      started.push(call)
+      if (call < gates.length) await gates[call].promise
+      return 0n
+    }
+    const agents = Array.from({ length: 501 }, (_, index) => ({
+      address: `COLD${String(index).padStart(3, '0')}`,
+      scopeReadStatus: 'ok',
+      vault: 'CVAULT',
+      revoked: false,
+      expiry: 9_999_999_999,
+      authorized: true,
+      association: 'unknown',
+      baseChildren: [],
+    }))
+    const operation = readOwnerMoney({
+      owner: 'GA',
+      discovery: { status: 'complete', agents },
+      signal: oldController.signal,
+      stellar: {
+        readVaultShares: rpc,
+        readTokenBalance: rpc,
+        readPricePerShare: async () => 10_000_000n,
+        readSupplyAprBps: async () => null,
+      },
+      base: { loadIndexedBasePositions: async () => ({ status: 'empty', accounts: [] }) },
+      now: 1,
+    })
+
+    await waitUntil(() => started.length >= 8)
+    const newController = replaceMoneyFetchAbortController(controllerRef)
+    for (const gate of gates) gate.resolve()
+
+    expect(oldController.signal.aborted).toBe(true)
+    expect(newController.signal.aborted).toBe(false)
+    await expect(operation).rejects.toMatchObject({ name: 'AbortError' })
+    expect(started).toHaveLength(8)
+  })
+
+  it('replaces an automatic-refresh child without aborting the owner-lifetime signal', () => {
+    const ownerController = new AbortController()
+    const controllerRef = { current: null }
+    const firstRefresh = replaceMoneyFetchAbortController(controllerRef, {
+      parentSignal: ownerController.signal,
+    })
+    const secondRefresh = replaceMoneyFetchAbortController(controllerRef, {
+      parentSignal: ownerController.signal,
+    })
+
+    expect(firstRefresh.signal.aborted).toBe(true)
+    expect(secondRefresh.signal.aborted).toBe(false)
+    expect(ownerController.signal.aborted).toBe(false)
+
+    const reason = new Error('owner epoch ended')
+    ownerController.abort(reason)
+    expect(secondRefresh.signal.aborted).toBe(true)
+    expect(secondRefresh.signal.reason).toBe(reason)
   })
 })
 
@@ -615,12 +717,17 @@ describe('/home & /agent route source: MyMoneyRoute moved to /home, /agent is no
   }
 
   it('the /home route element mounts <MyMoneyRoute', () => {
-    expect(routeBlock('/home')).toMatch(/<MyMoneyRoute/)
+    const homeRoute = routeBlock('/home')
+    expect(homeRoute).toMatch(/<MyMoneyRoute/)
+    expect(homeRoute).toMatch(/agents=\{moneyRead\?\.agents \?\? \[\]\}/)
+    expect(homeRoute).not.toMatch(/agents=\{crewAgents\}/)
   })
 
   it('the /agent route element mounts <CrewRoute, never <MyMoneyRoute', () => {
-    expect(routeBlock('/agent')).toMatch(/<CrewRoute/)
-    expect(routeBlock('/agent')).not.toMatch(/<MyMoneyRoute/)
+    const agentRoute = routeBlock('/agent')
+    expect(agentRoute).toMatch(/<CrewRoute/)
+    expect(agentRoute).toMatch(/crew=\{crew\}/)
+    expect(agentRoute).not.toMatch(/<MyMoneyRoute/)
   })
 
   it('neither /home nor /agent ever mounts <OpsConsole', () => {
@@ -690,34 +797,27 @@ describe('session-resumed banner Dismiss button (Task 10 F3 fix)', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// Fix round 1, M9: the sidebar badge and CrewRoute.jsx's own "Working for you" stat must count
-// "active" agents the SAME way (!revoked && !problems.length) -- the badge used to count only
-// !revoked, so an agent with problems made the rail say one more than the crew page for the same
-// word. Source-level proof (app.jsx too heavy to render): the badge's own count expression must
-// carry the same predicate CrewRoute.jsx's activeCount uses.
+// Task 18: Sidebar and CrewRoute must consume the same projected Crew read model. The
+// productive-membership predicate belongs to buildCrewPersonas.js and is covered by executable
+// projection/App/Crew tests; this source check only freezes the single route-composition seam.
 // ---------------------------------------------------------------------------------------------
-describe('activeAgentCount (Task 10 M9 fix): matches CrewRoute.jsx\'s own "active" definition', () => {
+describe('Crew route composition (Task 18): Sidebar and /agent share one Crew projection', () => {
   const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
-  const crewRouteSrc = fs.readFileSync(
-    path.resolve(here, './components/crew/CrewRoute.jsx'),
-    'utf8'
-  )
 
-  function exprBody(constName) {
-    const marker = `const ${constName} = `
+  function routeBlock(routePath) {
+    const marker = `path="${routePath}"`
     const start = src.indexOf(marker)
-    expect(start, `${constName} not found in app.jsx`).toBeGreaterThan(-1)
-    return src.slice(start, src.indexOf('\n\n', start))
+    expect(start, `Route ${routePath} not found in app.jsx`).toBeGreaterThan(-1)
+    const nextRoute = src.indexOf('<Route', start + marker.length)
+    return src.slice(start, nextRoute === -1 ? src.length : nextRoute)
   }
 
-  it('counts !revoked && !problems.length, not !revoked alone', () => {
-    const expr = exprBody('activeAgentCount')
-    expect(expr).toMatch(/!a\?\.scope\?\.value\?\.revoked/)
-    expect(expr).toMatch(/!a\?\.problems\?\.length/)
+  it('passes the projected activeCount to Sidebar', () => {
+    expect(src).toMatch(/<Sidebar[\s\S]*agentCount=\{crew\.activeCount\}/)
   })
 
-  it("CrewRoute.jsx's own activeCount uses the identical predicate (both fields present)", () => {
-    expect(crewRouteSrc).toMatch(/!a\?\.scope\?\.value\?\.revoked && !a\?\.problems\?\.length/)
+  it('passes the same projected crew object to /agent CrewRoute', () => {
+    expect(routeBlock('/agent')).toMatch(/<CrewRoute[\s\S]*crew=\{crew\}/)
   })
 })
 

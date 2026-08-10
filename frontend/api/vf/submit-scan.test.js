@@ -12,6 +12,7 @@ const VAULT = 'CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU'
 const PASS = 'Test SDF Network ; September 2015'
 const SECRET = 'SABCD'
 const RELAYER = 'GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X'
+const OUTER_HASH = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 const LIVE_SUBMIT_ROUTE = routes['POST /submit']
 
 function invokeOp(contract) {
@@ -51,7 +52,7 @@ function producerFixture({ innerHash, getStatus = 'SUCCESS', holdPoll = false } 
   }
   const rpcServer = {
     simulateTransaction: vi.fn(async () => ({ transactionData: {}, result: { retval: {} } })),
-    sendTransaction: vi.fn(async () => ({ status: 'PENDING', hash: 'OUTERHASH' })),
+    sendTransaction: vi.fn(async () => ({ status: 'PENDING', hash: OUTER_HASH })),
     getTransaction: vi.fn(async () => {
       if (holdPoll) {
         return new Promise((resolve) => {
@@ -174,7 +175,7 @@ describe('/submit', () => {
     const client = installSubmitRoute(producer.relay)
 
     await expect(client.submit('SIGNED_XDR')).resolves.toEqual({
-      hash: 'OUTERHASH',
+      hash: OUTER_HASH,
       status: 'SUCCESS',
       relayer: RELAYER,
     })
@@ -192,11 +193,11 @@ describe('/submit', () => {
       const client = installSubmitRoute(producer.relay)
 
       await expect(client.submit('SIGNED_XDR')).resolves.toMatchObject({
-        hash: 'OUTERHASH',
+        hash: OUTER_HASH,
         status,
       })
       await expect(client.submit('SIGNED_XDR')).resolves.toMatchObject({
-        hash: 'OUTERHASH',
+        hash: OUTER_HASH,
         status,
         duplicate: true,
       })
@@ -222,7 +223,7 @@ describe('/submit', () => {
         submission: 'unknown',
         httpStatus: 502,
         result: {
-          hash: 'OUTERHASH',
+          hash: OUTER_HASH,
           status: 'PENDING',
           relayer: RELAYER,
           ...(duplicate === undefined ? {} : { duplicate }),
@@ -242,12 +243,12 @@ describe('/submit', () => {
     await expect(client.submit('SIGNED_XDR')).rejects.toMatchObject({
       code: 'VF_SUBMISSION_UNKNOWN',
       httpStatus: 409,
-      result: { hash: 'OUTERHASH', status: 'PENDING', relayer: RELAYER },
+      result: { hash: OUTER_HASH, status: 'PENDING', relayer: RELAYER },
     })
     expect(producer.rpcServer.sendTransaction).toHaveBeenCalledOnce()
 
     producer.release()
-    await expect(first).resolves.toMatchObject({ hash: 'OUTERHASH', status: 'SUCCESS' })
+    await expect(first).resolves.toMatchObject({ hash: OUTER_HASH, status: 'SUCCESS' })
   })
 
   it('preserves a real post-send poll failure as HTTP 502 typed unknown with its hash', async () => {
@@ -259,7 +260,7 @@ describe('/submit', () => {
       code: 'VF_SUBMISSION_UNKNOWN',
       submission: 'unknown',
       httpStatus: 502,
-      result: { hash: 'OUTERHASH', status: 'PENDING', relayer: RELAYER },
+      result: { hash: OUTER_HASH, status: 'PENDING', relayer: RELAYER },
     })
     expect(producer.rpcServer.sendTransaction).toHaveBeenCalledOnce()
   })

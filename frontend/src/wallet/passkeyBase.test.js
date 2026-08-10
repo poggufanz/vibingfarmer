@@ -2,6 +2,29 @@
 import { describe, test, expect, vi } from 'vitest'
 import { createBaseSmartAccount, signWithRpId } from './passkeyBase.js'
 
+const DEPLOY_USER_OP_HASH = `0x${'a'.repeat(64)}`
+const DEPLOY_TX_HASH = `0x${'b'.repeat(64)}`
+
+function undeployedAccountDeps(receipt, userOpHash = DEPLOY_USER_OP_HASH) {
+  const kernelClient = {
+    sendUserOperation: vi.fn(async () => userOpHash),
+    waitForUserOperationReceipt: vi.fn(async () => receipt),
+  }
+  return {
+    kernelClient,
+    deps: {
+      makePublicClient: vi.fn(() => ({ getCode: vi.fn(async () => '0x') })),
+      makeGaslessClient: vi.fn(() => kernelClient),
+      makeWebAuthnKey: vi.fn(async () => ({})),
+      makePasskeyValidator: vi.fn(async () => ({})),
+      makeKernelAccount: vi.fn(async () => ({
+        address: '0x0000000000000000000000000000000000000abc',
+        encodeCalls: vi.fn(async () => '0xnoop'),
+      })),
+    },
+  }
+}
+
 describe('createBaseSmartAccount', () => {
   test('registers a webauthn key, builds a passkey validator (sudo-only, no session plugin), returns the owner address', async () => {
     const fakeWebAuthnKey = { pubKeyX: 1n, pubKeyY: 2n, authenticatorId: 'cred-1' }
@@ -11,8 +34,11 @@ describe('createBaseSmartAccount', () => {
       encodeCalls: vi.fn(async () => '0xnoopCallData'),
     }
     const fakeKernelClient = {
-      sendUserOperation: vi.fn(async () => '0xdeployOp'),
-      waitForUserOperationReceipt: vi.fn(async () => ({ success: true })),
+      sendUserOperation: vi.fn(async () => DEPLOY_USER_OP_HASH),
+      waitForUserOperationReceipt: vi.fn(async () => ({
+        success: true,
+        receipt: { status: 'success', transactionHash: DEPLOY_TX_HASH },
+      })),
     }
 
     const deps = {
@@ -76,6 +102,56 @@ describe('createBaseSmartAccount', () => {
     expect(result.address).toBe('0xdeployed')
     expect(deps.makeGaslessClient).not.toHaveBeenCalled()
     expect(fakeKernelClient.sendUserOperation).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    [
+      'outer failure with inner success',
+      { success: false, receipt: { status: 'success', transactionHash: DEPLOY_TX_HASH } },
+    ],
+    [
+      'outer success with inner revert',
+      { success: true, receipt: { status: 'reverted', transactionHash: DEPLOY_TX_HASH } },
+    ],
+    ['missing nested receipt', { success: true }],
+    [
+      'malformed deployment transaction hash',
+      { success: true, receipt: { status: 'success', transactionHash: '0x1' } },
+    ],
+  ])('rejects an undeployed Kernel when its deployment receipt has %s', async (_label, receipt) => {
+    const { deps, kernelClient } = undeployedAccountDeps(receipt)
+
+    await expect(
+      createBaseSmartAccount({
+        passkeyName: 'user@example.com',
+        mode: 'register',
+        passkeyServerUrl: 'https://passkeys.zerodev.app/test-project',
+        deps,
+      })
+    ).rejects.toThrow()
+
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1)
+    expect(kernelClient.waitForUserOperationReceipt).toHaveBeenCalledTimes(1)
+  })
+
+  test('rejects a malformed deployment UserOperation hash before polling and never retries', async () => {
+    const receipt = {
+      success: true,
+      receipt: { status: 'success', transactionHash: DEPLOY_TX_HASH },
+    }
+    const { deps, kernelClient } = undeployedAccountDeps(receipt, '0x1234')
+
+    await expect(
+      createBaseSmartAccount({
+        passkeyName: 'user@example.com',
+        mode: 'register',
+        passkeyServerUrl: 'https://passkeys.zerodev.app/test-project',
+        deps,
+      })
+    ).rejects.toThrow(/user operation hash/i)
+
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1)
+    expect(kernelClient.waitForUserOperationReceipt).not.toHaveBeenCalled()
   })
 
   test('mode "login" requests an existing-credential assertion, not a new registration', async () => {

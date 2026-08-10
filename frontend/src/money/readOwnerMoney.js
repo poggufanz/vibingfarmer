@@ -29,6 +29,7 @@ import { SOROBAN_DECIMALS, SOROBAN_BLEND_POOL_ADDRESS } from '../stellar/config.
 import { BASE_USDC_DECIMALS } from '../base/config.js'
 import { BASE_POOL_CATALOG } from '../config.js'
 import { custodyForAgent, custodyBreakdownForAgent } from './custody.js'
+import { mapSettledWithConcurrency } from '../async/mapSettledWithConcurrency.js'
 
 const TOKEN = 'USDC'
 // Every OwnerMoneyReadV1 amount this module produces is canonicalized to the Stellar side's 7dp
@@ -331,16 +332,11 @@ function coverageReasonFor({ units, groupProblems, groupChildren }) {
   return null
 }
 
-async function readOneAgentMoney({
-  row,
-  readVaultShares,
-  readTokenBalance,
-  pps,
-  baseAccountsMap,
-  now,
-}) {
+async function readOneAgentMoney({ row, sharesResult, idleResult, pps, baseAccountsMap, now }) {
   const address = row.address
   if (row.scopeReadStatus !== 'ok') return unavailableScopeRecord(address, now)
+  if (sharesResult?.status === 'rejected') throw sharesResult.reason
+  if (idleResult?.status === 'rejected') throw idleResult.reason
 
   const problems = []
   if (row.revoked) problems.push('scope-revoked')
@@ -363,15 +359,8 @@ async function readOneAgentMoney({
     checkedAt: now,
   }
 
-  // Belt-and-braces (readVaultShares/readTokenBalance already catch internally and resolve null
-  // on RPC failure — see agentDeposit.js): allSettled here guards only against an injected/future
-  // implementation that throws instead, same non-load-bearing posture as ownerDiscovery.js.
-  const [sharesR, idleR] = await Promise.allSettled([
-    readVaultShares(address),
-    readTokenBalance(address),
-  ])
-  const rawShares = sharesR.status === 'fulfilled' ? sharesR.value : null
-  const rawIdle = idleR.status === 'fulfilled' ? idleR.value : null
+  const rawShares = sharesResult?.status === 'fulfilled' ? sharesResult.value : null
+  const rawIdle = idleResult?.status === 'fulfilled' ? idleResult.value : null
 
   const vaultShares = buildSharesRead(rawShares, pps, now)
   const idleToken = buildIdleRead(rawIdle, now)
@@ -516,7 +505,7 @@ async function readOneAgentMoney({
 /**
  * @param {{owner?: string, discovery: object, stellar?: object, base?: object,
  *   associationDelivery?: {events?: Array<{allocationId?:string, status:string}>}|null,
- *   now?: number}} p
+ *   now?: number, signal?:AbortSignal}} p
  *   `discovery` is an OwnerDiscoveryV1 envelope (ownerDiscovery.js). `stellar`/`base` are
  *   injectable read seams (tests); production defaults are the real Stellar RPC reads and
  *   dashboardPositions.js's loadIndexedBasePositions. `associationDelivery` is an OPTIONAL
@@ -534,6 +523,9 @@ async function readOneAgentMoney({
  *   checkedAt:number}>, stellarYield:{state:string, apy:number|null},
  *   stellarSubtotalUnits:bigint, baseSubtotalUnits:bigint, completeBaseTotalUnits:bigint|null,
  *   overallTotalUnits:bigint|null, baseValuationKind:string,
+ *   baseGroups:Array<{groupKey:string, kernelAddress:string, poolAddress:string, asset:string,
+ *   amount:{token:string, units:string, decimals:number}|null,
+ *   coverage:{state:'complete'|'partial'|'unavailable', problems:string[]}}>,
  *   ownerBaseCustodyBreakdown:Record<string,bigint>,
  *   associationCoverage:{state:'complete'|'partial'|'unknown', reasons:string[]},
  *   baseSourceCoverage:{state:'complete'|'unknown'},
@@ -546,6 +538,7 @@ export async function readOwnerMoney({
   base = {},
   associationDelivery = null,
   now = Date.now(),
+  signal,
 }) {
   const {
     readVaultShares = _readVaultShares,
@@ -569,8 +562,27 @@ export async function readOwnerMoney({
     ),
   ]
 
-  const [pps, baseResult] = await Promise.all([
-    readPricePerShare().catch(() => null),
+  // One operation list owns every Stellar RPC in this hydration pass. In particular, shares and
+  // idle balance are separate work items, so eight logical agents can never fan out into sixteen
+  // simultaneous RPC calls.
+  const stellarOperations = [{ kind: 'price-per-share', rowIndex: null, address: null }]
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex]
+    if (row.scopeReadStatus !== 'ok') continue
+    stellarOperations.push({ kind: 'vault-shares', rowIndex, address: row.address })
+    stellarOperations.push({ kind: 'idle-token', rowIndex, address: row.address })
+  }
+
+  const [stellarResults, baseResult] = await Promise.all([
+    mapSettledWithConcurrency(
+      stellarOperations,
+      (operation) => {
+        if (operation.kind === 'price-per-share') return readPricePerShare()
+        if (operation.kind === 'vault-shares') return readVaultShares(operation.address, { signal })
+        return readTokenBalance(operation.address, { signal })
+      },
+      { concurrency: 8, signal }
+    ),
     indexedBaseAccounts.length > 0
       ? loadIndexedBasePositions({ stellarOwner: owner, indexedBaseAccounts }).catch(() => ({
           status: 'unavailable',
@@ -578,6 +590,15 @@ export async function readOwnerMoney({
         }))
       : Promise.resolve({ status: 'empty', accounts: [] }),
   ])
+  const pps = stellarResults[0]?.status === 'fulfilled' ? stellarResults[0].value : null
+  const sharesByRow = new Map()
+  const idleByRow = new Map()
+  for (let index = 1; index < stellarOperations.length; index += 1) {
+    const operation = stellarOperations[index]
+    const result = stellarResults[index]
+    if (operation.kind === 'vault-shares') sharesByRow.set(operation.rowIndex, result)
+    else idleByRow.set(operation.rowIndex, result)
+  }
   const baseAccountsMap = new Map(
     (baseResult.accounts ?? []).map((a) => [String(a.kernelAddress).toLowerCase(), a])
   )
@@ -597,8 +618,15 @@ export async function readOwnerMoney({
   }))
 
   const settled = await Promise.allSettled(
-    rows.map((row) =>
-      readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, baseAccountsMap, now })
+    rows.map((row, rowIndex) =>
+      readOneAgentMoney({
+        row,
+        sharesResult: sharesByRow.get(rowIndex),
+        idleResult: idleByRow.get(rowIndex),
+        pps,
+        baseAccountsMap,
+        now,
+      })
     )
   )
   const agents = settled.map((r, i) =>
@@ -613,7 +641,12 @@ export async function readOwnerMoney({
   const hasVaultCustody = agents.some(hasKnownVaultLeg)
   let stellarYield = { state: 'unavailable', apy: null }
   if (hasVaultCustody) {
-    const aprBps = await readSupplyAprBps(SOROBAN_BLEND_POOL_ADDRESS).catch(() => null)
+    const [aprResult] = await mapSettledWithConcurrency(
+      [SOROBAN_BLEND_POOL_ADDRESS],
+      (poolAddress) => readSupplyAprBps(poolAddress, { signal }),
+      { concurrency: 8, signal }
+    )
+    const aprBps = aprResult.status === 'fulfilled' ? aprResult.value : null
     stellarYield =
       aprBps != null ? { state: 'live', apy: aprBps / 100 } : { state: 'unavailable', apy: null }
   }
@@ -646,6 +679,10 @@ export async function readOwnerMoney({
   let terminalGroupsTotal = 0
   let terminalGroupsLive = 0
   let baseSubtotalUnits = 0n
+  // Deterministic, owner-wide numeric evidence for Crew and any future projection that must not
+  // sum repeated per-agent views of one shared Base position. ownerNormalized.groups is already
+  // sorted by its normalized groupKey, so this list is stable across discovery/page order.
+  const baseGroups = []
   const ownerBaseCustodyBreakdown = {}
   let anyGroupUnknown = false
   // Review round 1, finding 4 (Important, fixed): the old loop kept only `{units, live}`,
@@ -663,6 +700,20 @@ export async function readOwnerMoney({
       live,
       problems: groupProblems,
     } = valueBaseGroup({ group, children: groupChildren, baseAccountsMap })
+    const groupIncomplete = groupProblems.some((p) => READ_INCOMPLETE_PROBLEMS.has(p))
+    baseGroups.push({
+      groupKey: group.groupKey,
+      kernelAddress: group.kernelAddress,
+      poolAddress: group.poolAddress,
+      asset: group.asset,
+      // amountOf is the one canonical 7-decimal string-money constructor for this module. Never
+      // leak the internal BigInt (or a precision-losing Number) across this evidence boundary.
+      amount: units == null ? null : amountOf(units),
+      coverage: {
+        state: units == null ? 'unavailable' : groupIncomplete ? 'partial' : 'complete',
+        problems: [...groupProblems],
+      },
+    })
     if (group.hasTerminal) {
       terminalGroupsTotal += 1
       if (live) terminalGroupsLive += 1
@@ -672,7 +723,7 @@ export async function readOwnerMoney({
       const location = mostAdvancedChild(groupChildren)?.custody?.location ?? 'unknown'
       ownerBaseCustodyBreakdown[location] = (ownerBaseCustodyBreakdown[location] ?? 0n) + units
     } else anyGroupUnknown = true
-    if (groupProblems.some((p) => READ_INCOMPLETE_PROBLEMS.has(p))) anyGroupIncomplete = true
+    if (groupIncomplete) anyGroupIncomplete = true
   }
 
   const hasTaintedEvidence =
@@ -754,6 +805,7 @@ export async function readOwnerMoney({
     stellarYield,
     stellarSubtotalUnits,
     baseSubtotalUnits,
+    baseGroups,
     ownerBaseCustodyBreakdown,
     completeBaseTotalUnits,
     overallTotalUnits,

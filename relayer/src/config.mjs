@@ -1,11 +1,12 @@
 import { rpc, Keypair, StrKey } from '@stellar/stellar-sdk';
-import { createPublicClient, createWalletClient, http } from 'viem';
+import { createPublicClient, createWalletClient, getAddress, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia } from 'viem/chains';
 import { CCTP_DOMAIN, STELLAR_TESTNET, BASE_SEPOLIA } from './cctp/constants.mjs';
 import { createFileStore } from './store.mjs';
 import { loadDeploymentFacts } from './deploymentFacts.mjs';
 import { createAgentIndexConfig } from './agentIndexConfig.mjs';
+import { createSecretEnvelope, parseSecretKeyring } from './secretEnvelope.mjs';
 
 function need(env, key) {
   const value = env[key];
@@ -16,6 +17,18 @@ function need(env, key) {
 function optional(env, key) {
   const value = env[key];
   return value && !/FILL_ME/.test(value) ? value : '';
+}
+
+const PROXY_KEY_RE = /^[0-9a-f]{64}$/;
+
+function proxyKeyValue(env, key, { production, required = false } = {}) {
+  const value = optional(env, key);
+  if (!value) {
+    if (required) throw new Error(`env ${key} missing/unfilled`);
+    return '';
+  }
+  if (!PROXY_KEY_RE.test(value)) throw new Error(`env ${key} must be 64 lowercase hexadecimal characters`);
+  return value;
 }
 
 function parseUrl(raw, key, { production, originOnly = false, required = true } = {}) {
@@ -38,11 +51,6 @@ function parseUrl(raw, key, { production, originOnly = false, required = true } 
   return originOnly ? url.origin : url.toString().replace(/\/$/, '');
 }
 
-function evmAddress(value, key) {
-  if (!/^0x[a-fA-F0-9]{40}$/.test(String(value || ''))) throw new Error(`env ${key} must be an EVM address`);
-  return value;
-}
-
 function stellarAccount(value, key) {
   if (!StrKey.isValidEd25519PublicKey(String(value || ''))) {
     throw new Error(`env ${key} must be a Stellar G address`);
@@ -62,10 +70,29 @@ function nonEnumerable(target, key, value) {
   Object.defineProperty(target, key, { value, enumerable: false, writable: false });
 }
 
-export function loadConfig(env = process.env) {
-  const facts = loadDeploymentFacts();
+function activeImmutableAddress(env, key, canonical, baseCrossChainAvailable) {
+  if (!baseCrossChainAvailable) return canonical;
+  const configured = optional(env, key);
+  if (!configured) return canonical;
+  let checked;
+  try {
+    checked = getAddress(configured);
+  } catch {
+    throw new Error(`env ${key} must be a checksummed EVM address`);
+  }
+  if (checked !== configured) throw new Error(`env ${key} must be a checksummed EVM address`);
+  if (checked !== canonical) throw new Error(`env ${key} disagrees with approved deployment facts`);
+  return canonical;
+}
+
+export function loadConfig(
+  env = process.env,
+  { loadDeploymentFactsFn = loadDeploymentFacts } = {},
+) {
+  const facts = loadDeploymentFactsFn();
   const mode = env.NODE_ENV || 'development';
   const production = mode === 'production' || mode === 'staging';
+  const baseCrossChainAvailable = facts.base.baseCrossChainAvailable === true;
 
   const sorobanRpcUrl = immutableValue(env, 'SOROBAN_RPC_URL', facts.stellar.rpcUrl, {
     production,
@@ -77,12 +104,23 @@ export function loadConfig(env = process.env) {
     production,
     validate: stellarAccount,
   });
-  const yieldRouterAddress = immutableValue(env, 'YIELD_ROUTER_ADDRESS', facts.base.yieldRouterAddress, {
-    production,
-    validate: evmAddress,
-    equal: (a, b) => a.toLowerCase() === b.toLowerCase(),
-  });
-  const baseRpcUrl = parseUrl(env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org', 'BASE_SEPOLIA_RPC_URL', { production });
+  // Deployment records are the only Base execution authority. Environment values may configure
+  // connectivity after an approved record is active, but can never select a router or generation.
+  const yieldRouterAddress = activeImmutableAddress(
+    env,
+    'YIELD_ROUTER_ADDRESS',
+    facts.base.yieldRouterAddress,
+    baseCrossChainAvailable,
+  );
+  const baseExitSweeperAddress = activeImmutableAddress(
+    env,
+    'BASE_EXIT_SWEEPER_ADDRESS',
+    facts.base.baseExitSweeperAddress,
+    baseCrossChainAvailable,
+  );
+  const baseRpcUrl = baseCrossChainAvailable
+    ? parseUrl(env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org', 'BASE_SEPOLIA_RPC_URL', { production })
+    : null;
   const irisUrl = parseUrl(need(env, 'IRIS_URL'), 'IRIS_URL', { production });
   const publicOrigin = parseUrl(optional(env, 'RELAYER_PUBLIC_ORIGIN'), 'RELAYER_PUBLIC_ORIGIN', {
     production,
@@ -98,12 +136,29 @@ export function loadConfig(env = process.env) {
   const reporterSchema = 1;
 
   const relayerStellarSecret = need(env, 'RELAYER_STELLAR_SECRET');
-  const relayerBasePrivkey = need(env, 'RELAYER_BASE_PRIVKEY');
-  const zerodevProjectId = need(env, 'ZERODEV_PROJECT_ID');
-  const proxyKey = production ? need(env, 'RELAYER_PROXY_KEY') : optional(env, 'RELAYER_PROXY_KEY');
+  const relayerBasePrivkey = baseCrossChainAvailable
+    ? need(env, 'RELAYER_BASE_PRIVKEY') : optional(env, 'RELAYER_BASE_PRIVKEY');
+  const zerodevProjectId = baseCrossChainAvailable
+    ? need(env, 'ZERODEV_PROJECT_ID') : optional(env, 'ZERODEV_PROJECT_ID');
+  const allowOpenProxy = !production && env.RELAYER_ALLOW_OPEN_PROXY === '1';
+  const proxyKey = proxyKeyValue(env, 'RELAYER_PROXY_KEY', {
+    production,
+    required: production || !allowOpenProxy,
+  });
+  const proxyKeyPrevious = proxyKeyValue(env, 'RELAYER_PROXY_KEY_PREVIOUS');
+  if (proxyKey && proxyKeyPrevious && proxyKey === proxyKeyPrevious) {
+    throw new Error('env RELAYER_PROXY_KEY_PREVIOUS must differ from RELAYER_PROXY_KEY');
+  }
   const reporterSecret = production ? need(env, 'AGENT_INDEX_REPORTER_SECRET') : optional(env, 'AGENT_INDEX_REPORTER_SECRET');
   const storePath = env.RELAYER_STORE_PATH || './.relayer-store.dev.json';
   const dbPath = production ? need(env, 'RELAYER_DB_PATH') : optional(env, 'RELAYER_DB_PATH');
+  const sessionKeyringRaw = optional(env, 'RELAYER_SESSION_KEY_ENCRYPTION_KEYS');
+  if (dbPath && !sessionKeyringRaw) {
+    throw new Error('env RELAYER_SESSION_KEY_ENCRYPTION_KEYS missing/unfilled');
+  }
+  const sessionKeyCipher = sessionKeyringRaw
+    ? createSecretEnvelope(parseSecretKeyring(sessionKeyringRaw))
+    : undefined;
   const agentIndex = createAgentIndexConfig({
     endpoint: reporterUrl,
     secret: reporterSecret,
@@ -118,10 +173,15 @@ export function loadConfig(env = process.env) {
   if (kp.publicKey() !== relayerStellarPublic) {
     throw new Error('env RELAYER_STELLAR_SECRET does not match RELAYER_STELLAR_PUBLIC');
   }
-  const account = privateKeyToAccount(relayerBasePrivkey.startsWith('0x') ? relayerBasePrivkey : `0x${relayerBasePrivkey}`);
-  const publicClient = createPublicClient({ chain: baseSepolia, transport: http(baseRpcUrl) });
-  const walletClient = createWalletClient({ account, chain: baseSepolia, transport: http(baseRpcUrl) });
-  const bundlerRpcUrl = `https://rpc.zerodev.app/api/v3/${zerodevProjectId}/chain/${baseSepolia.id}`;
+  const account = baseCrossChainAvailable
+    ? privateKeyToAccount(relayerBasePrivkey.startsWith('0x') ? relayerBasePrivkey : `0x${relayerBasePrivkey}`)
+    : null;
+  const publicClient = baseCrossChainAvailable
+    ? createPublicClient({ chain: baseSepolia, transport: http(baseRpcUrl) }) : undefined;
+  const walletClient = baseCrossChainAvailable
+    ? createWalletClient({ account, chain: baseSepolia, transport: http(baseRpcUrl) }) : undefined;
+  const bundlerRpcUrl = baseCrossChainAvailable
+    ? `https://rpc.zerodev.app/api/v3/${zerodevProjectId}/chain/${baseSepolia.id}` : null;
 
   const secrets = Object.freeze({
     stellarRelayer: Boolean(relayerStellarSecret),
@@ -129,14 +189,17 @@ export function loadConfig(env = process.env) {
     zeroDevProject: Boolean(zerodevProjectId),
     proxyAuth: Boolean(proxyKey),
     reporterAuth: Boolean(reporterSecret),
+    sessionKeyEncryption: Boolean(sessionKeyCipher),
   });
+  const baseRelay = baseCrossChainAvailable && secrets.baseRelayer && secrets.zeroDevProject;
   const readiness = Object.freeze({
     stellarRelay: secrets.stellarRelayer,
-    baseRelay: secrets.baseRelayer && secrets.zeroDevProject,
+    baseRelay,
     proxyAuth: secrets.proxyAuth,
     reporter: Boolean(reporterUrl) && secrets.reporterAuth,
-    ready: secrets.stellarRelayer && secrets.baseRelayer && secrets.zeroDevProject
-      && (!production || (agentIndex.ready && secrets.proxyAuth)),
+    ready: secrets.stellarRelayer
+      && (!production || (agentIndex.ready && secrets.proxyAuth))
+      && (!baseCrossChainAvailable || baseRelay),
   });
   const reporter = Object.freeze({ url: reporterUrl, schema: reporterSchema, hasSecret: secrets.reporterAuth });
   const base = {
@@ -147,8 +210,12 @@ export function loadConfig(env = process.env) {
     tokenMessengerV2Address: BASE_SEPOLIA.tokenMessengerV2,
     usdcAddress: facts.base.usdcAddress,
     yieldRouterAddress,
+    baseExitSweeperAddress,
     allowedPools: facts.base.allowedPools,
     mandatePolicy: facts.base.mandatePolicy,
+    baseCrossChainAvailable,
+    unavailableReason: facts.base.unavailableReason,
+    hardenedDeployment: facts.base.hardenedDeployment,
   };
   nonEnumerable(base, 'publicClient', publicClient);
   nonEnumerable(base, 'walletClient', walletClient);
@@ -156,7 +223,8 @@ export function loadConfig(env = process.env) {
     version: 1,
     networkId: facts.stellar.networkId,
     publicOrigin: publicOrigin || null,
-    facts: Object.freeze({ stellar: facts.stellar, base: facts.base }),
+    baseCrossChainAvailable,
+    unavailableReason: facts.base.unavailableReason,
     reporter,
     secrets,
     readiness,
@@ -193,7 +261,7 @@ export function loadConfig(env = process.env) {
     irisUrl,
     dbPath,
     publicOrigin: publicOrigin || null,
-    facts: publicRuntime.facts,
+    facts: Object.freeze({ stellar: facts.stellar, base: facts.base }),
     reporter,
     secrets,
     readiness,
@@ -204,7 +272,14 @@ export function loadConfig(env = process.env) {
   };
   nonEnumerable(config, 'store', createFileStore(storePath));
   nonEnumerable(config, 'agentIndex', agentIndex);
-  nonEnumerable(config, 'runtime', Object.freeze({ proxyKey, reporterSecret, debugErrors: env.RELAYER_DEBUG_ERRORS === '1' }));
+  nonEnumerable(config, 'sessionKeyCipher', sessionKeyCipher);
+  nonEnumerable(config, 'runtime', Object.freeze({
+    proxyKey,
+    proxyKeyPrevious,
+    reporterSecret,
+    allowOpenProxy,
+    debugErrors: env.RELAYER_DEBUG_ERRORS === '1',
+  }));
   nonEnumerable(config, 'toJSON', () => publicRuntime);
   return Object.freeze(config);
 }

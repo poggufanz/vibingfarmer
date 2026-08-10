@@ -175,9 +175,9 @@ export default async function handler(req, res) {
       rpcServer,
     })
     return res.end(JSON.stringify(out))
-  } catch (err) {
-    console.error('[api/faucet] error:', err?.message || err)
+  } catch {
+    console.error('[api/faucet] FAUCET_REQUEST_FAILED')
     res.statusCode = 502
-    return res.end(JSON.stringify({ error: 'Faucet failed' }))
+    return res.end(JSON.stringify({ error: 'Faucet failed', code: 'VF_FAUCET_FAILED' }))
   }
 }

@@ -2,8 +2,16 @@ import { createHash, randomUUID } from 'node:crypto';
 
 const OUTBOX_STATUSES = new Set(['pending', 'leased', 'delivered', 'dead']);
 const LIFECYCLE_STATUSES = new Set(['planned', 'submitted', 'confirmed', 'failed', 'unknown']);
+const SAFE_FAILURE_CODES = new Set([
+  'delivery_failed', 'reporter_delivery_failed', 'reporter_unavailable', 'lease_expired',
+]);
 const REQUEST_FIELDS = new Set(['identity', 'expectedSequence', 'lifecycle']);
-const IDENTITY_FIELDS = new Set(['networkId', 'owner', 'bindingId', 'allocationId', 'childId']);
+const IDENTITY_FIELDS = new Set([
+  'networkId', 'owner', 'bindingId', 'executionId', 'allocationId', 'childId',
+]);
+const RECOVERY_IDENTITY_FIELDS = new Set([
+  'networkId', 'bindingId', 'executionId', 'allocationId', 'childId',
+]);
 const LIFECYCLE_FIELDS = new Set(['sequence', 'status', 'evidence', 'observedAt']);
 
 function exactObject(value, fields, label) {
@@ -17,6 +25,15 @@ function exactObject(value, fields, label) {
 function requireText(value, field) {
   if (typeof value !== 'string' || !value) throw new Error(`${field} is required`);
   return value;
+}
+
+function safeFailureCode(value) {
+  return typeof value === 'string'
+    && value.length <= 64
+    && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(value)
+    && SAFE_FAILURE_CODES.has(value)
+    ? value
+    : 'delivery_failed';
 }
 
 function rejectSensitive(value, path = '$', seen = new WeakSet()) {
@@ -43,6 +60,12 @@ function canonicalJson(value) {
   const encoded = JSON.stringify(value);
   if (encoded === undefined) throw new Error('outbox report contains an unsupported value');
   return encoded;
+}
+
+function recoveryIdentity(identity) {
+  return Object.fromEntries([...RECOVERY_IDENTITY_FIELDS].map((field) => [
+    field, requireText(identity?.[field], `identity.${field}`),
+  ]));
 }
 
 function validateReport(report) {
@@ -89,22 +112,41 @@ export function createAssociationOutbox(db, {
   maxAttempts = 5,
   now = () => Date.now(),
   leaseToken = randomUUID,
+  registerTransactionEnqueue = null,
 } = {}) {
   if (!Number.isSafeInteger(maxAttempts) || maxAttempts <= 0) {
     throw new Error('outbox maxAttempts must be a positive safe integer');
   }
+  const legacyRows = db.prepare('SELECT id,identity_key,report_json FROM association_outbox').all();
+  if (legacyRows.length > 0) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of legacyRows) {
+        const report = JSON.parse(row.report_json);
+        const nextKey = canonicalJson(recoveryIdentity(report.identity));
+        if (row.identity_key !== nextKey) {
+          db.prepare('UPDATE association_outbox SET identity_key=? WHERE id=?').run(nextKey, row.id);
+        }
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw new Error('association outbox legacy identity migration conflict', { cause: error });
+    }
+  }
 
-  function enqueue(input, { transaction = true } = {}) {
+  function enqueueInternal(input, { transaction = true } = {}) {
     const reports = Array.isArray(input) ? input : [input];
     if (reports.length === 0) throw new Error('outbox enqueue requires a lifecycle report');
     const prepared = reports.map((report) => {
       validateReport(report);
       const reportJson = canonicalJson(report);
       const digest = createHash('sha256').update(reportJson).digest('hex');
-      const identityKey = canonicalJson(report.identity);
+      const identityKey = canonicalJson(recoveryIdentity(report.identity));
       const idempotencyKey = canonicalJson([
         report.identity.networkId,
         report.identity.bindingId,
+        report.identity.executionId,
         report.identity.allocationId,
         report.identity.childId,
         report.lifecycle.sequence,
@@ -161,6 +203,17 @@ export function createAssociationOutbox(db, {
       throw error;
     }
     return Array.isArray(input) ? outputs : outputs[0];
+  }
+
+  function enqueue(input) {
+    return enqueueInternal(input, { transaction: true });
+  }
+
+  if (registerTransactionEnqueue != null) {
+    if (typeof registerTransactionEnqueue !== 'function') {
+      throw new Error('association transaction registration is invalid');
+    }
+    registerTransactionEnqueue((input) => enqueueInternal(input, { transaction: false }));
   }
 
   function leaseNext({ now: leaseNow = now(), leaseMs = 30_000 } = {}) {
@@ -235,22 +288,24 @@ export function createAssociationOutbox(db, {
       status: dead ? 'dead' : 'pending',
       timestamp,
       retryAt: dead ? null : retryAt,
-      error: String(error).slice(0, 160),
+      error: safeFailureCode(error),
     });
   }
 
   function markDead({ id, leaseToken: token, error = 'delivery failed', now: timestamp = now() }) {
     return guardedTransition({
-      id, leaseToken: token, status: 'dead', timestamp, error: String(error).slice(0, 160),
+      id, leaseToken: token, status: 'dead', timestamp, error: safeFailureCode(error),
     });
   }
 
-  function status(childId) {
-    requireText(childId, 'childId');
+  function status(identity) {
+    exactObject(identity, RECOVERY_IDENTITY_FIELDS, 'recovery identity');
+    const identityKey = canonicalJson(recoveryIdentity(identity));
     return db.prepare(
-      'SELECT sequence, status, attempts, report_json FROM association_outbox WHERE child_id = ? ORDER BY sequence ASC, id ASC'
-    ).all(childId).map((row) => ({
+      'SELECT sequence, status, attempts, report_json FROM association_outbox WHERE identity_key = ? ORDER BY sequence ASC, id ASC'
+    ).all(identityKey).map((row) => ({
       allocationId: JSON.parse(row.report_json).identity.allocationId,
+      executionId: JSON.parse(row.report_json).identity.executionId,
       sequence: row.sequence,
       status: row.status,
       attempts: row.attempts,

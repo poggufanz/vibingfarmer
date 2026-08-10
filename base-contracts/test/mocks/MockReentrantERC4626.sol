@@ -76,6 +76,10 @@ contract MockReentrantERC4626 is ERC20 {
         _approve(address(this), spender, shares);
     }
 
+    function approveToken(IERC20 token, address spender, uint256 amount) external {
+        token.forceApprove(spender, amount);
+    }
+
     function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
         uint256 pulled = assets - depositPullShortfall;
         underlying.safeTransferFrom(msg.sender, address(this), pulled);

@@ -9,6 +9,25 @@ import stellarRelayProxy from './api/stellar-relay.js'
 import faucetProxy from './api/faucet.js'
 import vfRouter from './api/vf/_router.js'
 import onrampSessionProxy from './api/onramp-session.js'
+import vfCrossProxy from './api/vf-cross.js'
+import { withJsonBody } from './api/_viteAdapter.js'
+import agentIndexViteUnavailable from './api/agent-index-vite-unavailable.js'
+
+const vfCrossViteProxy = withJsonBody(vfCrossProxy)
+
+// Connect strips the mounted `/api/agent-index` prefix before invoking this middleware. The
+// browser imports the pure recovery decision module at `/api/agent-index/recovery.js`, so allow
+// only that exact GET path (plus Vite's cache-busting query) to continue into Vite's transform
+// pipeline. Every other Agent Index request remains fail-closed at the generic 503 handler,
+// including arbitrary `.js`-looking paths.
+function agentIndexViteUnavailableMiddleware(req, res, next) {
+  const requestUrl = typeof req?.url === 'string' ? req.url : ''
+  const requestPath = requestUrl.split('?', 1)[0]
+  if (req?.method === 'GET' && requestPath === '/recovery.js' && typeof next === 'function') {
+    return next()
+  }
+  return agentIndexViteUnavailable(req, res, next)
+}
 
 // Repo root (parent of frontend/) — needed below so the dev server's fs.allow boundary covers
 // frontend/src/stellar/vaultReads.js's cross-package import of keeper/src/apr.js.
@@ -35,9 +54,19 @@ const appVersion = (() => {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '') // all vars (incl. non-VITE server-side)
-  if (env.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = env.DEEPSEEK_API_KEY
-  if (env.TAVILY_API_KEY) process.env.TAVILY_API_KEY = env.TAVILY_API_KEY
-  if (env.ALLOWED_ORIGIN) process.env.ALLOWED_ORIGIN = env.ALLOWED_ORIGIN
+  const passthrough = [
+    'DEEPSEEK_API_KEY',
+    'TAVILY_API_KEY',
+    'ALLOWED_ORIGIN',
+    'ALLOWED_EXTENSION_ORIGINS',
+    'NODE_ENV',
+    'TRUST_PROXY_HOPS',
+    'RELAYER_ORIGIN',
+    'RELAYER_PROXY_KEY',
+  ]
+  for (const key of passthrough) {
+    if (env[key]) process.env[key] = env[key]
+  }
 
   // Soroban gasless relay (sub-project 2) — server-side only, never in the client bundle.
   if (env.STELLAR_RELAYER_SECRET) process.env.STELLAR_RELAYER_SECRET = env.STELLAR_RELAYER_SECRET
@@ -78,6 +107,8 @@ export default defineConfig(({ mode }) => {
   const apiProxyPlugin = {
     name: 'api-proxy',
     configureServer(s) {
+      s.middlewares.use('/api/vf-cross', vfCrossViteProxy)
+      s.middlewares.use('/api/agent-index', agentIndexViteUnavailableMiddleware)
       s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
@@ -86,6 +117,8 @@ export default defineConfig(({ mode }) => {
       s.middlewares.use('/api/onramp-session', onrampSessionProxy)
     },
     configurePreviewServer(s) {
+      s.middlewares.use('/api/vf-cross', vfCrossViteProxy)
+      s.middlewares.use('/api/agent-index', agentIndexViteUnavailableMiddleware)
       s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)

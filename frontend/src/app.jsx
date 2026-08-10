@@ -11,6 +11,19 @@ import React, {
 } from 'react'
 import { lazy, Suspense } from 'react'
 import { isDevMode } from './devFlag.js'
+import { assignCrewPersona } from './crew/personas.js'
+import { resumePendingCctpTransfers } from './cctp/resumeTransfers.js'
+import {
+  postFarmPersistedIntent,
+  postFarmAttach,
+  pollFarmStatus,
+  postUnwindAttach,
+  pollUnwindStatus,
+} from './base/relayerClient.js'
+import {
+  reconcileUnwindUserOperation,
+  readKnownUnwindUserOperation,
+} from './base/unwindEvidence.js'
 
 import { Icon, Sidebar, TopBar, STEPS } from './components.jsx'
 // Strategy Task 13 (Pocket Crew redesign, Wave 5) — the production `/strategy` route.
@@ -34,6 +47,7 @@ import { shortAddr } from './screens.jsx'
 import { MemoryModal, makeInitialExecState } from './agents.jsx'
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel.jsx'
 import { applyTheme, isLightTheme, normalizeTheme } from './design/theme.js'
+import { buildCrewPersonas } from './crew/buildCrewPersonas.js'
 
 import {
   connectActiveAccount,
@@ -56,7 +70,15 @@ import {
   requestRecoveryAction,
   resolveRecoveryCredential,
 } from './strategy/recoveryClient.js'
-import { projectRecoveryReceipt } from './strategy/receiptProjection.js'
+import { projectBaseRecoveryBundle, projectRecoveryReceipt } from './strategy/receiptProjection.js'
+import {
+  createBaseRecoveryActionRunner,
+  executeBaseRecovery,
+  pollBaseRecoveryEvidence,
+  readBaseRecoveryEvidence,
+  requestBaseRecoveryClaim,
+} from './strategy/baseRecoveryClient.js'
+import { baseRecoveryIdentityKey } from './strategy/baseRecoveryIdentity.js'
 import { readContract } from './stellar/client.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS, BASE_POOL_CATALOG } from './config.js'
 import {
@@ -77,8 +99,6 @@ import {
   buildBaseLegContext,
   applyBaseLegOutcome,
   mapBaseLegEvent,
-  baseMandateProbeAllocation,
-  baseMandateAllocationsForPlan,
   baseMandateRequiresReview,
 } from './mergeFlowHelpers.js'
 import { getMandateStatus } from './base/relayerClient.js'
@@ -122,6 +142,11 @@ const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
 import { loadDeviceBasePositions, loadIndexedBasePositions } from './base/dashboardPositions.js'
 import { readIdleUsdc } from './base/readPositions.js'
+import {
+  BASE_CROSS_CHAIN_AVAILABLE,
+  BASE_CROSS_CHAIN_UNAVAILABLE_REASON,
+  assertBaseCrossChainAvailable,
+} from './base/config.js'
 // Task 10 (IA remap) — HomePage is retired; `/home` now mounts MyMoneyRoute directly (the one
 // portfolio authority), and `/agent` becomes the crew's own live console below.
 // My Money Task 13 (Pocket Crew redesign, Wave 5) — the production My money route. Replaces
@@ -487,6 +512,26 @@ export function createEpochBoundRun({ captured, getCurrent, onEvent = () => {} }
   }
 }
 
+/** Replace the owner-scoped money read capability. Aborting the previous controller stops its
+ * downstream queues; the owner/revision commit guards remain a second line of defense. */
+export function replaceMoneyFetchAbortController(controllerRef, { parentSignal } = {}) {
+  controllerRef.current?.abort()
+  const controller = new AbortController()
+  if (parentSignal?.aborted) {
+    controller.abort(parentSignal.reason)
+  } else if (parentSignal) {
+    const abortFromParent = () => controller.abort(parentSignal.reason)
+    parentSignal.addEventListener('abort', abortFromParent, { once: true })
+    controller.signal.addEventListener(
+      'abort',
+      () => parentSignal.removeEventListener('abort', abortFromParent),
+      { once: true }
+    )
+  }
+  controllerRef.current = controller
+  return controller
+}
+
 /** Account-epoch-scoped constructor input for the raw recovery orchestrator. Keeping this guard at
  * the App boundary prevents a late recorder callback from reaching React even if an internal
  * orchestrator event source is added later without its own account assertion. */
@@ -846,6 +891,82 @@ export function createRecoveryActionRunner({
   }
 }
 
+/**
+ * Convert one failed Base receipt outcome into an exact public recovery projection. The identity
+ * must already exist on the Task-13 outcome; this boundary never reconstructs it from run IDs,
+ * allocation positions, or job IDs.
+ */
+export async function projectBaseOutcomeRecovery({
+  outcome,
+  owner,
+  signal,
+  readEvidence = readBaseRecoveryEvidence,
+  projectEvidence = projectBaseRecoveryBundle,
+}) {
+  let key
+  try {
+    key = baseRecoveryIdentityKey(outcome?.identity)
+  } catch {
+    return null
+  }
+  try {
+    const bundle = await readEvidence({ identity: outcome.identity, signal })
+    if (bundle?.owner !== owner) throw new Error('Base evidence owner mismatch')
+    const projection = projectEvidence(bundle)
+    if (baseRecoveryIdentityKey(projection?.identity) !== key) {
+      throw new Error('Base evidence identity mismatch')
+    }
+    return { key, projection }
+  } catch (error) {
+    if (error?.name === 'AbortError') return null
+    const publicEvidence = outcome?.evidence ?? {}
+    const phases = {}
+    if (/^[0-9a-f]{64}$/.test(publicEvidence.burnHash || '')) {
+      phases.cctp_burn = {
+        state: 'unknown',
+        evidence: { burnTxHash: publicEvidence.burnHash },
+      }
+    }
+    if (/^0x[0-9a-f]{64}$/.test(publicEvidence.mintTxHash || '')) {
+      phases.cctp_mint = {
+        state: 'unknown',
+        evidence: { mintTxHash: publicEvidence.mintTxHash },
+      }
+    }
+    const userOpHash = /^0x[0-9a-f]{64}$/.test(publicEvidence.userOpHash || '')
+      ? publicEvidence.userOpHash
+      : null
+    const transactionHash = /^0x[0-9a-f]{64}$/.test(publicEvidence.depositTxHash || '')
+      ? publicEvidence.depositTxHash
+      : null
+    if (userOpHash || transactionHash) {
+      phases.base_deposit = {
+        state: 'unknown',
+        evidence: {
+          ...(userOpHash ? { userOpHash } : {}),
+          ...(transactionHash ? { transactionHash } : {}),
+        },
+      }
+    }
+    return {
+      key,
+      projection: {
+        action: 'manual-review',
+        phase: null,
+        reasonCode: 'base-evidence-unavailable',
+        identity: outcome.identity,
+        version: 0,
+        phases,
+        custody: {
+          location:
+            typeof outcome.custody?.location === 'string' ? outcome.custody.location : 'unknown',
+          confirmed: outcome.custody?.confirmed === true,
+        },
+      },
+    }
+  }
+}
+
 // Final review, Fix 2: the cached envelope's SHAPE, not just its data, can go stale across a
 // deploy. A pre-Task-10 cache stamped `discovery.agents[].baseChildren` nowhere at all; under the
 // current `sourceUnknown = discovery?.status !== 'complete'` predicate (readOwnerMoney.js:635) a
@@ -889,7 +1010,17 @@ export function buildMoneySnapshot(reads) {
   if (!reads) return null
   return {
     ...aggregateOwnerPositions(reads),
+    owner: reads.owner ?? null,
+    networkId: reads.networkId ?? null,
     agents: reads.agents ?? [],
+    // JSON-safe owner-wide evidence retained from readOwnerMoney. The internal subtotal fields
+    // are BigInts and intentionally stay outside the cacheable snapshot; these exact string-money
+    // groups plus their coverage axes are the complete projection input Crew needs.
+    baseGroups: reads.baseGroups ?? null,
+    associationCoverage: reads.associationCoverage ?? null,
+    baseSourceCoverage: reads.baseSourceCoverage ?? null,
+    basePositionCoverage: reads.basePositionCoverage ?? null,
+    baseValuationKind: reads.baseValuationKind ?? null,
     checkedAt: reads.checkedAt ?? null,
     confirmedLedger: reads.confirmedLedger ?? null,
     confirmedBlock: reads.confirmedBlock ?? null,
@@ -936,9 +1067,10 @@ export async function fetchMyMoneySnapshot({
   now = Date.now(),
   discoverScopes = discoverOwnerScopes,
   readMoney = readOwnerMoney,
+  signal,
 }) {
-  const discovery = await discoverScopes({ owner })
-  const reads = await readMoney({ owner, discovery, now })
+  const discovery = await discoverScopes(signal ? { owner, signal } : { owner })
+  const reads = await readMoney({ owner, discovery, now, ...(signal ? { signal } : {}) })
   return { discovery, money: buildMoneySnapshot(reads) }
 }
 
@@ -963,12 +1095,13 @@ export async function guardedMoneyFetch({
   currentOwnerRef,
   revisionRef,
   onCommit,
+  signal,
 }) {
   const readToken = nextReconciliationToken(revisionRef.current)
   revisionRef.current = readToken
   let snapshot
   try {
-    snapshot = await fetchSnapshot({ owner, now })
+    snapshot = await fetchSnapshot({ owner, now, ...(signal ? { signal } : {}) })
   } catch {
     return false // a failed read leaves the last-good state in place; buildMyMoneyModel's own cache
     // fallback (still fed from moneyCacheRef) is what downgrades it to stale over time.
@@ -1004,9 +1137,9 @@ export async function guardedMoneyFetch({
  */
 export function moneyFetchArgs(
   owner,
-  { currentOwnerRef, revisionRef, fetchSnapshot = fetchMyMoneySnapshot }
+  { currentOwnerRef, revisionRef, fetchSnapshot = fetchMyMoneySnapshot, signal }
 ) {
-  return { owner, now: Date.now(), fetchSnapshot, currentOwnerRef, revisionRef }
+  return { owner, now: Date.now(), fetchSnapshot, currentOwnerRef, revisionRef, signal }
 }
 
 // Task 10, carried finding C1: classifyKeeperAutomation (money/automationEvidence.js:18,33) only
@@ -1094,6 +1227,21 @@ export function composeV3Decision(raw, { plan, reviewedBudgets, agentInits }) {
     reviewedAgentInits: agentInits,
     checkedAt: Math.floor(Date.now() / 1000),
   }
+}
+
+export function buildPersonaByAddress(moneyDiscovery) {
+  const assigned = []
+  const seen = new Set()
+  const networkId = typeof moneyDiscovery?.networkId === 'string' ? moneyDiscovery.networkId : ''
+  for (const discoveryRow of moneyDiscovery?.agents || []) {
+    const address = discoveryRow?.address
+    if (typeof address !== 'string' || address.length === 0 || seen.has(address)) continue
+    const assignment = assignCrewPersona({ networkId, discoveryRow })
+    if (assignment.state !== 'assigned') continue
+    assigned.push([address, assignment.persona])
+    seen.add(address)
+  }
+  return Object.freeze(Object.fromEntries(assigned))
 }
 
 /* ---------- App ---------- */
@@ -1193,6 +1341,9 @@ const App = () => {
   const [recoveryPendingAllocations, setRecoveryPendingAllocations] = useS(() => new Set())
   const recoveryMappingsRef = useR(new Map())
   const recoveryRunnerRef = useR(null)
+  const [baseRecoveryByIdentity, setBaseRecoveryByIdentity] = useS({})
+  const [baseRecoveryPendingIdentities, setBaseRecoveryPendingIdentities] = useS(() => new Set())
+  const baseRecoveryRunnerRef = useR(null)
   const recoveryLeaseOwnerRef = useR(
     `vf-recovery-${globalThis.crypto?.randomUUID?.() || Date.now()}`
   )
@@ -1285,6 +1436,7 @@ const App = () => {
   // `useState` call's textual position doesn't affect hook order/correctness as long as it fires
   // unconditionally every render, same as every other hook in this component.
   const [moneyDiscovery, setMoneyDiscovery] = useS(null)
+  const personaByAddress = useM(() => buildPersonaByAddress(moneyDiscovery), [moneyDiscovery])
   // Which agents' vault shares a "position" reads. Priority:
   //   view-as (dev) → the impersonated address's OWN shares;
   //   real run      → every agent this owner's discovery envelope has proven belongs to this
@@ -2332,6 +2484,10 @@ const App = () => {
   // ZeroDev/viem chain behind it) out of the eager bundle — mirrors orchestrator.js's
   // baseLeg.js gating (Task 8).
   const handleBaseWithdrawClick = async () => {
+    if (!BASE_CROSS_CHAIN_AVAILABLE) {
+      setBaseWithdrawError(BASE_CROSS_CHAIN_UNAVAILABLE_REASON)
+      return
+    }
     const captured = activeAccount
     assertActiveAccount(captured)
     setBaseWithdrawError(null)
@@ -2404,6 +2560,10 @@ const App = () => {
   // fabricates a position: `positions` is exactly what this read returns, [] when the ceremony
   // succeeds but nothing is found there.
   async function handleRecoverBaseAccount() {
+    if (!BASE_CROSS_CHAIN_AVAILABLE) {
+      setBaseWithdrawError(BASE_CROSS_CHAIN_UNAVAILABLE_REASON)
+      return
+    }
     if (!realAddress || !activeAccount) return
     const captured = activeAccount
     assertActiveAccount(captured)
@@ -2555,9 +2715,32 @@ const App = () => {
   const moneyRevisionRef = useR(null) // freshness.js's nextReconciliationToken/isReconciliationCurrent
   const realAddressRef = useR(realAddress)
   const moneyCacheRef = useR({})
+  const moneyFetchAbortRef = useR(null)
+  // One controller spans the connected account's whole lifetime. Automatic polls get linked
+  // child controllers so replacing a poll cannot cancel an action reconciliation; every action
+  // read receives this owner controller directly and is stopped immediately on switch/disconnect.
+  const moneyOwnerAbortRef = useR(null)
+  const moneyMountedEpochRef = useR(null)
+
+  useE(() => {
+    const mountedEpoch = { active: true }
+    moneyMountedEpochRef.current = mountedEpoch
+    return () => {
+      mountedEpoch.active = false
+      if (moneyMountedEpochRef.current !== mountedEpoch) return
+      if (!moneyOwnerAbortRef.current) moneyOwnerAbortRef.current = new AbortController()
+      moneyOwnerAbortRef.current.abort()
+      activeAccountRef.current = null
+      realAddressRef.current = null
+    }
+  }, [])
 
   function installActiveWalletAccount(next) {
     const previous = activeAccountRef.current
+    if (previous !== (next || null)) {
+      moneyOwnerAbortRef.current?.abort()
+      moneyOwnerAbortRef.current = new AbortController()
+    }
     if (previous && previous !== next) {
       const changed = Object.assign(new Error('The active wallet account changed.'), {
         code: 'ACTIVE_ACCOUNT_CHANGED',
@@ -2571,6 +2754,9 @@ const App = () => {
       setRunReceipt(null)
       setRecoveryByAllocation({})
       setRecoveryPendingAllocations(new Set())
+      setBaseRecoveryByIdentity({})
+      setBaseRecoveryPendingIdentities(new Set())
+      baseRecoveryRunnerRef.current = null
       recoveryMappingsRef.current = new Map()
       setExecMap({})
       setOpenAgentId(null)
@@ -2595,6 +2781,8 @@ const App = () => {
       setMoneyStopAccessAddress(null)
       setMoneyRecovery(null)
       moneyCacheRef.current = {}
+      moneyFetchAbortRef.current?.abort()
+      moneyFetchAbortRef.current = null
       setScopes([])
       setAgentData({ positions: {}, alerts: [], lastUpdated: null })
       positionsAgentsRef.current = undefined
@@ -2608,6 +2796,30 @@ const App = () => {
   }
 
   useE(() => onActiveAccountChange(installActiveWalletAccount), [])
+
+  // Recovery deliberately receives only the public owner and abort signal.  It cannot acquire a
+  // signer from App, so a reload can reconcile evidence but can never repeat a burn or UserOp.
+  useE(() => {
+    if (!activeAccount?.address) return undefined
+    const controller = new AbortController()
+    const resumeOptions = {
+      signal: controller.signal,
+      postFarmIntent: postFarmPersistedIntent,
+      postFarmAttach,
+      pollForwardStatus: pollFarmStatus,
+      postUnwindAttach,
+      pollUnwindStatus,
+      reconcileUnwindUserOp: (params) =>
+        reconcileUnwindUserOperation({
+          ...params,
+          readReceipt: () => readKnownUnwindUserOperation(params),
+        }),
+    }
+    // Resume dependencies are executable seams, never serializable recovery data.
+    Object.defineProperty(resumeOptions, 'toJSON', { enumerable: false, value: () => ({}) })
+    resumePendingCctpTransfers(activeAccount.address, resumeOptions).catch(() => {})
+    return () => controller.abort()
+  }, [activeAccount?.address])
 
   const assertActiveAccount = (captured) =>
     assertCurrentActiveAccount({ captured, current: activeAccountRef.current })
@@ -2626,6 +2838,16 @@ const App = () => {
   // only at flow reset) and is re-derived on every render, including every 15s poll tick, even on
   // routes other than /agent. Memoized on the only input that can change its output.
   const crewDecisions = useM(() => selectCrewDecisions(logs), [logs])
+  const crew = useM(
+    () =>
+      buildCrewPersonas({
+        moneyRead,
+        discovery: moneyDiscovery,
+      }),
+    // Owner-wide Base value/coverage can change while the same per-agent array survives an
+    // action reconciliation. The whole envelope is an input, so the whole envelope is the key.
+    [moneyRead, moneyDiscovery]
+  )
 
   function moneyProtectionSnapshot() {
     const state = lifeboatStateRef.current
@@ -2674,7 +2896,15 @@ const App = () => {
   // ALL of the guard-then-commit decision now lives in the exported guardedMoneyFetch above — this
   // is a thin wrapper, not a second copy, so a controller-level test on guardedMoneyFetch IS a test
   // of this call site.
-  async function refreshMoney(owner) {
+  async function refreshMoney(
+    owner,
+    { parentSignal = moneyOwnerAbortRef.current?.signal, actionContext = null } = {}
+  ) {
+    if (actionContext) assertMoneyActionContext(actionContext)
+    const controller = replaceMoneyFetchAbortController(moneyFetchAbortRef, {
+      parentSignal,
+    })
+    if (actionContext) assertMoneyActionContext(actionContext)
     // REFRESH-MONEY-WIRING:START -- MM13 M5, fix round 2: pinned by a source-scan test
     // (app.money.test.jsx) asserting this call passes the LIVE ref objects, not dead literals, and
     // that nothing after the spread overrides them. moneyFetchArgs itself (exported above) is
@@ -2687,8 +2917,13 @@ const App = () => {
     // `{ current: ... }` literal anywhere in this whole block) now actually covers the space a
     // plausible "add an override" refactor would use.
     await guardedMoneyFetch({
-      ...moneyFetchArgs(owner, { currentOwnerRef: realAddressRef, revisionRef: moneyRevisionRef }),
+      ...moneyFetchArgs(owner, {
+        currentOwnerRef: realAddressRef,
+        revisionRef: moneyRevisionRef,
+        signal: controller.signal,
+      }),
       onCommit: (snapshot) => {
+        if (actionContext) assertMoneyActionContext(actionContext)
         const protection = moneyProtectionSnapshot()
         const nextCache = { money: snapshot.money, discovery: snapshot.discovery, protection }
         moneyCacheRef.current = nextCache
@@ -2724,7 +2959,11 @@ const App = () => {
   // wrapping the effect if you touch it.
   useE(() => {
     let alive = true
+    const ownerController = moneyOwnerAbortRef.current
     if (!realAddress) {
+      moneyFetchAbortRef.current?.abort()
+      moneyFetchAbortRef.current = null
+      ownerController?.abort()
       moneyCacheRef.current = {}
       setMoneyDiscovery(null)
       setMoneyRead(null)
@@ -2752,6 +2991,9 @@ const App = () => {
     return () => {
       alive = false
       clearInterval(id)
+      moneyFetchAbortRef.current?.abort()
+      moneyFetchAbortRef.current = null
+      ownerController?.abort()
     }
   }, [realAddress])
   // MONEY-RELOAD-EFFECT:END
@@ -2761,29 +3003,27 @@ const App = () => {
   // back to a full refreshMoney() when the action's reconciliation never got a fresh read (e.g.
   // 'not-submitted'). Guarded the same way as refreshMoney — a wallet switch during a pending
   // action must not let its aftermath repaint the new owner's screen.
-  async function refreshMoneyAfterAction(freshReads) {
-    if (
-      !isMoneyFetchForCurrentOwner({
-        fetchOwner: realAddress,
-        currentOwner: realAddressRef.current,
-      })
-    ) {
-      return
-    }
+  async function refreshMoneyAfterAction(actionContext, freshReads) {
+    assertMoneyActionContext(actionContext)
     if (!freshReads) {
-      await refreshMoney(realAddress)
+      await refreshMoney(actionContext.owner, {
+        parentSignal: actionContext.signal,
+        actionContext,
+      })
       return
     }
+    assertMoneyActionContext(actionContext)
     const money = buildMoneySnapshot(freshReads)
     const protection = moneyProtectionSnapshot()
-    const nextCache = { money, discovery: moneyDiscovery, protection }
+    const nextCache = { money, discovery: actionContext.discovery, protection }
+    assertMoneyActionContext(actionContext)
     moneyCacheRef.current = nextCache
-    saveMoneyCache(realAddress, nextCache)
+    saveMoneyCache(actionContext.owner, nextCache)
     setMoneyRead(money)
     setMoneyModel(
       buildMyMoneyModel({
-        owner: realAddress,
-        discovery: moneyDiscovery,
+        owner: actionContext.owner,
+        discovery: actionContext.discovery,
         money,
         protection,
         cache: nextCache,
@@ -2792,8 +3032,53 @@ const App = () => {
     )
   }
 
-  function boundReadOwnerMoney() {
-    return readOwnerMoney({ owner: realAddress, discovery: moneyDiscovery, now: Date.now() })
+  function actionEpochChanged() {
+    return Object.assign(new Error('The active wallet account changed.'), {
+      code: 'ACTIVE_ACCOUNT_CHANGED',
+    })
+  }
+
+  function assertMoneyActionContext(actionContext) {
+    if (
+      !actionContext?.signal ||
+      actionContext.signal.aborted ||
+      !actionContext.mountedEpoch?.active ||
+      activeAccountRef.current !== actionContext.activeAccount ||
+      activeAccountRef.current?.epoch !== actionContext.accountEpoch ||
+      realAddressRef.current !== actionContext.owner
+    ) {
+      throw actionEpochChanged()
+    }
+    return actionContext
+  }
+
+  function isMoneyActionContextCurrent(actionContext) {
+    try {
+      assertMoneyActionContext(actionContext)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  function captureMoneyActionContext() {
+    const actionContext = Object.freeze({
+      owner: realAddress,
+      discovery: moneyDiscovery,
+      activeAccount,
+      accountEpoch: activeAccount?.epoch,
+      mountedEpoch: moneyMountedEpochRef.current,
+      signal: moneyOwnerAbortRef.current?.signal,
+    })
+    return assertMoneyActionContext(actionContext)
+  }
+
+  function createMoneyActionReader(actionContext) {
+    const { owner, discovery, signal } = assertMoneyActionContext(actionContext)
+    return () => {
+      assertMoneyActionContext(actionContext)
+      return readOwnerMoney({ owner, discovery, now: Date.now(), signal })
+    }
   }
 
   async function handleMoneyPrimaryAction(action) {
@@ -2828,27 +3113,29 @@ const App = () => {
     setMoneyWithdrawOpen(true)
   }
 
-  function openMoneyRecoveryFromOutcomes({ action, outcomes }) {
+  function openMoneyRecoveryFromOutcomes(actionContext, { action, outcomes }) {
+    assertMoneyActionContext(actionContext)
     const bad = outcomes.find((o) => o.outcome === 'unknown' || o.outcome === 'not-submitted')
     if (!bad) return
+    assertMoneyActionContext(actionContext)
     setMoneyRecovery({ action, submission: bad, reconciled: null })
   }
 
   async function handleConfirmFullExit(plan) {
     if (!plan?.ok || !realAddress) return
-    const captured = activeAccount
-    assertActiveAccount(captured)
+    const actionContext = captureMoneyActionContext()
+    const readMoneyForAction = createMoneyActionReader(actionContext)
     setMoneyActionPending(true)
     try {
       const addresses = plan.targets.map((t) => t.address)
       const swept = await sweepAgents({
-        owner: realAddress,
+        owner: actionContext.owner,
         agentAddresses: addresses,
-        to: realAddress,
-        activeAccount: captured,
+        to: actionContext.owner,
+        activeAccount: actionContext.activeAccount,
         getCurrentActiveAccount: () => activeAccountRef.current,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       const perAgent = addresses.map((address, i) => ({
         agentAddress: address,
         ok: swept.errors[i] == null,
@@ -2861,47 +3148,46 @@ const App = () => {
       const reconciled = await reconcileOwnerAction({
         action,
         result: perAgent,
-        readOwnerMoney: boundReadOwnerMoney,
+        readOwnerMoney: readMoneyForAction,
         beforeRevision,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       moneyRevisionRef.current = reconciled.revision
-      await refreshMoneyAfterAction(reconciled.fresh)
-      assertActiveAccount(captured)
+      await refreshMoneyAfterAction(actionContext, reconciled.fresh)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       if (reconciled.complete) setMoneyWithdrawOpen(false)
-      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+      else
+        openMoneyRecoveryFromOutcomes(actionContext, {
+          action,
+          outcomes: reconciled.outcomes,
+        })
     } finally {
-      try {
-        assertActiveAccount(captured)
-        setMoneyActionPending(false)
-      } catch {
-        // The replacement account's transition already cleared this owner-scoped pending state.
-      }
+      if (isMoneyActionContextCurrent(actionContext)) setMoneyActionPending(false)
     }
   }
 
   async function handleConfirmPartialExit(plan) {
     if (!plan?.ok || plan.mode !== 'partial' || !realAddress) return
+    const actionContext = captureMoneyActionContext()
+    const readMoneyForAction = createMoneyActionReader(actionContext)
     setMoneyActionPending(true)
     const action = { kind: 'partial-exit', agentAddress: plan.agentAddress }
-    const captured = activeAccount
-    assertActiveAccount(captured)
     try {
       await ensureExitSigner({
-        owner: realAddress,
+        owner: actionContext.owner,
         agentAddress: plan.agentAddress,
-        activeAccount: captured,
+        activeAccount: actionContext.activeAccount,
         getCurrentActiveAccount: () => activeAccountRef.current,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       await partialWithdraw({
-        owner: realAddress,
+        owner: actionContext.owner,
         agentAddress: plan.agentAddress,
         amountUnits: BigInt(plan.amount.units),
-        activeAccount: captured,
+        activeAccount: actionContext.activeAccount,
         getCurrentActiveAccount: () => activeAccountRef.current,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
         action,
@@ -2911,53 +3197,56 @@ const App = () => {
           status: 'SUCCESS',
           amount: plan.amount,
         },
-        readOwnerMoney: boundReadOwnerMoney,
+        readOwnerMoney: readMoneyForAction,
         beforeRevision,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       moneyRevisionRef.current = reconciled.revision
-      await refreshMoneyAfterAction(reconciled.fresh)
-      assertActiveAccount(captured)
+      await refreshMoneyAfterAction(actionContext, reconciled.fresh)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       if (reconciled.complete) setMoneyWithdrawOpen(false)
-      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+      else
+        openMoneyRecoveryFromOutcomes(actionContext, {
+          action,
+          outcomes: reconciled.outcomes,
+        })
     } catch (err) {
+      if (!isMoneyActionContextCurrent(actionContext)) return
       if (err?.code === 'ACTIVE_ACCOUNT_CHANGED') return
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
         action,
         result: { agentAddress: plan.agentAddress, error: err },
-        readOwnerMoney: boundReadOwnerMoney,
+        readOwnerMoney: readMoneyForAction,
         beforeRevision,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       moneyRevisionRef.current = reconciled.revision
-      await refreshMoneyAfterAction(reconciled.fresh)
-      assertActiveAccount(captured)
-      openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+      await refreshMoneyAfterAction(actionContext, reconciled.fresh)
+      if (!isMoneyActionContextCurrent(actionContext)) return
+      openMoneyRecoveryFromOutcomes(actionContext, {
+        action,
+        outcomes: reconciled.outcomes,
+      })
     } finally {
-      try {
-        assertActiveAccount(captured)
-        setMoneyActionPending(false)
-      } catch {
-        // Cleared atomically by the account transition.
-      }
+      if (isMoneyActionContextCurrent(actionContext)) setMoneyActionPending(false)
     }
   }
 
   async function handleConfirmRevoke(plan) {
     if (!plan?.ok || !realAddress) return
+    const actionContext = captureMoneyActionContext()
+    const readMoneyForAction = createMoneyActionReader(actionContext)
     setMoneyActionPending(true)
     const action = { kind: 'revoke', agentAddress: plan.agentAddress }
-    const captured = activeAccount
-    assertActiveAccount(captured)
     try {
       const result = await revokeAgentOnChain({
-        owner: realAddress,
+        owner: actionContext.owner,
         agent: plan.agentAddress,
-        activeAccount: captured,
+        activeAccount: actionContext.activeAccount,
         getCurrentActiveAccount: () => activeAccountRef.current,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
         action,
@@ -2967,22 +3256,21 @@ const App = () => {
           status: result.status,
           hash: result.hash,
         },
-        readOwnerMoney: boundReadOwnerMoney,
+        readOwnerMoney: readMoneyForAction,
         beforeRevision,
       })
-      assertActiveAccount(captured)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       moneyRevisionRef.current = reconciled.revision
-      await refreshMoneyAfterAction(reconciled.fresh)
-      assertActiveAccount(captured)
+      await refreshMoneyAfterAction(actionContext, reconciled.fresh)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       if (reconciled.complete) setMoneyStopAccessAddress(null)
-      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+      else
+        openMoneyRecoveryFromOutcomes(actionContext, {
+          action,
+          outcomes: reconciled.outcomes,
+        })
     } finally {
-      try {
-        assertActiveAccount(captured)
-        setMoneyActionPending(false)
-      } catch {
-        // Cleared atomically by the account transition.
-      }
+      if (isMoneyActionContextCurrent(actionContext)) setMoneyActionPending(false)
     }
   }
 
@@ -2996,17 +3284,22 @@ const App = () => {
 
   async function handleCheckSubmissionStatus() {
     if (!moneyRecovery?.action) return
+    const actionContext = captureMoneyActionContext()
+    const readMoneyForAction = createMoneyActionReader(actionContext)
+    const recovery = moneyRecovery
     setMoneyActionPending(true)
     try {
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
-        action: moneyRecovery.action,
-        result: moneyRecovery.submission,
-        readOwnerMoney: boundReadOwnerMoney,
+        action: recovery.action,
+        result: recovery.submission,
+        readOwnerMoney: readMoneyForAction,
         beforeRevision,
       })
+      if (!isMoneyActionContextCurrent(actionContext)) return
       moneyRevisionRef.current = reconciled.revision
-      await refreshMoneyAfterAction(reconciled.fresh)
+      await refreshMoneyAfterAction(actionContext, reconciled.fresh)
+      if (!isMoneyActionContextCurrent(actionContext)) return
       setMoneyRecovery((prev) =>
         prev
           ? {
@@ -3020,7 +3313,7 @@ const App = () => {
           : prev
       )
     } finally {
-      setMoneyActionPending(false)
+      if (isMoneyActionContextCurrent(actionContext)) setMoneyActionPending(false)
     }
   }
 
@@ -3080,12 +3373,11 @@ const App = () => {
     if (!stellarOwner) return { connected: false, healthy: null, mandateView: null, action: null }
     const record = readBaseMandate(stellarOwner)
     let mandateEvidence = null
-    if (record?.serializedApproval && record?.kernelAddress) {
+    if (record?.mandateId && record?.kernelAddress) {
       try {
-        mandateEvidence = await getMandateStatus(record.serializedApproval, {
+        mandateEvidence = await getMandateStatus(record.mandateId, {
           stellarOwner,
           kernelAddress: record.kernelAddress,
-          allocation: baseMandateProbeAllocation(),
         })
       } catch {
         mandateEvidence = null
@@ -3619,39 +3911,48 @@ const App = () => {
 
   async function runOrchestratorDispatch(permissionDecision) {
     const plan = strategyFlowRef.current.plan
-    const baseAllocations = baseMandateAllocationsForPlan(plan)
-    if (baseAllocations.length > 0) {
+    const hasBaseLeg = (plan?.agents || []).some((agent) => agent.kind === 'bridge')
+    if (hasBaseLeg) {
+      try {
+        assertBaseCrossChainAvailable()
+      } catch (cause) {
+        throw new PermissionPhaseError({
+          phase: 'preflight',
+          code: cause?.code || 'BASE_CROSS_CHAIN_UNAVAILABLE',
+          message: cause?.message || BASE_CROSS_CHAIN_UNAVAILABLE_REASON,
+          cause,
+        })
+      }
       const record = readBaseMandate(realAddress)
       const reviewedEvidence = baseView.mandateView?.evidence ?? null
-      for (const allocation of baseAllocations) {
-        let currentEvidence = null
-        try {
-          currentEvidence = await getMandateStatus(record?.serializedApproval, {
-            stellarOwner: realAddress,
-            kernelAddress: record?.kernelAddress,
-            allocation,
-          })
-        } catch {
-          currentEvidence = null
-        }
-        if (baseMandateRequiresReview(reviewedEvidence, currentEvidence)) {
-          setBaseView((previous) => ({
-            ...previous,
-            healthy: false,
-            mandateView: {
-              ...(previous?.mandateView || {}),
-              ready: false,
-              status: currentEvidence?.status || 'unavailable',
-              evidence: currentEvidence,
-            },
-          }))
-          setStrategyReached(['plan'])
-          throw new PermissionPhaseError({
-            phase: 'preflight',
-            code: 'VF_BASE_MANDATE_CHANGED',
-            message: 'Base mandate evidence changed. Rebuild and review the plan before granting.',
-          })
-        }
+      // ONE amount-free live check immediately before the grant: the mandate is named by its
+      // public mandateId only — no allocation/amount/pool material crosses this boundary.
+      let currentEvidence = null
+      try {
+        currentEvidence = await getMandateStatus(record?.mandateId, {
+          stellarOwner: realAddress,
+          kernelAddress: record?.kernelAddress,
+        })
+      } catch {
+        currentEvidence = null
+      }
+      if (baseMandateRequiresReview(reviewedEvidence, currentEvidence)) {
+        setBaseView((previous) => ({
+          ...previous,
+          healthy: false,
+          mandateView: {
+            ...(previous?.mandateView || {}),
+            ready: false,
+            status: currentEvidence?.status || 'unavailable',
+            evidence: currentEvidence,
+          },
+        }))
+        setStrategyReached(['plan'])
+        throw new PermissionPhaseError({
+          phase: 'preflight',
+          code: 'VF_BASE_MANDATE_CHANGED',
+          message: 'Base mandate evidence changed. Rebuild and review the plan before granting.',
+        })
       }
     }
     const sessionId = `session-${runId}`
@@ -3671,6 +3972,9 @@ const App = () => {
     setRunEvents([])
     setRecoveryByAllocation({})
     setRecoveryPendingAllocations(new Set())
+    setBaseRecoveryByIdentity({})
+    setBaseRecoveryPendingIdentities(new Set())
+    baseRecoveryRunnerRef.current = null
     recoveryMappingsRef.current = new Map()
 
     const orch = new OrchestratorAgent({
@@ -3758,8 +4062,9 @@ const App = () => {
     return dispatchPromise
   }
 
-  // Project every failed settled lane from durable evidence. Base children deliberately receive
-  // only a blocked display projection; no Stellar identity mapping is ever created for them.
+  // Project every failed settled lane from its own durable evidence authority. Base children are
+  // keyed only by the exact five-field identity returned in the Task-13 receipt; they never enter
+  // the Stellar allocation map and this effect never fabricates execution/child identifiers.
   useE(() => {
     const plan = strategyFlow.plan
     const captured = activeAccount
@@ -3770,48 +4075,33 @@ const App = () => {
       if (agent.kind !== 'bridge') continue
       for (const child of agent.children || []) parentByChild.set(child.allocationId, agent)
     }
+    const controller = new AbortController()
     Promise.all(
       (runReceipt.allocations || [])
         .filter((outcome) => outcome?.executionStatus === 'failed')
         .map(async (outcome) => {
           const parent = parentByChild.get(outcome.allocationId)
           if (parent) {
-            return [
-              outcome.allocationId,
-              projectRecoveryReceipt({
-                receipt: null,
-                version: 0,
-                identity: {
-                  executionId: `${plan.runId}:exec:${outcome.allocationId}`,
-                  allocationId: outcome.allocationId,
-                  parentAllocationId: parent.allocationId,
-                  childId: outcome.allocationId,
-                },
-                baseResult: {
-                  allocationId: outcome.allocationId,
-                  jobId: outcome.evidence?.jobId ?? null,
-                },
-                strandedBridge:
-                  outcome.custody?.location === 'agent'
-                    ? {
-                        pulled: true,
-                        bridgeAgentAddress: outcome.evidence?.bridgeAgentAddress ?? null,
-                      }
-                    : null,
-              }),
-            ]
+            const projected = await projectBaseOutcomeRecovery({
+              outcome,
+              owner: captured.address,
+              signal: controller.signal,
+            })
+            if (activeAccountRef.current !== captured || !projected) return null
+            return { kind: 'base', ...projected }
           }
           const mapping = recoveryMappingsRef.current.get(outcome.allocationId)
           if (!mapping) {
-            return [
-              outcome.allocationId,
-              {
+            return {
+              kind: 'stellar',
+              key: outcome.allocationId,
+              projection: {
                 action: 'manual-review',
                 phase: null,
                 reason: 'The authoritative in-memory agent mapping is unavailable.',
                 route: { allocationId: outcome.allocationId, source: 'unmapped' },
               },
-            ]
+            }
           }
           try {
             const authoritative = await readRecoveryReceipt({
@@ -3821,28 +4111,44 @@ const App = () => {
               allocationId: mapping.allocationId,
             })
             assertCurrentActiveAccount({ captured, current: activeAccountRef.current })
-            return [
-              outcome.allocationId,
-              projectRecoveryReceipt({ ...authoritative, identity: mapping }),
-            ]
+            return {
+              kind: 'stellar',
+              key: outcome.allocationId,
+              projection: projectRecoveryReceipt({ ...authoritative, identity: mapping }),
+            }
           } catch (error) {
-            return [
-              outcome.allocationId,
-              {
+            return {
+              kind: 'stellar',
+              key: outcome.allocationId,
+              projection: {
                 action: 'manual-review',
                 phase: null,
                 reason: error?.message || 'Recovery evidence could not be read.',
                 route: { allocationId: outcome.allocationId, source: 'read-failed' },
               },
-            ]
+            }
           }
         })
     ).then((entries) => {
       if (!alive || activeAccountRef.current !== captured) return
-      setRecoveryByAllocation(Object.fromEntries(entries))
+      setRecoveryByAllocation(
+        Object.fromEntries(
+          entries
+            .filter((entry) => entry?.kind === 'stellar' && entry.key)
+            .map((entry) => [entry.key, entry.projection])
+        )
+      )
+      setBaseRecoveryByIdentity(
+        Object.fromEntries(
+          entries
+            .filter((entry) => entry?.kind === 'base' && entry.key)
+            .map((entry) => [entry.key, entry.projection])
+        )
+      )
     })
     return () => {
       alive = false
+      controller.abort()
     }
   }, [runReceipt, strategyFlow.plan, activeAccount])
 
@@ -3891,6 +4197,56 @@ const App = () => {
   async function onRecoverAllocation(allocationId) {
     try {
       return await recoveryRunnerRef.current.run(allocationId)
+    } catch {
+      return null
+    }
+  }
+
+  if (!baseRecoveryRunnerRef.current) {
+    baseRecoveryRunnerRef.current = createBaseRecoveryActionRunner({
+      getActiveAccount: () => activeAccountRef.current,
+      getSignal: () => moneyOwnerAbortRef.current?.signal,
+      getMandateId: ({ evidence }) => {
+        const mandate = readBaseMandate(evidence.owner)
+        if (mandate?.stellarOwner !== evidence.owner || typeof mandate?.mandateId !== 'string') {
+          throw new Error('The active Base mandate is unavailable.')
+        }
+        return mandate.mandateId
+      },
+      readEvidence: readBaseRecoveryEvidence,
+      projectEvidence: projectBaseRecoveryBundle,
+      requestClaim: requestBaseRecoveryClaim,
+      executeRecovery: executeBaseRecovery,
+      pollEvidence: pollBaseRecoveryEvidence,
+      resolveCredential: (args) =>
+        resolveRecoveryCredential({ ...args, vault: SOROBAN_ACTIVE_VAULT_ADDRESS }),
+      onProjection: (identityKey, projected) =>
+        setBaseRecoveryByIdentity((previous) => ({
+          ...previous,
+          [identityKey]: projected,
+        })),
+      onPending: (identityKey, pending) =>
+        setBaseRecoveryPendingIdentities((previous) => {
+          const next = new Set(previous)
+          if (pending) next.add(identityKey)
+          else next.delete(identityKey)
+          return next
+        }),
+      onError: (_identityKey, error) =>
+        addLog({
+          event: 'AgentFailed',
+          agent: 'base-recovery',
+          meta: `Base recovery requires attention (${error?.code || 'base-recovery-failed'}).`,
+        }),
+      leaseOwner: recoveryLeaseOwnerRef.current,
+      pollLimit: 6,
+      pollIntervalMs: 2_000,
+    })
+  }
+
+  async function onRecoverBaseChild(identity) {
+    try {
+      return await baseRecoveryRunnerRef.current.run(identity)
     } catch {
       return null
     }
@@ -3951,6 +4307,7 @@ const App = () => {
         onCustomizeSkill={() => setSkillDrawerOpen(true)}
         protectProps={{
           owner: realAddress,
+          personaByAddress,
           baseMandateView: baseView.mandateView,
           onConnectWallet,
           onRetryPreflight,
@@ -3960,6 +4317,7 @@ const App = () => {
         }}
         startProps={{
           permission: strategyFlow.permission,
+          personaByAddress,
           events: runEvents,
           receipt: runReceipt,
           runId,
@@ -3967,6 +4325,9 @@ const App = () => {
           recoveryByAllocation,
           recoveryPendingAllocations,
           onRecoverAllocation,
+          baseRecoveryByIdentity,
+          baseRecoveryPendingIdentities,
+          onRecoverBaseChild,
           onViewMoney,
           onMakeAnotherDeposit,
           // Task 7 (Pocket Crew design alignment) -- the done-state "Watch the crew" action.
@@ -4102,6 +4463,9 @@ const App = () => {
     setRunReceipt(null)
     setRecoveryByAllocation({})
     setRecoveryPendingAllocations(new Set())
+    setBaseRecoveryByIdentity({})
+    setBaseRecoveryPendingIdentities(new Set())
+    baseRecoveryRunnerRef.current = null
     recoveryMappingsRef.current = new Map()
     setRunId(`run-${Date.now()}`)
     baseSetupSucceededRef.current = false
@@ -4277,21 +4641,17 @@ const App = () => {
     owner: realAddress,
     networkId: 'stellar-testnet',
   })
-  const moneyBasePlan = { available: basePositions.length > 0, positions: basePositions }
+  const moneyBasePlan = {
+    available: BASE_CROSS_CHAIN_AVAILABLE && basePositions.length > 0,
+    positions: basePositions,
+    unavailableReason: BASE_CROSS_CHAIN_AVAILABLE ? null : BASE_CROSS_CHAIN_UNAVAILABLE_REASON,
+  }
   const moneyStopAccessAgent =
     moneyRead?.agents?.find((a) => a.address === moneyStopAccessAddress) ?? null
-  // Fix round 1, M9: this MUST stay byte-identical to CrewRoute.jsx's own `activeCount` predicate
-  // (`!a?.scope?.value?.revoked && !a?.problems?.length`) -- the badge used to count only
-  // `!revoked`, so an agent with problems made the rail say one more than the crew page's own
-  // "Working for you" stat for the exact same word, "active".
-  const activeAgentCount = (moneyRead?.agents ?? []).filter(
-    (a) => !a?.scope?.value?.revoked && !a?.problems?.length
-  ).length
-
   return (
     <div className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'}`}>
       <SkipLink />
-      <Sidebar extended={sbExtended} onToggle={toggleSb} agentCount={activeAgentCount} />
+      <Sidebar extended={sbExtended} onToggle={toggleSb} agentCount={crew.activeCount} />
       <main id="main-content" className="main" tabIndex={-1}>
         <RouteFocus pathname={location.pathname} />
         <TopBar
@@ -4348,6 +4708,10 @@ const App = () => {
                   onRecoverAgent={handleRecoverAgent}
                   onRecoverBase={handleRecoverBaseAccount}
                   actionPending={moneyActionPending}
+                  baseActionsAvailable={BASE_CROSS_CHAIN_AVAILABLE}
+                  baseUnavailableReason={BASE_CROSS_CHAIN_UNAVAILABLE_REASON}
+                  baseActionError={baseWithdrawError}
+                  basePlan={moneyBasePlan}
                 />
               </>
             }
@@ -4369,7 +4733,7 @@ const App = () => {
             path="/agent"
             element={
               <CrewRoute
-                agents={moneyRead?.agents ?? []}
+                crew={crew}
                 model={moneyModel}
                 keeper={moneyKeeper}
                 keeperEvents={keeperActivity}

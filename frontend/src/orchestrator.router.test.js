@@ -18,6 +18,11 @@
 // but not these directly; orchestrator.test.js covers the separate `setupLegacy` (non-router) path.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
+vi.mock('./base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./base/hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
 const submitGrantMock = vi.fn()
 const runAgentPullMock = vi.fn()
 const readAllowanceMock = vi.fn()

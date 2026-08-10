@@ -1,0 +1,38 @@
+name: frontend-rate-limit-retention
+
+on:
+  # One bounded batch per hour advances the D1 retention target without putting an unbounded
+  # DELETE on the request path. The owner monitors backlog versus churn; this is production-only
+  # and never receives a preview ID.
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    # Owner: frontend release maintainers. A bounded hourly run is the production D1 retention
+    # control for vf_cross_rate_limits; it is intentionally separate from request handling.
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Delete one bounded batch of stale production edge-limit rows
+        run: npm run d1:cleanup:rate-limits
+        env:
+          RATE_LIMIT_CLEANUP_ENV: production
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VF_RATE_LIMIT_RETENTION_MS: "604800000"
+          VF_RATE_LIMIT_CLEANUP_BATCH: "500"

@@ -31,6 +31,15 @@ import { AgentTeam } from './AgentTeam.jsx'
 import { VaultProtection } from './VaultProtection.jsx'
 import { HowMoneyWorks } from './HowMoneyWorks.jsx'
 import { TechnicalMoneyDetails } from './TechnicalMoneyDetails.jsx'
+import { formatAssetUnits } from '../../money/assetUnits.js'
+
+function basePositionAmount(position) {
+  try {
+    return `${formatAssetUnits(position?.assets, 6)} USDC`
+  } catch {
+    return 'Balance unavailable'
+  }
+}
 
 export function MyMoneyRoute({
   model,
@@ -45,6 +54,10 @@ export function MyMoneyRoute({
   onRecoverAgent,
   onRecoverBase,
   actionPending = false,
+  baseActionsAvailable = true,
+  baseUnavailableReason = null,
+  baseActionError = null,
+  basePlan = null,
 }) {
   // 2026-08-02 polish (motion pass): one restrained section entrance (the shared
   // usePocketTransition treatment StartStage already uses -- 0.32s power3.out, y:8, stagger
@@ -83,6 +96,34 @@ export function MyMoneyRoute({
         />
         <TechnicalMoneyDetails model={model} agents={agents} />
 
+        {(basePlan?.positions?.length ?? 0) > 0 && (
+          <section
+            className="pc-money-section"
+            aria-labelledby="base-history-heading"
+            data-pocket-enter
+          >
+            <header>
+              <h2 id="base-history-heading">Historical Base positions</h2>
+            </header>
+            <div>
+              {!basePlan.available && basePlan.unavailableReason && (
+                <p id="base-history-unavailable" role="status">
+                  {basePlan.unavailableReason}
+                </p>
+              )}
+              <ul className="pc-position-list">
+                {basePlan.positions.map((position) => (
+                  <li className="pc-position-row" key={position.pool}>
+                    <strong>Base</strong>
+                    <span>{position.poolName || position.pool}</span>
+                    <span className="pc-money">{basePositionAmount(position)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        )}
+
         <section
           className="pc-money-section"
           aria-labelledby="recover-base-heading"
@@ -92,14 +133,30 @@ export function MyMoneyRoute({
             <h2 id="recover-base-heading">Recover a Base account</h2>
           </header>
           <p>
-            Settled USDC on Base from a previous device or browser? Check for it here — this device
-            has no local Base record yet.
+            {(basePlan?.positions?.length ?? 0) > 0
+              ? 'Historical Base balances stay visible here. Recovery remains a separate owner action.'
+              : 'Settled USDC on Base from a previous device or browser? Check for it here — this device has no local Base record yet.'}
           </p>
+          {!baseActionsAvailable && baseUnavailableReason && (
+            <p id="recover-base-unavailable" role="status">
+              {baseUnavailableReason}
+            </p>
+          )}
+          {baseActionError && baseActionError !== baseUnavailableReason && (
+            <p role="alert">{baseActionError}</p>
+          )}
           <button
             type="button"
             className="pc-button pc-button--secondary"
-            disabled={actionPending}
-            onClick={onRecoverBase}
+            disabled={actionPending || !baseActionsAvailable}
+            aria-describedby={
+              !baseActionsAvailable && baseUnavailableReason
+                ? 'recover-base-unavailable'
+                : undefined
+            }
+            onClick={() => {
+              if (baseActionsAvailable) onRecoverBase?.()
+            }}
           >
             Recover Base account
           </button>

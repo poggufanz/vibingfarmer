@@ -20,7 +20,7 @@ import {
   evmAddrToBytes32,
 } from './stellar/cctpBurn.js'
 import { deriveCctpTransferUnits, toBaseUnits } from './stellar/format.js'
-import { readStoredBaseMandate } from './mergeFlowHelpers.js'
+import { readBaseMandate } from './wallet/baseBinding.js'
 import {
   SOROBAN_TOKEN_ADDRESS,
   SOROBAN_DECIMALS,
@@ -36,6 +36,7 @@ import {
   assertActiveOwner,
 } from './stellar/activeAccount.js'
 import { getActiveAccount } from './stellar/walletKit.js'
+import { assertBaseCrossChainAvailable } from './base/config.js'
 // Task 6 chunk C1 -- the real AllocationReceiptV2 evidence producer (Chunk A) and its authenticated
 // transport (Chunk B), both closed/reviewed. Neither import pulls in `./stellar/config.js` or
 // `./stellar/agentCache.js` (allocationReceipt.js has NO imports at all; agentIndexReceiptClient.js
@@ -749,6 +750,10 @@ export class OrchestratorAgent {
    * @returns {Promise<{completed:number, failed:number, results:Array, sessionId:string, baseLeg:object|null}>}
    */
   async dispatch(strategyOrPlan, totalAmountOrOptions) {
+    const hasBaseAllocation =
+      (strategyOrPlan?.agents || []).some((agent) => agent?.kind === 'bridge') ||
+      (strategyOrPlan?.vaults || []).some((vault) => vault?.chain === 'base')
+    if (hasBaseAllocation) assertBaseCrossChainAvailable()
     this.assertCurrentAccount()
     // Strategy Task 7 (Pocket Crew redesign, Wave 1) — dispatch is overloaded by the SHAPE of its
     // second argument, never by an explicit flag, so every pre-Task-7 call site (a plain
@@ -1140,6 +1145,7 @@ export class OrchestratorAgent {
     const planAgents = strategyPlan.agents || []
     const bridgeAgents = planAgents.filter((agent) => agent.kind === 'bridge')
     const depositAgents = planAgents.filter((agent) => agent.kind !== 'bridge')
+    if (bridgeAgents.length > 0) assertBaseCrossChainAvailable()
     if (bridgeAgents.length > 1) {
       throw new PermissionPhaseError({
         phase: 'preflight',
@@ -1276,7 +1282,6 @@ export class OrchestratorAgent {
         })
       }
       try {
-        const { readBaseMandate } = await import('./wallet/baseBinding.js')
         this.assertCurrentAccount()
         baseMandate = readBaseMandate(this.user)
       } catch (cause) {
@@ -1728,6 +1733,7 @@ export class OrchestratorAgent {
   /** After the shared fresh grant confirms, both execution branches are settled data. A Base
    * failure must therefore never erase completed Stellar deposits (and vice versa). */
   async dispatchConfirmedMixed({ strategyPlan, confirmed, workers, bridgeAgent, baseMandate }) {
+    assertBaseCrossChainAvailable()
     const mandate = baseMandate
     const bridgeWorker = workers.find((worker) => worker.allocationId === bridgeAgent.allocationId)
     const bridgeMaterialError =
@@ -2379,6 +2385,9 @@ export class OrchestratorAgent {
    * exactly once; never touches the reuse cache reads.
    */
   async grantFreshFromDecision(strategyPlan, workers, permissionDecision) {
+    if ((strategyPlan?.agents || []).some((agent) => agent?.kind === 'bridge')) {
+      assertBaseCrossChainAvailable()
+    }
     const reviewedByAllocation = new Map(
       (permissionDecision.reviewedAgentInits || []).map((r) => [r.allocationId, r])
     )
@@ -2521,6 +2530,7 @@ export class OrchestratorAgent {
 
   async dispatchLegacy(strategy, totalAmount) {
     const allVaults = strategy.vaults || []
+    if (allVaults.some((vault) => vault?.chain === 'base')) assertBaseCrossChainAvailable()
     const receiptRunId = strategy.runId || this.sessionId
     const baseVaults = allVaults
       .filter((v) => v.chain === 'base')
@@ -2566,7 +2576,9 @@ export class OrchestratorAgent {
     // desync the runtime burn arg from what's actually on-chain (see baseLeg.js's own doc).
     let bridgeKernelAddress = null
     if (baseVaults.length > 0) {
-      const mandate = readStoredBaseMandate()
+      // Owner-scoped v3 record only — never the removed global vf_base_mandate reader, so a
+      // wallet switch can never pin another owner's kernel as this grant's mint_recipient.
+      const mandate = readBaseMandate(this.user)
       if (!mandate) {
         throw new Error('No durable Base mandate is stored for the cross-chain leg.')
       }
@@ -2716,7 +2728,8 @@ export class OrchestratorAgent {
             workers,
             expiry,
             bridgeInit,
-            resolveBridgeAgent
+            resolveBridgeAgent,
+            bridgeSessionKey
           )
           this.assertCurrentAccount()
         } else if (
@@ -3052,9 +3065,9 @@ export class OrchestratorAgent {
    * them), so the only signature-free path is reusing STILL-VALID cached agents. Sequence:
    *   1. Try to fill EVERY worker from cache with the router's allowance still covering the run
    *      total → 0 further signatures (tryReuseAllCached). Skipped entirely when a bridge agent is
-   *      needed — it can NEVER be served from cache (never cached, by design — see baseLeg.js's
-   *      grant-covers-burn note), so a grant is unavoidable whenever `bridgeInit` is present, and
-   *      it may as well cover every Stellar worker too rather than leave some half-cached.
+   *      needed — it can NEVER be reused for a later burn, so a grant is unavoidable whenever
+   *      `bridgeInit` is present. Its bounded signer is retained only so an owner can prove the
+   *      original bridge-agent identity for Task-14 recovery after reload.
    *   2. Otherwise a single grant signature deploys a fresh agent per worker (+ the bridge agent,
    *      when present) and (re)sets the budget(s) (grantFreshAgents). A grant failure marks every
    *      worker failed (no agents deployed) and resolves the bridge agent as null.
@@ -3066,7 +3079,14 @@ export class OrchestratorAgent {
    * @param {(bridgeAgentAddress:string|null)=>void} [resolveBridgeAgent] - settles once the bridge
    *   agent's address is known (or null, when no grant ran or it failed)
    */
-  async setupViaRouter(workers, expiry, bridgeInit = null, resolveBridgeAgent = () => {}) {
+  async setupViaRouter(
+    workers,
+    expiry,
+    bridgeInit = null,
+    resolveBridgeAgent = () => {},
+    bridgeCredential = null
+  ) {
+    if (bridgeInit) assertBaseCrossChainAvailable()
     const nowSec = Math.floor(Date.now() / 1000)
     const totalUnits = workers.reduce((acc, w) => acc + w.amount, 0n)
 
@@ -3078,7 +3098,14 @@ export class OrchestratorAgent {
       for (const w of workers) await w.setupKey() // fresh keys the grant pins as agent signers
       let granted
       try {
-        granted = await this.grantFreshAgents(workers, totalUnits, expiry, nowSec, bridgeInit)
+        granted = await this.grantFreshAgents(
+          workers,
+          totalUnits,
+          expiry,
+          nowSec,
+          bridgeInit,
+          bridgeCredential
+        )
       } catch (err) {
         // A grant covers ALL workers (+ the bridge agent) under one signature — its failure
         // (dismissed signature request, sim error) leaves NOTHING deployed, so the whole run's
@@ -3208,7 +3235,28 @@ export class OrchestratorAgent {
    * grant.js's own `bridgeAgentAddress` field already names that last entry, reused verbatim here.
    * @returns {Promise<string|null>} the deployed bridge agent's address, or null when none was requested
    */
-  async grantFreshAgents(workers, totalUnits, expiry, nowSec, bridgeInit = null) {
+  async grantFreshAgents(
+    workers,
+    totalUnits,
+    expiry,
+    nowSec,
+    bridgeInit = null,
+    bridgeCredential = null
+  ) {
+    if (bridgeInit) assertBaseCrossChainAvailable()
+    if (
+      bridgeInit &&
+      (!bridgeCredential ||
+        typeof bridgeCredential.secret !== 'string' ||
+        bridgeCredential.secret.length === 0 ||
+        typeof bridgeCredential.publicKey !== 'string' ||
+        bridgeCredential.publicKey.length === 0 ||
+        !(bridgeCredential.rawPublicKey instanceof Uint8Array) ||
+        bridgeCredential.rawPublicKey.length !== bridgeInit.signer?.length ||
+        bridgeCredential.rawPublicKey.some((byte, index) => byte !== bridgeInit.signer[index]))
+    ) {
+      throw new Error('The bridge recovery credential does not match the reviewed grant signer.')
+    }
     const budget =
       this.grantBudgetUnits != null && this.grantBudgetUnits > totalUnits
         ? this.grantBudgetUnits
@@ -3276,6 +3324,37 @@ export class OrchestratorAgent {
         reused: false,
       })
     })
+    if (bridgeInit) {
+      if (
+        typeof bridgeAgentAddress !== 'string' ||
+        bridgeAgentAddress.length === 0 ||
+        agentAddresses[workers.length] !== bridgeAgentAddress
+      ) {
+        throw new Error('The funding router did not return the confirmed bridge agent address.')
+      }
+      // This is the same short-lived, on-chain-scoped session credential the grant pinned to the
+      // bridge agent. It cannot change the burn destination or act as the owner. Retaining it in
+      // the existing owner/vault credential bucket lets a reload prove that exact bridge-agent
+      // identity to Agent Index; it is never considered reusable for a new burn because its
+      // on-chain target/kind do not satisfy the deposit-agent reuse predicate.
+      const bridgeCredentialStored = saveCachedAgent({
+        owner: this.user,
+        vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+        entry: {
+          agentAddress: bridgeAgentAddress,
+          secret: bridgeCredential.secret,
+          signerPub: bridgeCredential.publicKey,
+          cap: String(bridgeInit.cap),
+          expiry,
+          createdAt: Date.now(),
+        },
+      })
+      if (bridgeCredentialStored === false) {
+        throw new Error(
+          'The confirmed bridge credential could not be stored; no Base transfer was started.'
+        )
+      }
+    }
     return { bridgeAgentAddress, agentAddresses, txHash: hash, expiryLedger: expiryLedger ?? null }
   }
 }

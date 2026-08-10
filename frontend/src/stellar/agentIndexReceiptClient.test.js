@@ -316,6 +316,37 @@ describe('postReceiptEvidence', () => {
     ).toBe(true)
   })
 
+  it('writes a URL-safe signature when the browser Buffer lacks base64url encoding', async () => {
+    const body = mutationFixture()
+    const sessionKey = newSessionKey()
+    const challenge = challengeFor(body)
+    const fetchImpl = sequenceFetch([{ status: 201, body: { ok: true, challenge } }, writeSuccess])
+    const nativeToString = Buffer.prototype.toString
+    const toStringSpy = vi
+      .spyOn(Buffer.prototype, 'toString')
+      .mockImplementation(function browserCompatibleToString(encoding, ...args) {
+        if (encoding === 'base64url') throw new TypeError('Unknown encoding: base64url')
+        return Reflect.apply(nativeToString, this, [encoding, ...args])
+      })
+
+    try {
+      await postReceiptEvidence({
+        activeAccount: OWNER,
+        agentAddress: AGENT,
+        sessionKey,
+        body,
+        fetchImpl,
+      })
+    } finally {
+      toStringSpy.mockRestore()
+    }
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    const writeReq = JSON.parse(fetchImpl.mock.calls[1][1].body)
+    expect(writeReq.proof.signature).toMatch(/^[A-Za-z0-9_-]+$/)
+    expect(writeReq.proof.signature).not.toContain('=')
+  })
+
   it('never places sessionKey.secret anywhere in either request (body, URL, or headers)', async () => {
     const body = mutationFixture()
     const sessionKey = newSessionKey()

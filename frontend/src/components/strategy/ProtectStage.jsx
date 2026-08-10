@@ -73,13 +73,16 @@ import { maxAtRisk } from '../../strategy/permissionScope.js'
 import { buildAmountDisplayMap } from '../../strategy/planModel.js'
 import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
+import { CREW_PERSONAS, personaForOrdinal } from '../../crew/personas.js'
 
 const DEFAULT_WALLETS = ['VF Wallet', 'Freighter', 'xBull', 'Albedo']
-const CREW_AVATARS = [
-  '/brand/agents/sprout.svg',
-  '/brand/agents/clover.svg',
-  '/brand/agents/mochi.svg',
-]
+
+function addressPersona(personaByAddress, address) {
+  if (typeof address !== 'string' || address.length === 0) return null
+  const candidate =
+    personaByAddress instanceof Map ? personaByAddress.get(address) : personaByAddress?.[address]
+  return CREW_PERSONAS.find((persona) => persona.id === candidate?.id) || null
+}
 
 // Wave 6 carry (Strategy Tasks 11/13): relocated from the now-deleted GrantPanel.jsx (a demoted
 // legacy card whose default export became dead once app.jsx's production /strategy route stopped
@@ -233,6 +236,7 @@ function reuseIsUsable(decision) {
 export function ProtectStage({
   plan,
   owner = null,
+  personaByAddress = null,
   availableWallets = DEFAULT_WALLETS,
   baseMandateView = null,
   // Task 5 chunk C fix round 1 (Critical 1 -- reviewer finding): the ONLY signal that a cumulative
@@ -392,6 +396,10 @@ export function ProtectStage({
         })
       : []
   const executionDisplayMap = buildAmountDisplayMap(executionAmountRows, 'amount')
+  const personaForAllocation = (allocationId, fallbackOrdinal) => {
+    const ordinal = plan.agents.findIndex((agent) => agent.allocationId === allocationId)
+    return personaForOrdinal(ordinal >= 0 ? ordinal : fallbackOrdinal)
+  }
 
   // Fix round 1 -- F3 (review finding): the heading `<p>` + 4-row `<ul>` ceiling card below used to
   // be written out near-verbatim in BOTH `.pc-protect-limit` (reuse) and `.pc-support` (fresh) --
@@ -823,16 +831,35 @@ export function ProtectStage({
                 timestamp for the whole preflight, not per-agent), makes the Rice claim
                 self-evidently sound. */}
             <p>As of {formatExpiry(decision.checkedAt)}</p>
-            {decision.agents.map((a) => (
-              <div key={a.allocationId}>
-                <p>{a.agentAddress}</p>
-                <p>
-                  Headroom: {unitsToDisplay(a.headroom.units, a.headroom.decimals)}{' '}
-                  {tokenSymbol(a.headroom.token)}
-                </p>
-                <p>Expires {formatExpiry(a.scopeExpiry)}</p>
-              </div>
-            ))}
+            {decision.agents.map((a, index) => {
+              const assigned = addressPersona(personaByAddress, a.agentAddress)
+              const persona = assigned || personaForAllocation(a.allocationId, index)
+              return (
+                <div
+                  key={a.allocationId}
+                  className="pc-protect-bound-agent"
+                  data-agent-address={a.agentAddress}
+                >
+                  <img
+                    className="pc-protect-agent-avatar pc-crew-avatar"
+                    src={persona.avatar}
+                    alt={`${persona.name} agent${assigned ? '' : ', assignment syncing'}`}
+                    width="44"
+                    height="44"
+                  />
+                  <div>
+                    <p className="pc-worker-name">{persona.name}</p>
+                    {!assigned && <p className="pc-crew-syncing">Crew assignment syncing.</p>}
+                    <p>{a.agentAddress}</p>
+                    <p>
+                      Headroom: {unitsToDisplay(a.headroom.units, a.headroom.decimals)}{' '}
+                      {tokenSymbol(a.headroom.token)}
+                    </p>
+                    <p>Expires {formatExpiry(a.scopeExpiry)}</p>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
 
@@ -883,19 +910,37 @@ export function ProtectStage({
                 Scope: <span className="pc-technical">{decision.scopeId}</span>
               </p>
             </TechnicalDetails>
-            {decision.executions.map((e) => {
+            {decision.executions.map((e, index) => {
               const reviewed = reviewedByAllocation.get(e.allocationId)
+              const assigned = addressPersona(personaByAddress, e.agentAddress)
+              const persona = assigned || personaForAllocation(e.allocationId, index)
               return (
-                <div key={e.allocationId}>
-                  <p>{e.agentAddress}</p>
-                  <p>
-                    Moves {executionDisplayMap[e.allocationId]} {tokenSymbol(reviewed?.cap?.token)}
-                  </p>
-                  <TechnicalDetails summary="Execution technical details">
+                <div
+                  key={e.allocationId}
+                  className="pc-protect-bound-agent"
+                  data-agent-address={e.agentAddress}
+                >
+                  <img
+                    className="pc-protect-agent-avatar pc-crew-avatar"
+                    src={persona.avatar}
+                    alt={`${persona.name} agent${assigned ? '' : ', assignment syncing'}`}
+                    width="44"
+                    height="44"
+                  />
+                  <div>
+                    <p className="pc-worker-name">{persona.name}</p>
+                    {!assigned && <p className="pc-crew-syncing">Crew assignment syncing.</p>}
+                    <p>{e.agentAddress}</p>
                     <p>
-                      Execution: <span className="pc-technical">{e.executionId}</span>
+                      Moves {executionDisplayMap[e.allocationId]}{' '}
+                      {tokenSymbol(reviewed?.cap?.token)}
                     </p>
-                  </TechnicalDetails>
+                    <TechnicalDetails summary={`${persona.name} execution technical details`}>
+                      <p>
+                        Execution: <span className="pc-technical">{e.executionId}</span>
+                      </p>
+                    </TechnicalDetails>
+                  </div>
                 </div>
               )
             })}
@@ -954,6 +999,7 @@ export function ProtectStage({
               (r) => r.allocationId === planAgent.allocationId
             )
             const isBridge = planAgent.kind === 'bridge'
+            const persona = personaForOrdinal(i)
             return (
               <li
                 key={planAgent.allocationId}
@@ -961,13 +1007,14 @@ export function ProtectStage({
                 data-agent-kind={planAgent.kind}
               >
                 <img
-                  className="pc-protect-agent-avatar"
-                  src={CREW_AVATARS[i % CREW_AVATARS.length]}
-                  alt={`Agent ${i + 1}, planned`}
+                  className="pc-protect-agent-avatar pc-crew-avatar"
+                  src={persona.avatar}
+                  alt={`${persona.name} agent, planned`}
                   width="44"
                   height="44"
                 />
                 <div>
+                  <p className="pc-worker-name">{persona.name}</p>
                   {isBridge ? (
                     <NetworkRoute context={BRIDGE_NETWORK_CONTEXT} />
                   ) : (
@@ -984,7 +1031,7 @@ export function ProtectStage({
                       </p>
                       <p>Resets every {periodLabel(reviewed.periodSeconds)}</p>
                       <p>Expires {humanExpiry(reviewed.expiry)}</p>
-                      <TechnicalDetails summary={`Agent ${i + 1} technical details`}>
+                      <TechnicalDetails summary={`${persona.name} technical details`}>
                         {/* Owner decision #19: the container no longer defaults to mono (it holds
                             friendly prose just as often, see PlanStage.jsx) -- these three raw
                             values are marked .pc-technical individually so they keep rendering in

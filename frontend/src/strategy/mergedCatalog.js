@@ -1,11 +1,14 @@
 // frontend/src/strategy/mergedCatalog.js
 // Fail-closed merged catalog: Base pools are only offered to the strategist when the relayer
-// answers. Health probe = GET /status/health-probe on the vf-cross proxy — a LIVE relayer
-// returns 404 {"error":"unknown jobId"}; an unconfigured proxy returns 503; a dead tunnel 502.
+// answers. Health probe = public `GET /api/vf-cross/config` on the same-origin proxy — healthy
+// only on an explicit `readiness.ready === true`; an unconfigured proxy (503), an unknown route
+// (404), a dead tunnel (502), or a network error all fail closed. A cross-origin
+// VITE_CROSS_RELAYER_BASE override is deliberately ignored: readiness must come from the same
+// proxy boundary every capability flow uses.
 import { VAULT_CATALOG, BASE_POOL_CATALOG } from '../config.js'
 import { normalizeVenue, VENUE_KINDS } from './venueTruth.js'
 
-const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cross'
+const DEFAULT_BASE_URL = '/api/vf-cross'
 
 export async function checkRelayerHealth({
   baseUrl = DEFAULT_BASE_URL,
@@ -13,11 +16,22 @@ export async function checkRelayerHealth({
   timeoutMs = 3000,
   signal,
 } = {}) {
+  // Capability/readiness flows only ever go through the same-origin proxy — a direct
+  // cross-origin relayer base URL is refused without opening a request.
+  if (typeof baseUrl !== 'string' || !baseUrl.startsWith('/') || baseUrl.startsWith('//')) {
+    return false
+  }
   try {
     const timeout = AbortSignal.timeout(timeoutMs)
     const composedSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
-    const res = await fetchImpl(`${baseUrl}/status/health-probe`, { signal: composedSignal })
-    return res.status === 404
+    const res = await fetchImpl(`${baseUrl}/config`, {
+      method: 'GET',
+      credentials: 'same-origin',
+      signal: composedSignal,
+    })
+    if (!res.ok) return false
+    const config = await res.json()
+    return config?.readiness?.ready === true
   } catch {
     // Network error or abort/timeout: fail closed (Base offered only on a confirmed-live relayer).
     return false

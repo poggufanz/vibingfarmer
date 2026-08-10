@@ -56,10 +56,24 @@
 import { useMemo, useRef } from 'react'
 import { StatusNotice, TechnicalDetails } from '../pocket/Primitives.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
-import { AgentMark } from '../pocket/AgentMark.jsx'
 import { buildStrategyViewModel, buildAmountDisplayMap } from '../../strategy/planModel.js'
 import { usePocketTransition } from '../../design/usePocketTransition.js'
+import { SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
 import { StrategyReceipt } from './StrategyReceipt.jsx'
+import { CREW_PERSONAS, personaForOrdinal } from '../../crew/personas.js'
+import { baseRecoveryIdentityKey } from '../../strategy/baseRecoveryIdentity.js'
+
+const TOKEN_SYMBOLS = Object.freeze({
+  [SOROBAN_TOKEN_ADDRESS]: 'USDC',
+  [STELLAR_USDC_SAC]: 'Circle USDC',
+})
+
+function tokenSymbol(token) {
+  if (TOKEN_SYMBOLS[token]) return TOKEN_SYMBOLS[token]
+  if (typeof token === 'string' && token.length > 12)
+    return `${token.slice(0, 4)}…${token.slice(-4)}`
+  return token
+}
 
 // Rank 0 is shared by two DIFFERENT labels depending on permission mode -- 'creating' (fresh: the
 // grant transaction just deployed this agent) vs 'pending' (reuse: the agent already existed;
@@ -275,7 +289,42 @@ function latestConfirmedRecoveryHash(receipt) {
 // the strongest terminal verdict: a completed Stellar deposit with receipt-confirmed vault
 // custody. This single derived receipt feeds both the lane and StrategyReceipt, preventing a
 // recovered allocation from remaining failed/held in one view while appearing complete in another.
-function foldRecoveryReceipt(receipt, recoveryByAllocation) {
+function confirmedBaseRecoveryProjection(projection, identityKey) {
+  if (!projection || projection.action !== 'complete') return false
+  try {
+    if (baseRecoveryIdentityKey(projection.identity) !== identityKey) return false
+  } catch {
+    return false
+  }
+  const phase = projection.phases?.base_deposit
+  const evidence = phase?.evidence
+  const event = evidence?.event
+  return (
+    Number.isSafeInteger(projection.version) &&
+    projection.version >= 0 &&
+    phase?.state === 'confirmed' &&
+    Number.isSafeInteger(phase.recoveryVersion) &&
+    phase.recoveryVersion > 0 &&
+    phase.recoveryVersion <= projection.version &&
+    projection.custody?.location === 'base-proxy' &&
+    projection.custody.confirmed === true &&
+    /^0x[0-9a-f]{64}$/.test(evidence?.userOpHash || '') &&
+    /^0x[0-9a-f]{64}$/.test(evidence?.transactionHash || '') &&
+    /^(0|[1-9]\d*)$/.test(evidence?.assets || '') &&
+    /^[1-9]\d*$/.test(evidence?.shares || '') &&
+    event &&
+    /^0x[0-9a-f]{40}$/.test(event.address || '') &&
+    /^0x[0-9a-f]{64}$/.test(event.topic0 || '') &&
+    typeof event.logIndex === 'string' &&
+    /^(0|[1-9]\d*)$/.test(event.logIndex) &&
+    /^0x[0-9a-f]{40}$/.test(event.caller || '') &&
+    /^0x[0-9a-f]{40}$/.test(event.poolAddress || '') &&
+    event.assets === evidence.assets &&
+    event.shares === evidence.shares
+  )
+}
+
+function foldRecoveryReceipt(receipt, recoveryByAllocation, baseRecoveryByIdentity) {
   if (!receipt) return receipt
   const replacements = new Map()
   for (const outcome of receipt.allocations || []) {
@@ -286,6 +335,45 @@ function foldRecoveryReceipt(receipt, recoveryByAllocation) {
       projection.custody?.location !== 'stellar-vault' ||
       projection.custody.confirmed !== true
     ) {
+      let identityKey = null
+      try {
+        identityKey = baseRecoveryIdentityKey(outcome.identity)
+      } catch {
+        identityKey = null
+      }
+      const baseProjection = identityKey
+        ? baseRecoveryByIdentity instanceof Map
+          ? baseRecoveryByIdentity.get(identityKey)
+          : baseRecoveryByIdentity?.[identityKey]
+        : null
+      if (!identityKey || !confirmedBaseRecoveryProjection(baseProjection, identityKey)) continue
+      const evidence = baseProjection.phases.base_deposit.evidence
+      replacements.set(outcome.allocationId, {
+        ...outcome,
+        networkContext: {
+          ...outcome.networkContext,
+          currentCustodyNetwork: 'base-sepolia',
+          transit: false,
+        },
+        executionStatus: 'succeeded',
+        custody: {
+          location: 'base-proxy',
+          confirmed: true,
+          checkedAt: baseProjection.phases.base_deposit.observedAt ?? null,
+          amount: outcome.amount,
+          reason: null,
+          source: 'receipt',
+        },
+        txHash: evidence.transactionHash,
+        error: null,
+        evidence: {
+          ...outcome.evidence,
+          allocationId: outcome.allocationId,
+          recoveryVersion: baseProjection.version,
+          userOpHash: evidence.userOpHash,
+          depositTxHash: evidence.transactionHash,
+        },
+      })
       continue
     }
     const txHash = latestConfirmedRecoveryHash(projection.receipt)
@@ -311,12 +399,23 @@ function foldRecoveryReceipt(receipt, recoveryByAllocation) {
   const replace = (outcome) => replacements.get(outcome.allocationId) || outcome
   const allocations = receipt.allocations.map(replace)
   const stellarResults = (receipt.branches?.stellar?.results || []).map(replace)
+  const baseResults = (receipt.branches?.base?.results || []).map(replace)
   const stellarStatus =
     stellarResults.length > 0 && stellarResults.every((row) => row.executionStatus === 'succeeded')
       ? 'succeeded'
       : stellarResults.length > 0 && stellarResults.every((row) => row.executionStatus === 'failed')
         ? 'failed'
         : 'partial'
+  const baseStatus =
+    baseResults.length > 0 && baseResults.every((row) => row.executionStatus === 'succeeded')
+      ? 'succeeded'
+      : baseResults.length > 0 && baseResults.every((row) => row.executionStatus === 'failed')
+        ? 'failed'
+        : baseResults.some((row) => row.executionStatus === 'pending')
+          ? 'in-transit'
+          : baseResults.length > 0
+            ? 'partial'
+            : (receipt.branches?.base?.status ?? 'not-planned')
   return {
     ...receipt,
     allocations,
@@ -326,6 +425,11 @@ function foldRecoveryReceipt(receipt, recoveryByAllocation) {
         ...receipt.branches?.stellar,
         status: stellarStatus,
         results: stellarResults,
+      },
+      base: {
+        ...receipt.branches?.base,
+        status: baseStatus,
+        results: baseResults,
       },
     },
   }
@@ -341,6 +445,7 @@ function bridgeChildRows(children, allocationById) {
     const failed = outcome?.executionStatus === 'failed'
     return {
       allocationId: child.allocationId,
+      identity: outcome?.identity || null,
       proxyTarget: child.proxyTarget,
       destination: child.destination,
       failed,
@@ -414,8 +519,36 @@ function summarizeLanes(lanes) {
 }
 
 function recoveryControl(projection, pending, { baseChild = false } = {}) {
-  if (!projection) return { label: 'Checking status', disabled: true }
-  if (baseChild || projection.action === 'blocked-reconcile') {
+  if (!projection) {
+    return { label: baseChild ? 'Checking Base status' : 'Checking status', disabled: true }
+  }
+  if (baseChild) {
+    const labels = {
+      'no-movement': 'No Base movement confirmed',
+      'poll-attestation': 'Check attestation',
+      'submit-mint': 'Resume transfer to Base',
+      'poll-mint': 'Check Base arrival',
+      'submit-base-deposit': 'Deposit from Base account',
+      'poll-base-deposit': 'Check Base deposit',
+      'recovery-in-progress': 'Recovery in progress',
+      'manual-review': 'Manual review',
+      'owner-action-required': 'Action needed in Base account',
+      complete: 'Complete',
+    }
+    const actionable = new Set([
+      'poll-attestation',
+      'submit-mint',
+      'poll-mint',
+      'submit-base-deposit',
+      'poll-base-deposit',
+    ])
+    return {
+      label: labels[projection.action] || 'Manual review',
+      disabled: pending || !actionable.has(projection.action),
+      hidden: projection.action === 'complete',
+    }
+  }
+  if (projection.action === 'blocked-reconcile') {
     return { label: 'Manual review', disabled: true }
   }
   const labels = {
@@ -433,16 +566,57 @@ function recoveryControl(projection, pending, { baseChild = false } = {}) {
   return { label, disabled: pending || !actionable }
 }
 
+function validAgentAddresses(agentAddresses, expectedLength) {
+  return (
+    Array.isArray(agentAddresses) &&
+    agentAddresses.length === expectedLength &&
+    agentAddresses.every((address) => typeof address === 'string' && address.length > 0) &&
+    new Set(agentAddresses).size === agentAddresses.length
+  )
+}
+
+function confirmedAgentAddresses({ plan, runId, events, receipt }) {
+  const currentRunId = plan.runId || runId
+  const confirmation = [...events]
+    .reverse()
+    .find(
+      (event) =>
+        (event?.name === 'grant-confirmed' || event?.name === 'reuse-confirmed') &&
+        event.data?.runId === currentRunId
+    )
+  if (validAgentAddresses(confirmation?.data?.agentAddresses, plan.agents.length)) {
+    return confirmation.data.agentAddresses
+  }
+  if (
+    receipt?.runId === currentRunId &&
+    validAgentAddresses(receipt.permission?.agentAddresses, plan.agents.length)
+  ) {
+    return receipt.permission.agentAddresses
+  }
+  return null
+}
+
+function addressPersona(personaByAddress, address) {
+  if (typeof address !== 'string' || address.length === 0) return null
+  const candidate =
+    personaByAddress instanceof Map ? personaByAddress.get(address) : personaByAddress?.[address]
+  return CREW_PERSONAS.find((persona) => persona.id === candidate?.id) || null
+}
+
 export function StartStage({
   plan,
   permission = null,
   events = [],
   receipt = null,
+  personaByAddress = null,
   runId,
   stellarVenue,
   recoveryByAllocation = {},
   recoveryPendingAllocations = new Set(),
   onRecoverAllocation,
+  baseRecoveryByIdentity = {},
+  baseRecoveryPendingIdentities = new Set(),
+  onRecoverBaseChild,
   onViewMoney,
   onMakeAnotherDeposit,
   onViewCrew,
@@ -466,13 +640,17 @@ export function StartStage({
   const capDisplay = useMemo(() => buildAmountDisplayMap(plan.agents, 'allocation'), [plan.agents])
 
   const effectiveReceipt = useMemo(
-    () => foldRecoveryReceipt(receipt, recoveryByAllocation),
-    [receipt, recoveryByAllocation]
+    () => foldRecoveryReceipt(receipt, recoveryByAllocation, baseRecoveryByIdentity),
+    [receipt, recoveryByAllocation, baseRecoveryByIdentity]
   )
 
   const lanes = useMemo(
     () => buildLanes({ plan, permission, events, receipt: effectiveReceipt }),
     [plan, permission, events, effectiveReceipt]
+  )
+  const agentAddresses = useMemo(
+    () => confirmedAgentAddresses({ plan, runId, events, receipt: effectiveReceipt }),
+    [plan, runId, events, effectiveReceipt]
   )
 
   const anyFailed = lanes.some((lane) => lane.phase === 'failed')
@@ -496,6 +674,11 @@ export function StartStage({
           <ul className="pc-agent-lanes">
             {lanes.map((lane, index) => {
               const isBridge = lane.kind === 'bridge'
+              const planAgent = plan.agents[index]
+              const agentAddress = agentAddresses?.[index] || null
+              const assignedPersona = addressPersona(personaByAddress, agentAddress)
+              const persona = assignedPersona || personaForOrdinal(index)
+              const assignmentSyncing = Boolean(agentAddress && !assignedPersona)
               const display = displayByAllocation.get(lane.allocationId)
               const phaseLabel = isBridge
                 ? BRIDGE_PHASE_LABEL[lane.phase]
@@ -506,29 +689,43 @@ export function StartStage({
                   className="pc-agent-lane"
                   data-agent-kind={lane.kind}
                   data-lane-phase={lane.phase}
+                  data-agent-address={agentAddress || undefined}
                 >
-                  <AgentMark
-                    identity={lane.allocationId}
-                    state={laneMarkState(lane.phase)}
-                    label={isBridge ? 'B' : String(index + 1)}
+                  <img
+                    className="pc-start-agent-avatar pc-crew-avatar"
+                    src={persona.avatar}
+                    alt={`${persona.name} agent${
+                      assignmentSyncing ? ', assignment syncing' : agentAddress ? '' : ', planned'
+                    }`}
+                    data-state={laneMarkState(lane.phase)}
+                    width="44"
+                    height="44"
                   />
-                  <div data-pocket-enter>
-                    {isBridge ? (
-                      <NetworkRoute context={bridgeNetworkContext(lane.phase)} />
-                    ) : (
-                      <NetworkBadge networkId="stellar-testnet" />
+                  <div className="pc-agent-lane-body" data-pocket-enter>
+                    <p className="pc-worker-name">{persona.name}</p>
+                    {assignmentSyncing && (
+                      <p className="pc-crew-syncing">Crew assignment syncing.</p>
                     )}
-                    <p>{phaseLabel || lane.phase}</p>
-                    {/* Fix round 1 (F1): the formatted 2dp figure (capDisplay, keyed by
-                        allocationId), never the raw `display.allocation` float -- see capDisplay's
-                        own comment above. Bridge child rows a few lines below intentionally stay
-                        raw (`childDisplay?.allocation`): PlanStage.jsx's own sibling bridge-child
-                        row (line 676) also renders that field raw, so those two already agree. */}
-                    {display && (
-                      <p className="pc-lane-cap">
-                        {capDisplay[lane.allocationId]} {plan.amount.token}
-                      </p>
-                    )}
+                    {agentAddress && <p className="pc-lane-address pc-technical">{agentAddress}</p>}
+                    <div className="pc-agent-lane-meta">
+                      {isBridge ? (
+                        <NetworkRoute context={bridgeNetworkContext(lane.phase)} />
+                      ) : (
+                        <NetworkBadge networkId="stellar-testnet" />
+                      )}
+                      {/* Fix round 1 (F1): the formatted 2dp figure (capDisplay, keyed by
+                          allocationId), never the raw `display.allocation` float -- see capDisplay's
+                          own comment above. Bridge child rows a few lines below intentionally stay
+                          raw (`childDisplay?.allocation`): PlanStage.jsx's own sibling bridge-child
+                          row (line 676) also renders that field raw, so those two already agree. */}
+                      {display && (
+                        <p className="pc-lane-cap">
+                          {capDisplay[lane.allocationId]}{' '}
+                          {tokenSymbol(planAgent?.allocation.token ?? plan.amount.token)}
+                        </p>
+                      )}
+                    </div>
+                    <p className="pc-lane-phase">{phaseLabel || lane.phase}</p>
                     <div className="pc-agent-lane-progress">
                       <span />
                     </div>
@@ -543,10 +740,20 @@ export function StartStage({
                           const childDisplay = display?.children?.find(
                             (c) => c.allocationId === child.allocationId
                           )
-                          const projection = recoveryByAllocation[child.allocationId]
+                          let identityKey = null
+                          try {
+                            identityKey = baseRecoveryIdentityKey(child.identity)
+                          } catch {
+                            identityKey = null
+                          }
+                          const projection = identityKey
+                            ? baseRecoveryByIdentity instanceof Map
+                              ? baseRecoveryByIdentity.get(identityKey)
+                              : baseRecoveryByIdentity[identityKey]
+                            : { action: 'manual-review' }
                           const control = recoveryControl(
                             projection,
-                            recoveryPendingAllocations.has(child.allocationId),
+                            identityKey != null && baseRecoveryPendingIdentities.has(identityKey),
                             { baseChild: true }
                           )
                           return (
@@ -556,16 +763,21 @@ export function StartStage({
                                     sibling bridge-child row, which always names the currency
                                     alongside the amount -- this one silently omitted it. */}
                                 {child.proxyTarget || child.destination}:{' '}
-                                {childDisplay?.allocation ?? ''} {plan.amount.token}
+                                {childDisplay?.allocation ?? ''}{' '}
+                                {tokenSymbol(planAgent?.allocation.token ?? plan.amount.token)}
                               </span>
                               {child.custodyLabel && <span> {child.custodyLabel}</span>}
                               {child.error && <span role="alert"> {child.error}</span>}
-                              {child.failed && (
+                              {child.failed && !control.hidden && (
                                 <button
                                   type="button"
                                   className="pc-button pc-button--secondary"
                                   disabled={control.disabled}
-                                  onClick={() => onRecoverAllocation?.(child.allocationId)}
+                                  onClick={() => {
+                                    if (!control.disabled && child.identity) {
+                                      onRecoverBaseChild?.(child.identity)
+                                    }
+                                  }}
                                 >
                                   {control.label}
                                 </button>
@@ -576,7 +788,7 @@ export function StartStage({
                       </ul>
                     )}
                     {lane.txHash && (
-                      <TechnicalDetails summary={`Agent ${index + 1} technical details`}>
+                      <TechnicalDetails summary={`${persona.name} technical details`}>
                         {/* Owner decision #19: the container no longer defaults to mono -- these
                             two raw values are marked .pc-technical individually so they keep
                             rendering in the mono face. */}

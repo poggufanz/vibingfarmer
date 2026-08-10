@@ -22,6 +22,7 @@ import {
   NETWORK_PASSPHRASE,
 } from './config.js'
 import { rpcServer } from './client.js'
+import { mapSettledWithConcurrency } from '../async/mapSettledWithConcurrency.js'
 
 // The only network the D1 index (agentCreatorManifest.js AGENT_CREATORS) covers today.
 export const DEFAULT_NETWORK_ID = 'stellar-testnet'
@@ -46,6 +47,36 @@ function emptyEnvelope(networkId, owner) {
       vaultVerifiedCount: 0,
       unverifiedCandidateCount: 0,
     },
+  }
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+}
+
+async function awaitWithAbort(promise, signal) {
+  if (!signal) return promise
+  throwIfAborted(signal)
+  let onAbort
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(signal.reason ?? new DOMException('Aborted', 'AbortError'))
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    return await Promise.race([promise, aborted])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
+async function fallbackUnlessAborted(promise, fallback, signal) {
+  try {
+    const value = await awaitWithAbort(promise, signal)
+    throwIfAborted(signal)
+    return value
+  } catch {
+    throwIfAborted(signal)
+    return fallback
   }
 }
 
@@ -74,7 +105,8 @@ function placeholderApiFields(address) {
  * Build the OwnerDiscoveryV1 envelope for `owner`. Read-only; never mutates any cache.
  * @param {{owner:string, networkId?:string, server?:object, vault?:string,
  *   fetchClient?:Function, loadCache?:Function, fetchRpcEvents?:Function,
- *   queryRegistry?:Function, discoverVaultAgents?:Function, readScope?:Function}} p
+ *   queryRegistry?:Function, discoverVaultAgents?:Function, readScope?:Function,
+ *   signal?:AbortSignal}} p
  * @returns {Promise<{status:'complete'|'partial'|'unavailable', networkId:string, owner:string,
  *   agents:Array, coverage:object|null, hints:object}>}
  */
@@ -89,16 +121,22 @@ export async function discoverOwnerScopes({
   queryRegistry = queryAgentsByOwner,
   discoverVaultAgents = discoverAgentsFromVault,
   readScope = readAgentScope,
+  signal,
 } = {}) {
   if (!owner) return emptyEnvelope(networkId, owner)
+  throwIfAborted(signal)
 
-  const client = await fetchClient({ owner, networkId }).catch(() => ({
-    status: 'unavailable',
-    networkId,
-    owner,
-    agents: [],
-    coverage: null,
-  }))
+  const client = await fallbackUnlessAborted(
+    fetchClient({ owner, networkId, signal }),
+    {
+      status: 'unavailable',
+      networkId,
+      owner,
+      agents: [],
+      coverage: null,
+    },
+    signal
+  )
 
   // Neither of these seams has its own internal try/catch (unlike every fetch below, which is
   // `.catch`-guarded individually) — a throwing rpcServer() (SDK load failure) or a throwing
@@ -107,8 +145,10 @@ export async function discoverOwnerScopes({
   let s = server ?? null
   if (!s) {
     try {
-      s = await rpcServer()
+      s = await awaitWithAbort(rpcServer(), signal)
+      throwIfAborted(signal)
     } catch {
+      throwIfAborted(signal)
       s = null
     }
   }
@@ -118,22 +158,35 @@ export async function discoverOwnerScopes({
   } catch {
     cached = []
   }
-  const [rpcEvents, registryAgents, vaultAgents] = await Promise.all([
-    SOROBAN_FUNDING_ROUTER_ADDRESS
-      ? fetchRpcEvents({ server: s, routerAddress: SOROBAN_FUNDING_ROUTER_ADDRESS, owner }).catch(
-          () => []
-        )
-      : Promise.resolve([]),
-    queryRegistry(owner, { server: s }).catch(() => []),
-    // ponytail: discoverVaultAgents() already runs its own getEvents scan (~100k ledgers) plus
-    // batched N+1 scope_of reads to owner-verify each holder (events.js:135-217), and the
-    // Promise.allSettled below re-reads scope_of for every one of these addresses again — every
-    // vault-discovered agent costs two scope_of round-trips per envelope build. Upgrade: have
-    // discoverAgentsFromVault hand back the scope it already read (or accept a shared scope
-    // cache) so the second read below can skip vault-sourced candidates; revisit if build
-    // latency or RPC quota becomes a problem.
-    discoverVaultAgents(owner, { server: s }).catch(() => []),
-  ])
+  throwIfAborted(signal)
+  // Keep the singleton router/registry reads from overlapping the vault's eight-wide scope queue;
+  // otherwise the owner-wide cap could briefly become ten even though each mapper was bounded.
+  const rpcEvents = SOROBAN_FUNDING_ROUTER_ADDRESS
+    ? await fallbackUnlessAborted(
+        fetchRpcEvents({
+          server: s,
+          routerAddress: SOROBAN_FUNDING_ROUTER_ADDRESS,
+          owner,
+          signal,
+        }),
+        [],
+        signal
+      )
+    : []
+  const registryAgents = await fallbackUnlessAborted(
+    queryRegistry(owner, { server: s, signal }),
+    [],
+    signal
+  )
+  // ponytail: discoverVaultAgents() already runs its own getEvents scan (~100k ledgers) plus
+  // bounded N+1 scope_of reads to owner-verify each holder, and the queue below re-reads scope_of
+  // for every one of these addresses again. Upgrade: return/cache the scopes if latency warrants.
+  const vaultAgents = await fallbackUnlessAborted(
+    discoverVaultAgents(owner, { server: s, signal }),
+    [],
+    signal
+  )
+  throwIfAborted(signal)
 
   // Candidate union, deduped by address — dedup never drops WHICH sources saw an address
   // (discoverySources below), and an API-known row's identity is never overwritten by a hint stub.
@@ -162,11 +215,13 @@ export async function discoverOwnerScopes({
 
   // Chain is authoritative: re-read every candidate's scope. readAgentScope never throws (catches
   // internally), so allSettled here is belt-and-braces, not load-bearing.
-  const settled = await Promise.allSettled(
-    [...candidates.values()].map(async (c) => ({
+  const settled = await mapSettledWithConcurrency(
+    [...candidates.values()],
+    async (c) => ({
       ...c,
-      scope: await readScope(c.address, { server: s }),
-    }))
+      scope: await fallbackUnlessAborted(readScope(c.address, { server: s, signal }), null, signal),
+    }),
+    { concurrency: 8, signal }
   )
 
   const agents = []

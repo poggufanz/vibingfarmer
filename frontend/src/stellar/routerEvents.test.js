@@ -13,6 +13,24 @@ const AGENT_A = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 const AGENT_B = 'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
 const OWNER = Keypair.random().publicKey()
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+async function waitUntil(predicate) {
+  for (let attempts = 0; attempts < 100; attempts += 1) {
+    if (predicate()) return
+    await Promise.resolve()
+  }
+  throw new Error('condition was not reached')
+}
+
 // Mirror an RPC getEvents `Deployed` record: topics [deployed(lowercase), owner, agent],
 // data = ScMap { cap }.
 function deployedRecord({ owner = OWNER, agent, cap, ledger, txHash }) {
@@ -209,5 +227,80 @@ describe('fetchRouterDeployedEvents', () => {
     }
     const out = await fetchRouterDeployedEvents({ server, routerAddress: ROUTER, owner: OWNER })
     expect(out).toEqual([])
+  })
+
+  it('rejects promptly and never starts page two when aborted during page one', async () => {
+    const pageOne = deferred()
+    const abortReason = new Error('owner changed')
+    const controller = new AbortController()
+    let eventCalls = 0
+    const server = {
+      getHealth: async () => ({ oldestLedger: 1 }),
+      getEvents: async () => {
+        eventCalls += 1
+        if (eventCalls === 1) return pageOne.promise
+        return { events: [], cursor: 'page-2' }
+      },
+    }
+
+    const operation = fetchRouterDeployedEvents({
+      server,
+      routerAddress: ROUTER,
+      owner: OWNER,
+      signal: controller.signal,
+    })
+    const observed = operation.then(
+      () => ({ status: 'fulfilled' }),
+      (reason) => ({ status: 'rejected', reason })
+    )
+
+    await waitUntil(() => eventCalls === 1)
+    controller.abort(abortReason)
+    const promptOutcome = await Promise.race([
+      observed,
+      new Promise((resolve) => setTimeout(() => resolve({ status: 'pending' }), 20)),
+    ])
+    pageOne.resolve({ events: [], cursor: 'page-2' })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(promptOutcome).toEqual({ status: 'rejected', reason: abortReason })
+    expect(eventCalls).toBe(1)
+  })
+
+  it('stops before decoding another record when the signal aborts during decode', async () => {
+    const controller = new AbortController()
+    const abortReason = new Error('owner changed while decoding')
+    const first = deployedRecord({ agent: AGENT_A, cap: 1n, ledger: 100, txHash: 'TXA' })
+    const firstTopic = first.topic
+    Object.defineProperty(first, 'topic', {
+      get() {
+        controller.abort(abortReason)
+        return firstTopic
+      },
+    })
+    let secondDecoded = false
+    const second = deployedRecord({ agent: AGENT_B, cap: 2n, ledger: 101, txHash: 'TXB' })
+    const secondTopic = second.topic
+    Object.defineProperty(second, 'topic', {
+      get() {
+        secondDecoded = true
+        return secondTopic
+      },
+    })
+    const server = {
+      getHealth: async () => ({ oldestLedger: 1 }),
+      getEvents: async () => ({ events: [first, second] }),
+    }
+
+    await expect(
+      fetchRouterDeployedEvents({
+        server,
+        routerAddress: ROUTER,
+        owner: OWNER,
+        signal: controller.signal,
+      })
+    ).rejects.toBe(abortReason)
+    expect(secondDecoded).toBe(false)
   })
 })

@@ -182,6 +182,40 @@ describe('MyMoneyRoute — Fix loop 1, I2: Recover Base account is reachable fro
     fireEvent.click(btn)
     expect(onRecoverBase).not.toHaveBeenCalled()
   })
+
+  it('keeps recovery visibly unavailable and inert while hardened Base facts are absent', () => {
+    const onRecoverBase = vi.fn()
+    render(
+      <MyMoneyRoute
+        model={baseModel()}
+        agents={[]}
+        onRecoverBase={onRecoverBase}
+        baseActionsAvailable={false}
+        baseUnavailableReason="Base cross-chain actions are temporarily unavailable while the hardened deployment is verified."
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Recover Base account' })
+    expect(button.disabled).toBe(true)
+    expect(button.getAttribute('aria-describedby')).toBe('recover-base-unavailable')
+    expect(document.getElementById('recover-base-unavailable').textContent).toMatch(
+      /temporarily unavailable/i
+    )
+    fireEvent.click(button)
+    expect(onRecoverBase).not.toHaveBeenCalled()
+  })
+
+  it('renders a Base controller error instead of leaving it in dead state', () => {
+    render(
+      <MyMoneyRoute
+        model={baseModel()}
+        agents={[]}
+        baseActionError="The selected passkey does not own this Base account."
+      />
+    )
+
+    expect(screen.getByRole('alert').textContent).toMatch(/selected passkey/i)
+  })
 })
 
 describe('MyMoneyRoute — checklist item 1: no 3+ equal rounded cards', () => {

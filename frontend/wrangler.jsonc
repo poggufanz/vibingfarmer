@@ -13,7 +13,12 @@
   // `npx wrangler d1 create vf-gate`, paste the id below, then
   // `npx wrangler d1 migrations apply vf-gate --remote`.
   "d1_databases": [
-    { "binding": "VF_DB", "database_name": "vf-gate", "database_id": "ec1a48cf-bd50-49a3-88b0-c07a12329fd8" }
+    {
+      "binding": "VF_DB",
+      "database_name": "vf-gate",
+      "database_id": "ec1a48cf-bd50-49a3-88b0-c07a12329fd8",
+      "preview_database_id": "00000000-0000-4000-8000-000000000001"
+    }
   ],
   // Non-secret runtime env for the /api/* Pages Functions. Secrets
   // (STELLAR_RELAYER_SECRET, VF_*) are set per-environment via
@@ -21,6 +26,8 @@
   "vars": {
     "NODE_ENV": "production",
     "ALLOWED_ORIGIN": "https://vibing-farmer.pages.dev",
+    "ALLOWED_EXTENSION_ORIGINS": "",
+    "RELAYER_ORIGIN": "https://vf-relayer.example.com",
     "SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org",
     "STELLAR_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
     "SOROBAN_VAULT_ADDRESS": "CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77",
@@ -56,11 +63,18 @@
       // no nodejs_compat ("process is not defined") and no VF_DB binding.
       "compatibility_flags": ["nodejs_compat"],
       "d1_databases": [
-        { "binding": "VF_DB", "database_name": "vf-gate", "database_id": "ec1a48cf-bd50-49a3-88b0-c07a12329fd8" }
+        {
+          "binding": "VF_DB",
+          "database_name": "vf-gate",
+          "database_id": "00000000-0000-4000-8000-000000000001",
+          "preview_database_id": "00000000-0000-4000-8000-000000000001"
+        }
       ],
       "vars": {
         "NODE_ENV": "production",
         "ALLOWED_ORIGIN": "https://dev.vibing-farmer.pages.dev",
+        "ALLOWED_EXTENSION_ORIGINS": "",
+        "RELAYER_ORIGIN": "https://vf-relayer.example.com",
         "SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org",
         "STELLAR_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
         "SOROBAN_VAULT_ADDRESS": "CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77",

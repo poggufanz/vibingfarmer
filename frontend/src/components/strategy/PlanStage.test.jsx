@@ -15,7 +15,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
-import { CREW_NAMES, PlanStage } from './PlanStage.jsx'
+
+vi.mock('../../base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } =
+    await import('../../base/hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
+import { PlanStage } from './PlanStage.jsx'
 import { StrategyRoute } from './StrategyRoute.jsx'
 import { FIRST_DEPOSIT_MIN_UNITS } from '../../strategy/amountValidation.js'
 import { canonicalizeStrategy } from '../../strategy/canonicalStrategy.js'
@@ -866,6 +873,35 @@ describe('PlanStage — C2: the reviewed amount must reconcile with the typed am
   })
 })
 
+describe('PlanStage — generation error layout', () => {
+  it('keeps one spacing token between the error notice and the retry button', async () => {
+    const onGenerate = vi.fn().mockRejectedValue(new Error('Strategy provider unavailable'))
+    const { container } = render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+    )
+    await fillAndSubmit({ amount: '100', risk: 'Steady' })
+    await screen.findByRole('alert')
+
+    const browser = await launchRealChromium()
+    try {
+      const page = await browser.newPage()
+      await page.setViewportSize({ width: 656, height: 480 })
+      await page.setContent(buildLayoutHarnessHtml(container.innerHTML))
+      const gap = await page.evaluate(() => {
+        const notice = document.querySelector('.pc-status-notice')
+        const retry = Array.from(document.querySelectorAll('button')).find(
+          (button) => button.textContent.trim() === 'Build my plan'
+        )
+        return retry.getBoundingClientRect().top - notice.getBoundingClientRect().bottom
+      })
+
+      expect(gap).toBe(16)
+    } finally {
+      await browser.close()
+    }
+  })
+})
+
 describe('PlanStage — I2: the cached source state is never mislabeled as the deterministic fallback', () => {
   it('shows a distinct "cached" badge and freshness, never "Safe default plan"/"Fallback"', async () => {
     const onGenerate = vi.fn().mockResolvedValue({
@@ -1196,7 +1232,7 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
   it('item 5: replaces numbered marks with three distinct crew SVG avatars', async () => {
     await generateThreeWaySplit()
     expect(screen.queryByText(/^Worker \d/)).toBeNull()
-    for (const name of CREW_NAMES.slice(0, 3)) expect(screen.getByText(name)).toBeTruthy()
+    for (const name of ['Sprout', 'Clover', 'Mochi']) expect(screen.getByText(name)).toBeTruthy()
     const marks = document.querySelectorAll('[data-agent-kind="deposit"] img.pc-plan-agent-avatar')
     expect(marks.length).toBe(3)
     expect(new Set(Array.from(marks, (mark) => mark.getAttribute('src'))).size).toBe(3)
@@ -1204,6 +1240,59 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
       expect(mark.getAttribute('src')).toMatch(/\/brand\/agents\/(sprout|clover|mochi)\.svg$/)
       expect(Number(mark.getAttribute('width'))).toBeGreaterThanOrEqual(40)
       expect(Number(mark.getAttribute('height'))).toBeGreaterThanOrEqual(40)
+    }
+  })
+
+  it('rotates the shared three-persona catalog across six planned allocations', async () => {
+    const originalNormalize = planModel.normalizeStrategyPlan
+    const spy = vi.spyOn(planModel, 'normalizeStrategyPlan').mockImplementation((input) => {
+      const real = originalNormalize(input)
+      const units = ['166666667', '166666667', '166666667', '166666667', '166666666', '166666666']
+      return {
+        ...real,
+        agents: units.map((allocationUnits, index) => ({
+          ...real.agents[0],
+          allocationId: `${real.runId}:deposit:${index}`,
+          allocation: { ...real.agents[0].allocation, units: allocationUnits },
+          cap: { ...real.agents[0].cap, units: allocationUnits },
+        })),
+      }
+    })
+    try {
+      const onGenerate = vi.fn().mockResolvedValue({
+        source: 'deepseek',
+        sourceState: 'live-ai',
+        stellarUnits: '1000000000',
+        baseAllocations: [],
+      })
+      render(
+        <PlanStage
+          vaultTotalShares={FUNDED_VAULT}
+          base={disconnectedBase}
+          onGenerate={onGenerate}
+        />
+      )
+      await fillAndSubmit({ amount: '100', risk: 'Steady' })
+      await screen.findByRole('button', { name: 'Accept plan' })
+
+      expect(
+        Array.from(document.querySelectorAll('.pc-worker-name'), (row) => row.textContent)
+      ).toEqual(['Sprout', 'Clover', 'Mochi', 'Sprout', 'Clover', 'Mochi'])
+      expect(
+        Array.from(document.querySelectorAll('.pc-plan-agent-avatar'), (image) =>
+          image.getAttribute('src')
+        )
+      ).toEqual([
+        '/brand/agents/sprout.svg',
+        '/brand/agents/clover.svg',
+        '/brand/agents/mochi.svg',
+        '/brand/agents/sprout.svg',
+        '/brand/agents/clover.svg',
+        '/brand/agents/mochi.svg',
+      ])
+      expect(document.body.textContent).not.toMatch(/Pepper|Juniper|Basil/)
+    } finally {
+      spy.mockRestore()
     }
   })
 

@@ -48,6 +48,7 @@ import { StrategyRoute } from '../src/components/strategy/StrategyRoute.jsx'
 // ceremonyView.js's own imports below (never a lazy() candidate; lazy() exists only to keep a
 // ROUTE's own stylesheet off every fixture page, and this file has none).
 import { selectCrewDecisions } from '../src/components/crew/selectCrewDecisions.js'
+import { buildCrewPersonas } from '../src/crew/buildCrewPersonas.js'
 // Task 12 fix round 1, M8: the real, shared export app.jsx itself imports from the same place
 // (app.jsx:33, used for its own keeper-event fromLabel/toLabel -- app.jsx:1156-1157) -- not a
 // second hand-copied `slice(0,6)…slice(-4)` this file would need to keep in sync by hand if the
@@ -1734,52 +1735,73 @@ function crewHealthyAgent(address, units) {
   }
 }
 
-const CREW_AGENTS_THREE = Object.freeze([
+const CREW_MAX_I128_UNITS = 170141183460469231731687303715884105727n
+const CREW_AGENTS_ASSIGNED = Object.freeze([
   mmDepositAgent(),
-  mmBridgeAgent(),
-  // Same address My Money's own fixture uses for its revoked/recovery agent -- healthy here on
-  // purpose (see this section's own header comment above).
-  crewHealthyAgent(MM_AGENT_RECOVERY, 150_0000000n),
+  crewHealthyAgent(MM_AGENT_RECOVERY, CREW_MAX_I128_UNITS - 300_0000000n),
 ])
 
-const CREW_DISCOVERY_THREE = Object.freeze({
+function crewIndexedRow(address, runOrdinal, cap, createdLedger) {
+  return {
+    address,
+    creator: 'CCREWVISUALINDEXCREATORAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    createdLedger,
+    createdTxHash: `${REAL_TX_HASH_1.slice(0, 56)}${String(runOrdinal).padStart(8, '0')}`,
+    runId: `run-crew-${runOrdinal}`,
+    runOrdinal,
+    grantTxHash: REAL_TX_HASH_2,
+    provenance: {
+      source: 'router-event',
+      providerId: 'visual-live-rpc',
+      endpointClass: 'live',
+      generation: 'agent-v3',
+    },
+    discoverySources: ['agent-index-api'],
+    scopeReadStatus: 'ok',
+    vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+    revoked: false,
+    expiry: NOW_SECONDS + 3600,
+    authorized: true,
+    cap,
+    baseChildren: [],
+  }
+}
+
+const CREW_DISCOVERY_ASSIGNED = Object.freeze({
   status: 'complete',
+  networkId: 'stellar-testnet',
+  owner: MM_OWNER,
   agents: [
-    { address: MM_AGENT_DEPOSIT, cap: MM_DEPOSIT_CAP },
-    { address: MM_AGENT_BRIDGE, cap: MM_BRIDGE_CAP },
-    { address: MM_AGENT_RECOVERY, cap: '2000000000' }, // 200 USDC -- exceeds the 150 USDC shown.
+    crewIndexedRow(MM_AGENT_DEPOSIT, 0, MM_DEPOSIT_CAP, 5551300),
+    // Ordinal 3 wraps to Sprout. This is indexed assignment evidence, not render order.
+    crewIndexedRow(MM_AGENT_RECOVERY, 3, '2000000000', 5551350),
   ],
 })
 
-// Same 650 USDC total as My Money's own MM_MODEL_ACTIVE above (300 + 200 + 150 -- identical
-// per-agent amounts, all three healthy here instead of one revoked) -- not recomputed, just an
-// honest coincidence of reusing the same three amounts.
-//
-// Task 12 fix round 1, M6: this aggregate must match CREW_AGENTS_THREE's own per-agent
-// custodyBreakdown, not just the total -- mmBridgeAgent() (200 USDC) splits 120 stellar-vault / 80
-// base-proxy (see its own header comment), so the aggregate is 300 (deposit) + 120 (bridge's
-// stellar leg) + 150 (recovery-address healthy agent) = 570 stellar-vault, 80 base-proxy. Inert
-// today (nothing in CrewRoute renders this aggregate), but wrong before this fix in a fixture
-// whose entire value is being right.
-const CREW_MONEY_THREE = Object.freeze({
-  confirmedTotal: { state: 'known', amount: mmAmt(650_0000000n) },
+const CREW_MONEY_ASSIGNED = Object.freeze({
+  confirmedTotal: { state: 'known', amount: mmAmt(CREW_MAX_I128_UNITS) },
   yield: { state: 'live', apy: 8.1 },
   earned: { state: 'unavailable', amount: null },
   unattributed: {},
-  custodyBreakdown: { 'stellar-vault': '5700000000', 'base-proxy': '800000000' },
-  agentCount: 3,
+  custodyBreakdown: { 'stellar-vault': String(CREW_MAX_I128_UNITS) },
+  agentCount: 2,
   problemAgentCount: 0,
-  agents: CREW_AGENTS_THREE,
+  agents: CREW_AGENTS_ASSIGNED,
   checkedAt: NOW_SECONDS * 1000,
   confirmedLedger: 5551400,
   confirmedBlock: 43,
   source: 'stellar-rpc',
 })
 
+const CREW_PERSONAS_ASSIGNED = buildCrewPersonas({
+  moneyAgents: CREW_AGENTS_ASSIGNED,
+  discovery: CREW_DISCOVERY_ASSIGNED,
+})
+
 const CREW_MODEL_ARMED = buildMyMoneyModel({
   owner: MM_OWNER,
-  discovery: CREW_DISCOVERY_THREE,
-  money: CREW_MONEY_THREE,
+  discovery: CREW_DISCOVERY_ASSIGNED,
+  money: CREW_MONEY_ASSIGNED,
   protection: { state: 'armed', authority: MM_OWNER, mandateExpiry: NOW_SECONDS + 5 * 3600 },
   now: NOW_SECONDS * 1000,
 })
@@ -1790,8 +1812,8 @@ const CREW_MODEL_ARMED = buildMyMoneyModel({
 // exercises that exact decay path, not a separately-disarmed one.
 const CREW_MODEL_ALARM = buildMyMoneyModel({
   owner: MM_OWNER,
-  discovery: CREW_DISCOVERY_THREE,
-  money: CREW_MONEY_THREE,
+  discovery: CREW_DISCOVERY_ASSIGNED,
+  money: CREW_MONEY_ASSIGNED,
   protection: { state: 'armed', authority: MM_OWNER, mandateExpiry: NOW_SECONDS - 3600 },
   now: NOW_SECONDS * 1000,
 })
@@ -1817,10 +1839,21 @@ const CREW_AGENTS_CANCELLED = Object.freeze([mmDepositAgent(), CREW_AGENT_CANCEL
 
 const CREW_DISCOVERY_CANCELLED = Object.freeze({
   status: 'complete',
+  networkId: 'stellar-testnet',
+  owner: MM_OWNER,
   agents: [
-    { address: MM_AGENT_DEPOSIT, cap: MM_DEPOSIT_CAP },
-    { address: MM_AGENT_BRIDGE, cap: MM_BRIDGE_CAP },
+    crewIndexedRow(MM_AGENT_DEPOSIT, 0, MM_DEPOSIT_CAP, 5551300),
+    {
+      ...crewIndexedRow(MM_AGENT_BRIDGE, 1, MM_BRIDGE_CAP, 5551325),
+      revoked: true,
+      authorized: false,
+    },
   ],
+})
+
+const CREW_PERSONAS_CANCELLED = buildCrewPersonas({
+  moneyAgents: CREW_AGENTS_CANCELLED,
+  discovery: CREW_DISCOVERY_CANCELLED,
 })
 
 const CREW_MODEL_CANCELLED = buildMyMoneyModel({
@@ -1859,9 +1892,20 @@ const CREW_MODEL_CANCELLED = buildMyMoneyModel({
 // (same owner/discovery/money/protection), rebuilt with checkedAt/now/mandateExpiry all anchored
 // to the crew fixture's own frozen instant instead -- MM_MODEL_EMPTY itself is left untouched
 // (My Money's own fixture keeps using it, so its baselines are unaffected).
+const CREW_DISCOVERY_EMPTY = Object.freeze({
+  ...MM_DISCOVERY_EMPTY,
+  networkId: 'stellar-testnet',
+  owner: MM_OWNER,
+})
+
+const CREW_PERSONAS_EMPTY = buildCrewPersonas({
+  moneyAgents: [],
+  discovery: CREW_DISCOVERY_EMPTY,
+})
+
 const CREW_MODEL_EMPTY = buildMyMoneyModel({
   owner: MM_OWNER,
-  discovery: MM_DISCOVERY_EMPTY,
+  discovery: CREW_DISCOVERY_EMPTY,
   money: {
     confirmedTotal: { state: 'known', amount: mmAmt(0n) },
     yield: { state: 'unavailable', apy: null },
@@ -1942,9 +1986,9 @@ function CrewFixture() {
       {/* CrewRoute is lazy() (see its own declaration's comment) for the same CSS-cascade reason
           MyMoneyRoute is above -- one Suspense boundary, one pending marker, for the whole fixture. */}
       <Suspense fallback={<div data-fixture-pending="true" />}>
-        <Section title="The crew — armed, three agents">
+        <Section title="The crew — armed, two Sprout children">
           <CrewRoute
-            agents={CREW_AGENTS_THREE}
+            crew={CREW_PERSONAS_ASSIGNED}
             model={CREW_MODEL_ARMED}
             keeper={MM_KEEPER_HEALTHY}
             keeperEvents={CREW_KEEPER_EVENTS}
@@ -1957,7 +2001,7 @@ function CrewFixture() {
 
         <Section ariaHidden title="The crew — alarm only (mandate lapsed)">
           <CrewRoute
-            agents={CREW_AGENTS_THREE}
+            crew={CREW_PERSONAS_ASSIGNED}
             model={CREW_MODEL_ALARM}
             keeper={MM_KEEPER_HEALTHY}
             keeperEvents={CREW_KEEPER_EVENTS}
@@ -1973,7 +2017,7 @@ function CrewFixture() {
             by the two populated sections above. */}
         <Section ariaHidden title="The crew — one agent cancelled">
           <CrewRoute
-            agents={CREW_AGENTS_CANCELLED}
+            crew={CREW_PERSONAS_CANCELLED}
             model={CREW_MODEL_CANCELLED}
             keeper={MM_KEEPER_HEALTHY}
             keeperEvents={[]}
@@ -1984,14 +2028,14 @@ function CrewFixture() {
           />
         </Section>
 
-        {/* CrewRoute's own `!agents.length` branch (real code, not a fixture-invented one) --
-            CREW_MODEL_EMPTY mirrors My Money's own MM_MODEL_EMPTY shape (authoritatively-empty,
-            built the same real buildMyMoneyModel way) so `emptyStateCopy`'s confident "No crew
-            members are deployed yet" line is what's frozen here, not its uncertain-read sibling --
-            but anchored on this fixture's OWN frozen clock rather than reusing MM_MODEL_EMPTY's
-            (fix round 1, M7: see CREW_MODEL_EMPTY's own comment). */}
+        {/* The same authoritatively empty discovery feeds both the money model and the persistent
+            three-persona projection, so the route can distinguish known-empty from a read gap. */}
         <Section ariaHidden title="The crew — empty">
-          <CrewRoute agents={[]} model={CREW_MODEL_EMPTY} onStartStrategy={() => {}} />
+          <CrewRoute
+            crew={CREW_PERSONAS_EMPTY}
+            model={CREW_MODEL_EMPTY}
+            onStartStrategy={() => {}}
+          />
         </Section>
       </Suspense>
     </main>

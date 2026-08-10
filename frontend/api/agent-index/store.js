@@ -2,6 +2,7 @@
 // (migrations/0002_agent_index.sql). This is the ONLY module that issues SQL against the
 // agent_index_sources / agent_index_gaps / agent_memberships / agent_run_allocations /
 // agent_backfill_audits tables — Tasks 3-7 go through createAgentIndexStore(db), never raw SQL.
+import { createHash } from 'node:crypto'
 import {
   toMembershipRow,
   parseMembershipRow,
@@ -19,12 +20,22 @@ import {
   parsePhaseAttemptRow,
   toBaseChildRow,
   parseBaseChildRow,
+  baseChildBatchDigest,
+  baseChildEvidenceDigest,
+  baseChildEvidenceReportDigest,
+  baseChildRecoveryIdentity,
+  toBaseChildPhaseEventRow,
+  parseBaseChildPhaseEventRow,
+  parseBaseChildPhaseProjectionRow,
   canonicalJson,
   AgentIndexConflictError,
   AgentIndexStoreError,
   AgentIndexValidationError,
   BASE_CHILD_LIFECYCLE_STATUSES,
   RECEIPT_PHASES,
+  BASE_CHILD_RECOVERY_PHASES,
+  BASE_RECOVERY_ACTIONS,
+  BASE_RECOVERY_PHASES,
   nowSeconds,
 } from './models.js'
 import {
@@ -32,6 +43,31 @@ import {
   AGENT_CREATOR_MANIFEST_VERSION,
   AGENT_INDEX_SCHEMA_VERSION,
 } from '../../src/stellar/agentCreatorManifest.js'
+
+export const D1_TOTAL_BIND_PARAMETER_LIMIT = 100
+// Network-scoped address queries reserve one D1 bind for networkId.
+export const D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE = D1_TOTAL_BIND_PARAMETER_LIMIT - 1
+export const MAX_BASE_CHILD_BATCH_SIZE = 16
+
+function baseRecoveryLeaseTokenDigest(token) {
+  return createHash('sha256').update(token).digest('hex')
+}
+
+function selectorPhaseEntry(row, parse) {
+  let parsed
+  try {
+    parsed = parse(row)
+    if (baseChildEvidenceDigest(parsed.evidence) !== parsed.evidenceDigest) {
+      throw new Error('persisted evidence digest mismatch')
+    }
+  } catch (error) {
+    throw new AgentIndexStoreError('Base child recovery evidence integrity check failed', {
+      cause: error,
+    })
+  }
+  const { evidenceDigest: _storageDigest, ...entry } = parsed
+  return entry
+}
 
 function parseSourceId(sourceId) {
   if (typeof sourceId !== 'string' || !sourceId)
@@ -86,7 +122,7 @@ function sameAssociationEvidence(existing, association) {
 
 /** D1 repository. `db` is a Cloudflare D1 binding (prepare/bind/run/first/all + batch) — or, in
  * tests, an in-memory double with the same surface (see store.test.js). */
-export function createAgentIndexStore(db) {
+export function createAgentIndexStore(db, { enableLegacyBaseChildWrites = false } = {}) {
   async function probeReadiness() {
     await db.prepare('UPDATE agent_index_sources SET status = status WHERE 0').bind().run()
     await db
@@ -109,6 +145,45 @@ export function createAgentIndexStore(db) {
         `SELECT attempt_id, network_id, execution_id, allocation_id, attempt_kind,
                 phase, status, evidence_json, request_digest, receipt_version
          FROM execution_phase_attempts WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT idempotency_key, request_digest, burn_units_7, child_count
+         FROM base_child_intent_batches WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT idempotency_key, ordinal, network_id, binding_id, execution_id,
+                allocation_id, child_id, intent_digest
+         FROM base_child_intent_batch_items WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT event_id, network_id, binding_id, execution_id, allocation_id, child_id,
+                recovery_version, phase, state, evidence_json
+         FROM base_child_phase_events WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT network_id, binding_id, execution_id, allocation_id, child_id, phase,
+                owner_address, action, evidence_version, lease_token, acquired_at, expires_at
+         FROM base_child_recovery_leases WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT network_id, binding_id, execution_id, allocation_id, child_id, phase,
+                latest_event_id, recovery_version, state, evidence_json
+         FROM base_child_phase_projection WHERE 0`
       )
       .bind()
       .all()
@@ -151,7 +226,7 @@ export function createAgentIndexStore(db) {
     return {
       writable: true,
       schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
-      stores: { executionReceipts: true, baseChildIntents: true },
+      stores: { executionReceipts: true, baseChildIntents: true, baseRecoveryEvidence: true },
     }
   }
 
@@ -640,6 +715,376 @@ export function createAgentIndexStore(db) {
     return { released: Number(result?.meta?.changes ?? 0) === 1 }
   }
 
+  const BASE_RECOVERY_ACTION_PHASE = Object.freeze({
+    'poll-attestation': 'cctp_attestation',
+    'submit-mint': 'cctp_mint',
+    'poll-mint': 'cctp_mint',
+    'submit-base-deposit': 'base_deposit',
+    'poll-base-deposit': 'base_deposit',
+  })
+
+  function validateBaseLeaseInput(lease, { requireHolder = true, requireTtl = false } = {}) {
+    if (!lease || typeof lease !== 'object' || Array.isArray(lease)) {
+      throw new AgentIndexValidationError('Base recovery lease is required')
+    }
+    const action = lease.action
+    const phase = lease.phase
+    if (!BASE_RECOVERY_ACTIONS.includes(action) || !BASE_RECOVERY_ACTION_PHASE[action]) {
+      throw new AgentIndexValidationError('Base recovery lease action is not claimable')
+    }
+    if (BASE_RECOVERY_ACTION_PHASE[action] !== phase || !BASE_RECOVERY_PHASES.includes(phase)) {
+      throw new AgentIndexValidationError('Base recovery lease phase does not match action')
+    }
+    if (
+      !lease.identity ||
+      typeof lease.identity !== 'object' ||
+      !lease.identity.networkId ||
+      !lease.identity.bindingId ||
+      !lease.identity.executionId ||
+      !lease.identity.allocationId ||
+      !lease.identity.childId
+    ) {
+      throw new AgentIndexValidationError('Base recovery lease identity is required')
+    }
+    if (typeof lease.leaseToken !== 'string' || !/^[0-9a-f]{64}$/.test(lease.leaseToken)) {
+      throw new AgentIndexValidationError('Base recovery lease token is invalid')
+    }
+    if (!Number.isSafeInteger(lease.evidenceVersion) || lease.evidenceVersion < 0) {
+      throw new AgentIndexValidationError('Base recovery lease evidence version is invalid')
+    }
+    if (!Number.isSafeInteger(lease.now) || lease.now < 0) {
+      throw new AgentIndexValidationError('Base recovery lease time is invalid')
+    }
+    if (
+      requireHolder &&
+      (typeof lease.holder !== 'string' || !lease.holder || lease.holder.length > 128)
+    ) {
+      throw new AgentIndexValidationError('Base recovery lease holder is required')
+    }
+    if (requireTtl && (!Number.isSafeInteger(lease.ttlMs) || lease.ttlMs <= 0)) {
+      throw new AgentIndexValidationError('Base recovery lease TTL is invalid')
+    }
+  }
+
+  async function readBaseChildLeaseIntent(identity, owner) {
+    const row = await db
+      .prepare(
+        `SELECT recovery_version, owner_address, agent_address
+           FROM base_child_intents
+          WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+            AND allocation_id = ? AND child_id = ?${owner ? ' AND owner_address = ?' : ''}`
+      )
+      .bind(
+        identity.networkId,
+        identity.bindingId,
+        identity.executionId,
+        identity.allocationId,
+        identity.childId,
+        ...(owner ? [owner] : [])
+      )
+      .first()
+    return row ?? null
+  }
+
+  async function acquireBaseChildRecoveryLease(lease) {
+    validateBaseLeaseInput(lease, { requireHolder: true, requireTtl: true })
+    if (typeof lease.owner !== 'string' || !lease.owner) {
+      throw new AgentIndexValidationError('Base recovery lease owner is required')
+    }
+    const intent = await readBaseChildLeaseIntent(lease.identity, lease.owner)
+    if (!intent) return { acquired: false, code: 'identity-conflict' }
+    if (intent.recovery_version !== lease.evidenceVersion) {
+      return { acquired: false, code: 'version-conflict', currentVersion: intent.recovery_version }
+    }
+    const expiresAt = lease.now + lease.ttlMs
+    const leaseTokenDigest = baseRecoveryLeaseTokenDigest(lease.leaseToken)
+    // The schema intentionally makes action/evidence_version immutable on UPDATE.  Once the
+    // authoritative child version advances, remove only the stale row for this exact identity and
+    // phase; the following INSERT then records the new immutable claim facts.  Live same-version
+    // rows are never touched here, so a failed claim leaves every byte/timestamp unchanged.
+    const staleLeaseDelete = db
+      .prepare(
+        `DELETE FROM base_child_recovery_leases
+          WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+            AND allocation_id = ? AND child_id = ? AND phase = ?
+            AND evidence_version < ?
+            AND EXISTS (
+              SELECT 1 FROM base_child_intents i
+               WHERE i.network_id = ? AND i.binding_id = ? AND i.execution_id = ?
+                 AND i.allocation_id = ? AND i.child_id = ? AND i.owner_address = ?
+                 AND i.recovery_version = ?
+            )`
+      )
+      .bind(
+        lease.identity.networkId,
+        lease.identity.bindingId,
+        lease.identity.executionId,
+        lease.identity.allocationId,
+        lease.identity.childId,
+        lease.phase,
+        lease.evidenceVersion,
+        lease.identity.networkId,
+        lease.identity.bindingId,
+        lease.identity.executionId,
+        lease.identity.allocationId,
+        lease.identity.childId,
+        lease.owner,
+        lease.evidenceVersion
+      )
+    const leaseUpsert = db
+      .prepare(
+        `INSERT INTO base_child_recovery_leases
+           (network_id, binding_id, execution_id, allocation_id, child_id, phase,
+            owner_address, action, evidence_version, holder, lease_token, acquired_at, expires_at)
+         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?
+           FROM base_child_intents
+          WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+            AND allocation_id = ? AND child_id = ? AND owner_address = ?
+            AND recovery_version = ?
+         ON CONFLICT(network_id, binding_id, allocation_id, child_id, phase) DO UPDATE SET
+           holder = excluded.holder,
+           lease_token = excluded.lease_token,
+           acquired_at = excluded.acquired_at,
+           expires_at = excluded.expires_at
+         WHERE base_child_recovery_leases.network_id = excluded.network_id
+           AND base_child_recovery_leases.binding_id = excluded.binding_id
+           AND base_child_recovery_leases.execution_id = excluded.execution_id
+           AND base_child_recovery_leases.allocation_id = excluded.allocation_id
+           AND base_child_recovery_leases.child_id = excluded.child_id
+           AND base_child_recovery_leases.phase = excluded.phase
+           AND base_child_recovery_leases.owner_address = excluded.owner_address
+           AND base_child_recovery_leases.action = excluded.action
+           AND base_child_recovery_leases.evidence_version = excluded.evidence_version
+           AND (base_child_recovery_leases.expires_at <= ?
+             OR (base_child_recovery_leases.lease_token = excluded.lease_token
+                 AND base_child_recovery_leases.holder = excluded.holder)
+             OR base_child_recovery_leases.evidence_version <
+                (SELECT recovery_version FROM base_child_intents
+                   WHERE network_id = excluded.network_id AND binding_id = excluded.binding_id
+                     AND execution_id = excluded.execution_id AND allocation_id = excluded.allocation_id
+                     AND child_id = excluded.child_id AND owner_address = excluded.owner_address))`
+      )
+      .bind(
+        lease.identity.networkId,
+        lease.identity.bindingId,
+        lease.identity.executionId,
+        lease.identity.allocationId,
+        lease.identity.childId,
+        lease.phase,
+        lease.owner,
+        lease.action,
+        lease.evidenceVersion,
+        lease.holder,
+        leaseTokenDigest,
+        lease.now,
+        expiresAt,
+        lease.identity.networkId,
+        lease.identity.bindingId,
+        lease.identity.executionId,
+        lease.identity.allocationId,
+        lease.identity.childId,
+        lease.owner,
+        lease.evidenceVersion,
+        lease.now
+      )
+    const [, result] = await db.batch([staleLeaseDelete, leaseUpsert])
+    const acquired = Number(result?.meta?.changes ?? 0) === 1
+    return {
+      acquired,
+      leaseToken: lease.leaseToken,
+      expiresAt,
+      ...(acquired ? {} : { code: 'lease-conflict' }),
+    }
+  }
+
+  async function readBaseChildRecoveryClaim({
+    identity,
+    action,
+    phase,
+    evidenceVersion,
+    leaseToken,
+    now,
+    includeVersionConflict = false,
+  }) {
+    validateBaseLeaseInput(
+      {
+        identity,
+        action,
+        phase: phase ?? BASE_RECOVERY_ACTION_PHASE[action],
+        evidenceVersion,
+        leaseToken,
+        now,
+      },
+      { requireHolder: false, requireTtl: false }
+    )
+    const selectedPhase = phase ?? BASE_RECOVERY_ACTION_PHASE[action]
+    const leaseTokenDigest = baseRecoveryLeaseTokenDigest(leaseToken)
+    const row = await db
+      .prepare(
+        `SELECT l.network_id, l.binding_id, l.execution_id, l.allocation_id, l.child_id,
+                l.phase, l.owner_address, i.agent_address, l.action, l.evidence_version, l.holder,
+                l.lease_token, l.acquired_at, l.expires_at, i.recovery_version AS current_recovery_version
+           FROM base_child_recovery_leases l
+           JOIN base_child_intents i
+             ON i.network_id = l.network_id AND i.binding_id = l.binding_id
+            AND i.execution_id = l.execution_id AND i.allocation_id = l.allocation_id
+            AND i.child_id = l.child_id AND i.owner_address = l.owner_address
+          WHERE l.network_id = ? AND l.binding_id = ? AND l.execution_id = ?
+            AND l.allocation_id = ? AND l.child_id = ? AND l.phase = ?
+            AND l.action = ? AND l.evidence_version = ? AND l.lease_token = ?
+            AND l.expires_at > ?`
+      )
+      .bind(
+        identity.networkId,
+        identity.bindingId,
+        identity.executionId,
+        identity.allocationId,
+        identity.childId,
+        selectedPhase,
+        action,
+        evidenceVersion,
+        leaseTokenDigest,
+        now
+      )
+      .first()
+    if (!row) return null
+    if (row.current_recovery_version !== evidenceVersion) {
+      return includeVersionConflict
+        ? { conflict: 'version', currentVersion: row.current_recovery_version }
+        : null
+    }
+    return {
+      identity: {
+        networkId: row.network_id,
+        bindingId: row.binding_id,
+        executionId: row.execution_id,
+        allocationId: row.allocation_id,
+        childId: row.child_id,
+      },
+      owner: row.owner_address,
+      agent: row.agent_address,
+      action: row.action,
+      phase: row.phase,
+      evidenceVersion: row.evidence_version,
+      holder: row.holder,
+      leaseToken,
+      acquiredAt: row.acquired_at,
+      expiresAt: row.expires_at,
+    }
+  }
+
+  async function renewBaseChildRecoveryLease({
+    identity,
+    action,
+    phase,
+    evidenceVersion,
+    holder,
+    leaseToken,
+    now,
+    ttlMs,
+  }) {
+    validateBaseLeaseInput(
+      {
+        identity,
+        action,
+        phase: phase ?? BASE_RECOVERY_ACTION_PHASE[action],
+        evidenceVersion,
+        holder,
+        leaseToken,
+        now,
+        ttlMs,
+      },
+      { requireHolder: true, requireTtl: true }
+    )
+    const selectedPhase = phase ?? BASE_RECOVERY_ACTION_PHASE[action]
+    const expiresAt = now + ttlMs
+    const leaseTokenDigest = baseRecoveryLeaseTokenDigest(leaseToken)
+    const intent = await readBaseChildLeaseIntent(identity)
+    if (!intent) return { renewed: false, expiresAt }
+    const owner = intent.owner_address
+    const result = await db
+      .prepare(
+        `UPDATE base_child_recovery_leases
+            SET expires_at = ?
+          WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+            AND allocation_id = ? AND child_id = ? AND phase = ?
+            AND owner_address = ? AND action = ? AND evidence_version = ?
+            AND holder = ? AND lease_token = ? AND expires_at > ?
+            AND EXISTS (
+              SELECT 1 FROM base_child_intents i
+               WHERE i.network_id = ? AND i.binding_id = ? AND i.execution_id = ?
+                 AND i.allocation_id = ? AND i.child_id = ? AND i.owner_address = ?
+                 AND i.recovery_version = ?
+            )`
+      )
+      .bind(
+        expiresAt,
+        identity.networkId,
+        identity.bindingId,
+        identity.executionId,
+        identity.allocationId,
+        identity.childId,
+        selectedPhase,
+        owner,
+        action,
+        evidenceVersion,
+        holder,
+        leaseTokenDigest,
+        now,
+        identity.networkId,
+        identity.bindingId,
+        identity.executionId,
+        identity.allocationId,
+        identity.childId,
+        owner,
+        evidenceVersion
+      )
+      .run()
+    return { renewed: Number(result?.meta?.changes ?? 0) === 1, expiresAt }
+  }
+
+  async function releaseBaseChildRecoveryLease({
+    identity,
+    action,
+    phase,
+    evidenceVersion,
+    leaseToken,
+  }) {
+    validateBaseLeaseInput(
+      {
+        identity,
+        action,
+        phase: phase ?? BASE_RECOVERY_ACTION_PHASE[action],
+        evidenceVersion,
+        leaseToken,
+        now: 0,
+      },
+      { requireHolder: false, requireTtl: false }
+    )
+    const selectedPhase = phase ?? BASE_RECOVERY_ACTION_PHASE[action]
+    const leaseTokenDigest = baseRecoveryLeaseTokenDigest(leaseToken)
+    const result = await db
+      .prepare(
+        `DELETE FROM base_child_recovery_leases
+          WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+            AND allocation_id = ? AND child_id = ? AND phase = ?
+            AND action = ? AND evidence_version = ? AND lease_token = ?`
+      )
+      .bind(
+        identity.networkId,
+        identity.bindingId,
+        identity.executionId,
+        identity.allocationId,
+        identity.childId,
+        selectedPhase,
+        action,
+        evidenceVersion,
+        leaseTokenDigest
+      )
+      .run()
+    return { released: Number(result?.meta?.changes ?? 0) === 1 }
+  }
+
   async function readBaseChildIntent({ networkId, bindingId, allocationId, childId, owner }) {
     const row = await db
       .prepare(
@@ -666,21 +1111,507 @@ export function createAgentIndexStore(db) {
     return (results ?? []).map(parseBaseChildRow)
   }
 
+  async function readBaseChildIntentBatch(idempotencyKey) {
+    const receipt = await db
+      .prepare(`SELECT * FROM base_child_intent_batches WHERE idempotency_key = ?`)
+      .bind(idempotencyKey)
+      .first()
+    if (!receipt) return null
+    const { results } = await db
+      .prepare(
+        `SELECT * FROM base_child_intent_batch_items
+         WHERE idempotency_key = ? ORDER BY ordinal ASC`
+      )
+      .bind(idempotencyKey)
+      .all()
+    return { receipt, items: results ?? [] }
+  }
+
+  function exactBatch(existing, { batch, requestDigest, idempotencyKey }) {
+    if (!existing || existing.receipt.idempotency_key !== idempotencyKey) return false
+    if (
+      existing.receipt.request_digest !== requestDigest ||
+      existing.receipt.burn_units_7 !== batch.burnUnits7 ||
+      existing.receipt.child_count !== batch.children.length ||
+      existing.items.length !== batch.children.length
+    ) {
+      return false
+    }
+    return batch.children.every((child, ordinal) => {
+      const item = existing.items[ordinal]
+      const row = toBaseChildRow(child, baseChildBatchDigest(child.intent))
+      return (
+        item?.ordinal === ordinal &&
+        item.network_id === row.network_id &&
+        item.binding_id === row.binding_id &&
+        item.execution_id === row.execution_id &&
+        item.allocation_id === row.allocation_id &&
+        item.child_id === row.child_id &&
+        item.owner_address === row.owner_address &&
+        item.agent_address === row.agent_address &&
+        item.intent_digest === row.intent_digest
+      )
+    })
+  }
+
+  async function reserveBaseChildIntentBatch({ batch, requestDigest, idempotencyKey }) {
+    if (
+      !batch ||
+      batch.idempotencyKey !== idempotencyKey ||
+      !idempotencyKey ||
+      !/^[0-9a-f]{64}$/.test(requestDigest ?? '') ||
+      !Array.isArray(batch.children) ||
+      batch.children.length === 0 ||
+      batch.children.length > MAX_BASE_CHILD_BATCH_SIZE ||
+      !/^(?:[1-9]\d*)$/.test(batch.burnUnits7 ?? '')
+    ) {
+      throw new AgentIndexValidationError('Invalid Base child intent batch')
+    }
+    const existing = await readBaseChildIntentBatch(idempotencyKey)
+    if (existing) {
+      if (!exactBatch(existing, { batch, requestDigest, idempotencyKey })) {
+        throw new AgentIndexConflictError('Base child batch idempotency conflict')
+      }
+      const children = await Promise.all(
+        batch.children.map(async (child) => {
+          const identity = baseChildRecoveryIdentity(child)
+          const bundle = await readBaseChildRecoveryBundle(identity)
+          return { identity, recoveryVersion: bundle.recoveryVersion }
+        })
+      )
+      return { written: 0, duplicates: batch.children.length, children }
+    }
+
+    const rows = batch.children.map((child) =>
+      toBaseChildRow(child, baseChildBatchDigest(child.intent))
+    )
+    const first = rows[0]
+    const firstIntent = batch.children[0].intent
+    const createdAt = Math.min(...rows.map((row) => row.observed_at))
+    const statements = [
+      db
+        .prepare(
+          `INSERT INTO base_child_intent_batches
+             (idempotency_key, request_digest, network_id, owner_address, agent_address,
+              binding_id, run_id, grant_tx_hash, kernel_address, binding_hash, base_job_id,
+              burn_units_7, child_count, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .bind(
+          idempotencyKey,
+          requestDigest,
+          first.network_id,
+          first.owner_address,
+          first.agent_address,
+          first.binding_id,
+          firstIntent.runId,
+          firstIntent.grantTxHash,
+          firstIntent.kernelAddress,
+          firstIntent.bindingHash,
+          firstIntent.baseJobId,
+          batch.burnUnits7,
+          rows.length,
+          createdAt
+        ),
+    ]
+    rows.forEach((row, ordinal) => {
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO base_child_intents
+               (network_id, binding_id, execution_id, allocation_id, child_id,
+                owner_address, agent_address, intent_digest, intent_json, token, units, decimals,
+                lifecycle_sequence, lifecycle_status, lifecycle_evidence_json, recovery_version,
+                created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          )
+          .bind(
+            row.network_id,
+            row.binding_id,
+            row.execution_id,
+            row.allocation_id,
+            row.child_id,
+            row.owner_address,
+            row.agent_address,
+            row.intent_digest,
+            row.intent_json,
+            row.token,
+            row.units,
+            row.decimals,
+            row.lifecycle_sequence,
+            row.lifecycle_status,
+            row.lifecycle_evidence_json,
+            0,
+            row.observed_at,
+            row.observed_at
+          ),
+        db
+          .prepare(
+            `INSERT INTO base_child_lifecycle_events
+               (network_id, binding_id, allocation_id, child_id, sequence, idempotency_key,
+                status, evidence_json, observed_at)
+             VALUES (?,?,?,?,0,?,?,?,?)`
+          )
+          .bind(
+            row.network_id,
+            row.binding_id,
+            row.allocation_id,
+            row.child_id,
+            `${idempotencyKey}:${ordinal}:planned`,
+            row.lifecycle_status,
+            row.lifecycle_evidence_json,
+            row.observed_at
+          ),
+        db
+          .prepare(
+            `INSERT INTO base_child_intent_batch_items
+               (idempotency_key, ordinal, network_id, binding_id, execution_id, allocation_id,
+                child_id, owner_address, agent_address, intent_digest)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`
+          )
+          .bind(
+            idempotencyKey,
+            ordinal,
+            row.network_id,
+            row.binding_id,
+            row.execution_id,
+            row.allocation_id,
+            row.child_id,
+            row.owner_address,
+            row.agent_address,
+            row.intent_digest
+          )
+      )
+    })
+    try {
+      await db.batch(statements)
+      return {
+        written: rows.length,
+        duplicates: 0,
+        children: batch.children.map((child) => ({
+          identity: baseChildRecoveryIdentity(child),
+          recoveryVersion: 0,
+        })),
+      }
+    } catch (error) {
+      const raced = await readBaseChildIntentBatch(idempotencyKey)
+      if (exactBatch(raced, { batch, requestDigest, idempotencyKey })) {
+        const children = await Promise.all(
+          batch.children.map(async (child) => {
+            const identity = baseChildRecoveryIdentity(child)
+            const bundle = await readBaseChildRecoveryBundle(identity)
+            return { identity, recoveryVersion: bundle.recoveryVersion }
+          })
+        )
+        return { written: 0, duplicates: rows.length, children }
+      }
+      const message = String(error?.message ?? error)
+      if (/constraint|unique|immutable|conflict/i.test(message)) {
+        throw new AgentIndexConflictError('Base child batch conflict', { cause: error })
+      }
+      throw new AgentIndexStoreError('Base child batch store failed', { cause: error })
+    }
+  }
+
+  async function readBaseChildRecoveryBundle(identity) {
+    let normalized
+    try {
+      normalized = baseChildRecoveryIdentity(identity)
+    } catch (error) {
+      throw new AgentIndexValidationError('Invalid Base child recovery identity', { cause: error })
+    }
+    const args = [
+      normalized.networkId,
+      normalized.bindingId,
+      normalized.executionId,
+      normalized.allocationId,
+      normalized.childId,
+    ]
+    const row = await db
+      .prepare(
+        `SELECT * FROM base_child_intents
+         WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+           AND allocation_id = ? AND child_id = ?`
+      )
+      .bind(...args)
+      .first()
+    if (!row) return null
+    const [{ results: projectionRows }, { results: eventRows }] = await Promise.all([
+      db
+        .prepare(
+          `SELECT * FROM base_child_phase_projection
+           WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+             AND allocation_id = ? AND child_id = ?
+           ORDER BY CASE phase
+             WHEN 'cctp_burn' THEN 0 WHEN 'cctp_attestation' THEN 1
+             WHEN 'cctp_mint' THEN 2 WHEN 'base_deposit' THEN 3 END ASC`
+        )
+        .bind(...args)
+        .all(),
+      db
+        .prepare(
+          `SELECT * FROM base_child_phase_events
+           WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+             AND allocation_id = ? AND child_id = ?
+           ORDER BY recovery_version ASC, event_id ASC`
+        )
+        .bind(...args)
+        .all(),
+    ])
+    const parsedIntent = parseBaseChildRow(row)
+    // The selector consumes one closed internal bundle.  Do not hand it the richer SQL row
+    // wrapper (`version`, lifecycle, owner, and timestamps): those are storage details and would
+    // make an otherwise valid bundle fail the exact-intent allowlist.  Subjects remain top-level
+    // immutable facts so the browser proof and reporter claim can bind them independently.
+    return {
+      schemaVersion: 1,
+      identity: normalized,
+      owner: parsedIntent.owner,
+      agent: parsedIntent.agent,
+      recoverable: parsedIntent.recoverable,
+      recoveryVersion: parsedIntent.recoveryVersion,
+      intent: parsedIntent.intent,
+      phases: (projectionRows ?? []).map((entry) =>
+        selectorPhaseEntry(entry, parseBaseChildPhaseProjectionRow)
+      ),
+      events: (eventRows ?? []).map((entry) =>
+        selectorPhaseEntry(entry, parseBaseChildPhaseEventRow)
+      ),
+    }
+  }
+
+  function exactPhaseEvent(row, eventRow) {
+    return (
+      row?.event_id === eventRow.event_id &&
+      row.network_id === eventRow.network_id &&
+      row.binding_id === eventRow.binding_id &&
+      row.execution_id === eventRow.execution_id &&
+      row.allocation_id === eventRow.allocation_id &&
+      row.child_id === eventRow.child_id &&
+      row.owner_address === eventRow.owner_address &&
+      row.agent_address === eventRow.agent_address &&
+      row.recovery_version === eventRow.recovery_version &&
+      row.phase === eventRow.phase &&
+      row.state === eventRow.state &&
+      row.evidence_digest === eventRow.evidence_digest &&
+      row.evidence_json === eventRow.evidence_json &&
+      row.observed_at === eventRow.observed_at
+    )
+  }
+
+  function allowPhaseTransition(projections, eventRow) {
+    const phaseIndex = BASE_CHILD_RECOVERY_PHASES.indexOf(eventRow.phase)
+    const current = projections.find((entry) => entry.phase === eventRow.phase)
+    for (let index = 0; index < phaseIndex; index += 1) {
+      const predecessor = projections.find(
+        (entry) => entry.phase === BASE_CHILD_RECOVERY_PHASES[index]
+      )
+      if (predecessor?.state !== 'confirmed') return false
+    }
+    if (!current) return true
+    if (current.state === 'confirmed') return false
+    const allowed = {
+      submitting: new Set(['submitted', 'confirmed', 'failed', 'unknown', 'blocked']),
+      submitted: new Set(['confirmed', 'failed', 'unknown', 'blocked']),
+      unknown: new Set(['confirmed']),
+      failed: eventRow.phase === 'cctp_attestation' ? new Set(['confirmed']) : new Set(),
+      blocked: new Set(),
+    }
+    if (!allowed[current.state]?.has(eventRow.state)) return false
+    const previousHandle = current.evidence?.reconcileHandle
+    const nextEvidence = JSON.parse(eventRow.evidence_json)
+    const nextHandle = nextEvidence.reconcileHandle
+    if (
+      (previousHandle == null) !== (nextHandle == null) ||
+      (previousHandle != null && canonicalJson(previousHandle) !== canonicalJson(nextHandle))
+    )
+      return false
+    if (
+      ['unknown', 'failed'].includes(current.state) &&
+      eventRow.state === 'confirmed' &&
+      (current.phase === 'cctp_attestation' || current.state === 'unknown')
+    ) {
+      const previous = current.evidence ?? {}
+      const next = nextEvidence
+      const immutableFields = [
+        'burnTxHash',
+        'expectationDigest',
+        'messageDigest',
+        'nonce',
+        'attestationDigest',
+        'mintTxHash',
+        'userOpHash',
+        'transactionHash',
+        'reconcileHandle',
+      ]
+      for (const key of immutableFields) {
+        if (
+          Object.prototype.hasOwnProperty.call(previous, key) &&
+          next[key] !== undefined &&
+          (typeof previous[key] === 'object' || typeof next[key] === 'object'
+            ? canonicalJson(previous[key]) !== canonicalJson(next[key])
+            : next[key] !== previous[key])
+        )
+          return false
+      }
+    }
+    return true
+  }
+
+  async function advanceBaseChildPhase({ identity, expectedRecoveryVersion, event }) {
+    const existingEvent = await db
+      .prepare(`SELECT * FROM base_child_phase_events WHERE event_id = ?`)
+      .bind(event?.eventId ?? '')
+      .first()
+    const bundle = await readBaseChildRecoveryBundle(identity)
+    if (!bundle || !bundle.recoverable) {
+      throw new AgentIndexConflictError('Base child recovery identity conflict')
+    }
+    let eventRow
+    try {
+      eventRow = toBaseChildPhaseEventRow(
+        { identity, expectedRecoveryVersion, event },
+        { owner: bundle.owner, agent: bundle.agent }
+      )
+    } catch (error) {
+      if (existingEvent) {
+        throw new AgentIndexConflictError('Base child phase event conflict', { cause: error })
+      }
+      throw new AgentIndexValidationError('Invalid Base child phase evidence', { cause: error })
+    }
+    if (existingEvent) {
+      if (!exactPhaseEvent(existingEvent, eventRow)) {
+        throw new AgentIndexConflictError('Base child phase event conflict')
+      }
+      return {
+        written: 0,
+        duplicates: 1,
+        eventId: eventRow.event_id,
+        recoveryVersion: eventRow.recovery_version,
+        evidenceDigest: eventRow.evidence_digest,
+        reportDigest: baseChildEvidenceReportDigest({ identity, expectedRecoveryVersion, event }),
+      }
+    }
+    if (
+      bundle.recoveryVersion !== expectedRecoveryVersion ||
+      !allowPhaseTransition(bundle.phases, eventRow)
+    ) {
+      throw new AgentIndexConflictError('Base child phase sequence conflict')
+    }
+    const identityArgs = [
+      eventRow.network_id,
+      eventRow.binding_id,
+      eventRow.execution_id,
+      eventRow.allocation_id,
+      eventRow.child_id,
+    ]
+    const statements = [
+      db
+        .prepare(
+          `INSERT INTO base_child_phase_events
+             (event_id, network_id, binding_id, execution_id, allocation_id, child_id,
+              owner_address, agent_address, recovery_version, phase, state, evidence_digest,
+              evidence_json, observed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .bind(
+          eventRow.event_id,
+          ...identityArgs,
+          eventRow.owner_address,
+          eventRow.agent_address,
+          eventRow.recovery_version,
+          eventRow.phase,
+          eventRow.state,
+          eventRow.evidence_digest,
+          eventRow.evidence_json,
+          eventRow.observed_at
+        ),
+      db
+        .prepare(
+          `UPDATE base_child_intents SET recovery_version = ?, updated_at = ?
+           WHERE network_id = ? AND binding_id = ? AND execution_id = ?
+             AND allocation_id = ? AND child_id = ? AND recovery_version = ?`
+        )
+        .bind(
+          eventRow.recovery_version,
+          eventRow.observed_at,
+          ...identityArgs,
+          expectedRecoveryVersion
+        ),
+      db
+        .prepare(
+          `INSERT INTO base_child_phase_projection
+             (network_id, binding_id, execution_id, allocation_id, child_id, phase,
+              latest_event_id, recovery_version, state, evidence_digest, evidence_json, observed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(network_id, binding_id, allocation_id, child_id, phase) DO UPDATE SET
+             latest_event_id = excluded.latest_event_id,
+             recovery_version = excluded.recovery_version,
+             state = excluded.state,
+             evidence_digest = excluded.evidence_digest,
+             evidence_json = excluded.evidence_json,
+             observed_at = excluded.observed_at`
+        )
+        .bind(
+          ...identityArgs,
+          eventRow.phase,
+          eventRow.event_id,
+          eventRow.recovery_version,
+          eventRow.state,
+          eventRow.evidence_digest,
+          eventRow.evidence_json,
+          eventRow.observed_at
+        ),
+    ]
+    try {
+      await db.batch(statements)
+      return {
+        written: 1,
+        duplicates: 0,
+        eventId: eventRow.event_id,
+        recoveryVersion: eventRow.recovery_version,
+        evidenceDigest: eventRow.evidence_digest,
+        reportDigest: baseChildEvidenceReportDigest({ identity, expectedRecoveryVersion, event }),
+      }
+    } catch (error) {
+      const raced = await db
+        .prepare(`SELECT * FROM base_child_phase_events WHERE event_id = ?`)
+        .bind(eventRow.event_id)
+        .first()
+      if (exactPhaseEvent(raced, eventRow)) {
+        return {
+          written: 0,
+          duplicates: 1,
+          eventId: eventRow.event_id,
+          recoveryVersion: eventRow.recovery_version,
+          evidenceDigest: eventRow.evidence_digest,
+          reportDigest: baseChildEvidenceReportDigest({ identity, expectedRecoveryVersion, event }),
+        }
+      }
+      const message = String(error?.message ?? error)
+      if (/constraint|unique|CAS|conflict/i.test(message)) {
+        throw new AgentIndexConflictError('Base child phase evidence conflict', { cause: error })
+      }
+      throw new AgentIndexStoreError('Base child phase evidence store failed', { cause: error })
+    }
+  }
+
   async function createBaseChildIntent({ child, intentDigest, idempotencyKey }) {
     const row = toBaseChildRow(child, intentDigest)
     const now = row.observed_at
     const insertIntent = db
       .prepare(
         `INSERT INTO base_child_intents
-           (network_id, binding_id, allocation_id, child_id, owner_address, agent_address,
+           (network_id, binding_id, execution_id, allocation_id, child_id, owner_address, agent_address,
             intent_digest, intent_json, token, units, decimals, lifecycle_sequence,
-            lifecycle_status, lifecycle_evidence_json, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            lifecycle_status, lifecycle_evidence_json, recovery_version, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(network_id, binding_id, allocation_id, child_id) DO NOTHING`
       )
       .bind(
         row.network_id,
         row.binding_id,
+        row.execution_id,
         row.allocation_id,
         row.child_id,
         row.owner_address,
@@ -693,6 +1624,7 @@ export function createAgentIndexStore(db) {
         row.lifecycle_sequence,
         row.lifecycle_status,
         row.lifecycle_evidence_json,
+        0,
         now,
         now
       )
@@ -900,7 +1832,18 @@ export function createAgentIndexStore(db) {
 
   async function upsertMembership(record) {
     const row = toMembershipRow(record)
-    await bindMembershipRow(row).run()
+    try {
+      await bindMembershipRow(row).run()
+    } catch (error) {
+      if (
+        String(error?.message ?? error).includes('immutable agent membership identity conflict')
+      ) {
+        throw new AgentIndexConflictError('immutable agent membership identity conflict', {
+          cause: error,
+        })
+      }
+      throw error
+    }
   }
 
   async function upsertRunAllocation(record) {
@@ -1215,6 +2158,67 @@ export function createAgentIndexStore(db) {
     return (results ?? []).map(parseMembershipRow)
   }
 
+  async function readOwnerMembershipsPage({
+    networkId,
+    owner,
+    limit,
+    afterLedger,
+    afterAddress,
+    snapshotThroughLedger,
+  }) {
+    if (!networkId || !owner) {
+      throw new Error('readOwnerMembershipsPage requires networkId and owner')
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error('readOwnerMembershipsPage requires limit from 1 to 500')
+    }
+    if (
+      !Number.isSafeInteger(afterLedger) ||
+      afterLedger < -1 ||
+      typeof afterAddress !== 'string'
+    ) {
+      throw new Error('readOwnerMembershipsPage requires a valid keyset boundary')
+    }
+    if (!Number.isSafeInteger(snapshotThroughLedger) || snapshotThroughLedger < 0) {
+      throw new Error('readOwnerMembershipsPage requires snapshotThroughLedger')
+    }
+    const { results } = await db
+      .prepare(
+        `SELECT * FROM agent_memberships
+         WHERE network_id = ? AND owner_address = ?
+           AND creation_ledger <= ?
+           AND (creation_ledger > ? OR (creation_ledger = ? AND agent_address > ?))
+         ORDER BY creation_ledger ASC, agent_address ASC
+         LIMIT ?`
+      )
+      .bind(
+        networkId,
+        owner,
+        snapshotThroughLedger,
+        afterLedger,
+        afterLedger,
+        afterAddress,
+        limit + 1
+      )
+      .all()
+    const rows = results ?? []
+    return { rows: rows.slice(0, limit).map(parseMembershipRow), hasMore: rows.length > limit }
+  }
+
+  async function readOwnerMaximumCreationLedger({ networkId, owner }) {
+    if (!networkId || !owner) {
+      throw new Error('readOwnerMaximumCreationLedger requires networkId and owner')
+    }
+    const row = await db
+      .prepare(
+        `SELECT MAX(creation_ledger) AS maximum_creation_ledger
+         FROM agent_memberships WHERE network_id = ? AND owner_address = ?`
+      )
+      .bind(networkId, owner)
+      .first()
+    return row?.maximum_creation_ledger == null ? null : Number(row.maximum_creation_ledger)
+  }
+
   async function readCoverage({ networkId }) {
     if (!networkId) throw new Error('readCoverage requires networkId')
     const [sourcesRes, gapsRes, auditsRes] = await Promise.all([
@@ -1416,7 +2420,18 @@ export function createAgentIndexStore(db) {
     // reject the page (e.g. finalized_through_ledger's lower bound, which depends on state read
     // above and so isn't pre-validated in JS), the memberships that already "succeeded" earlier
     // in this same transaction are rolled back too — genuine all-or-nothing, not just early exit.
-    await db.batch([...rows.map((row) => bindMembershipRow(row)), sourceStatement])
+    try {
+      await db.batch([...rows.map((row) => bindMembershipRow(row)), sourceStatement])
+    } catch (error) {
+      if (
+        String(error?.message ?? error).includes('immutable agent membership identity conflict')
+      ) {
+        throw new AgentIndexConflictError('immutable agent membership identity conflict', {
+          cause: error,
+        })
+      }
+      throw error
+    }
   }
 
   async function recordGap(gap) {
@@ -1465,10 +2480,17 @@ export function createAgentIndexStore(db) {
     commitAuthenticatedReceiptMutation,
     acquireRecoveryLease,
     releaseRecoveryLease,
-    createBaseChildIntent,
-    advanceBaseChildLifecycle,
+    acquireBaseChildRecoveryLease,
+    readBaseChildRecoveryClaim,
+    renewBaseChildRecoveryLease,
+    releaseBaseChildRecoveryLease,
+    ...(enableLegacyBaseChildWrites ? { createBaseChildIntent, advanceBaseChildLifecycle } : {}),
     readBaseChildIntent,
     readOwnerBaseChildIntents,
+    reserveBaseChildIntentBatch,
+    advanceBaseChildPhase,
+    readBaseChildRecoveryBundle,
+    readPublicBaseChildEvidence: readBaseChildRecoveryBundle,
     upsertMembership,
     upsertRunAllocation,
     readRunAllocation,
@@ -1476,6 +2498,8 @@ export function createAgentIndexStore(db) {
     hasAssociationEvent,
     commitAssociation,
     readOwnerMemberships,
+    readOwnerMembershipsPage,
+    readOwnerMaximumCreationLedger,
     readMembershipsByAgentAddresses,
     readCoverage,
     ensureSourceRow,

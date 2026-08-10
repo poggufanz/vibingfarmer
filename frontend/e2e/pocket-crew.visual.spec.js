@@ -567,7 +567,7 @@ test.describe('Pocket Crew My money', () => {
 })
 
 // Task 12 (visual harness fixtures + snapshot regeneration) -- frozen baselines for the
-// deterministic `crew` fixture (armed/three-agents, alarm-only/mandate-lapsed,
+// deterministic `crew` fixture (armed/two Sprout children, alarm-only/mandate-lapsed,
 // one-agent-cancelled, empty), all mounting the real `/agent` composition root's own CrewRoute
 // (src/components/crew/CrewRoute.jsx). Declared as exactly FOUR baselines, not a naive eight,
 // mirroring My Money's own declared-project split immediately above (:149-153): forest captured
@@ -591,6 +591,28 @@ test.describe('Pocket Crew crew', () => {
     MOBILE_PROJECTS
   )
 
+  async function assertPersistentPersonaFixture(page) {
+    const shape = await page.evaluate(() => {
+      const firstRoute = document.querySelector('[data-fixture="crew"] .pc-crew-route')
+      const cards = [...(firstRoute?.querySelectorAll('[data-persona-id]') || [])]
+      return {
+        cards: cards.map((card) => ({
+          id: card.dataset.personaId,
+          children: card.querySelectorAll('[data-child-address]').length,
+        })),
+        amountTexts: [...(firstRoute?.querySelectorAll('.pc-crew-amount-list li') || [])].map(
+          (row) => row.textContent
+        ),
+      }
+    })
+    expect(shape.cards).toEqual([
+      { id: 'sprout', children: 2 },
+      { id: 'clover', children: 0 },
+      { id: 'mochi', children: 0 },
+    ])
+    expect(shape.amountTexts).toContain('17,014,118,346,046,923,173,168,730,371,588.4105727 USDC')
+  }
+
   test('forest theme', async ({ page }, testInfo) => {
     test.skip(
       !MOBILE_PROJECTS.includes(testInfo.project.name),
@@ -602,6 +624,7 @@ test.describe('Pocket Crew crew', () => {
     )
     await page.evaluate(() => document.fonts.ready)
     await waitForPocketEnterSettled(page)
+    await assertPersistentPersonaFixture(page)
     await assertNoOverflowAtMobileWidth(page, testInfo)
     await assertNoVerticalTextTrap(page, testInfo)
     await expect(page).toHaveScreenshot('crew-forest.png', { fullPage: true })
@@ -618,6 +641,7 @@ test.describe('Pocket Crew crew', () => {
     )
     await page.evaluate(() => document.fonts.ready)
     await waitForPocketEnterSettled(page)
+    await assertPersistentPersonaFixture(page)
     await expect(page).toHaveScreenshot('crew-day-field.png', { fullPage: true })
   })
 

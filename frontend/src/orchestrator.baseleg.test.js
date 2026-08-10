@@ -11,6 +11,11 @@
 // explicitly forwards this spy into the real executeBaseLeg and its real runFarmFlow.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
+vi.mock('./base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./base/hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
 const baseLegHarness = vi.hoisted(() => ({ executeReal: null }))
 
 const submitGrantMock = vi.fn()
@@ -41,7 +46,7 @@ vi.mock('./stellar/agentCache.js', () => ({
 vi.mock('./stellar/sessionKey.js', () => ({
   newSessionKey: (secret) => ({
     publicKey: secret ? 'GRESTORED' : 'GFRESH',
-    secret,
+    secret: secret ?? 'SFRESH',
     rawPublicKey: new Uint8Array(32),
     sign: () => new Uint8Array(64),
   }),
@@ -168,6 +173,10 @@ import {
 import { BASE_POOL_CATALOG } from './config.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'
+const CANONICAL_JOB_ID = '55'.repeat(16)
+const CCTP_OWNER = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
+const CCTP_BRIDGE_AGENT = 'CAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQMCJ'
+const CCTP_GRANT_HASH = 'bb'.repeat(32)
 
 // grantAddresses walks agentInits in order; the LAST entry is the bridge agent iff its kind===1 —
 // mirrors grant.js's own additive bridgeAgentAddress logic exactly, so the mock stays honest.
@@ -289,12 +298,12 @@ function permissionedStellarOnlyFixture(runId, agentCount = 1) {
   }
 }
 
-function permissionedOrchestrator(onEvent = vi.fn()) {
+function permissionedOrchestrator(onEvent = vi.fn(), connectedAddress = 'GUSER') {
   return new OrchestratorAgent({
     user: 'GUSER',
     sessionId: 'permissioned-regression',
     onEvent,
-    baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+    baseLegContext: { connectedAddress, signTx: vi.fn() },
   })
 }
 
@@ -357,7 +366,7 @@ beforeEach(() => {
   }))
   takeReusableAgentMock.mockReset()
   takeReusableAgentMock.mockResolvedValue(null)
-  saveCachedAgentMock.mockClear()
+  saveCachedAgentMock.mockReset().mockReturnValue(true)
   readTokenBalanceMock.mockReset()
   readTokenBalanceMock.mockImplementation(async (addr) => (addr === 'GUSER' ? null : 0n))
   runAgentDepositMock.mockReset()
@@ -366,13 +375,24 @@ beforeEach(() => {
   readVaultSharesMock.mockResolvedValue(0n)
   readStoredBaseMandateMock.mockReset()
   readStoredBaseMandateMock.mockReturnValue({
+    version: 3,
+    mandateId: '11'.repeat(16),
+    stellarOwner: 'GUSER',
     kernelAddress: KERNEL,
-    serializedApproval: 'APPROVAL',
-    sessionKeyAddress: '0xSESSION',
-    expiry: 9999999999,
+    sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
+    validUntilSeconds: 9999999999,
+    status: 'active',
   })
   readBaseMandateMock.mockReset()
-  readBaseMandateMock.mockReturnValue({ kernelAddress: KERNEL })
+  readBaseMandateMock.mockReturnValue({
+    version: 3,
+    mandateId: '11'.repeat(16),
+    stellarOwner: 'GUSER',
+    kernelAddress: KERNEL,
+    sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
+    validUntilSeconds: 9999999999,
+    status: 'active',
+  })
   executeBaseLegMock.mockReset()
   executeBaseLegMock.mockResolvedValue({ success: true, burnHash: 'B', jobId: 'j1' })
   runAgentBurnMock.mockReset()
@@ -712,6 +732,35 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     )
   })
 
+  it('derives the bridge recipient only from the connected owner v3 mandate, never a global record', async () => {
+    readStoredBaseMandateMock.mockImplementation(() => {
+      throw new Error('global mandate reader must be unreachable')
+    })
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 's-owner-v3',
+      onEvent: vi.fn(),
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+    })
+
+    const summary = await orch.dispatch(
+      {
+        vaults: [
+          { address: 'CSTELLAR', allocation: 0.6, chain: 'stellar' },
+          { address: '0xBASE', allocation: 0.4, chain: 'base' },
+        ],
+      },
+      100
+    )
+
+    expect(summary.baseLeg).toMatchObject({ success: true })
+    expect(readBaseMandateMock).toHaveBeenCalledWith('GUSER')
+    expect(readStoredBaseMandateMock).not.toHaveBeenCalled()
+    expect(executeBaseLegMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kernelAddress: KERNEL })
+    )
+  })
+
   it('an all-Base strategy (zero Stellar deposit workers) still grants — bridge init only, no deposit budget entry', async () => {
     const orch = new OrchestratorAgent({
       user: 'GUSER',
@@ -719,7 +768,10 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       onEvent: vi.fn(),
       baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
     })
-    await orch.dispatch({ vaults: [{ address: '0xBASE', allocation: 1, chain: 'base' }] }, 50)
+    const summary = await orch.dispatch(
+      { vaults: [{ address: '0xBASE', allocation: 1, chain: 'base' }] },
+      50
+    )
 
     expect(workerInstances).toHaveLength(0)
     expect(submitGrantMock).toHaveBeenCalledTimes(1)
@@ -727,9 +779,68 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     expect(grantArgs.agentInits).toHaveLength(1)
     expect(grantArgs.agentInits[0].kind).toBe(1)
     expect(grantArgs.budgets).toEqual([{ budget: expect.any(BigInt), token: STELLAR_USDC_SAC }])
+    expect(summary.baseLeg).toMatchObject({ success: true })
     expect(executeBaseLegMock).toHaveBeenCalledWith(
       expect.objectContaining({ bridgeAgentAddress: 'CFRESH1' })
     )
+    expect(saveCachedAgentMock).toHaveBeenCalledTimes(1)
+    expect(saveCachedAgentMock).toHaveBeenCalledWith({
+      owner: 'GUSER',
+      vault: 'CACTIVEVAULT',
+      entry: expect.objectContaining({
+        agentAddress: 'CFRESH1',
+        secret: 'SFRESH',
+        signerPub: 'GFRESH',
+        cap: '500000000',
+        expiry: expect.any(Number),
+      }),
+    })
+  })
+
+  it('stops before the Base burn when the confirmed bridge credential cannot be persisted', async () => {
+    saveCachedAgentMock.mockReturnValue(false)
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 's-allbase-cache-failure',
+      onEvent: vi.fn(),
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+    })
+
+    const summary = await orch.dispatch(
+      { vaults: [{ address: '0xBASE', allocation: 1, chain: 'base' }] },
+      50
+    )
+
+    expect(submitGrantMock).toHaveBeenCalledOnce()
+    expect(saveCachedAgentMock).toHaveBeenCalledOnce()
+    expect(executeBaseLegMock).not.toHaveBeenCalled()
+    expect(runAgentBurnMock).not.toHaveBeenCalled()
+    expect(summary.baseLeg).toMatchObject({ success: false })
+  })
+
+  it('binds the persisted bridge credential to the exact grant signer', async () => {
+    const signer = new Uint8Array(32)
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's-bridge-cache-unit' })
+    await expect(
+      orch.grantFreshAgents(
+        [],
+        0n,
+        2_100_000_000,
+        2_000_000_000,
+        {
+          signer,
+          cap: 1n,
+          token: STELLAR_USDC_SAC,
+          target: 'CTOKENMESSENGER',
+          kind: 1,
+          mintRecipient: new Uint8Array(32),
+          destinationDomain: 6,
+          periodDuration: 3600,
+          expiry: 2_100_000_000,
+        },
+        { secret: 'SFRESH', publicKey: 'GFRESH', rawPublicKey: signer }
+      )
+    ).resolves.toMatchObject({ bridgeAgentAddress: 'CFRESH1' })
   })
 
   it('a bridge leg forces the grant path even when the Stellar allowance already covers cached reuse (never partially cached)', async () => {
@@ -762,13 +873,14 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     expect(workerInstances).toHaveLength(1)
     expect(executeBaseLegMock).not.toHaveBeenCalled()
     expect(readStoredBaseMandateMock).not.toHaveBeenCalled()
+    expect(readBaseMandateMock).not.toHaveBeenCalled()
     expect(summary.baseLeg).toBeNull()
     const grantArgs = submitGrantMock.mock.calls[0][0]
     expect(grantArgs.agentInits).toHaveLength(1) // deposit worker only, no bridge init appended
   })
 
   it('no stored Base mandate -> dispatch aborts before any work (mandate setup is its own ceremony, never a run)', async () => {
-    readStoredBaseMandateMock.mockReturnValue(null)
+    readBaseMandateMock.mockReturnValue(null)
     const orch = new OrchestratorAgent({
       user: 'GUSER',
       sessionId: 's-nomandate',
@@ -1383,6 +1495,16 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
   it('[Custody] real Orchestrator/Base/farm dispatch keeps a possibly-dispatched burn unknown', async () => {
     const fixture = permissionedMixedFixture('run-uncertain-burn')
     const onEvent = vi.fn()
+    const journalEntries = new Map()
+    const journalStorage = {
+      get length() {
+        return journalEntries.size
+      },
+      key: (index) => [...journalEntries.keys()][index] ?? null,
+      getItem: (key) => journalEntries.get(key) ?? null,
+      setItem: (key, value) => journalEntries.set(key, value),
+      removeItem: (key) => journalEntries.delete(key),
+    }
     fixture.plan.agents[1].children[0].allocationId = 'run-uncertain-burn:bridge:aave-v3'
     fixture.plan.agents[1].children[0].address = BASE_POOL_CATALOG.find(
       (pool) => pool.proxyTarget === 'aave-v3'
@@ -1396,13 +1518,44 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
         deps: {
           ...args.deps,
           readStoredMandate: () => ({
-            version: 2,
-            stellarOwner: 'GUSER',
-            serializedApproval: 'APPROVAL',
-            sessionKeyAddress: '0xSESSION',
+            version: 3,
+            mandateId: '11'.repeat(16),
+            stellarOwner: CCTP_OWNER,
+            sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
             kernelAddress: KERNEL,
-            expiresAt: 9999999999,
+            relayerOrigin: 'https://relayer.example',
+            validUntilSeconds: 9999999999,
             status: 'active',
+            bindingId: 'binding-1',
+            bindingHash: 'aa'.repeat(32),
+            reasonCodes: [],
+            expected: {},
+            checks: {
+              chain: true,
+              owner: true,
+              kernel: true,
+              session: true,
+              permission: true,
+              policy: true,
+              binding: true,
+              origin: true,
+              implementation: true,
+              freshness: true,
+              reconstruction: true,
+              activation: true,
+            },
+            observed: {
+              blockNumber: '101',
+              blockHash: `0x${'ab'.repeat(32)}`,
+              blockTime: 2_000_000_000,
+              implementation: '0x0000000000000000000000000000000000000CC3',
+              permission: { digest: 'permission-digest' },
+              activation: {
+                userOpHash: `0x${'33'.repeat(32)}`,
+                txHash: `0x${'44'.repeat(32)}`,
+                activatedAt: 2_000_000_000,
+              },
+            },
           }),
           // Task 9 hardened isVerifiedBaseMandateStatus to require the full BaseMandateStatusV2
           // shape (checks/observed/reasonCodes), not a bare `{status:'active'}` flag -- this
@@ -1413,8 +1566,16 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
           // and then goes uncertain -- was never exercised. Mirror the verified shape so the gate
           // legitimately passes and the real burn-uncertainty path below runs.
           getMandateStatus: async () => ({
-            version: 2,
+            version: 3,
+            mandateId: '11'.repeat(16),
+            stellarOwner: CCTP_OWNER,
+            kernelAddress: KERNEL,
+            sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
+            relayerOrigin: 'https://relayer.example',
+            validUntilSeconds: 9999999999,
             status: 'active',
+            bindingId: 'binding-1',
+            bindingHash: 'aa'.repeat(32),
             reasonCodes: [],
             checks: {
               chain: true,
@@ -1426,18 +1587,21 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
               binding: true,
               origin: true,
               implementation: true,
-              allocation: true,
               freshness: true,
               reconstruction: true,
-              prepared: true,
+              activation: true,
             },
             observed: {
               blockNumber: '101',
-              blockHash: '0xblock',
-              blockTime: Date.now(),
-              implementation: '0ximpl',
+              blockHash: `0x${'ab'.repeat(32)}`,
+              blockTime: 2_000_000_000,
+              implementation: '0x0000000000000000000000000000000000000CC3',
               permission: { digest: 'permission-digest' },
-              preparedCallDigest: 'prepared-call-digest',
+              activation: {
+                userOpHash: `0x${'33'.repeat(32)}`,
+                txHash: `0x${'44'.repeat(32)}`,
+                activatedAt: 2_000_000_000,
+              },
             },
           }),
           makePublicClient: () => ({}),
@@ -1460,16 +1624,24 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       ok: true,
       status: 201,
       json: async () => ({
-        jobId: 'JOB-INTENT-run-uncertain-burn',
+        jobId: CANONICAL_JOB_ID,
         acknowledged: true,
         schemaVersion: 1,
       }),
     }))
+    submitGrantMock.mockResolvedValue({
+      hash: CCTP_GRANT_HASH,
+      status: 'SUCCESS',
+      agentAddresses: ['CFRESH1', CCTP_BRIDGE_AGENT],
+      bridgeAgentAddress: CCTP_BRIDGE_AGENT,
+      expiryLedger: 9999,
+    })
+    vi.stubGlobal('localStorage', journalStorage)
     vi.stubGlobal('fetch', fetchMock)
 
     let summary
     try {
-      summary = await permissionedOrchestrator(onEvent).dispatch(fixture.plan, {
+      summary = await permissionedOrchestrator(onEvent, CCTP_OWNER).dispatch(fixture.plan, {
         permissionDecision: fixture.permissionDecision,
       })
     } finally {
@@ -1479,24 +1651,25 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
 
     expect(summary.baseLeg).toMatchObject({
       success: false,
-      error: 'burn response lost after dispatch',
+      error: 'base_submission_unknown',
       custody: { location: 'unknown', confirmed: false },
       recovery: {
         action: 'reconcile-cctp-burn',
         phase: 'cctp_burn',
+        reasonCode: 'submission_unknown',
         evidence: { result: { hash: 'HBURN-MAYBE', status: 'PENDING' } },
       },
     })
     expect(base).toMatchObject({
       executionStatus: 'failed',
       custody: { location: 'unknown', confirmed: false },
-      error: 'burn response lost after dispatch',
+      error: 'base_submission_unknown',
       evidence: {
         stage: 'burn',
         recovery: {
           action: 'reconcile-cctp-burn',
           phase: 'cctp_burn',
-          reason: 'burn response lost after dispatch',
+          reasonCode: 'submission_unknown',
           evidence: {
             submission: 'unknown',
             stage: 'cctp_burn',

@@ -10,13 +10,29 @@
 import { decodeDeployedEvent } from '../../src/stellar/routerEvents.js'
 import { decodeEvent } from '../../src/stellar/events.js'
 import { fromScVal } from '../../src/stellar/scval.js'
-import { sourceIdFor } from './models.js'
+import { AgentIndexConflictError, sourceIdFor } from './models.js'
+import { D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE } from './store.js'
 import {
   AGENT_INDEX_FINALITY_LEDGERS,
   AGENT_INDEX_MAX_LAG_MS,
   AGENT_WASM_GENERATIONS,
   creatorForAddress,
 } from '../../src/stellar/agentCreatorManifest.js'
+
+const SOURCE_ERROR_CODES = Object.freeze({
+  conflict: 'AGENT_INDEX_MEMBERSHIP_CONFLICT',
+  paging: 'AGENT_INDEX_PAGING_TOKEN_INVALID',
+  schema: 'AGENT_INDEX_EVENT_SCHEMA_INVALID',
+  source: 'AGENT_INDEX_SOURCE_ERROR',
+})
+
+function sourceErrorCode(error) {
+  if (error instanceof AgentIndexConflictError) return SOURCE_ERROR_CODES.conflict
+  const message = String(error?.message || '').toLowerCase()
+  if (message.includes('paging token')) return SOURCE_ERROR_CODES.paging
+  if (message.includes('schema') || message.includes('decode')) return SOURCE_ERROR_CODES.schema
+  return SOURCE_ERROR_CODES.source
+}
 
 /**
  * Classify one raw event record against `source`'s expected schema. Three outcomes:
@@ -36,6 +52,14 @@ function decodeSourceEvent(source, rec) {
       return { matched: false }
     }
     if (topic0 !== 'deployed') return { matched: false }
+    if (rec.pagingToken == null || String(rec.pagingToken).length === 0) {
+      return {
+        matched: true,
+        error: new Error(
+          "decodeSourceEvent: 'deployed' event missing required paging token — cannot prove canonical order"
+        ),
+      }
+    }
     const d = decodeDeployedEvent(rec)
     if (!d || !d.agent || !d.owner || !d.txHash) {
       return {
@@ -47,7 +71,13 @@ function decodeSourceEvent(source, rec) {
     }
     return {
       matched: true,
-      decoded: { agentAddress: d.agent, ownerAddress: d.owner, ledger: d.ledger, txHash: d.txHash },
+      decoded: {
+        agentAddress: d.agent,
+        ownerAddress: d.owner,
+        ledger: d.ledger,
+        txHash: d.txHash,
+        pagingToken: String(rec.pagingToken),
+      },
     }
   }
   if (source.kind === 'registry') {
@@ -180,23 +210,59 @@ function nextOrdinal(map, txHash) {
   return n
 }
 
-function toMembership(source, decoded, generation, runOrdinal, provenanceSource) {
+function comparePagingToken(a, b) {
+  try {
+    const left = BigInt(a)
+    const right = BigInt(b)
+    return left < right ? -1 : left > right ? 1 : 0
+  } catch {
+    return String(a).localeCompare(String(b))
+  }
+}
+
+function compareDecodedEventOrder(a, b) {
+  return (
+    a.ledger - b.ledger ||
+    String(a.txHash).localeCompare(String(b.txHash)) ||
+    comparePagingToken(a.pagingToken, b.pagingToken)
+  )
+}
+
+function immutableMembershipIdentity(source, decoded) {
   const isFundingRouter = source.kind === 'funding-router'
+  return {
+    ownerAddress: decoded.ownerAddress,
+    creatorAddress: source.address,
+    creationLedger: decoded.ledger,
+    creationTx: decoded.txHash,
+    grantTxHash: isFundingRouter ? decoded.txHash : null,
+    runId: isFundingRouter ? `${source.networkId}:${source.address}:${decoded.txHash}` : null,
+    runOrdinal: isFundingRouter ? decoded.runOrdinal : null,
+  }
+}
+
+function isExactImmutableMembershipReplay(priorRow, identity) {
+  return (
+    priorRow.owner === identity.ownerAddress &&
+    priorRow.creator === identity.creatorAddress &&
+    priorRow.createdLedger === identity.creationLedger &&
+    priorRow.createdTxHash === identity.creationTx &&
+    priorRow.grantTxHash === identity.grantTxHash &&
+    priorRow.runId === identity.runId &&
+    priorRow.runOrdinal === identity.runOrdinal
+  )
+}
+
+function toMembership(source, decoded, generation, provenanceSource) {
   return {
     networkId: source.networkId,
     agentAddress: decoded.agentAddress,
-    ownerAddress: decoded.ownerAddress,
-    creatorAddress: source.address,
+    ...immutableMembershipIdentity(source, decoded),
     schemaVersion: source.schemaVersion,
     // v3-bridge is the only generation whose wasm can be EITHER deposit or bridge kind
     // (AgentScope.kind, agent_account/src/types.rs) — the Deployed/agent_authorized event schema
     // never carries that field, so 'unknown' is the honest value, never a guessed 'bridge'.
     kind: generation === 'agent-v3-bridge' ? 'unknown' : 'deposit',
-    creationLedger: decoded.ledger,
-    creationTx: decoded.txHash,
-    grantTxHash: isFundingRouter ? decoded.txHash : null,
-    runId: isFundingRouter ? `${source.networkId}:${source.address}:${decoded.txHash}` : null,
-    runOrdinal: isFundingRouter ? runOrdinal : null,
     provenance: {
       source: provenanceSource,
       providerId: source._providerId,
@@ -204,6 +270,25 @@ function toMembership(source, decoded, generation, runOrdinal, provenanceSource)
       generation,
     },
   }
+}
+
+async function readExistingMemberships({ store, networkId, agentAddresses }) {
+  const byAddress = new Map()
+  for (
+    let offset = 0;
+    offset < agentAddresses.length;
+    offset += D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE
+  ) {
+    const rows = await store.readMembershipsByAgentAddresses({
+      networkId,
+      agentAddresses: agentAddresses.slice(offset, offset + D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE),
+    })
+    for (const row of rows) byAddress.set(row.address, row)
+  }
+  return agentAddresses.flatMap((address) => {
+    const row = byAddress.get(address)
+    return row ? [row] : []
+  })
 }
 
 /**
@@ -337,19 +422,11 @@ export async function ingestAgentIndexPage({
     ? res.latestLedger
     : reportedLatestAvailable
 
-  // Stable paging-token order → dedupe by pagingToken (raw duplicate records) then by agent
-  // address (a LATER duplicate for an already-seen agent can never change its owner/creator —
-  // first occurrence wins within this page; everything else is dropped for that agent). A
-  // matching-topic record that fails to decode is fail-closed: abort the WHOLE page rather than
-  // silently dropping membership while coverage still advances (Important 4).
-  const seenPagingToken = new Set()
-  const byAgent = new Map()
+  // Decode before ordering so only records that actually match this source participate. Router
+  // deployments require their RPC paging token: without it response order cannot prove a stable
+  // ordinal. Any matched record that cannot decode or prove order aborts the whole page.
+  const decodedEvents = []
   for (const rec of res.events || []) {
-    const pt = rec.pagingToken
-    if (pt != null) {
-      if (seenPagingToken.has(pt)) continue
-      seenPagingToken.add(pt)
-    }
     const result = decodeSourceEvent(source, rec)
     if (result.error) {
       await store.recordSourceError({
@@ -357,40 +434,65 @@ export async function ingestAgentIndexPage({
         networkId: source.networkId,
         creatorAddress: source.address,
         fromLedger,
-        message: result.error.message,
+        message: sourceErrorCode(result.error),
       })
       throw result.error
     }
     if (!result.decoded) continue
-    if (!byAgent.has(result.decoded.agentAddress))
-      byAgent.set(result.decoded.agentAddress, result.decoded)
+    decodedEvents.push(result.decoded)
+  }
+
+  // RPC response arrays are not authoritative order. Canonicalize first, then dedupe paging-token
+  // replays and agent re-emissions. Router ordinals are assigned exactly once across each complete
+  // transaction group, before prior-page rows are filtered, so replay cannot renumber a survivor.
+  decodedEvents.sort(compareDecodedEventOrder)
+  const seenPagingToken = new Set()
+  const byAgent = new Map()
+  for (const decoded of decodedEvents) {
+    if (decoded.pagingToken != null) {
+      if (seenPagingToken.has(decoded.pagingToken)) continue
+      seenPagingToken.add(decoded.pagingToken)
+    }
+    if (!byAgent.has(decoded.agentAddress)) byAgent.set(decoded.agentAddress, decoded)
+  }
+  const ordinalByTx = new Map()
+  if (source.kind === 'funding-router') {
+    for (const decoded of byAgent.values()) {
+      decoded.runOrdinal = nextOrdinal(ordinalByTx, decoded.txHash)
+    }
   }
 
   // Spec-partial 6: a duplicate `deployed`/`agent_authorized` event for an agent ALREADY indexed
   // by a prior page must never rewrite its identity via commitSourcePage's ON CONFLICT DO UPDATE.
-  // Drop (and count) any candidate whose agent address already has a membership row — an
-  // identical re-emission has nothing to change (a harmless no-op skip); one with different
-  // immutable fields (owner/creator/creation ledger/tx — a spoof or corrupt replay) is exactly
-  // the rewrite this guard exists to prevent.
+  // An exact immutable-identity replay is a harmless no-op. Any mismatch is source corruption:
+  // record it and fail before commitSourcePage can advance coverage.
   const candidateAddresses = [...byAgent.keys()]
   const existingMemberships = candidateAddresses.length
-    ? await store.readMembershipsByAgentAddresses({
+    ? await readExistingMemberships({
+        store,
         networkId: source.networkId,
         agentAddresses: candidateAddresses,
       })
     : []
   const existingByAddress = new Map(existingMemberships.map((m) => [m.address, m]))
-  let duplicateCount = 0
   const toResolve = []
   for (const decoded of byAgent.values()) {
     const priorRow = existingByAddress.get(decoded.agentAddress)
     if (priorRow) {
-      const isIdentical =
-        priorRow.owner === decoded.ownerAddress &&
-        priorRow.creator === source.address &&
-        priorRow.createdLedger === decoded.ledger &&
-        priorRow.createdTxHash === decoded.txHash
-      if (!isIdentical) duplicateCount += 1
+      const identity = immutableMembershipIdentity(source, decoded)
+      if (!isExactImmutableMembershipReplay(priorRow, identity)) {
+        const error = new AgentIndexConflictError(
+          `immutable agent membership identity conflict for ${decoded.agentAddress}`
+        )
+        await store.recordSourceError({
+          sourceId,
+          networkId: source.networkId,
+          creatorAddress: source.address,
+          fromLedger,
+          message: sourceErrorCode(error),
+        })
+        throw error
+      }
       continue
     }
     toResolve.push(decoded)
@@ -399,7 +501,6 @@ export async function ingestAgentIndexPage({
   const provenanceSource =
     source.discoverySources?.[0] ??
     (source.kind === 'funding-router' ? 'router-event' : 'registry-event')
-  const ordinalByTx = new Map()
   const memberships = []
   for (const decoded of toResolve) {
     const generation = await resolveAgentGeneration(source, decoded.agentAddress, eventSource)
@@ -409,8 +510,6 @@ export async function ingestAgentIndexPage({
           `(source ${sourceId}) — refusing to guess`
       )
     }
-    const runOrdinal =
-      source.kind === 'funding-router' ? nextOrdinal(ordinalByTx, decoded.txHash) : null
     memberships.push(
       toMembership(
         {
@@ -420,34 +519,45 @@ export async function ingestAgentIndexPage({
         },
         decoded,
         generation,
-        runOrdinal,
         provenanceSource
       )
     )
   }
 
   const finalizedThroughLedger = Math.max(fromLedger - 1, Math.min(throughLedger, finalizedLedger))
-  await store.commitSourcePage({
-    sourceId,
-    fromLedger,
-    throughLedger,
-    finalizedThroughLedger,
-    cursor: res.cursor ?? null,
-    memberships,
-    providerId: eventSource.providerId,
-    endpointClass: eventSource.endpointClass,
-    reportedOldestLedger: Number.isInteger(eventSource.oldestAvailableLedger)
-      ? eventSource.oldestAvailableLedger
-      : null,
-    reportedLatestLedger,
-  })
+  try {
+    await store.commitSourcePage({
+      sourceId,
+      fromLedger,
+      throughLedger,
+      finalizedThroughLedger,
+      cursor: res.cursor ?? null,
+      memberships,
+      providerId: eventSource.providerId,
+      endpointClass: eventSource.endpointClass,
+      reportedOldestLedger: Number.isInteger(eventSource.oldestAvailableLedger)
+        ? eventSource.oldestAvailableLedger
+        : null,
+      reportedLatestLedger,
+    })
+  } catch (error) {
+    if (error instanceof AgentIndexConflictError) {
+      await store.recordSourceError({
+        sourceId,
+        networkId: source.networkId,
+        creatorAddress: source.address,
+        fromLedger,
+        message: sourceErrorCode(error),
+      })
+    }
+    throw error
+  }
   return {
     sourceId,
     status: 'committed',
     fromLedger,
     throughLedger,
     membershipCount: memberships.length,
-    ...(duplicateCount > 0 ? { duplicateCount } : {}),
   }
 }
 

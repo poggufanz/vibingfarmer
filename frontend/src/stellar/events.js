@@ -10,6 +10,7 @@ import {
 } from './config.js'
 import { fromScVal, symbolScVal } from './scval.js'
 import { rpcServer, readContract, horizonServer } from './client.js'
+import { mapSettledWithConcurrency } from '../async/mapSettledWithConcurrency.js'
 
 // Contracts we watch + the event topic-symbols each emits (docs/soroban-interfaces.md).
 // Attestation (F5) emits strategy_attested — surfaced in the public Explorer feed.
@@ -21,6 +22,32 @@ const WATCHED = [
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_ATTESTATION_ADDRESS,
 ]
+
+function abortReason(signal) {
+  return signal?.reason ?? new DOMException('Aborted', 'AbortError')
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortReason(signal)
+}
+
+async function awaitWithAbort(promise, signal) {
+  if (!signal) return promise
+  throwIfAborted(signal)
+  let onAbort
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(abortReason(signal))
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    return await Promise.race([promise, aborted])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
+const readAgentScope = (agent, { server }) =>
+  readContract({ contract: agent, method: 'scope_of', server })
 
 /**
  * Decode one RPC getEvents record into a typed event.
@@ -83,25 +110,29 @@ export function eventToGraphDelta(e) {
  * @param {{ server?: object, startLedger?: number }} [opts]
  * @returns {Promise<string[]>} de-duped agent C... addresses
  */
-export async function queryAgentsByOwner(ownerAddr, { server, startLedger } = {}) {
+export async function queryAgentsByOwner(ownerAddr, { server, startLedger, signal } = {}) {
   if (!ownerAddr) return []
-  const s = server || (await rpcServer())
+  throwIfAborted(signal)
+  const s = server || (await awaitWithAbort(rpcServer(), signal))
   if (!startLedger) {
-    const meta = await s.getLatestLedger()
+    const meta = await awaitWithAbort(s.getLatestLedger(), signal)
     startLedger = Math.max(1, Number(meta.sequence) - 100000)
   }
   const topic = symbolScVal('agent_authorized').toXDR('base64')
-  const res = await s.getEvents({
-    startLedger,
-    filters: [
-      {
-        type: 'contract',
-        contractIds: [SOROBAN_REGISTRY_ADDRESS],
-        topics: [[topic]],
-      },
-    ],
-    limit: 200,
-  })
+  const res = await awaitWithAbort(
+    s.getEvents({
+      startLedger,
+      filters: [
+        {
+          type: 'contract',
+          contractIds: [SOROBAN_REGISTRY_ADDRESS],
+          topics: [[topic]],
+        },
+      ],
+      limit: 200,
+    }),
+    signal
+  )
   const seen = new Set()
   const agents = []
   for (const rec of res.events || []) {
@@ -132,11 +163,15 @@ export async function queryAgentsByOwner(ownerAddr, { server, startLedger } = {}
  * @param {{ server?: object, startLedger?: number }} [opts]
  * @returns {Promise<string[]>} de-duped agent C... addresses
  */
-export async function discoverAgentsFromVault(ownerAddr, { server, startLedger } = {}) {
+export async function discoverAgentsFromVault(
+  ownerAddr,
+  { server, startLedger, signal, readScope = readAgentScope } = {}
+) {
   if (!ownerAddr) return []
-  const s = server || (await rpcServer())
+  throwIfAborted(signal)
+  const s = server || (await awaitWithAbort(rpcServer(), signal))
   if (!startLedger) {
-    const meta = await s.getLatestLedger()
+    const meta = await awaitWithAbort(s.getLatestLedger(), signal)
     startLedger = Math.max(1, Number(meta.sequence) - 100000)
   }
   const topic = symbolScVal('vault_deposit').toXDR('base64')
@@ -149,17 +184,20 @@ export async function discoverAgentsFromVault(ownerAddr, { server, startLedger }
     startLedger,
     '- latest'
   )
-  const res = await s.getEvents({
-    startLedger,
-    filters: [
-      {
-        type: 'contract',
-        contractIds: [SOROBAN_ACTIVE_VAULT_ADDRESS],
-        topics: [[topic]],
-      },
-    ],
-    limit: 200,
-  })
+  const res = await awaitWithAbort(
+    s.getEvents({
+      startLedger,
+      filters: [
+        {
+          type: 'contract',
+          contractIds: [SOROBAN_ACTIVE_VAULT_ADDRESS],
+          topics: [[topic]],
+        },
+      ],
+      limit: 200,
+    }),
+    signal
+  )
   console.log('[discover] vault_deposit events count:', res.events?.length)
   if (res.events?.length) {
     console.log(
@@ -187,30 +225,23 @@ export async function discoverAgentsFromVault(ownerAddr, { server, startLedger }
     }
   }
   console.log('[discover] unique agents collected:', [...agentSet])
-  // Verify each agent's owner by reading scope_of() from the agent contract.
-  // Batch in groups of 10 to avoid RPC throttling on testnet.
+  // Verify each agent's owner by reading scope_of() from the agent contract. Each scope read is
+  // one queue item: the cap applies to actual Stellar RPC operations, not logical agent batches.
   const agents = [...agentSet]
   console.log('[discover] verifying', agents.length, 'agents via scope_of...')
+  const results = await mapSettledWithConcurrency(
+    agents,
+    async (agent) => {
+      const scope = await readScope(agent, { server: s, signal })
+      const match = scope?.owner?.toLowerCase() === ownerAddr.toLowerCase()
+      console.log('[discover] scope_of', agent, '→ owner:', scope?.owner, 'match:', match)
+      return match ? agent : null
+    },
+    { concurrency: 8, signal }
+  )
   const found = []
-  const BATCH = 10
-  for (let i = 0; i < agents.length; i += BATCH) {
-    const batch = agents.slice(i, i + BATCH)
-    const results = await Promise.allSettled(
-      batch.map(async (agent) => {
-        try {
-          const scope = await readContract({ contract: agent, method: 'scope_of', server: s })
-          const match = scope?.owner?.toLowerCase() === ownerAddr.toLowerCase()
-          console.log('[discover] scope_of', agent, '→ owner:', scope?.owner, 'match:', match)
-          return match ? agent : null
-        } catch (err) {
-          console.warn('[discover] scope_of failed for', agent, err?.message)
-          return null
-        }
-      })
-    )
-    for (const r of results) {
-      if (r.status === 'fulfilled' && r.value) found.push(r.value)
-    }
+  for (const result of results) {
+    if (result.status === 'fulfilled' && result.value) found.push(result.value)
   }
   console.log('[discover] verified agents for this owner:', found)
   return found

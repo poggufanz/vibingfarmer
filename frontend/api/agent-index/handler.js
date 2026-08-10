@@ -1,7 +1,7 @@
 // Pure, DI-friendly route logic for /api/agent-index — no req/res, no real D1/RPC construction
 // (that glue lives in ../agent-index.js, which is untested by design: everything worth testing
 // here is testable without touching a network or a real Cloudflare binding).
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
 import { ingestAgentIndexPage, coverageProof } from './indexer.js'
 import { commitBackfillAudit } from './backfill.js'
@@ -12,6 +12,7 @@ import {
   ingestBaseChildIntent,
   joinBaseAssociations,
   mergeOwnerBaseAssociations,
+  validateBaseChildIntentBatch,
 } from './associations.js'
 import {
   applyAuthenticatedReceiptMutation,
@@ -20,12 +21,19 @@ import {
   receiptProofMessage,
   receiptRequestDigest,
 } from './executionReceipts.js'
-import { selectRecoveryAction } from './recovery.js'
+import { selectBaseChildRecoveryAction, selectRecoveryAction } from './recovery.js'
+import { D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE } from './store.js'
 import {
   AgentIndexConflictError,
   AgentIndexStoreError,
   AgentIndexUnavailableError,
   AgentIndexValidationError,
+  assertNoSensitiveProperties,
+  baseChildBatchDigest,
+  baseChildRecoveryIdentity,
+  BASE_RECOVERY_ACTIONS,
+  validateBaseRecoveryRequest,
+  validateBaseChildPhaseEvidence,
 } from './models.js'
 import {
   AGENT_CREATORS,
@@ -172,6 +180,10 @@ async function reporterGate({ secret, providedSecret }) {
   }
   return null
 }
+
+// The outer route uses the same constant-time gate before quota and dependency construction.
+// Handlers repeat it so direct/in-process callers keep the identical security boundary.
+export const reporterAuthenticationGate = reporterGate
 
 export async function handleReceiptChallenge({
   request,
@@ -554,6 +566,426 @@ export async function handleRecoveryRequest({
   }
 }
 
+const BASE_RECOVERY_ACTION_PHASE = Object.freeze({
+  'poll-attestation': 'cctp_attestation',
+  'submit-mint': 'cctp_mint',
+  'poll-mint': 'cctp_mint',
+  'submit-base-deposit': 'base_deposit',
+  'poll-base-deposit': 'base_deposit',
+})
+const BASE_RECOVERY_CLAIM_FIELDS = new Set(['identity', 'action', 'evidenceVersion', 'leaseToken'])
+const BASE_RECOVERY_RENEW_FIELDS = new Set([
+  'identity',
+  'action',
+  'evidenceVersion',
+  'holder',
+  'leaseToken',
+])
+const BASE_RECOVERY_RELEASE_FIELDS = new Set([
+  'identity',
+  'action',
+  'evidenceVersion',
+  'leaseToken',
+])
+
+function validateBaseRecoveryExactObject(value, fields, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AgentIndexValidationError(`${label} must be an object`)
+  }
+  const keys = Object.keys(value)
+  if (
+    keys.length !== fields.size ||
+    keys.some((key) => !fields.has(key)) ||
+    [...fields].some((key) => !Object.prototype.hasOwnProperty.call(value, key))
+  ) {
+    throw new AgentIndexValidationError(`Invalid ${label}`)
+  }
+}
+
+function validateBaseRecoveryClaimBody(body, fields = BASE_RECOVERY_CLAIM_FIELDS) {
+  validateBaseRecoveryExactObject(body, fields, 'Base recovery claim')
+  const identity = baseChildRecoveryIdentity(body.identity)
+  if (!BASE_RECOVERY_ACTIONS.includes(body.action) || !BASE_RECOVERY_ACTION_PHASE[body.action]) {
+    throw new AgentIndexValidationError('Base recovery claim action is not claimable')
+  }
+  if (!Number.isSafeInteger(body.evidenceVersion) || body.evidenceVersion < 0) {
+    throw new AgentIndexValidationError('Base recovery claim evidence version is invalid')
+  }
+  if (typeof body.leaseToken !== 'string' || !/^[0-9a-f]{64}$/.test(body.leaseToken)) {
+    throw new AgentIndexValidationError('Base recovery claim lease token is invalid')
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'holder')) {
+    if (typeof body.holder !== 'string' || body.holder.length === 0 || body.holder.length > 128) {
+      throw new AgentIndexValidationError('Base recovery claim holder is invalid')
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'now')) {
+    if (!Number.isSafeInteger(body.now) || body.now < 0) {
+      throw new AgentIndexValidationError('Base recovery claim time is invalid')
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'ttlMs')) {
+    if (!Number.isSafeInteger(body.ttlMs) || body.ttlMs <= 0) {
+      throw new AgentIndexValidationError('Base recovery claim TTL is invalid')
+    }
+  }
+  return { ...body, identity }
+}
+
+function baseRecoveryClaimFailure(error) {
+  const failure = agentIndexFailure(error)
+  if (failure.status === 400) return { status: 400, body: { error: 'Invalid Base recovery claim' } }
+  if (failure.status === 401 || failure.status === 403) {
+    return { status: 403, body: { error: 'Base recovery authorization failed' } }
+  }
+  if (failure.status === 409) return failure
+  return failure
+}
+
+function baseRecoveryPublicClaim({ identity, action, phase, reasonCode, evidenceVersion, lease }) {
+  return { ok: true, identity, action, phase, reasonCode, evidenceVersion, lease }
+}
+
+function baseRecoveryReporterLease(claim) {
+  if (!claim) return null
+  return {
+    identity: claim.identity,
+    owner: claim.owner,
+    action: claim.action,
+    phase: claim.phase,
+    evidenceVersion: claim.evidenceVersion,
+    holder: claim.holder,
+    leaseToken: claim.leaseToken,
+    acquiredAt: claim.acquiredAt,
+    expiresAt: claim.expiresAt,
+  }
+}
+
+function baseRecoveryLeaseToken() {
+  return randomBytes(32).toString('hex')
+}
+
+/**
+ * Browser proof-gated Base recovery claim.  The caller signs only the full child identity and
+ * expected version; selector action/phase and every lease fact are recomputed from D1 evidence.
+ */
+export async function handleBaseRecoveryRequest({
+  request,
+  proof,
+  store,
+  authorityReader,
+  now = Date.now(),
+  leaseTtlMs = 30_000,
+}) {
+  if (!store)
+    return { status: 503, body: { error: 'Base recovery store unavailable', configured: false } }
+  try {
+    const parsed = validateBaseRecoveryRequest(request)
+    validateBaseRecoveryExactObject(
+      proof,
+      new Set(['challengeId', 'expiresAt', 'signature']),
+      'Base recovery proof'
+    )
+    if (
+      !store.readReceiptChallenge ||
+      !store.consumeReceiptChallenge ||
+      !store.readBaseChildRecoveryBundle ||
+      !store.acquireBaseChildRecoveryLease
+    ) {
+      throw new AgentIndexUnavailableError('Base recovery store is unavailable')
+    }
+    if (typeof authorityReader !== 'function')
+      throw new AgentIndexUnavailableError('Base recovery authority is not configured')
+    if (
+      !Number.isSafeInteger(now) ||
+      now < 0 ||
+      !Number.isSafeInteger(leaseTtlMs) ||
+      leaseTtlMs <= 0
+    ) {
+      throw new AgentIndexValidationError('Base recovery claim time is invalid')
+    }
+    const challenge = await store.readReceiptChallenge({ challengeId: proof?.challengeId })
+    if (!challenge)
+      throw new ReceiptAuthError('proof', 'Base recovery proof challenge does not exist')
+    if (challenge.consumedAt != null)
+      throw new ReceiptAuthError('replay', 'Base recovery proof challenge was already consumed')
+    if (now >= challenge.expiresAt)
+      throw new ReceiptAuthError('expired', 'Base recovery proof challenge expired')
+    if (challenge.requestDigest !== receiptRequestDigest(parsed))
+      throw new ReceiptAuthError('proof', 'Base recovery proof challenge request digest mismatch')
+    const currentAuthority = validateRecoveryAuthority({
+      facts: await readRecoveryAuthority(authorityReader, {
+        networkId: challenge.networkId,
+        owner: challenge.owner,
+        agent: challenge.agent,
+      }),
+      owner: challenge.owner,
+    })
+    verifyRecoveryProof({ challenge, proof, publicKey: currentAuthority.signerPublicKey })
+    const identity = {
+      networkId: challenge.networkId,
+      bindingId: parsed.bindingId,
+      executionId: parsed.executionId,
+      allocationId: parsed.allocationId,
+      childId: parsed.childId,
+    }
+    const bundle = await store.readBaseChildRecoveryBundle(identity)
+    if (
+      !bundle ||
+      bundle.owner !== challenge.owner ||
+      bundle.agent !== challenge.agent ||
+      !baseChildRecoveryIdentity(bundle.identity) ||
+      Object.entries(identity).some(([key, value]) => bundle.identity[key] !== value)
+    ) {
+      throw new ReceiptAuthError('authority', 'Base recovery child is not available to this signer')
+    }
+    const decision = selectBaseChildRecoveryAction(bundle)
+    const consumed = await store.consumeReceiptChallenge({
+      challenge,
+      consumeToken: randomUUID(),
+      now,
+    })
+    if (!consumed)
+      throw new ReceiptAuthError('replay', 'Base recovery proof challenge was already consumed')
+    if (parsed.expectedRecoveryVersion !== bundle.recoveryVersion) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          code: 'version-conflict',
+          error: 'Base recovery evidence version has moved on since the caller observed it',
+          evidenceVersion: bundle.recoveryVersion,
+        },
+      }
+    }
+    if (!decision.phase) {
+      return {
+        status: 200,
+        body: baseRecoveryPublicClaim({
+          identity,
+          action: decision.action,
+          phase: null,
+          reasonCode: decision.reasonCode,
+          evidenceVersion: bundle.recoveryVersion,
+          lease: null,
+        }),
+      }
+    }
+    const leaseToken = baseRecoveryLeaseToken()
+    const leaseResult = await store.acquireBaseChildRecoveryLease({
+      identity,
+      owner: challenge.owner,
+      action: decision.action,
+      phase: decision.phase,
+      evidenceVersion: bundle.recoveryVersion,
+      holder: parsed.leaseOwner,
+      leaseToken,
+      now,
+      ttlMs: leaseTtlMs,
+    })
+    if (!leaseResult?.acquired) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          code: leaseResult?.code === 'version-conflict' ? 'version-conflict' : 'lease-conflict',
+          error:
+            leaseResult?.code === 'version-conflict'
+              ? 'Base recovery evidence version has moved on since the caller observed it'
+              : 'Base recovery lease is already held',
+          ...(leaseResult?.currentVersion != null
+            ? { evidenceVersion: leaseResult.currentVersion }
+            : {}),
+        },
+      }
+    }
+    return {
+      status: 200,
+      body: baseRecoveryPublicClaim({
+        identity,
+        action: decision.action,
+        phase: decision.phase,
+        reasonCode: decision.reasonCode,
+        evidenceVersion: bundle.recoveryVersion,
+        lease: {
+          holder: parsed.leaseOwner,
+          leaseToken: leaseResult.leaseToken,
+          expiresAt: leaseResult.expiresAt,
+        },
+      }),
+    }
+  } catch (error) {
+    return baseRecoveryClaimFailure(error)
+  }
+}
+
+async function readAndRecomputeBaseClaim({ body, store, now }) {
+  const claim = await store.readBaseChildRecoveryClaim({
+    ...body,
+    now,
+    includeVersionConflict: true,
+  })
+  if (!claim) return null
+  if (claim.conflict === 'version') return claim
+  const bundle = await store.readBaseChildRecoveryBundle(body.identity)
+  if (
+    !bundle ||
+    claim.owner !== bundle.owner ||
+    claim.agent !== bundle.agent ||
+    !baseChildRecoveryIdentity(bundle.identity) ||
+    Object.entries(body.identity).some(([key, value]) => bundle.identity[key] !== value)
+  )
+    return null
+  if (
+    bundle.recoveryVersion !== body.evidenceVersion ||
+    claim.evidenceVersion !== body.evidenceVersion
+  ) {
+    return { conflict: 'version', currentVersion: bundle.recoveryVersion }
+  }
+  const decision = selectBaseChildRecoveryAction(bundle)
+  if (
+    decision.action !== body.action ||
+    decision.phase !== BASE_RECOVERY_ACTION_PHASE[body.action] ||
+    (decision.phase == null && BASE_RECOVERY_ACTION_PHASE[body.action] != null)
+  )
+    return null
+  return { claim, bundle, decision }
+}
+
+/** Reporter-only exact claim read; never mounted as a public GET. */
+export async function handleBaseRecoveryClaim({
+  body,
+  store,
+  secret,
+  providedSecret,
+  now = Date.now(),
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  try {
+    const parsed = validateBaseRecoveryClaimBody(body)
+    if (!store?.readBaseChildRecoveryClaim || !store?.readBaseChildRecoveryBundle)
+      throw new AgentIndexUnavailableError('Base recovery claim store is unavailable')
+    const result = await readAndRecomputeBaseClaim({ body: parsed, store, now })
+    if (!result) return { status: 404, body: { error: 'Base recovery claim not found' } }
+    if (result.conflict === 'version')
+      return {
+        status: 409,
+        body: {
+          error: 'Base recovery evidence version has moved on',
+          code: 'version-conflict',
+          evidenceVersion: result.currentVersion,
+        },
+      }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        identity: parsed.identity,
+        action: result.decision.action,
+        phase: result.decision.phase,
+        reasonCode: result.decision.reasonCode,
+        evidenceVersion: result.bundle.recoveryVersion,
+        lease: baseRecoveryReporterLease(result.claim),
+        bundle: result.bundle,
+      },
+    }
+  } catch (error) {
+    return baseRecoveryClaimFailure(error)
+  }
+}
+
+export async function handleBaseRecoveryRenew({
+  body,
+  store,
+  secret,
+  providedSecret,
+  now = Date.now(),
+  leaseTtlMs = 30_000,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  try {
+    if (
+      !Number.isSafeInteger(now) ||
+      now < 0 ||
+      !Number.isSafeInteger(leaseTtlMs) ||
+      leaseTtlMs <= 0
+    ) {
+      throw new AgentIndexValidationError('Base recovery renewal timing is invalid')
+    }
+    const parsed = validateBaseRecoveryClaimBody(body, BASE_RECOVERY_RENEW_FIELDS)
+    if (
+      !store?.readBaseChildRecoveryClaim ||
+      !store?.readBaseChildRecoveryBundle ||
+      !store?.renewBaseChildRecoveryLease
+    )
+      throw new AgentIndexUnavailableError('Base recovery claim store is unavailable')
+    const result = await readAndRecomputeBaseClaim({ body: parsed, store, now })
+    if (!result)
+      return {
+        status: 409,
+        body: { error: 'Base recovery claim is stale', code: 'version-conflict' },
+      }
+    if (result.conflict === 'version')
+      return {
+        status: 409,
+        body: {
+          error: 'Base recovery evidence version has moved on',
+          code: 'version-conflict',
+          evidenceVersion: result.currentVersion,
+        },
+      }
+    const renewed = await store.renewBaseChildRecoveryLease({
+      ...parsed,
+      phase: result.decision.phase,
+      now,
+      ttlMs: leaseTtlMs,
+    })
+    if (!renewed?.renewed)
+      return {
+        status: 409,
+        body: { error: 'Base recovery lease is no longer held', code: 'lease-conflict' },
+      }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        identity: parsed.identity,
+        action: parsed.action,
+        phase: result.decision.phase,
+        evidenceVersion: parsed.evidenceVersion,
+        lease: {
+          holder: parsed.holder,
+          leaseToken: parsed.leaseToken,
+          expiresAt: renewed.expiresAt,
+        },
+      },
+    }
+  } catch (error) {
+    return baseRecoveryClaimFailure(error)
+  }
+}
+
+export async function handleBaseRecoveryRelease({ body, store, secret, providedSecret }) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  try {
+    const parsed = validateBaseRecoveryClaimBody(body, BASE_RECOVERY_RELEASE_FIELDS)
+    if (!store?.releaseBaseChildRecoveryLease)
+      throw new AgentIndexUnavailableError('Base recovery claim store is unavailable')
+    const released = await store.releaseBaseChildRecoveryLease(parsed)
+    return released?.released
+      ? { status: 200, body: { ok: true } }
+      : {
+          status: 409,
+          body: { error: 'Base recovery lease release conflict', code: 'lease-conflict' },
+        }
+  } catch (error) {
+    return baseRecoveryClaimFailure(error)
+  }
+}
+
 export async function handleBaseChildIntent({
   child,
   configuredNetworkId,
@@ -583,6 +1015,342 @@ export async function handleBaseChildIntent({
   }
 }
 
+export async function handleBaseChildIntentBatch({
+  batch,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+  authorityReader,
+  poolTargets,
+  scopeRequirements,
+  maxBatchSize,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  try {
+    requireConfiguredNetwork(batch?.children?.[0]?.networkId, configuredNetworkId)
+    if (!store?.reserveBaseChildIntentBatch || !store?.readMembershipsByAgentAddresses) {
+      throw new AgentIndexUnavailableError('Base child batch store is unavailable')
+    }
+    if (typeof authorityReader !== 'function') {
+      throw new AgentIndexUnavailableError('Base child authority reader is unavailable')
+    }
+    if (maxBatchSize === null) {
+      throw new AgentIndexUnavailableError('Base child batch limit is misconfigured')
+    }
+    const result = await validateBaseChildIntentBatch({
+      batch,
+      store,
+      authorityReader,
+      poolTargets,
+      scopeRequirements,
+      supportedNetworkId: configuredNetworkId,
+      ...(maxBatchSize == null ? {} : { maxBatchSize }),
+    })
+    return {
+      status: 201,
+      body: {
+        acknowledged: true,
+        schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+        idempotencyKey: batch.idempotencyKey,
+        requestDigest: baseChildBatchDigest(batch),
+        children: result.children,
+        written: result.written,
+        duplicates: result.duplicates,
+      },
+    }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+const EVIDENCE_REQUEST_FIELDS = new Set([
+  'schemaVersion',
+  'identity',
+  'expectedRecoveryVersion',
+  'event',
+])
+const EVIDENCE_EVENT_FIELDS = new Set(['eventId', 'phase', 'state', 'evidence', 'observedAt'])
+const RECOVERY_IDENTITY_FIELDS = new Set([
+  'networkId',
+  'bindingId',
+  'executionId',
+  'allocationId',
+  'childId',
+])
+
+function requireExactObject(value, fields, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AgentIndexValidationError(`${label} must be an object`)
+  }
+  const keys = Object.keys(value)
+  const unexpected = keys.find((key) => !fields.has(key))
+  const missing = [...fields].find((key) => !Object.prototype.hasOwnProperty.call(value, key))
+  if (unexpected || missing) throw new AgentIndexValidationError(`Invalid ${label}`)
+}
+
+function validateEvidenceRequest(request) {
+  try {
+    requireExactObject(request, EVIDENCE_REQUEST_FIELDS, 'Base child evidence request')
+    requireExactObject(request.identity, RECOVERY_IDENTITY_FIELDS, 'Base child recovery identity')
+    requireExactObject(request.event, EVIDENCE_EVENT_FIELDS, 'Base child evidence event')
+    if (request.schemaVersion !== AGENT_INDEX_SCHEMA_VERSION) {
+      throw new AgentIndexValidationError('Unsupported Base child evidence schema')
+    }
+    baseChildRecoveryIdentity(request.identity)
+    assertNoSensitiveProperties(request)
+    validateBaseChildPhaseEvidence({
+      phase: request.event.phase,
+      state: request.event.state,
+      evidence: request.event.evidence ?? {},
+    })
+  } catch (error) {
+    if (error instanceof AgentIndexValidationError) throw error
+    throw new AgentIndexValidationError('Invalid Base child phase evidence', { cause: error })
+  }
+}
+
+export async function handleBaseChildEvidenceWrite({
+  request,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  try {
+    validateEvidenceRequest(request)
+    requireConfiguredNetwork(request.identity.networkId, configuredNetworkId)
+    if (!store?.advanceBaseChildPhase) {
+      throw new AgentIndexUnavailableError('Base child evidence store is unavailable')
+    }
+    const result = await store.advanceBaseChildPhase(request)
+    return {
+      status: 201,
+      body: {
+        acknowledged: true,
+        schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+        identity: request.identity,
+        eventId: request.event.eventId,
+        phase: request.event.phase,
+        state: request.event.state,
+        recoveryVersion: result.recoveryVersion,
+        evidenceDigest: result.evidenceDigest,
+        reportDigest: result.reportDigest,
+        written: result.written,
+        duplicates: result.duplicates,
+      },
+    }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+const PUBLIC_EVIDENCE_FIELDS = new Set([
+  'burnTxHash',
+  'expectationDigest',
+  'burnUnits7',
+  'messageDigest',
+  'attestationDigest',
+  'evidenceVersion',
+  'mintTxHash',
+  'userOpHash',
+  'transactionHash',
+  'blockNumber',
+  'blockHash',
+  'chainId',
+  'kernelAddress',
+  'yieldRouterAddress',
+  'yieldRouter',
+  'caller',
+  'poolAddress',
+  'assets',
+  'minShares',
+  'shares',
+  'nonce',
+  'reconcileHandle',
+  'reasonCode',
+  'custodyLocation',
+  'kernelCustodyConfirmed',
+  'token',
+  'units',
+  'decimals',
+  'destinationDomain',
+  'messageHash',
+  'attestationHash',
+  'mintRecipient',
+  'logIndex',
+  'event',
+  'custody',
+])
+
+const PUBLIC_BASE_INTENT_FIELDS = [
+  'runId',
+  'grantTxHash',
+  'bindingHash',
+  'baseJobId',
+  'kernelAddress',
+  'poolAddress',
+  'proxyTarget',
+  'token',
+  'units',
+  'decimals',
+  'minShares',
+]
+const PUBLIC_BASE_EVENT_FIELDS = [
+  'eventId',
+  'identity',
+  'owner',
+  'agent',
+  'recoveryVersion',
+  'phase',
+  'state',
+  'evidence',
+  'observedAt',
+]
+
+function publicBaseScalar(value) {
+  return value === null || ['string', 'number', 'boolean'].includes(typeof value)
+}
+
+function publicBaseEvent(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const output = {}
+  for (const field of [
+    'address',
+    'topic0',
+    'logIndex',
+    'caller',
+    'poolAddress',
+    'assets',
+    'shares',
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(value, field) && publicBaseScalar(value[field])) {
+      output[field] = value[field]
+    }
+  }
+  return output
+}
+
+function publicBaseReconcileHandle(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const output = {}
+  for (const field of ['entryPoint', 'sender', 'nonce', 'startBlock']) {
+    if (Object.prototype.hasOwnProperty.call(value, field) && publicBaseScalar(value[field])) {
+      output[field] = value[field]
+    }
+  }
+  return Object.keys(output).length === 4 ? output : null
+}
+
+function publicEvidence(value, phase) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const output = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (!PUBLIC_EVIDENCE_FIELDS.has(key)) continue
+    if (key === 'nonce' && phase === 'base_deposit') continue
+    if (key === 'event') {
+      output[key] = publicBaseEvent(entry)
+      continue
+    }
+    if (key === 'reconcileHandle') {
+      const handle = publicBaseReconcileHandle(entry)
+      if (handle) output[key] = handle
+      continue
+    }
+    if (key === 'custody') {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        const custody = {}
+        for (const field of ['location', 'confirmed']) {
+          if (
+            Object.prototype.hasOwnProperty.call(entry, field) &&
+            publicBaseScalar(entry[field])
+          ) {
+            custody[field] = entry[field]
+          }
+        }
+        output[key] = custody
+      }
+      continue
+    }
+    if (publicBaseScalar(entry)) output[key] = entry
+  }
+  return output
+}
+
+function publicBaseIntent(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const output = {}
+  for (const field of PUBLIC_BASE_INTENT_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(value, field) && publicBaseScalar(value[field])) {
+      output[field] = value[field]
+    }
+  }
+  return output
+}
+
+function publicBaseIdentity(value, fallback) {
+  return baseChildRecoveryIdentity(value ?? fallback)
+}
+
+export function publicBaseChildEvidenceSummary(bundle) {
+  const identity = baseChildRecoveryIdentity(bundle.identity)
+  return {
+    schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+    identity,
+    owner: typeof bundle.owner === 'string' ? bundle.owner : '',
+    agent: typeof bundle.agent === 'string' ? bundle.agent : '',
+    recoverable: bundle.recoverable === true,
+    recoveryVersion: bundle.recoveryVersion,
+    intent: publicBaseIntent(bundle.intent),
+    phases: (bundle.phases ?? []).map((phase) => ({
+      identity: publicBaseIdentity(phase.identity, identity),
+      phase: phase.phase,
+      state: phase.state,
+      eventId: phase.eventId,
+      recoveryVersion: phase.recoveryVersion,
+      observedAt: phase.observedAt,
+      evidence: publicEvidence(phase.evidence, phase.phase),
+    })),
+    events: (bundle.events ?? []).map((event) => {
+      const output = {}
+      for (const field of PUBLIC_BASE_EVENT_FIELDS) {
+        if (field === 'identity') {
+          output.identity = publicBaseIdentity(event.identity, identity)
+        } else if (field === 'evidence') {
+          output.evidence = publicEvidence(event.evidence, event.phase)
+        } else if (
+          Object.prototype.hasOwnProperty.call(event, field) &&
+          publicBaseScalar(event[field])
+        ) {
+          output[field] = event[field]
+        }
+      }
+      return output
+    }),
+  }
+}
+
+export async function handleBaseChildEvidenceRead({ identity, configuredNetworkId, store }) {
+  try {
+    requireExactObject(identity, RECOVERY_IDENTITY_FIELDS, 'Base child recovery identity')
+    const normalized = baseChildRecoveryIdentity(identity)
+    if (configuredNetworkId !== undefined) {
+      requireConfiguredNetwork(normalized.networkId, configuredNetworkId)
+    }
+    if (!store?.readPublicBaseChildEvidence) {
+      throw new AgentIndexUnavailableError('Base child evidence store is unavailable')
+    }
+    const bundle = await store.readPublicBaseChildEvidence(normalized)
+    if (!bundle) return { status: 404, body: { error: 'Base child evidence not found' } }
+    return { status: 200, body: publicBaseChildEvidenceSummary(bundle) }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
 export async function handleReporterReadiness({ store, secret, providedSecret }) {
   const gate = await reporterGate({ secret, providedSecret })
   if (gate) return gate
@@ -595,7 +1363,8 @@ export async function handleReporterReadiness({ store, secret, providedSecret })
       result?.writable !== true ||
       result?.schemaVersion !== AGENT_INDEX_SCHEMA_VERSION ||
       result?.stores?.executionReceipts !== true ||
-      result?.stores?.baseChildIntents !== true
+      result?.stores?.baseChildIntents !== true ||
+      result?.stores?.baseRecoveryEvidence !== true
     ) {
       return { status: 503, body: { error: 'Base child store unavailable', configured: true } }
     }
@@ -604,11 +1373,15 @@ export async function handleReporterReadiness({ store, secret, providedSecret })
       body: {
         ready: true,
         schemaVersion: result.schemaVersion,
-        stores: { executionReceipts: true, baseChildIntents: true },
+        stores: {
+          executionReceipts: true,
+          baseChildIntents: true,
+          baseRecoveryEvidence: true,
+        },
       },
     }
-  } catch (error) {
-    return agentIndexFailure(error)
+  } catch {
+    return { status: 503, body: { error: 'Base child store unavailable', configured: true } }
   }
 }
 
@@ -704,7 +1477,7 @@ export async function handleIngest({
     const sourceId = `${sources[i].networkId}:${sources[i].address}`
     return r.status === 'fulfilled'
       ? { sourceId, ok: true, ...r.value }
-      : { sourceId, ok: false, error: r.reason?.message || String(r.reason) }
+      : { sourceId, ok: false, error: 'AGENT_INDEX_SOURCE_UNAVAILABLE' }
   })
   const failed = results.filter((r) => !r.ok).length
   return { status: 200, body: { results, ok: results.length - failed, failed } }
@@ -740,8 +1513,8 @@ export async function handleBackfillCommit({ secret, providedSecret, store, audi
   try {
     const result = await commitBackfillAudit({ store, audit })
     return { status: 200, body: { ok: true, ...result } }
-  } catch (err) {
-    return { status: 400, body: { error: err.message } }
+  } catch {
+    return { status: 400, body: { error: 'AGENT_INDEX_BACKFILL_FAILED' } }
   }
 }
 
@@ -786,12 +1559,12 @@ export async function handleAssociationReport({
       now,
     })
     return { status: 200, body: { ok: true, ...result } }
-  } catch (err) {
-    return { status: 400, body: { error: err.message } }
+  } catch {
+    return { status: 400, body: { error: 'AGENT_INDEX_ASSOCIATION_FAILED' } }
   }
 }
 
-function unavailableBody({ networkId, owner, manifest, now }) {
+function unavailableBody({ networkId, owner, manifest, now, pagination }) {
   return {
     version: 1,
     networkId,
@@ -811,14 +1584,66 @@ function unavailableBody({ networkId, owner, manifest, now }) {
       requiredFinalityLedgers: AGENT_INDEX_FINALITY_LEDGERS,
       checkedAt: now,
     },
+    pagination: pagination ?? {
+      hasMore: false,
+      nextCursor: null,
+      snapshotThroughLedger: null,
+      coverageStatus: 'unavailable',
+    },
   }
 }
 
 const DEFAULT_READ_LIMIT = 200
 const MAX_READ_LIMIT = 500
 
+async function validateOwnerAssociationMemberships({
+  associations,
+  store,
+  networkId,
+  owner,
+  isValidAddress,
+}) {
+  const addresses = [...new Set(associations.map((row) => row.bridgeAgentAddress))]
+  const addressSet = new Set(addresses)
+  if (addresses.some((address) => !isValidAddress(address))) {
+    throw new AgentIndexValidationError('Base association agent address is invalid')
+  }
+  const memberships = []
+  for (let offset = 0; offset < addresses.length; offset += D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE) {
+    memberships.push(
+      ...(await store.readMembershipsByAgentAddresses({
+        networkId,
+        agentAddresses: addresses.slice(offset, offset + D1_NETWORK_SCOPED_ADDRESS_CHUNK_SIZE),
+      }))
+    )
+  }
+  const membershipByAddress = new Map()
+  for (const membership of memberships) {
+    if (
+      membership.networkId !== networkId ||
+      membership.owner !== owner ||
+      !addressSet.has(membership.address) ||
+      membershipByAddress.has(membership.address)
+    ) {
+      throw new AgentIndexValidationError('Base association membership scope is invalid')
+    }
+    membershipByAddress.set(membership.address, membership)
+  }
+  for (const association of associations) {
+    if (
+      association.networkId !== networkId ||
+      association.ownerAddress !== owner ||
+      membershipByAddress.get(association.bridgeAgentAddress)?.address !==
+        association.bridgeAgentAddress
+    ) {
+      throw new AgentIndexValidationError('Base association has no exact owner membership')
+    }
+  }
+}
+
 /**
- * `GET /api/agent-index?network=<networkId>&owner=<G-or-C-StrKey>&limit=<n>`. Public, read-only,
+ * `GET /api/agent-index?network=<networkId>&owner=<G-or-C-StrKey>&limit=<n>&cursor=<token>`.
+ * Public, read-only,
  * on-chain-derived data. An unreachable store returns a STRUCTURED `unavailable` response —
  * never `agents: []` mislabeled `complete`.
  * @param {object} p
@@ -838,6 +1663,8 @@ export async function handleRead({
   manifest = LIVE_MANIFEST,
   now = Date.now(),
   limit,
+  cursor,
+  cursorCodec,
 }) {
   if (typeof networkId !== 'string' || !networkId) {
     return { status: 400, body: { error: 'Invalid network' } }
@@ -849,8 +1676,13 @@ export async function handleRead({
     return { status: 400, body: { error: 'Invalid owner' } }
   }
   let effectiveLimit = DEFAULT_READ_LIMIT
-  if (limit !== undefined && limit !== null && limit !== '') {
-    const n = Number(limit)
+  if (limit !== undefined && limit !== null) {
+    const n =
+      typeof limit === 'number'
+        ? limit
+        : typeof limit === 'string' && /^\d+$/u.test(limit)
+          ? Number(limit)
+          : Number.NaN
     if (!Number.isInteger(n) || n < 1 || n > MAX_READ_LIMIT) {
       return { status: 400, body: { error: 'Invalid limit' } }
     }
@@ -864,42 +1696,96 @@ export async function handleRead({
   // Missing either reader is a deploy/version skew and must never look like a complete empty set.
   if (
     typeof store.readOwnerBaseChildIntents !== 'function' ||
-    typeof store.readOwnerRunAllocations !== 'function'
+    typeof store.readOwnerRunAllocations !== 'function' ||
+    typeof store.readOwnerMembershipsPage !== 'function' ||
+    typeof store.readOwnerMaximumCreationLedger !== 'function' ||
+    typeof store.readMembershipsByAgentAddresses !== 'function'
   ) {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
 
-  let memberships
+  const startedFromCursor = cursor !== undefined && cursor !== null && cursor !== ''
+  if (cursor !== undefined && cursor !== null && typeof cursor !== 'string') {
+    return { status: 400, body: { error: 'Invalid cursor' } }
+  }
+  if (startedFromCursor && !cursorCodec) {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
+
   let coverage
-  let associations
+  let proof
   try {
-    const [membershipRows, coverageRows, authoritativeChildren, legacyAssociations] =
-      await Promise.all([
-        store.readOwnerMemberships({ networkId, owner }),
-        store.readCoverage({ networkId }),
-        store.readOwnerBaseChildIntents({ networkId, owner }),
-        store.readOwnerRunAllocations({ networkId, owner }),
-      ])
-    memberships = membershipRows
-    coverage = coverageRows
-    associations = mergeOwnerBaseAssociations({ authoritativeChildren, legacyAssociations })
+    coverage = await store.readCoverage({ networkId })
+    proof = coverageProof({
+      manifest,
+      sources: coverage.sources,
+      gaps: coverage.gaps,
+      backfillAudit: coverage.backfillAudits,
+      now,
+    })
   } catch {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
 
-  const proof = coverageProof({
-    manifest,
-    sources: coverage.sources,
-    gaps: coverage.gaps,
-    backfillAudit: coverage.backfillAudits,
-    now,
-  })
-  const { status, ...coverageOut } = proof
+  let afterLedger = -1
+  let afterAddress = ''
+  let snapshotThroughLedger
+  if (startedFromCursor) {
+    try {
+      const decoded = await cursorCodec.decode(cursor, {
+        networkId,
+        owner,
+        manifestHash: manifest.hash,
+      })
+      snapshotThroughLedger = decoded.snapshotThroughLedger
+      afterLedger = decoded.afterLedger
+      afterAddress = decoded.afterAddress
+    } catch {
+      return { status: 400, body: { error: 'Invalid cursor' } }
+    }
+  } else if (Number.isSafeInteger(proof.finalizedThroughLedger)) {
+    snapshotThroughLedger = proof.finalizedThroughLedger
+  } else if (proof.status !== 'complete') {
+    try {
+      snapshotThroughLedger =
+        (await store.readOwnerMaximumCreationLedger({ networkId, owner })) ?? 0
+    } catch {
+      return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+    }
+  } else {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
+
+  let memberships
+  let hasMore
+  let authoritativeChildren
+  let legacyAssociations
+  try {
+    const [page, children, legacy] = await Promise.all([
+      store.readOwnerMembershipsPage({
+        networkId,
+        owner,
+        limit: effectiveLimit,
+        afterLedger,
+        afterAddress,
+        snapshotThroughLedger,
+      }),
+      store.readOwnerBaseChildIntents({ networkId, owner }),
+      store.readOwnerRunAllocations({ networkId, owner }),
+    ])
+    memberships = page.rows
+    hasMore = page.hasMore
+    authoritativeChildren = children
+    legacyAssociations = legacy
+  } catch {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
+
+  const { status: coverageStatus, ...coverageOut } = proof
   // Never trust stored rows blindly to be well-formed StrKeys — a membership whose address or
   // creator fails validation is dropped from the response, never guessed or coerced (Minor 7).
   const agents = memberships
     .filter((m) => isValidAddress(m.address) && isValidAddress(m.creator))
-    .slice(0, effectiveLimit)
     .map((m) => ({
       address: m.address,
       kind: m.kind,
@@ -911,15 +1797,90 @@ export async function handleRead({
       grantTxHash: m.grantTxHash,
       provenance: m.provenance,
     }))
+  const pageAddresses = new Set(agents.map((agent) => agent.address))
+  let associations
+  try {
+    associations = mergeOwnerBaseAssociations({
+      authoritativeChildren,
+      legacyAssociations,
+    })
+    await validateOwnerAssociationMemberships({
+      associations,
+      store,
+      networkId,
+      owner,
+      isValidAddress,
+    })
+  } catch {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
+  const pageAssociations = associations.filter((row) => pageAddresses.has(row.bridgeAgentAddress))
   let associatedAgents
   try {
-    associatedAgents = joinBaseAssociations({ agents, associations, now })
+    associatedAgents = joinBaseAssociations({ agents, associations: pageAssociations, now })
   } catch (error) {
     if (!(error instanceof AgentIndexValidationError)) throw error
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
+
+  let nextCursor = null
+  if (hasMore) {
+    if (!cursorCodec) {
+      return {
+        status: 200,
+        body: unavailableBody({
+          networkId,
+          owner,
+          manifest,
+          now,
+          pagination: {
+            hasMore: true,
+            nextCursor: null,
+            snapshotThroughLedger,
+            coverageStatus,
+          },
+        }),
+      }
+    }
+    const boundary = memberships.at(-1)
+    try {
+      nextCursor = await cursorCodec.encode({
+        version: 1,
+        networkId,
+        owner,
+        manifestHash: manifest.hash,
+        snapshotThroughLedger,
+        afterLedger: boundary.createdLedger,
+        afterAddress: boundary.address,
+      })
+    } catch {
+      return {
+        status: 200,
+        body: unavailableBody({
+          networkId,
+          owner,
+          manifest,
+          now,
+          pagination: {
+            hasMore: true,
+            nextCursor: null,
+            snapshotThroughLedger,
+            coverageStatus,
+          },
+        }),
+      }
+    }
+  }
   return {
     status: 200,
-    body: { version: 1, networkId, owner, status, agents: associatedAgents, coverage: coverageOut },
+    body: {
+      version: 1,
+      networkId,
+      owner,
+      status: hasMore || startedFromCursor ? 'partial' : coverageStatus,
+      agents: associatedAgents,
+      coverage: coverageOut,
+      pagination: { hasMore, nextCursor, snapshotThroughLedger, coverageStatus },
+    },
   }
 }

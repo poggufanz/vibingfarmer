@@ -1,61 +1,122 @@
-// frontend/src/base/hookData.test.js
 import { describe, test, expect } from 'vitest'
-import { buildForwarderHookData, assertHookData } from './hookData.js'
+import { StrKey } from '@stellar/stellar-sdk'
+import { buildForwarderHookData, assertHookData, assertStellarStrKey } from './hookData.js'
 
-describe('buildForwarderHookData', () => {
-  test('produces the exact layout: [zero x24][version=0 u32][strkey-length u32][strkey UTF-8]', () => {
-    const strkey = 'GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
-    const hookData = buildForwarderHookData(strkey)
-    expect(hookData.length).toBe(32 + strkey.length)
-    expect(Buffer.from(hookData.slice(0, 24)).every((b) => b === 0)).toBe(true)
-    const version = Buffer.from(hookData.slice(24, 28)).readUInt32BE(0)
-    expect(version).toBe(0)
-    const len = Buffer.from(hookData.slice(28, 32)).readUInt32BE(0)
-    expect(len).toBe(strkey.length)
-    expect(Buffer.from(hookData.slice(32)).toString('utf8')).toBe(strkey)
+const VALID_G = 'GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M'
+const VALID_C = 'CAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRDB3V'
+const INVALID = [
+  {
+    label: 'unsupported T-version',
+    kind: 'unsupported',
+    value: 'TAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRDYM5',
+  },
+  {
+    label: 'G payload with a stale checksum',
+    kind: 'G',
+    value: 'GAIRCEIRCEIRCEIRCEIRCEIRAEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M',
+  },
+  {
+    label: 'G checksum mutation',
+    kind: 'G',
+    value: 'GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCFWM',
+  },
+  {
+    label: 'G checksum byte-order mutation',
+    kind: 'G',
+    value: 'GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRDTAX',
+  },
+  {
+    label: 'C payload with a stale checksum',
+    kind: 'C',
+    value: `${VALID_C.slice(0, 10)}J${VALID_C.slice(11)}`,
+  },
+  {
+    label: 'C checksum mutation',
+    kind: 'C',
+    value: `${VALID_C.slice(0, -1)}A`,
+  },
+]
+
+function isAcceptedBySdk(value, kind) {
+  if (kind === 'G') return StrKey.isValidEd25519PublicKey(value)
+  if (kind === 'C') return StrKey.isValidContract(value)
+  return StrKey.isValidEd25519PublicKey(value) || StrKey.isValidContract(value)
+}
+
+describe('Stellar StrKey validation', () => {
+  test('accepts the exact SDK-generated G and C vectors with CRC16-XModem', () => {
+    expect(StrKey.isValidEd25519PublicKey(VALID_G)).toBe(true)
+    expect(StrKey.isValidContract(VALID_C)).toBe(true)
+    expect(() => assertStellarStrKey(VALID_G)).not.toThrow()
+    expect(() => assertStellarStrKey(VALID_C)).not.toThrow()
   })
+
+  test.each(INVALID)(
+    'rejects $label according to both the SDK and hook codec',
+    ({ value, kind }) => {
+      expect(isAcceptedBySdk(value, kind)).toBe(false)
+      expect(() => assertStellarStrKey(value)).toThrow(/strkey|checksum|version/i)
+    }
+  )
+
+  test.each([
+    VALID_G.slice(0, 55),
+    `${VALID_G}A`,
+    VALID_G.toLowerCase(),
+    `${VALID_G.slice(0, 10)}0${VALID_G.slice(11)}`,
+    `${VALID_G.slice(0, 10)}=${VALID_G.slice(11)}`,
+  ])('rejects noncanonical length/alphabet before envelope construction', (value) => {
+    expect(() => buildForwarderHookData(value)).toThrow(/strkey|base32|length/i)
+  })
+
+  test.each(
+    ['1', '8', '9', 'é'].flatMap((character) => [
+      { character, kind: 'G', valid: VALID_G },
+      { character, kind: 'C', valid: VALID_C },
+    ])
+  )(
+    'rejects forbidden Base32 character $character in a $kind literal before checksum evaluation',
+    ({ character, kind, valid }) => {
+      const value = `${valid.slice(0, 10)}${character}${valid.slice(11)}`
+      expect(isAcceptedBySdk(value, kind)).toBe(false)
+      expect(() => assertStellarStrKey(value)).toThrow(/strkey|base32|length|checksum/i)
+      expect(() => buildForwarderHookData(value)).toThrow(/strkey|base32|length|checksum/i)
+    }
+  )
 })
 
-describe('assertHookData - the #7313 guard', () => {
-  test('accepts a well-formed hookData buffer', () => {
-    const hookData = buildForwarderHookData(
-      'GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
-    )
-    expect(() => assertHookData(hookData)).not.toThrow()
+describe('buildForwarderHookData', () => {
+  test.each([VALID_G, VALID_C])(
+    'produces the exact [zero x24][version=0][length=56][UTF-8] envelope for %s',
+    (strkey) => {
+      const hookData = buildForwarderHookData(strkey)
+      expect(hookData.length).toBe(88)
+      expect(Buffer.from(hookData.slice(0, 24)).every((byte) => byte === 0)).toBe(true)
+      expect(Buffer.from(hookData.slice(24, 28)).readUInt32BE(0)).toBe(0)
+      expect(Buffer.from(hookData.slice(28, 32)).readUInt32BE(0)).toBe(56)
+      expect(Buffer.from(hookData.slice(32)).toString('utf8')).toBe(strkey)
+      expect(assertHookData(hookData)).toBe(strkey)
+    }
+  )
+
+  test('rejects dirty envelope headers, versions, lengths, and stale checksum payloads', () => {
+    const clean = Buffer.from(buildForwarderHookData(VALID_G))
+    const mutations = [
+      (value) => {
+        value[0] = 1
+      },
+      (value) => value.writeUInt32BE(1, 24),
+      (value) => value.writeUInt32BE(55, 28),
+      (value) => value.write(INVALID[1].value, 32, 'ascii'),
+    ]
+    for (const mutate of mutations) {
+      const corrupted = Buffer.from(clean)
+      mutate(corrupted)
+      expect(() => assertHookData(corrupted)).toThrow()
+    }
   })
 
-  test('rejects a raw 32-byte buffer (the exact SP0 #7313 mistake - a decoded key with no hook envelope)', () => {
-    const raw32 = new Uint8Array(32)
-    // A raw 32-byte decoded key has version 0 and a zero declared length, so it fails at the
-    // strkey/envelope check rather than the version check — either way it must be rejected.
-    expect(() => assertHookData(raw32)).toThrow(
-      /InvalidHookVersion|too short|version|strkey|decode/
-    )
-  })
-
-  test('rejects a non-zero version byte', () => {
-    const hookData = buildForwarderHookData(
-      'GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
-    )
-    const corrupted = Buffer.from(hookData)
-    corrupted.writeUInt32BE(1, 24) // flip version to 1
-    expect(() => assertHookData(corrupted)).toThrow(/version/)
-  })
-
-  test('rejects a declared strkey length that does not match the remaining bytes', () => {
-    const hookData = buildForwarderHookData(
-      'GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
-    )
-    const corrupted = Buffer.from(hookData)
-    corrupted.writeUInt32BE(999, 28) // lie about the length
-    expect(() => assertHookData(corrupted)).toThrow(/length/)
-  })
-
-  test('rejects a strkey payload that does not decode as a Stellar address', () => {
-    const bogus = Buffer.alloc(32 + 4)
-    bogus.writeUInt32BE(0, 24)
-    bogus.writeUInt32BE(4, 28)
-    bogus.write('nope', 32, 'utf8')
-    expect(() => assertHookData(bogus)).toThrow(/decode|strkey/)
+  test('rejects a decoded raw key with no hook envelope', () => {
+    expect(() => assertHookData(StrKey.decodeEd25519PublicKey(VALID_G))).toThrow(/length|hookData/i)
   })
 })

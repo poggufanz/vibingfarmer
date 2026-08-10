@@ -16,6 +16,11 @@ import { classifyActiveAccount } from '../stellar/activeAccount.js'
 import { NETWORK_PASSPHRASE } from '../stellar/config.js'
 import { AGENT_WASM_GENERATIONS } from '../stellar/agentCreatorManifest.js'
 
+vi.mock('../base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('../base/hardenedDeployment.fixture.js')
+  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
+})
+
 // Real module, wrapped in vi.fn so the "production resolver never reaches V3" test below can spy
 // on call count while every OTHER test in this file still gets the REAL proveReusablePermission
 // (a transparent passthrough spy, not a behavioral mock — see THE DORMANCY CONTRACT test group).

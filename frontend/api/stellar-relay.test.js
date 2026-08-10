@@ -23,6 +23,7 @@ const PASS = 'Test SDF Network ; September 2015'
 const SECRET = 'SABCD' // never parsed — Keypair.fromSecret is faked below
 const RELAYER_SOURCE = 'GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X'
 const OTHER_SOURCE = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
+const OUTER_HASH = 'ab'.repeat(32)
 
 const VAULT = 'CCTGGJVVY45DYDDXM3XBFEJ2OT2J2ZT6HIXZEQKXU7Z53TH3YSZJC3PF'
 const TOKEN = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
@@ -142,7 +143,7 @@ function makeSdk({
 function makeRpc({ sendStatus = 'PENDING', getStatuses = ['SUCCESS'] } = {}) {
   const queue = [...getStatuses]
   return {
-    sendTransaction: vi.fn(async () => ({ status: sendStatus, hash: 'OUTERHASH' })),
+    sendTransaction: vi.fn(async () => ({ status: sendStatus, hash: OUTER_HASH })),
     simulateTransaction: vi.fn(async () => ({
       transactionData: {},
       result: { retval: {} },
@@ -166,7 +167,7 @@ describe('feeBumpAndSubmit', () => {
       sdk,
       rpcServer: rpc,
     })
-    expect(out).toEqual({ hash: 'OUTERHASH', status: 'SUCCESS', relayer: RELAYER_SOURCE })
+    expect(out).toEqual({ hash: OUTER_HASH, status: 'SUCCESS', relayer: RELAYER_SOURCE })
     expect(relayApi.relayResultHttpResponse(out)).toEqual({ status: 200, body: out })
     expect(buildFeeBumpTransaction).toHaveBeenCalledOnce()
     expect(signSpy).toHaveBeenCalledOnce()
@@ -213,7 +214,7 @@ describe('feeBumpAndSubmit', () => {
     })
     rpc.sendTransaction.mockImplementation(async () => {
       order.push('submit-fee-bump')
-      return { status: 'PENDING', hash: 'OUTERHASH' }
+      return { status: 'PENDING', hash: OUTER_HASH }
     })
 
     await feeBumpAndSubmit({
@@ -347,7 +348,7 @@ describe('feeBumpAndSubmit', () => {
       rpcServer: rpcB,
     })
     expect(out).toEqual({
-      hash: 'OUTERHASH',
+      hash: OUTER_HASH,
       status: 'SUCCESS',
       relayer: RELAYER_SOURCE,
       duplicate: true,
@@ -374,7 +375,7 @@ describe('feeBumpAndSubmit', () => {
           pollTries: status === 'PENDING' ? 1 : 10,
           pollIntervalMs: 0,
         })
-      ).resolves.toMatchObject({ hash: 'OUTERHASH', status })
+      ).resolves.toMatchObject({ hash: OUTER_HASH, status })
 
       const duplicateSdk = makeSdk({ innerHashHex })
       const duplicateRpc = makeRpc()
@@ -387,7 +388,7 @@ describe('feeBumpAndSubmit', () => {
         rpcServer: duplicateRpc,
       })
       expect(cached).toEqual({
-        hash: 'OUTERHASH',
+        hash: OUTER_HASH,
         status,
         relayer: RELAYER_SOURCE,
         duplicate: true,
@@ -396,7 +397,7 @@ describe('feeBumpAndSubmit', () => {
       expect(response.status).toBe(status === 'PENDING' ? 502 : 200)
       expect(response.body).toMatchObject(
         status === 'PENDING'
-          ? { submission: 'unknown', hash: 'OUTERHASH', status, duplicate: true }
+          ? { submission: 'unknown', hash: OUTER_HASH, status, duplicate: true }
           : cached
       )
       expect(duplicateRpc.sendTransaction).not.toHaveBeenCalled()
@@ -411,10 +412,48 @@ describe('feeBumpAndSubmit', () => {
       body: {
         status: 'SUCCESS',
         relayer: RELAYER_SOURCE,
-        error: 'Stellar relay returned no hash-backed terminal result',
+        code: 'VF_SUBMISSION_UNKNOWN',
+        error: 'Stellar relay submission outcome is unknown',
         submission: 'unknown',
       },
     })
+  })
+
+  it('does not expose provider text or arbitrary result fields in unknown responses', () => {
+    const poison = 'T16_PROVIDER_SECRET_RPC_BODY_COOKIE'
+    const response = relayApi.relayUnknownHttpResponse(
+      new relayApi.RelaySubmissionUnknownError(poison, {
+        result: {
+          hash: OUTER_HASH,
+          status: 'PENDING',
+          relayer: RELAYER_SOURCE,
+          error: poison,
+          details: poison,
+        },
+      })
+    )
+
+    expect(JSON.stringify(response)).not.toContain(poison)
+    expect(response.body).toMatchObject({
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+      hash: OUTER_HASH,
+      status: 'PENDING',
+    })
+    expect(response.body.error).toBe('Stellar relay submission outcome is unknown')
+  })
+
+  it('does not classify a noncanonical provider hash as terminal success', () => {
+    for (const hash of [
+      'T16_PROVIDER_SECRET_HASH_BODY',
+      `0x${OUTER_HASH}`,
+      OUTER_HASH.toUpperCase(),
+    ]) {
+      const response = relayApi.relayResultHttpResponse({ hash, status: 'SUCCESS' })
+      expect(response.status).toBe(502)
+      expect(JSON.stringify(response)).not.toContain(hash)
+      expect(response.body).toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' })
+    }
   })
 
   it('returns a structured 409 unknown for an identical inner transaction already in flight', async () => {
@@ -457,14 +496,15 @@ describe('feeBumpAndSubmit', () => {
       name: 'RelaySubmissionUnknownError',
       code: 'VF_SUBMISSION_UNKNOWN',
       httpStatus: 409,
-      result: { hash: 'OUTERHASH', status: 'PENDING', relayer: RELAYER_SOURCE },
+      result: { hash: OUTER_HASH, status: 'PENDING', relayer: RELAYER_SOURCE },
     })
     expect(relayApi.relayUnknownHttpResponse(inFlightError)).toEqual({
       status: 409,
       body: {
-        error: 'inner tx already in flight',
+        code: 'VF_SUBMISSION_UNKNOWN',
+        error: 'Stellar relay submission outcome is unknown',
         submission: 'unknown',
-        hash: 'OUTERHASH',
+        hash: OUTER_HASH,
         status: 'PENDING',
         relayer: RELAYER_SOURCE,
       },
@@ -497,7 +537,7 @@ describe('feeBumpAndSubmit', () => {
       name: 'RelaySubmissionUnknownError',
       code: 'VF_SUBMISSION_UNKNOWN',
       httpStatus: 502,
-      result: { hash: 'OUTERHASH', status: 'PENDING', relayer: RELAYER_SOURCE },
+      result: { hash: OUTER_HASH, status: 'PENDING', relayer: RELAYER_SOURCE },
     })
 
     const produced = relayApi.relayUnknownHttpResponse(producerError)
@@ -505,7 +545,7 @@ describe('feeBumpAndSubmit', () => {
       status: 502,
       body: {
         submission: 'unknown',
-        hash: 'OUTERHASH',
+        hash: OUTER_HASH,
         status: 'PENDING',
         relayer: RELAYER_SOURCE,
       },
@@ -520,7 +560,7 @@ describe('feeBumpAndSubmit', () => {
     )
     await expect(submitViaRelayClient({ xdr: 'X' })).rejects.toMatchObject({
       code: 'VF_SUBMISSION_UNKNOWN',
-      result: { hash: 'OUTERHASH', status: 'PENDING', relayer: RELAYER_SOURCE },
+      result: { hash: OUTER_HASH, status: 'PENDING', relayer: RELAYER_SOURCE },
     })
     expect(rpc.sendTransaction).toHaveBeenCalledOnce()
   })
@@ -539,7 +579,7 @@ describe('feeBumpAndSubmit', () => {
       pollIntervalMs: 0,
     })
     expect(out.status).toBe('PENDING')
-    expect(out.hash).toBe('OUTERHASH')
+    expect(out.hash).toBe(OUTER_HASH)
   })
 
   it('rejects a non-allowlisted inner tx before ever touching the RPC (guard runs first)', async () => {
@@ -948,7 +988,7 @@ describe('fee relay — real signed XDR security path', () => {
         enforceAddressAuthorization(tx, currentLedger)
         return simulation
       }),
-      sendTransaction: vi.fn(async () => ({ status: 'PENDING', hash: 'REALOUTER' })),
+      sendTransaction: vi.fn(async () => ({ status: 'PENDING', hash: OUTER_HASH })),
       getTransaction: vi.fn(async () => ({ status: 'SUCCESS' })),
     }
   }
