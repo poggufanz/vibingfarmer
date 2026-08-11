@@ -395,6 +395,7 @@ describe('dispatch(strategyPlan, { permissionDecision }) — fresh mode', () => 
     const grantArgs = submitGrantMock.mock.calls[0][0]
     expect(grantArgs.budgets).toEqual([{ budget: 1000000000n, token: 'CTOKEN' }])
     expect(grantArgs.durationSeconds).toBe(3600)
+    expect(grantArgs.reviewedExpiryUnix).toBe(2000000000)
     expect(grantArgs.agentInits).toEqual([
       expect.objectContaining({
         cap: 400000000n,
@@ -411,6 +412,22 @@ describe('dispatch(strategyPlan, { permissionDecision }) — fresh mode', () => 
         expiry: 2000000000,
       }),
     ])
+  })
+
+  it('passes the earliest reviewed agent expiry to the fresh grant', async () => {
+    const plan = {
+      ...PLAN,
+      agents: [
+        { ...PLAN.agents[0], expiry: 2000000200 },
+        { ...PLAN.agents[1], expiry: 2000000100 },
+      ],
+    }
+    freshGrantHappyPath()
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's1c', onEvent: () => {} })
+
+    await orch.dispatch(plan, { permissionDecision: freshDecisionFor(plan) })
+
+    expect(submitGrantMock.mock.calls[0][0].reviewedExpiryUnix).toBe(2000000100)
   })
 
   it("executes exactly the plan's bigint units — never a float re-multiplication", async () => {

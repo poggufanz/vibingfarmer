@@ -221,6 +221,37 @@ describe('tokenBudgetScVal - encoding matches funding_router types.rs (TokenBudg
 })
 
 describe('buildGrantTx', () => {
+  it('derives the allowance cutoff from the reviewed Unix expiry after a signing delay', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1]) })
+    const { expiryLedger } = await buildGrantTx({
+      owner: OWNER,
+      budgets: sampleBudgets,
+      durationSeconds: 3600,
+      agentInits: [sampleInits[0]],
+      reviewedExpiryUnix: 1_800_000_600,
+      nowSec: 1_800_000_300,
+      server,
+    })
+
+    expect(expiryLedger).toBe(1000 + Math.ceil(300 / 5))
+  })
+
+  it('fails closed when the reviewed Unix expiry is no longer in the future', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1]) })
+
+    await expect(
+      buildGrantTx({
+        owner: OWNER,
+        budgets: sampleBudgets,
+        durationSeconds: 3600,
+        agentInits: [sampleInits[0]],
+        reviewedExpiryUnix: 1_800_000_300,
+        nowSec: 1_800_000_300,
+        server,
+      })
+    ).rejects.toThrow(/reviewed.*expiry.*future/i)
+  })
+
   it('converts duration→expiry_ledger at ~5s/ledger (latest + ceil(duration/5))', async () => {
     const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
     const { expiryLedger } = await buildGrantTx({

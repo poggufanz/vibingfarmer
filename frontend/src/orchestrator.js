@@ -2427,6 +2427,8 @@ export class OrchestratorAgent {
       budget: BigInt(b.units),
       token: b.token,
     }))
+    const reviewedExpiryUnix =
+      agentInits.length > 0 ? Math.min(...agentInits.map((agent) => Number(agent.expiry))) : undefined
 
     let submitted
     try {
@@ -2438,6 +2440,7 @@ export class OrchestratorAgent {
         budgets,
         durationSeconds: permissionDecision.durationSeconds,
         agentInits,
+        reviewedExpiryUnix,
       })
       this.assertCurrentAccount()
     } catch (err) {
