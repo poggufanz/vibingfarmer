@@ -186,7 +186,9 @@ describe('runtime commands and Wrangler bindings', () => {
     expect(workflow).toContain('d1:migrate:preview')
     expect(workflow).toContain('d1:migrate:production')
     expect(workflow).not.toContain('command: d1 migrations apply vf-gate --remote')
-    expect(workflow).toContain("if: github.event_name == 'push' && github.ref_name != 'main'")
+    expect(workflow).toContain(
+      "if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main'"
+    )
     expect(workflow).toContain(
       'command: pages deploy ./dist --project-name=vibing-farmer --branch=${{ github.ref_name }}'
     )
