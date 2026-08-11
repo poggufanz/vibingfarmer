@@ -43,7 +43,13 @@ export const BANNED_PUBLIC_CLAIM_PATTERNS = Object.freeze([
   }),
   Object.freeze({
     label: "network-fee-paid-by",
-    regex: /\bnetwork\s+fee\s+paid\s+by\b/i,
+    regex:
+      /\bnetwork\s+fee\s+paid\s+by\b(?!\s+(?:wallet|your\s+wallet|the\s+wallet)\b)/i,
+  }),
+  Object.freeze({
+    label: "third-party-pays-fee",
+    regex:
+      /\b(?:(?:the|a|an|our|your|this|that)\s+)?(?:fee[-\s]?bump\s+)?(?:relay|relayer|courier|service|sponsoring\s+service|sponsor|provider|platform|app|project|company|team|infrastructure|operator)\b[^.\n]{0,80}\bpays?\b[^.\n]{0,80}\b(?:gas|(?:the\s+)?network\s+fees?)\b[^.\n]{0,80}\bso\s+you\s+(?:don[\u0027\u2019]t|do\s+not)\s+have\s+to\b/i,
   }),
 ]);
 

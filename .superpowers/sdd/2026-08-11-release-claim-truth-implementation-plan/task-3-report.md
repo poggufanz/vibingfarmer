@@ -186,3 +186,41 @@ diff --check`: PASS. Scanner commands required elevated execution in this restri
 because child `git` processes otherwise receive `spawnSync git EPERM`; the nested-cwd runs passed
 with the approved elevation. The pre-existing untracked dependency directories were preserved and
 not staged.
+
+## Fix round 2
+
+This follow-up closes the remaining public-copy and scanner gaps without changing the
+fee-bump implementation. The grandmother metaphor now describes the courier stamping the
+transaction before departure, followed by the exact canonical sentence `Network fee sponsored
+by fee-bump relay.`. The scanner rejects claim-shaped third-party promises such as a relay or
+courier paying gas/network fees so the user does not have to, while leaving ordinary operational
+prose alone. The `network-fee-paid-by` pattern allows an explicit wallet payer (including the
+canonical `Network fee paid by wallet`) but continues to reject the incomplete `Network fee paid
+by` claim.
+
+The scanner test now launches the real CLI in temporary fixtures and asserts exit 0 for clean
+copy, exit 1 with a finding, and exit 2 for both a tracked-file read failure and repository
+discovery failure. The fixture cases run from both a repository root and a nested `frontend`
+directory where applicable; the pre-existing untracked dependency directories remain untouched.
+
+### TDD RED/GREEN
+
+The new courier fixture `A courier pays their bus fare (gas) so you don't have to.` initially
+failed to match the narrower regex. The regex was then widened only between the actor, `pays`,
+and gas/network-fee phrase, retaining the required `so you don't have to` claim shape. The
+scanner suite then passed all 13 subtests, including the child-process status matrix.
+
+### Verification
+
+```text
+node --test scripts/ci/public-claim-scan.test.mjs                         PASS — 13/13 (elevated; child git fixtures)
+node scripts/ci/public-claim-scan.mjs                                    PASS — exit 0 from repository root
+cd frontend && node ../scripts/ci/public-claim-scan.mjs                  PASS — exit 0 from frontend
+cd frontend && ./node_modules/.bin/prettier --check ../scripts/ci/public-claim-scan.mjs ../scripts/ci/public-claim-scan.test.mjs
+                                                                           PASS
+git diff --check                                                           PASS
+```
+
+The unprivileged scanner test/CLI attempts were blocked by this sandbox's `spawnSync git EPERM`
+restriction; the same commands passed with the approved elevated execution. No frontend runtime
+suite was affected by this documentation/scanner-only follow-up.

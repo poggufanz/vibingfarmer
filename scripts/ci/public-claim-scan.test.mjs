@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +22,16 @@ function makeGitFixture(text, { removeTrackedFile = false } = {}) {
   execFileSync("git", ["init", "--quiet"], { cwd: root });
   execFileSync("git", ["add", "README.md"], { cwd: root });
   if (removeTrackedFile) rmSync(path.join(root, "README.md"));
+  return root;
+}
+
+function makeDiscoveryFailureFixture() {
+  const root = mkdtempSync(path.join(os.tmpdir(), "public-claim-scan-no-git-"));
+  writeFileSync(
+    path.join(root, "README.md"),
+    "Network fee sponsored by fee-bump relay.\n",
+  );
+  mkdirSync(path.join(root, "frontend"));
   return root;
 }
 
@@ -83,6 +93,30 @@ test("findBannedPublicClaims rejects reachable noncanonical fee-payer claims", (
     assert.equal(findings[0].line, 1);
     assert.equal(findings[0].excerpt, fixture);
   }
+});
+
+test("findBannedPublicClaims rejects third-party fee promises without banning ordinary prose", () => {
+  const banned = [
+    "The relay pays the network fee so you don't have to.",
+    "A courier pays gas so you do not have to.",
+    "A courier service pays for their bus fare (gas) so you don't have to.",
+    "A courier pays their bus fare (gas) so you don't have to.",
+    "Our provider pays the network fees so you don't have to.",
+  ];
+
+  for (const fixture of banned) {
+    const findings = findBannedPublicClaims(fixture);
+    assert.ok(findings.length > 0, `expected a finding for ${fixture}`);
+    assert.equal(findings[0].pattern, "third-party-pays-fee");
+  }
+
+  const allowed = [
+    "Network fee paid by wallet.",
+    "The relay pays the network fee so it can operate.",
+    "You don't have to wait for a courier while the wallet pays its own fee.",
+    "A courier pays their bus fare (gas) while the wallet pays its own fee.",
+  ].join("\n");
+  assert.deepEqual(findBannedPublicClaims(allowed), []);
 });
 
 test("findBannedPublicClaims is line-aware and deterministic", () => {
@@ -170,6 +204,59 @@ test("main returns 1 and reports path, line, pattern, and excerpt for a finding"
     );
   } finally {
     rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("CLI propagates clean, finding, discovery, and read-error exit statuses", () => {
+  const repoRoot = resolveRepositoryRoot();
+  const scanner = path.join(repoRoot, "scripts/ci/public-claim-scan.mjs");
+  const cases = [
+    {
+      text: "Network fee sponsored by fee-bump relay.\n",
+      cwd: "frontend",
+      status: 0,
+      output: /public-claim-scan OK/,
+    },
+    {
+      text: "Fee-bump sponsored\n",
+      cwd: ".",
+      status: 1,
+      output: /README\.md:1 fee-bump-sponsored: Fee-bump sponsored/,
+    },
+    {
+      text: "Network fee sponsored by fee-bump relay.\n",
+      cwd: ".",
+      removeTrackedFile: true,
+      status: 2,
+      output: /public-claim-scan ERROR:/,
+    },
+    {
+      makeFixture: makeDiscoveryFailureFixture,
+      cwd: ".",
+      status: 2,
+      output: /public-claim-scan ERROR: git rev-parse failed:/,
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    const fixture = (fixtureCase.makeFixture || makeGitFixture)(
+      fixtureCase.text,
+      fixtureCase,
+    );
+    try {
+      const result = spawnSync(process.execPath, [scanner], {
+        cwd: path.join(fixture, fixtureCase.cwd),
+        encoding: "utf8",
+      });
+      assert.equal(
+        result.status,
+        fixtureCase.status,
+        result.stderr || result.stdout,
+      );
+      assert.match(`${result.stdout}${result.stderr}`, fixtureCase.output);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   }
 });
 
