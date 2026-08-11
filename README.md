@@ -34,7 +34,7 @@ Everything runs on Stellar testnet. No real funds.
 1. **Strategy.** You set deposit amount, risk, and vault count. The AI returns an allocation plan and a skill file per agent, using live DeFiLlama data. A Monte Carlo pass stress-tests the allocation over 200 scenarios before anything runs.
 2. **AI council.** Three specialists (yield, risk, market) score the proposal on their own. Disagreements go to a synthesis round. Verdict, cited playbook rules, and conflict resolution are logged for review.
 3. **Review.** Skill files open in the Skills Drawer. Edit caps, expiries, or targets. Nothing runs until you approve.
-4. **One signature.** You sign `funding_router.grant` (budget + expiry). A SEP-41 token allowance is the leash: the router deploys a fresh, scoped `agent_account` per worker and can only pull what you approved.
+4. **One signature.** You sign `funding_router.grant` (budget + permission lifetime). One selected permission lifetime is encoded as an agent Unix expiry and a SEP-41 allowance ledger cutoff derived from the same captured start time. The allowance is the leash: the router deploys a fresh, scoped `agent_account` per worker and can only pull what you approved.
 
 5. **Parallel deposit.** Workers sign with ephemeral ed25519 session keys. A fee-bump relayer sponsors each transaction. One worker failing does not abort the others. You pay 0 gas. (A Base pool in the plan settles as a sibling leg — see [Optional Base leg](#optional-base-leg) for its extra prompts.)
 6. **Attestation.** The strategy JSON is hashed and written on-chain so anyone with the original file can check what was approved.

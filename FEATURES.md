@@ -87,7 +87,7 @@ This is the end-to-end user journey, step by step. Each step lists **what the us
 ### Step 5 — ONE wallet signature
 
 - **User sees:** A single wallet pop-up. That's it — one signature for the whole run.
-- **Under the hood:** The wallet signs a call to `funding_router.grant(owner, budget, expiry_ledger, agents[])`. This one signature simultaneously (a) sets a SEP-41 token allowance from the user to the router (the spending leash) and (b) deploys N fresh `agent_account` contracts, one per worker, each pre-scoped to its own vault, cap, and expiry. See [§3.4](#34-one-signature-grant).
+- **Under the hood:** The wallet signs a call to `funding_router.grant(owner, budget, expiry_ledger, agents[])`. One selected permission lifetime is encoded as an agent Unix expiry and a SEP-41 allowance ledger cutoff derived from the same captured start time. This one signature simultaneously (a) sets a SEP-41 token allowance from the user to the router (the spending leash) and (b) deploys N fresh `agent_account` contracts, one per worker, each pre-scoped to its own vault, cap, and expiry. See [§3.4](#34-one-signature-grant).
 
 ### Step 6 — Agents deploy and deposit, gas-free
 

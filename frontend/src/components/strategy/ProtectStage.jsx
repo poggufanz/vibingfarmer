@@ -725,6 +725,16 @@ export function ProtectStage({
             </div>
           )}
 
+          {decision && phase === 'review' && (
+            <div className="pc-protect-review-lifetime">
+              <p>Permission lifetime: {preset.label}</p>
+              <p>
+                Stellar stores this as an agent timestamp and an allowance ledger cutoff derived
+                from the same lifetime.
+              </p>
+            </div>
+          )}
+
           {decision && decision.mode === 'reuse' && usableReuse && (
             <p>0 wallet confirmations needed -- this permission already covers this run.</p>
           )}

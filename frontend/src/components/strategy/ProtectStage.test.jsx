@@ -590,6 +590,12 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     await screen.findByRole('button', { name: 'Authorize with wallet' })
     expect(onRetryPreflight).toHaveBeenCalledWith({ durationSeconds: 604800 })
     expect(screen.getByText(/Valid for 7 days/)).toBeTruthy()
+    expect(screen.getByText('Permission lifetime: 7 days')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Stellar stores this as an agent timestamp and an allowance ledger cutoff derived from the same lifetime.'
+      )
+    ).toBeTruthy()
   })
 })
 
