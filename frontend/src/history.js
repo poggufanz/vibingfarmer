@@ -37,6 +37,15 @@ function addEntry(key, entry) {
   writeStore(key, entries)
 }
 
+function evidencedApy(apy, yieldEvidence) {
+  const value = Number(apy)
+  return yieldEvidence === 'live-venue' && Number.isFinite(value) ? value : null
+}
+
+function normalizeYieldEvidence(yieldEvidence) {
+  return yieldEvidence === 'live-venue' ? 'live-venue' : null
+}
+
 // ─── A: Transaction History ───────────────────────────────────────────────────
 
 /**
@@ -53,7 +62,9 @@ export function saveTransaction({
   workerId,
   gasPayedBy, // 'fee-bump-relayer' always
   network, // 'stellar-testnet'
+  yieldEvidence,
 }) {
+  const evidence = normalizeYieldEvidence(yieldEvidence)
   addEntry(KEYS.transactions, {
     type: 'transaction',
     txHash,
@@ -61,7 +72,8 @@ export function saveTransaction({
     vaultAddress,
     protocol,
     amountUsdc,
-    apy,
+    apy: evidencedApy(apy, evidence),
+    yieldEvidence: evidence,
     workerLabel,
     workerId,
     gasPayedBy: gasPayedBy || 'fee-bump-relayer',
@@ -94,21 +106,27 @@ export function saveStrategy({
   vaultDataSource, // 'defiLlama' | 'fallback'
   marketContextUsed, // boolean
   blendedApy, // weighted average APY
+  yieldEvidence,
   strategyHash, // bytes32 keccak256 of AI strategy + reasoning (on-chain attestation)
   dagTimings, // { skill, pools, gas, positions, market, signals } ms per fetch node
   dagWallMs, // total wall time of the parallel fetch DAG
 }) {
+  const evidence = normalizeYieldEvidence(yieldEvidence)
   addEntry(KEYS.strategies, {
     type: 'strategy',
     amountUsdc,
     riskLevel,
     numVaults,
-    vaultsSelected,
+    vaultsSelected: (vaultsSelected || []).map((vault) => ({
+      ...vault,
+      apy: evidencedApy(vault.apy, evidence),
+    })),
     strategySource,
     skillSource,
     vaultDataSource,
     marketContextUsed,
-    blendedApy,
+    blendedApy: evidencedApy(blendedApy, evidence),
+    yieldEvidence: evidence,
     strategyHash,
     dagTimings,
     dagWallMs,
@@ -136,10 +154,12 @@ export function saveReasoning({
   yieldSource,
   reasoning, // AI-generated reasoning string
   expectedApy,
+  yieldEvidence,
   amountUsdc,
   riskLevel,
   modelUsed, // 'deepseek-chat' | 'venice/llama-3.3-70b' etc
 }) {
+  const evidence = normalizeYieldEvidence(yieldEvidence)
   addEntry(KEYS.reasoning, {
     type: 'reasoning',
     vaultName,
@@ -147,7 +167,8 @@ export function saveReasoning({
     riskTier,
     yieldSource,
     reasoning,
-    expectedApy,
+    expectedApy: evidencedApy(expectedApy, evidence),
+    yieldEvidence: evidence,
     amountUsdc,
     riskLevel,
     modelUsed,
@@ -171,7 +192,7 @@ export function clearReasoningLog() {
  *
  * Filters to only transactions targeting current VAULT_CATALOG addresses so
  * deposits to old/redeployed contracts don't inflate balances.
- * APY falls back to VAULT_CATALOG when tx.apy is missing or zero.
+ * APY is only available when the transaction explicitly carries live execution-venue evidence.
  */
 export function positionsFromHistory(VAULT_CATALOG) {
   const txs = readStore(KEYS.transactions)
@@ -195,7 +216,7 @@ export function positionsFromHistory(VAULT_CATALOG) {
           v.protocol === tx.protocol || v.address?.toLowerCase() === tx.vaultAddress?.toLowerCase()
       )
 
-      const apy = parseFloat(tx.apy) || catalogEntry?.apy || 0
+      const apy = evidencedApy(tx.apy, tx.yieldEvidence)
       const amount = parseFloat(tx.amountUsdc) || 0
 
       if (!map[key]) {
@@ -211,7 +232,7 @@ export function positionsFromHistory(VAULT_CATALOG) {
 
       const prev = parseFloat(map[key].balance) || 0
       map[key].balance = String(prev + amount)
-      if (!map[key].apy && apy) map[key].apy = apy
+      if (map[key].apy === null && apy !== null) map[key].apy = apy
     })
 
   return map

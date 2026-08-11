@@ -1,0 +1,88 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  clearAllHistory,
+  getReasoningLog,
+  getStrategies,
+  getTransactions,
+  positionsFromHistory,
+  saveReasoning,
+  saveStrategy,
+  saveTransaction,
+} from './history.js'
+
+afterEach(() => clearAllHistory())
+
+const catalog = [
+  { name: 'Autofarm legacy', protocol: 'blend-usdc', address: 'CLegacy', apy: 4.8 },
+  { name: 'Autofarm live', protocol: 'blend-usdc', address: 'CLive', apy: 4.8 },
+]
+
+describe('history yield evidence', () => {
+  beforeEach(() => clearAllHistory())
+
+  it('persists transaction APY only when the caller supplies live-venue evidence', () => {
+    saveTransaction({
+      txHash: 'legacy',
+      vaultName: 'Legacy row',
+      vaultAddress: 'CLegacy',
+      protocol: 'blend-usdc',
+      amountUsdc: '10',
+      apy: 4.8,
+    })
+    saveTransaction({
+      txHash: 'live',
+      vaultName: 'Live row',
+      vaultAddress: 'CLive',
+      protocol: 'blend-usdc',
+      amountUsdc: '10',
+      apy: 6.2,
+      yieldEvidence: 'live-venue',
+    })
+
+    const rows = getTransactions()
+    expect(rows[0]).toMatchObject({ apy: 6.2, yieldEvidence: 'live-venue' })
+    expect(rows[1]).toMatchObject({ apy: null, yieldEvidence: null })
+
+    const positions = positionsFromHistory(catalog)
+    expect(positions.clegacy.apy).toBeNull()
+  })
+
+  it('normalizes strategy and reasoning APY unless live-venue evidence is explicit', () => {
+    saveStrategy({
+      amountUsdc: 10,
+      riskLevel: 'low',
+      numVaults: 1,
+      vaultsSelected: [{ name: 'Legacy row', protocol: 'blend-usdc', apy: 4.8, allocation: 1 }],
+      blendedApy: 4.8,
+    })
+    saveStrategy({
+      amountUsdc: 10,
+      riskLevel: 'low',
+      numVaults: 1,
+      vaultsSelected: [{ name: 'Live row', protocol: 'blend-usdc', apy: 6.2, allocation: 1 }],
+      blendedApy: 6.2,
+      yieldEvidence: 'live-venue',
+    })
+    saveReasoning({
+      vaultName: 'Legacy row',
+      protocol: 'blend-usdc',
+      reasoning: 'Legacy reasoning',
+      expectedApy: 4.8,
+    })
+    saveReasoning({
+      vaultName: 'Live row',
+      protocol: 'blend-usdc',
+      reasoning: 'Live reasoning',
+      expectedApy: 6.2,
+      yieldEvidence: 'live-venue',
+    })
+
+    expect(getStrategies()[0]).toMatchObject({ blendedApy: 6.2, yieldEvidence: 'live-venue' })
+    expect(getStrategies()[0].vaultsSelected[0].apy).toBe(6.2)
+    expect(getStrategies()[1]).toMatchObject({ blendedApy: null, yieldEvidence: null })
+    expect(getStrategies()[1].vaultsSelected[0].apy).toBeNull()
+    expect(getReasoningLog()[0]).toMatchObject({ expectedApy: 6.2, yieldEvidence: 'live-venue' })
+    expect(getReasoningLog()[1]).toMatchObject({ expectedApy: null, yieldEvidence: null })
+  })
+})

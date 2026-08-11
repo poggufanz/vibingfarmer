@@ -13,6 +13,7 @@ import { clearManualExitKey } from '../wallet/exitKey.js'
 import { signaturesForSweep, friendlyOwnerActionError } from '../money/ownerActions.js'
 import { getActiveAccount } from '../stellar/walletKit.js'
 import { sameActiveAccount } from '../stellar/activeAccount.js'
+import { venueYield } from '../strategy/venueTruth.js'
 
 const PPS_SCALE = 10_000_000n
 
@@ -70,6 +71,9 @@ export default function WithdrawModal({
   onSuccess,
 }) {
   const { language: lang } = loadSettings()
+  const vaultYield = venueYield(vault)
+  const evidencedVaultApy = vaultYield.state === 'live' ? vaultYield.apy : null
+  const yieldEvidence = vaultYield.state === 'live' ? 'live-venue' : null
   // stellar/ownerAuthorization.js's G/C split: a G keypair signs and pays its own fee directly; a C
   // (VF Wallet/passkey) contract address can never hold or spend XLM, so the relay sponsors the fee
   // instead (submitOwnerAuthorizedTx routes every C action through the relay). Same
@@ -192,7 +196,8 @@ export default function WithdrawModal({
         vaultAddress: vault.address,
         protocol: vault.protocol,
         amountUsdc: balUsdc,
-        apy: vault.apy,
+        apy: evidencedVaultApy,
+        yieldEvidence,
         type: 'withdraw',
         network: 'stellar-testnet',
       })
@@ -257,7 +262,8 @@ export default function WithdrawModal({
         vaultAddress: vault.address,
         protocol: vault.protocol,
         amountUsdc: toDisplay(out.redeemed),
-        apy: vault.apy,
+        apy: evidencedVaultApy,
+        yieldEvidence,
         type: 'withdraw',
         network: 'stellar-testnet',
       })

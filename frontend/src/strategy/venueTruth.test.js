@@ -46,6 +46,21 @@ describe('normalizeVenue — Stellar-live', () => {
     expect(isLiveYieldVenue(VAULT_CATALOG[0])).toBe(false)
   })
 
+  it('treats a flat catalog APY as unavailable and only accepts nested live evidence', () => {
+    const stellar = { ...VAULT_CATALOG[0] }
+    expect(venueYield({ ...stellar, apy: 4.8 })).toEqual({ state: 'unavailable', apy: null })
+    expect(
+      venueYield({ ...stellar, yield: { state: 'live', apy: 4.8, asOf: Date.now() } })
+    ).toEqual({ state: 'live', apy: 4.8 })
+  })
+
+  it('documents that DeFiLlama APY is not execution-venue evidence', () => {
+    const source = readFileSync(fileURLToPath(new URL('./venueTruth.js', import.meta.url)), 'utf8')
+    expect(source).toContain(
+      'Flat DeFiLlama APY is reference-market data, not live yield evidence for the Autofarm-to-Blend execution venue.'
+    )
+  })
+
   it('reports live yield only for an explicit, fresh {state:"live"} shape', () => {
     const now = 1_800_000_000_000
     expect(venueYield({ venueKind: 'stellar-live', yield: { state: 'live', apy: 5.5 } })).toEqual({

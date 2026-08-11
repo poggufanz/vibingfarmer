@@ -37,6 +37,8 @@ function formatTime(ts) {
   return `${d}d ago`
 }
 const short = (h) => (h ? `${h.slice(0, 8)}…${h.slice(-6)}` : '')
+const hasLiveApy = (row, field) =>
+  row?.yieldEvidence === 'live-venue' && row?.[field] != null && Number.isFinite(Number(row[field]))
 
 const TABS = [
   { id: 'transactions', label: 'Transactions' },
@@ -87,7 +89,7 @@ const TxList = ({ rows }) => {
               <span className="tx-sub mono">
                 {[
                   r.protocol,
-                  r.apy ? `${r.apy}% APY` : null,
+                  hasLiveApy(r, 'apy') ? `${r.apy}% APY` : null,
                   r.workerId || (isWithdraw ? 'manual withdraw' : null),
                 ]
                   .filter(Boolean)
@@ -186,11 +188,12 @@ const StratList = ({ rows }) => {
             <span className="hist-age mono">{formatTime(r.timestamp)}</span>
           </div>
           <div className="hist-card-meta mono">
-            {r.numVaults} vault{r.numVaults === 1 ? '' : 's'}, {r.blendedApy}% blended APY
+            {r.numVaults} vault{r.numVaults === 1 ? '' : 's'}
+            {hasLiveApy(r, 'blendedApy') ? `, ${r.blendedApy}% blended APY` : ''}
           </div>
           <div className="hist-card-tags mono">
             {r.strategySource},{' '}
-            {r.vaultDataSource === 'defiLlama' ? 'DeFiLlama data' : 'Static data'}
+            {r.vaultDataSource === 'defiLlama' ? 'DeFiLlama data' : 'Yield unavailable'}
             {r.marketContextUsed ? ', live market' : ''}
           </div>
           {r.dagTimings && (
@@ -220,7 +223,14 @@ const ReasonList = ({ rows }) => {
           </div>
           <div className="hist-reason">“{r.reasoning}”</div>
           <div className="hist-card-meta mono">
-            {r.riskTier} risk, {r.yieldSource}, {r.expectedApy}% APY, {r.modelUsed}
+            {[
+              r.riskTier && `${r.riskTier} risk`,
+              hasLiveApy(r, 'expectedApy') ? r.yieldSource : null,
+              hasLiveApy(r, 'expectedApy') ? `${r.expectedApy}% APY` : null,
+              r.modelUsed,
+            ]
+              .filter(Boolean)
+              .join(', ')}
           </div>
         </div>
       ))}

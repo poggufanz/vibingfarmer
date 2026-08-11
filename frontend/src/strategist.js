@@ -23,6 +23,7 @@ import { loadSettings } from './settingsStore.js'
 import { hashStrategy } from './attestation.js'
 import { buildStrategyState, enforceActionSpace, scoreReward, riskCeiling } from './strategy/mdp.js'
 import { expandAgentSlots } from './strategy/planModel.js'
+import { venueYield } from './strategy/venueTruth.js'
 
 const DISPLAY_PROSE_RULE =
   'Write user-facing prose as one plain sentence in sentence case. Do not use em dashes, en dashes, middle dots, emoji, headings, hype, or filler.'
@@ -446,6 +447,15 @@ Select optimal vault(s) from the catalog above. Trust only each entry's \`yield\
 
     // Deterministic tamper-proof hash of the ENFORCED strategy (for on-chain attestation)
     const strategyHash = hashStrategy({ ...parsed, generatedBy: provider.name })
+    const entryFor = (address) =>
+      vaultData.find((entry) => entry.address?.toLowerCase() === address?.toLowerCase())
+    const yieldEvidenceFor = (vault) =>
+      venueYield(entryFor(vault.address) || vault).state === 'live' ? 'live-venue' : null
+    const strategyYieldEvidence =
+      parsed.selected_vaults.length > 0 &&
+      parsed.selected_vaults.every((vault) => Boolean(yieldEvidenceFor(vault)))
+        ? 'live-venue'
+        : null
     // Persist strategy session + per-vault AI reasoning to history (localStorage)
     saveStrategy({
       amountUsdc: amount,
@@ -464,6 +474,7 @@ Select optimal vault(s) from the catalog above. Trust only each entry's \`yield\
       blendedApy: parsed.selected_vaults
         .reduce((sum, v) => sum + (v.expected_apy || 0) * (v.allocation || 0), 0)
         .toFixed(2),
+      yieldEvidence: strategyYieldEvidence,
       strategyHash,
       dagTimings: dag.timings,
       dagWallMs: Math.round(dag.wallMs),
@@ -477,6 +488,7 @@ Select optimal vault(s) from the catalog above. Trust only each entry's \`yield\
           yieldSource: v.yield_source_type,
           reasoning: v.reasoning,
           expectedApy: v.expected_apy,
+          yieldEvidence: yieldEvidenceFor(v),
           amountUsdc: amount,
           riskLevel,
           modelUsed: provider.model,
@@ -599,6 +611,7 @@ function shortRisk(riskLevel) {
  */
 export function buildFallbackForParams(amount, riskLevel) {
   const venue = VAULT_CATALOG[0]
+  const yieldState = venueYield(venue)
   const agents = expandAgentSlots({
     risk: shortRisk(riskLevel),
     stellarUnits: toBaseUnits(amount),
@@ -609,7 +622,7 @@ export function buildFallbackForParams(amount, riskLevel) {
     address: venue?.address,
     name: venue?.name,
     allocation: 1 / count,
-    expectedApy: venue?.apy ?? null,
+    expectedApy: yieldState.state === 'live' ? yieldState.apy : null,
   }))
   return {
     selected_vaults: vaults,

@@ -92,6 +92,7 @@ function resolveVenueKind(r) {
 // current input (the static config.js catalog, the DeFiLlama fetch in defiLlama.js) actually
 // carries -- is deliberately NOT recognized here: that is "no static APY elevated to current/live
 // yield." Absent, malformed, or stale live yield is truthfully 'unavailable', never coerced to 0.
+// Flat DeFiLlama APY is reference-market data, not live yield evidence for the Autofarm-to-Blend execution venue.
 function normalizeYield(raw, venueKind, nowMs) {
   if (isProxyKind(venueKind)) return NONE_YIELD // custody-only -- apy is always ignored, never partially trusted
   const y = raw?.yield
