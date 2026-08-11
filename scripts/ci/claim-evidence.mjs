@@ -3,7 +3,6 @@
 import { execFileSync } from "node:child_process";
 import {
   accessSync,
-  existsSync,
   readFileSync,
   realpathSync,
   statSync,
@@ -30,6 +29,130 @@ export const REQUIRED_CLAIM_IDS = Object.freeze([
   "feature-freeze",
 ]);
 
+const CANDIDATE_LOCATORS = Object.freeze([
+  "https://github.com/poggufanz/vibingfarmer/tree/v1.15.0-beta",
+  "https://dev.vibing-farmer.pages.dev",
+]);
+
+const CONTRACT_VERIFICATIONS = Object.freeze({
+  "permission-lifetime":
+    "cd frontend && npx vitest run src/strategy/permissionWindow.test.js src/strategy/flowState.test.js src/stellar/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
+  "yield-availability":
+    "cd frontend && npx vitest run src/strategy/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history.yield.test.js src/components/HistoryPanel.test.jsx src/strategist.yield.test.js src/components/TxDetailPage.test.jsx",
+  "sponsored-network-fee":
+    "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history.yield.test.js src/stellar/exit.test.js src/agents/agentController.test.js src/stellar/partialWithdraw.test.js src/components/TxDetailPage.test.jsx",
+  "stellar-explorer-counts":
+    "cd frontend && npx vitest run src/stellar/deploymentFacts.test.js src/components/ExplorerPage.test.jsx",
+  "candidate-same-commit":
+    "CANDIDATE_TAG_SHA=$CANDIDATE_SHA PREVIEW_COMMIT_SHA=$PREVIEW_SHA PREVIEW_URL=$CANDIDATE_PREVIEW_URL node scripts/ci/claim-evidence.mjs",
+  "required-checks":
+    "node --test scripts/ci/public-claim-scan.test.mjs scripts/ci/claim-evidence.test.mjs scripts/ci/release-gate.test.mjs",
+  "feature-freeze":
+    "node --test scripts/ci/claim-evidence.test.mjs && node scripts/ci/claim-evidence.mjs",
+});
+
+const CONTRACT_OWNERS = Object.freeze({
+  "permission-lifetime": "strategy",
+  "yield-availability": "frontend",
+  "sponsored-network-fee": "copy",
+  "stellar-explorer-counts": "explorer",
+  "candidate-same-commit": "release",
+  "required-checks": "release",
+  "feature-freeze": "release",
+});
+
+const CONTRACT_EVIDENCE = Object.freeze({
+  "permission-lifetime": Object.freeze([
+    "frontend/src/strategy/permissionWindow.js",
+    "frontend/src/strategy/permissionWindow.test.js",
+    "frontend/src/strategy/flowState.js",
+    "frontend/src/strategy/flowState.test.js",
+    "frontend/src/stellar/grant.js",
+    "frontend/src/stellar/grant.test.js",
+    "frontend/src/orchestrator.js",
+    "frontend/src/orchestrator.test.js",
+    "frontend/src/orchestrator.router.test.js",
+    "frontend/src/orchestrator.baseleg.test.js",
+    "frontend/src/orchestrator.unavailable.test.js",
+    "frontend/src/components/strategy/ProtectStage.jsx",
+    "frontend/src/components/strategy/ProtectStage.test.jsx",
+  ]),
+  "yield-availability": Object.freeze([
+    "frontend/src/strategy/venueTruth.js",
+    "frontend/src/strategy/venueTruth.test.js",
+    "frontend/src/components/strategy/PlanStage.jsx",
+    "frontend/src/components/strategy/PlanStage.test.jsx",
+    "frontend/src/components/OnboardingFlow.jsx",
+    "frontend/src/components/OnboardingFlow.test.jsx",
+    "frontend/src/components/VaultDetailPage.jsx",
+    "frontend/src/components/VaultDetailPage.test.jsx",
+    "frontend/src/history.js",
+    "frontend/src/history.yield.test.js",
+    "frontend/src/components/HistoryPanel.jsx",
+    "frontend/src/components/HistoryPanel.test.jsx",
+    "frontend/src/strategist.js",
+    "frontend/src/strategist.yield.test.js",
+    "frontend/src/components/TxDetailPage.jsx",
+    "frontend/src/components/TxDetailPage.test.jsx",
+  ]),
+  "sponsored-network-fee": Object.freeze([
+    "scripts/ci/public-claim-scan.mjs",
+    "scripts/ci/public-claim-scan.test.mjs",
+    "frontend/src/history.js",
+    "frontend/src/history.yield.test.js",
+    "frontend/src/stellar/exit.js",
+    "frontend/src/stellar/exit.test.js",
+    "frontend/src/agents/agentController.js",
+    "frontend/src/agents/agentController.test.js",
+    "frontend/src/stellar/partialWithdraw.js",
+    "frontend/src/stellar/partialWithdraw.test.js",
+    "frontend/src/components/TxDetailPage.jsx",
+    "frontend/src/components/TxDetailPage.test.jsx",
+  ]),
+  "stellar-explorer-counts": Object.freeze([
+    "frontend/src/stellar/deploymentFacts.js",
+    "frontend/src/stellar/deploymentFacts.test.js",
+    "frontend/src/components/ExplorerPage.jsx",
+    "frontend/src/components/ExplorerPage.test.jsx",
+    "deployments/stellar-testnet.json",
+  ]),
+  "candidate-same-commit": Object.freeze([
+    "release/specs/2026-08-11-release-claim-truth-design.md",
+    ".github/workflows/frontend.yml",
+    "scripts/ci/claim-evidence.mjs",
+    "scripts/ci/claim-evidence.test.mjs",
+  ]),
+  "required-checks": Object.freeze([
+    ".github/workflows/frontend.yml",
+    "scripts/ci/release-gate.mjs",
+    "scripts/ci/release-gate.test.mjs",
+    "scripts/ci/claim-evidence.mjs",
+    "scripts/ci/claim-evidence.test.mjs",
+  ]),
+  "feature-freeze": Object.freeze([
+    "release/2026-08-11-release-claim-truth-implementation-plan.md",
+    "release/specs/2026-08-11-release-claim-truth-design.md",
+    "scripts/ci/claim-evidence.mjs",
+    "scripts/ci/claim-evidence.test.mjs",
+  ]),
+});
+
+export const CLAIM_CONTRACTS = Object.freeze(
+  Object.fromEntries(
+    REQUIRED_CLAIM_IDS.map((id) => [
+      id,
+      Object.freeze({
+        owner: CONTRACT_OWNERS[id],
+        verification: CONTRACT_VERIFICATIONS[id],
+        minimumEvidence: CONTRACT_EVIDENCE[id],
+        ...(id === "candidate-same-commit"
+          ? { externalLocators: CANDIDATE_LOCATORS }
+          : {}),
+      }),
+    ]),
+  ),
+);
+
 const EXPECTED_CANDIDATE = Object.freeze({
   tag: "v1.15.0-beta",
   targetBranch: "dev",
@@ -42,6 +165,40 @@ function isPlainObject(value) {
 
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim() !== "";
+}
+
+function locatorMatches(locator, expected) {
+  if (!nonEmptyString(locator) || locator !== expected) return false;
+  try {
+    const actual = new URL(locator);
+    const target = new URL(expected);
+    return (
+      actual.protocol === "https:" &&
+      actual.hostname === target.hostname &&
+      actual.port === "" &&
+      actual.username === "" &&
+      actual.password === "" &&
+      actual.pathname === target.pathname &&
+      actual.search === target.search &&
+      actual.hash === target.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hasReadableMode(stats) {
+  return (stats.mode & 0o444) !== 0;
+}
+
+function evidenceIncludes(root, evidence, requiredEvidence) {
+  if (!Array.isArray(evidence)) return false;
+  const resolvedRoot = path.resolve(root);
+  const expected = path.resolve(resolvedRoot, requiredEvidence);
+  return evidence.some((candidate) => {
+    if (!nonEmptyString(candidate)) return false;
+    return path.resolve(resolvedRoot, candidate) === expected;
+  });
 }
 
 function evidencePathFailure(root, evidencePath) {
@@ -62,12 +219,22 @@ function evidencePathFailure(root, evidencePath) {
     return `evidence path must remain inside repo root: ${evidencePath}`;
   }
 
-  if (!existsSync(resolvedPath))
-    return `evidence path does not exist: ${evidencePath}`;
+  let stats;
+  try {
+    stats = statSync(resolvedPath);
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+      return `evidence path does not exist: ${evidencePath}`;
+    }
+    return `evidence path is unreadable: ${evidencePath}`;
+  }
 
   try {
     accessSync(resolvedPath, fsConstants.R_OK);
-    statSync(resolvedPath);
+    if (!hasReadableMode(stats))
+      return `evidence path is unreadable: ${evidencePath}`;
+    if (!stats.isFile())
+      return `evidence path is not a readable file: ${evidencePath}`;
     const realRoot = realpathSync(resolvedRoot);
     const realPath = realpathSync(resolvedPath);
     const realRelative = path.relative(realRoot, realPath);
@@ -173,19 +340,60 @@ function validateEvidenceMatrixInternal(matrix, repoRoot) {
       fail(`missing required claim: ${id}`);
       continue;
     }
+    const contract = CLAIM_CONTRACTS[id];
     if (row.status !== "proven") fail(`${id}: status must be proven`);
-    if (!nonEmptyString(row.owner)) fail(`${id}: owner must be non-empty`);
-    if (!nonEmptyString(row.verification))
+    if (!nonEmptyString(row.owner)) {
+      fail(`${id}: owner must be non-empty`);
+    } else if (row.owner !== contract.owner) {
+      fail(`${id}: owner must be exactly ${contract.owner}`);
+    }
+    if (!nonEmptyString(row.verification)) {
       fail(`${id}: verification must be non-empty`);
+    } else if (row.verification !== contract.verification) {
+      fail(`${id}: verification command does not match the contract`);
+    }
     if (!Array.isArray(row.evidence) || row.evidence.length === 0) {
       fail(`${id}: evidence must contain at least one local path`);
       continue;
     }
+    for (const requiredEvidence of contract.minimumEvidence) {
+      if (!evidenceIncludes(root, row.evidence, requiredEvidence)) {
+        fail(`${id}: missing required evidence path: ${requiredEvidence}`);
+      }
+    }
     for (const evidencePath of row.evidence) {
       const pathFailure = evidencePathFailure(root, evidencePath);
-      if (pathFailure) fail(`${id}: ${pathFailure}`);
+      if (pathFailure) {
+        fail(
+          `${id}: ${pathFailure}`,
+          /evidence path is unreadable/.test(pathFailure),
+        );
+      }
     }
-    if (row.externalLocators !== undefined) {
+    if (contract.externalLocators) {
+      if (!Array.isArray(row.externalLocators)) {
+        fail(
+          `${id}: externalLocators must contain the exact candidate locators`,
+          true,
+        );
+      } else if (
+        row.externalLocators.some((locator) => !nonEmptyString(locator))
+      ) {
+        fail(`${id}: externalLocators must contain URL strings`, true);
+      } else {
+        if (
+          row.externalLocators.length !== contract.externalLocators.length ||
+          row.externalLocators.some(
+            (locator, index) =>
+              !locatorMatches(locator, contract.externalLocators[index]),
+          )
+        ) {
+          fail(
+            `${id}: externalLocators must contain the exact HTTPS candidate locators`,
+          );
+        }
+      }
+    } else if (row.externalLocators !== undefined) {
       if (
         !Array.isArray(row.externalLocators) ||
         row.externalLocators.some((locator) => !nonEmptyString(locator))
@@ -323,6 +531,17 @@ function run() {
     for (const failure of matrixResult.failures)
       console.error(`  - ${failure}`);
     process.exitCode = matrixResult.malformed ? 2 : 1;
+    return;
+  }
+
+  if (
+    process.env.GITHUB_EVENT_NAME === "release" &&
+    matrix.candidate.productionPublish === false
+  ) {
+    console.error(
+      "claim-evidence FAILED — published GitHub Release is forbidden while candidate.productionPublish is false",
+    );
+    process.exitCode = 1;
     return;
   }
 

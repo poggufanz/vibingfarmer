@@ -16,10 +16,19 @@
       "id": "permission-lifetime",
       "status": "proven",
       "owner": "strategy",
-      "verification": "cd frontend && npx vitest run src/strategy/permissionWindow.test.js src/strategy/flowState.test.js src/components/strategy/ProtectStage.test.jsx",
+      "verification": "cd frontend && npx vitest run src/strategy/permissionWindow.test.js src/strategy/flowState.test.js src/stellar/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
       "evidence": [
         "frontend/src/strategy/permissionWindow.js",
         "frontend/src/strategy/permissionWindow.test.js",
+        "frontend/src/strategy/flowState.js",
+        "frontend/src/strategy/flowState.test.js",
+        "frontend/src/stellar/grant.js",
+        "frontend/src/stellar/grant.test.js",
+        "frontend/src/orchestrator.js",
+        "frontend/src/orchestrator.test.js",
+        "frontend/src/orchestrator.router.test.js",
+        "frontend/src/orchestrator.baseleg.test.js",
+        "frontend/src/orchestrator.unavailable.test.js",
         "frontend/src/components/strategy/ProtectStage.jsx",
         "frontend/src/components/strategy/ProtectStage.test.jsx"
       ]
@@ -28,26 +37,44 @@
       "id": "yield-availability",
       "status": "proven",
       "owner": "frontend",
-      "verification": "cd frontend && npx vitest run src/strategy/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history.yield.test.js src/components/HistoryPanel.test.jsx",
+      "verification": "cd frontend && npx vitest run src/strategy/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history.yield.test.js src/components/HistoryPanel.test.jsx src/strategist.yield.test.js src/components/TxDetailPage.test.jsx",
       "evidence": [
         "frontend/src/strategy/venueTruth.js",
         "frontend/src/strategy/venueTruth.test.js",
         "frontend/src/components/strategy/PlanStage.jsx",
         "frontend/src/components/strategy/PlanStage.test.jsx",
-        "frontend/src/history.yield.test.js"
+        "frontend/src/components/OnboardingFlow.jsx",
+        "frontend/src/components/OnboardingFlow.test.jsx",
+        "frontend/src/components/VaultDetailPage.jsx",
+        "frontend/src/components/VaultDetailPage.test.jsx",
+        "frontend/src/history.js",
+        "frontend/src/history.yield.test.js",
+        "frontend/src/components/HistoryPanel.jsx",
+        "frontend/src/components/HistoryPanel.test.jsx",
+        "frontend/src/strategist.js",
+        "frontend/src/strategist.yield.test.js",
+        "frontend/src/components/TxDetailPage.jsx",
+        "frontend/src/components/TxDetailPage.test.jsx"
       ]
     },
     {
       "id": "sponsored-network-fee",
       "status": "proven",
       "owner": "copy",
-      "verification": "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs",
+      "verification": "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history.yield.test.js src/stellar/exit.test.js src/agents/agentController.test.js src/stellar/partialWithdraw.test.js src/components/TxDetailPage.test.jsx",
       "evidence": [
         "scripts/ci/public-claim-scan.mjs",
         "scripts/ci/public-claim-scan.test.mjs",
-        "frontend/src/components.jsx",
-        "frontend/src/agents.jsx",
-        "README.md"
+        "frontend/src/history.js",
+        "frontend/src/history.yield.test.js",
+        "frontend/src/stellar/exit.js",
+        "frontend/src/stellar/exit.test.js",
+        "frontend/src/agents/agentController.js",
+        "frontend/src/agents/agentController.test.js",
+        "frontend/src/stellar/partialWithdraw.js",
+        "frontend/src/stellar/partialWithdraw.test.js",
+        "frontend/src/components/TxDetailPage.jsx",
+        "frontend/src/components/TxDetailPage.test.jsx"
       ]
     },
     {
@@ -67,10 +94,12 @@
       "id": "candidate-same-commit",
       "status": "proven",
       "owner": "release",
-      "verification": "CANDIDATE_TAG_SHA=$CANDIDATE_SHA PREVIEW_COMMIT_SHA=$CANDIDATE_SHA PREVIEW_URL=$CANDIDATE_PREVIEW_URL node scripts/ci/claim-evidence.mjs",
+      "verification": "CANDIDATE_TAG_SHA=$CANDIDATE_SHA PREVIEW_COMMIT_SHA=$PREVIEW_SHA PREVIEW_URL=$CANDIDATE_PREVIEW_URL node scripts/ci/claim-evidence.mjs",
       "evidence": [
         "release/specs/2026-08-11-release-claim-truth-design.md",
-        ".github/workflows/frontend.yml"
+        ".github/workflows/frontend.yml",
+        "scripts/ci/claim-evidence.mjs",
+        "scripts/ci/claim-evidence.test.mjs"
       ],
       "externalLocators": [
         "https://github.com/poggufanz/vibingfarmer/tree/v1.15.0-beta",
@@ -86,6 +115,7 @@
         ".github/workflows/frontend.yml",
         "scripts/ci/release-gate.mjs",
         "scripts/ci/release-gate.test.mjs",
+        "scripts/ci/claim-evidence.mjs",
         "scripts/ci/claim-evidence.test.mjs"
       ]
     },

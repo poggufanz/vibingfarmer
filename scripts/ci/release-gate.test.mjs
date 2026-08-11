@@ -426,6 +426,21 @@ test('workflow: claim-evidence runs at repository root with full history, Node 2
   })
 })
 
+test('workflow: published releases invoke claim-evidence before release-gate and remain fail-closed', () => {
+  const workflow = loadWorkflow()
+  assert.ok(workflow.on.release, 'workflow must declare the release trigger')
+  assert.deepEqual(workflow.on.release.types, ['published'])
+  const claimEvidence = workflow.jobs['claim-evidence']
+  assert.ok(claimEvidence, 'claim-evidence must run for release events')
+  assert.equal(Object.prototype.hasOwnProperty.call(claimEvidence, 'if'), false)
+  assert.ok(workflow.jobs['release-gate'].needs.includes('claim-evidence'))
+  const claimStep = claimEvidence.steps.find((step) => step.run === 'node scripts/ci/claim-evidence.mjs')
+  assert.ok(claimStep, 'release events must execute the claim CLI')
+  assert.equal(claimStep.env?.GITHUB_EVENT_NAME, undefined, 'GitHub must provide the real release event name')
+  assert.equal(workflow.jobs.deploy.needs, 'release-gate')
+  assert.match(String(workflow.jobs.deploy.if), /github\.event_name == .release./)
+})
+
 test('workflow: deploy needs only release-gate — it cannot bypass the gate via any other job', () => {
   const workflow = loadWorkflow()
   const deploy = workflow.jobs.deploy

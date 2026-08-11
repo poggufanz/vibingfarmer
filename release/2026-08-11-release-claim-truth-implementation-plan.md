@@ -600,7 +600,7 @@ Create seven rows using the IDs above. Each row names exact changed source/test 
   "id": "candidate-same-commit",
   "status": "proven",
   "owner": "release",
-  "verification": "CANDIDATE_TAG_SHA=$CANDIDATE_SHA PREVIEW_COMMIT_SHA=$CANDIDATE_SHA PREVIEW_URL=$CANDIDATE_PREVIEW_URL node scripts/ci/claim-evidence.mjs",
+  "verification": "CANDIDATE_TAG_SHA=$CANDIDATE_SHA PREVIEW_COMMIT_SHA=$PREVIEW_SHA PREVIEW_URL=$CANDIDATE_PREVIEW_URL node scripts/ci/claim-evidence.mjs",
   "evidence": [
     "release/specs/2026-08-11-release-claim-truth-design.md",
     ".github/workflows/frontend.yml"
@@ -611,6 +611,11 @@ Create seven rows using the IDs above. Each row names exact changed source/test 
   ]
 }
 ```
+
+`CANDIDATE_TAG_SHA` and `PREVIEW_COMMIT_SHA` are independent inputs: the former identifies the
+annotated tag and the latter identifies the successful post-preview deployment's source commit.
+The preview SHA must be resolved from that deployment and must not be copied from the tag
+variable.
 
 In `EVIDENCE_MATRIX.md`, state that the annotated tag—not a published GitHub Release—is the candidate locator, because publishing a GitHub Release deploys production. Link README to this file.
 
