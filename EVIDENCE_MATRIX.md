@@ -1,11 +1,11 @@
 # Release claim evidence matrix
 
-Candidate: `v1.15.1-beta` targeting `dev` in the `vibing-farmer` Cloudflare Pages project.
+Candidate: `v1.15.2-beta` targeting `dev` in the `vibing-farmer` Cloudflare Pages project.
 
 The machine-readable source of truth is [`release/evidence-matrix.json`](release/evidence-matrix.json).
 Every row names an owner, points to checked-in evidence, and includes the command used to verify
 it. The candidate row stays `pending` until a successful preview exists; ordinary PR/dev CI is
-allowed to pass in that pre-candidate state, but the exact `v1.15.1-beta` tag-push workflow run is
+allowed to pass in that pre-candidate state, but the exact `v1.15.2-beta` tag-push workflow run is
 the authoritative candidate promotion proof. Its required candidate step must resolve the tag and
 preview before the candidate claim can be treated as proven. The CI `claim-evidence` job validates
 the matrix, scans public copy, and evaluates the active feature freeze before the aggregate
@@ -13,7 +13,7 @@ the matrix, scans public copy, and evaluates the active feature freeze before th
 
 ## Candidate locator
 
-The annotated Git tag `v1.15.1-beta` is the candidate locator. We intentionally use an annotated
+The annotated Git tag `v1.15.2-beta` is the candidate locator. We intentionally use an annotated
 tag instead of publishing a GitHub Release: in this repository, publishing a GitHub Release
 triggers the production Cloudflare Pages deployment. The candidate tag and the successful
 Cloudflare preview must resolve to the same commit. Ordinary CI does not invent that proof: the
@@ -30,7 +30,7 @@ workflow with `GITHUB_EVENT_NAME=release`, `claim-evidence` exits with policy st
 the aggregate `release-gate`; because `deploy` needs only that gate, a published release cannot
 reach the production Pages deployment.
 
-Candidate verification prerequisites: push the annotated tag `v1.15.1-beta` so the full-history
+Candidate verification prerequisites: push the annotated tag `v1.15.2-beta` so the full-history
 checkout can resolve it. The automatic tag-push run queries Cloudflare for a successful `dev`
 preview by the tag target (the preview URL need not be supplied). The repository must provide
 `CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN` allowed to read Pages deployments for the

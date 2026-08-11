@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Align expiry, yield, fee, and Explorer claims with the live Stellar system, then publish a validated evidence matrix and activate a fail-closed feature freeze for `v1.15.1-beta`.
+**Goal:** Align expiry, yield, fee, and Explorer claims with the live Stellar system, then publish a validated evidence matrix and activate a fail-closed feature freeze for `v1.15.2-beta`.
 
 **Architecture:** Pure boundary helpers bind a reviewed plan to one permission window, while the existing venue-truth boundary permits numeric yield only for explicit evidence about the actual execution venue. Public deployment facts and release claims each get a checked-in source of truth with executable validators wired into the existing aggregate release gate. The final `dev` merge SHA is both the Cloudflare preview source and annotated candidate tag target.
 
@@ -19,7 +19,7 @@
 - Canonical Stellar copy is exactly `Network fee sponsored by fee-bump relay.`
 - Canonical Base copy is exactly `Base network fee sponsored by relay.`
 - Explorer counts are exactly 7 Soroban source crates, 6 first-party static Stellar deployments, 2 external protocol contracts, and 8 total static addresses; agent accounts are dynamic per run.
-- Candidate tag is exactly `v1.15.1-beta`; target branch is `dev`; Cloudflare Pages project is `vibing-farmer`.
+- Candidate tag is exactly `v1.15.2-beta`; target branch is `dev`; Cloudflare Pages project is `vibing-farmer`.
 - Use test-first RED/GREEN cycles for behavior and validator changes. Documentation-only replacements do not require a new unit test.
 - Preserve unrelated user changes and never edit the original dirty worktree.
 
@@ -594,7 +594,7 @@ Test this minimum matrix shape:
 {
   "schemaVersion": 1,
   "candidate": {
-    "tag": "v1.15.1-beta",
+    "tag": "v1.15.2-beta",
     "targetBranch": "dev",
     "cloudflareProject": "vibing-farmer",
     "productionPublish": false
@@ -643,7 +643,7 @@ has a successful preview to verify:
 
 For CLI use, load `release/evidence-matrix.json`; run local validation unconditionally. The checked-in
 `candidate-same-commit` row is `pending` until the preview exists, so ordinary PR/dev CI remains
-green while reporting that identity verification is pending. The exact `v1.15.1-beta` tag-push
+green while reporting that identity verification is pending. The exact `v1.15.2-beta` tag-push
 workflow is the authoritative promotion proof and automatically enters required candidate mode; a
 manual dispatch is only an operator retry. If `FREEZE_BASE_SHA` and
 `FREEZE_HEAD_SHA` are present, obtain subjects with `git log --format=%s BASE..HEAD` using
@@ -670,7 +670,7 @@ Create seven rows using the IDs above. Each row names exact changed source/test 
     ".github/workflows/frontend.yml"
   ],
   "externalLocators": [
-    "https://github.com/poggufanz/vibingfarmer/tree/v1.15.1-beta",
+    "https://github.com/poggufanz/vibingfarmer/tree/v1.15.2-beta",
     "https://dev.vibing-farmer.pages.dev"
   ]
 }
@@ -748,7 +748,7 @@ git commit -m "chore(release): publish claim evidence and freeze features"
 - [ ] Push the candidate branch and open a pull request to `dev`.
 - [ ] Merge only after GitHub `release-gate` succeeds.
 - [ ] Resolve the successful Cloudflare preview whose source SHA equals the `dev` merge SHA.
-- [ ] Create annotated tag `v1.15.1-beta` on that exact merge SHA and push only the tag.
+- [ ] Create annotated tag `v1.15.2-beta` on that exact merge SHA and push only the tag.
 - [ ] Confirm the automatic tag-push `frontend.yml` run resolves the successful `dev` preview
       from Cloudflare metadata and passes the required candidate step. A manual dispatch with an
       optional preview URL can retry verification; neither path deploys the tag.

@@ -1,7 +1,7 @@
 # Release Claim Truth — Design
 
 Date: 2026-08-11
-Candidate: `v1.15.1-beta`
+Candidate: `v1.15.2-beta`
 Target branch: `dev`
 
 ## Objective
@@ -99,7 +99,7 @@ The work lands through a pull request into `dev`, because the existing workflow 
 
 1. Resolve the merge commit SHA.
 2. Resolve the successful Cloudflare preview deployment for that exact SHA.
-3. Create and push annotated tag `v1.15.1-beta` on that same merge commit. The exact tag push
+3. Create and push annotated tag `v1.15.2-beta` on that same merge commit. The exact tag push
    automatically runs the candidate verification step.
 4. Let that tag-push run query the authenticated Cloudflare Pages API for a successful `dev`
    preview whose metadata commit equals the annotated tag target. A preview URL may be supplied
