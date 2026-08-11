@@ -5,10 +5,11 @@ Candidate: `v1.15.0-beta` targeting `dev` in the `vibing-farmer` Cloudflare Page
 The machine-readable source of truth is [`release/evidence-matrix.json`](release/evidence-matrix.json).
 Every row names an owner, points to checked-in evidence, and includes the command used to verify
 it. The candidate row stays `pending` until a successful preview exists; ordinary PR/dev CI is
-allowed to pass in that pre-candidate state, but the mandatory candidate verification workflow
-must resolve the tag and preview before the candidate claim can be treated as proven. The CI
-`claim-evidence` job validates the matrix, scans public copy, and evaluates the active feature
-freeze before the aggregate `release-gate` can pass.
+allowed to pass in that pre-candidate state, but the exact `v1.15.0-beta` tag-push workflow run is
+the authoritative candidate promotion proof. Its required candidate step must resolve the tag and
+preview before the candidate claim can be treated as proven. The CI `claim-evidence` job validates
+the matrix, scans public copy, and evaluates the active feature freeze before the aggregate
+`release-gate` can pass.
 
 ## Candidate locator
 
@@ -16,21 +17,25 @@ The annotated Git tag `v1.15.0-beta` is the candidate locator. We intentionally 
 tag instead of publishing a GitHub Release: in this repository, publishing a GitHub Release
 triggers the production Cloudflare Pages deployment. The candidate tag and the successful
 Cloudflare preview must resolve to the same commit. Ordinary CI does not invent that proof: the
-candidate row remains `pending` until the manual `workflow_dispatch` candidate run is invoked with
-`CANDIDATE_VERIFICATION_MODE=required`. That run peels the annotated tag from the local Git object
-database and resolves the successful `dev` preview's commit and URL from Cloudflare's authenticated
-deployment API. The operator supplies a preview URL only as a lookup selector; Cloudflare metadata
-is the source of the preview SHA and URL, so equal caller strings cannot prove the claim.
+candidate row remains `pending` until the exact tag-push run enters required mode automatically.
+That run peels `github.ref_name`'s annotated tag from the full-history local Git object database
+and queries the authenticated Cloudflare Pages deployment API for a successful `dev` preview whose
+metadata commit equals the tag target. The operator-supplied preview URL is optional and only
+narrowing; Cloudflare metadata is the source of the preview SHA and URL, so equal caller strings
+cannot prove the claim. A manual `workflow_dispatch` run may retry the same resolver but is not the
+only proof path.
 
 The matrix sets `candidate.productionPublish` to `false`. If GitHub nevertheless invokes the
 workflow with `GITHUB_EVENT_NAME=release`, `claim-evidence` exits with policy status `1` before
 the aggregate `release-gate`; because `deploy` needs only that gate, a published release cannot
 reach the production Pages deployment.
 
-Candidate verification prerequisites: push annotated tag `v1.15.0-beta` so the full-history
-checkout can resolve it, wait for the successful `dev` preview, then dispatch `frontend.yml` with
-that tag and preview URL. The repository must provide `CLOUDFLARE_ACCOUNT_ID` and a
-`CLOUDFLARE_API_TOKEN` allowed to read Pages deployments for the `vibing-farmer` project.
+Candidate verification prerequisites: push the annotated tag `v1.15.0-beta` so the full-history
+checkout can resolve it. The automatic tag-push run queries Cloudflare for a successful `dev`
+preview by the tag target (the preview URL need not be supplied). The repository must provide
+`CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN` allowed to read Pages deployments for the
+`vibing-farmer` project. The candidate workflow is a proof step only; tag pushes never enter
+preview or production deploy.
 
 ## Claims
 

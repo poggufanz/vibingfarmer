@@ -643,18 +643,21 @@ has a successful preview to verify:
 
 For CLI use, load `release/evidence-matrix.json`; run local validation unconditionally. The checked-in
 `candidate-same-commit` row is `pending` until the preview exists, so ordinary PR/dev CI remains
-green while reporting that identity verification is pending. If `FREEZE_BASE_SHA` and
+green while reporting that identity verification is pending. The exact `v1.15.0-beta` tag-push
+workflow is the authoritative promotion proof and automatically enters required candidate mode; a
+manual dispatch is only an operator retry. If `FREEZE_BASE_SHA` and
 `FREEZE_HEAD_SHA` are present, obtain subjects with `git log --format=%s BASE..HEAD` using
 `execFileSync` and evaluate the freeze. Candidate inputs are rejected unless
-`CANDIDATE_VERIFICATION_MODE=required` is explicit. In that mode, require the matrix tag name,
-preview URL, and Cloudflare account/token; resolve the annotated tag target from Git and resolve
-the successful preview's branch, URL, and commit metadata from Cloudflare's deployment API. Any
+`CANDIDATE_VERIFICATION_MODE=required` is explicit (and it is forced for the exact tag-push event).
+In that mode, require the matrix tag name and Cloudflare account/token; a preview URL is optional
+and only narrows the lookup. Resolve the annotated `github.ref_name` tag target from Git and
+resolve the successful preview's branch, URL, and commit metadata from Cloudflare's deployment API. Any
 caller SHA is an optional assertion only. Exit 1 for a failed policy and 2 for unreadable,
 malformed, or missing candidate inputs.
 
 - [ ] **Step 4: Publish machine and human evidence matrices**
 
-Create seven rows using the IDs above. Each row names exact changed source/test evidence and the command that proves it. The same-commit row starts as `pending` until the required candidate verification run proves its stable locators:
+Create seven rows using the IDs above. Each row names exact changed source/test evidence and the command that proves it. The same-commit row remains `pending` in static evidence; required candidate verification proves its stable locators at promotion time:
 
 ```json
 {
@@ -673,7 +676,7 @@ Create seven rows using the IDs above. Each row names exact changed source/test 
 }
 ```
 
-`CANDIDATE_TAG` and `CANDIDATE_PREVIEW_URL` are lookup inputs, not proof values. The verifier
+`CANDIDATE_TAG` and optional `CANDIDATE_PREVIEW_URL` are lookup inputs, not proof values. The verifier
 peels the annotated tag from the local Git object database and resolves the successful post-preview
 deployment's source commit and URL from Cloudflare metadata. Caller-supplied `CANDIDATE_TAG_SHA`
 or `PREVIEW_COMMIT_SHA` values, when present, are checked only as assertions against those
@@ -691,12 +694,14 @@ node scripts/ci/public-claim-scan.mjs
 node scripts/ci/claim-evidence.mjs
 ```
 
-Pass event-range SHA variables for push, pull request, and merge group with this exact environment block. For release events both expressions resolve to an empty string, so the already-gated tag target is not reinterpreted as a new commit range:
+Pass event-range SHA variables for branch pushes, pull request, and merge group with this exact
+environment block. For tag pushes both expressions resolve to an empty string, so the annotated
+tag target is not reinterpreted as a zero/tag commit range:
 
 ```yaml
 env:
-  FREEZE_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.event.before || '' }}
-  FREEZE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event_name == 'push' && github.sha || '' }}
+  FREEZE_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.ref_type == 'branch' && github.event.before || '' }}
+  FREEZE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event_name == 'push' && github.ref_type == 'branch' && github.sha || '' }}
 ```
 
 Add `claim-evidence` to `release-gate.needs` and `REQUIRED_JOBS`.
@@ -744,7 +749,7 @@ git commit -m "chore(release): publish claim evidence and freeze features"
 - [ ] Merge only after GitHub `release-gate` succeeds.
 - [ ] Resolve the successful Cloudflare preview whose source SHA equals the `dev` merge SHA.
 - [ ] Create annotated tag `v1.15.0-beta` on that exact merge SHA and push only the tag.
-- [ ] Dispatch `frontend.yml` with `candidate_tag=v1.15.0-beta` and the successful `dev`
-      preview URL. The workflow's required candidate mode needs `CLOUDFLARE_ACCOUNT_ID` and
-      `CLOUDFLARE_API_TOKEN` and resolves both sides independently.
+- [ ] Confirm the automatic tag-push `frontend.yml` run resolves the successful `dev` preview
+      from Cloudflare metadata and passes the required candidate step. A manual dispatch with an
+      optional preview URL can retry verification; neither path deploys the tag.
 - [ ] Confirm no GitHub Release was published and no production Cloudflare deployment was created.

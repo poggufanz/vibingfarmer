@@ -89,7 +89,7 @@ The repository publishes:
 - `scripts/ci/claim-evidence.mjs` to validate schema, required rows, local evidence paths, freeze state, and candidate identity resolution.
 - Unit tests for the validator and freeze decision.
 
-Each claim row records an owner, status, verification command, and one or more evidence locators. No row may be `proven` with an empty command or missing local evidence. The candidate same-commit row remains `pending` until the candidate verification run; ordinary CI may validate that pre-preview state, while the required candidate mode resolves the annotated tag target locally and the successful Cloudflare preview commit/URL from the authenticated deployment API. External release evidence is expressed through stable locators—the candidate tag and the Cloudflare deployment API/URL—and is verified at release time against those independently resolved values rather than copied into a recursively changing source file.
+Each claim row records an owner, status, verification command, and one or more evidence locators. No row may be `proven` with an empty command or missing local evidence. The candidate same-commit row must remain `pending` in static evidence; marking it `proven` is rejected until external candidate verification has resolved the sources. Ordinary CI may validate that pre-preview state, while the required candidate mode resolves the annotated tag target locally and the successful Cloudflare preview commit/URL from the authenticated deployment API. External release evidence is expressed through stable locators—the candidate tag and the Cloudflare deployment API/URL—and is verified at release time against those independently resolved values rather than copied into a recursively changing source file.
 
 The active freeze config rejects `feat` conventional commits in the event's candidate range. The workflow runs the claim scanner and evidence/freeze validator before the aggregate release gate can succeed.
 
@@ -99,10 +99,13 @@ The work lands through a pull request into `dev`, because the existing workflow 
 
 1. Resolve the merge commit SHA.
 2. Resolve the successful Cloudflare preview deployment for that exact SHA.
-3. Create and push annotated tag `v1.15.0-beta` on that same merge commit.
-4. Dispatch the workflow's candidate verification run with `candidate_tag` and the successful
-   `candidate_preview_url` inputs. The required mode resolves the annotated tag target and the
-   preview deployment metadata itself; it does not trust caller-supplied equal SHA strings.
+3. Create and push annotated tag `v1.15.0-beta` on that same merge commit. The exact tag push
+   automatically runs the candidate verification step.
+4. Let that tag-push run query the authenticated Cloudflare Pages API for a successful `dev`
+   preview whose metadata commit equals the annotated tag target. A preview URL may be supplied
+   to narrow the lookup, but is optional; the required mode resolves the tag target and preview
+   metadata itself and never trusts caller-supplied equal SHA strings. Manual dispatch remains an
+   operator retry path, not the sole promotion proof.
 
 Only the tag is created; no GitHub Release is published because this repository intentionally maps a published GitHub Release to a production deployment.
 
@@ -111,7 +114,10 @@ Only the tag is created; no GitHub Release is published because this repository 
 - Test-first unit coverage for lifetime rebinding, reducer transition, yield-unavailable rendering/data shaping, Explorer deployment facts, claim scanning, matrix validation, and freeze decisions.
 - Existing frontend unit, lint, formatting, brand, manifest, build, extension, visual, relayer, keeper, and Soroban checks remain required by CI.
 - Local focused tests run during implementation; the full repository verification runs before merge.
-- External verification records the GitHub workflow URL, candidate SHA/tag, and Cloudflare preview URL and confirms all three resolve to the same commit.
+- External verification records the GitHub workflow URL, candidate tag, resolved tag SHA, and
+  Cloudflare deployment ID/preview URL and confirms the tag target and deployment metadata resolve
+  to the same commit. The exact tag-push workflow is the authoritative promotion proof; that tag
+  event does not enter either deploy path.
 
 ## Non-goals
 

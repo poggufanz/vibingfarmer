@@ -351,6 +351,11 @@ function validateEvidenceMatrixInternal(
     const contract = CLAIM_CONTRACTS[id];
     const candidatePending =
       id === CANDIDATE_CLAIM_ID && row.status === "pending";
+    if (id === CANDIDATE_CLAIM_ID && row.status === "proven") {
+      fail(
+        `${id}: status must remain pending until required candidate verification resolves external evidence`,
+      );
+    }
     if (
       row.status !== "proven" &&
       !(candidatePending && !requireCandidateProof)
@@ -594,14 +599,14 @@ function successfulPreviewDeployment(deployment) {
 
 /**
  * Resolve a preview's commit and URL from Cloudflare's deployment API. The URL supplied by the
- * operator only selects a deployment; the commit SHA is read from Cloudflare metadata and the
- * deployment must be a successful preview on the expected branch.
+ * operator only selects a deployment when present; otherwise the expected commit and branch select
+ * a successful preview. The commit SHA is always read from Cloudflare metadata, never from a caller.
  */
 export async function resolveCloudflarePreview({
   accountId,
   apiToken,
   projectName = "vibing-farmer",
-  previewUrl,
+  previewUrl: previewUrlInput,
   expectedBranch = "dev",
   expectedSha,
   fetchImpl = globalThis.fetch,
@@ -615,7 +620,12 @@ export async function resolveCloudflarePreview({
   if (!nonEmptyString(projectName)) {
     throw new Error("Cloudflare Pages project name is required");
   }
-  const requestedUrl = previewUrlValue(previewUrl);
+  const requestedUrl = optionalPreviewUrlValue(previewUrlInput);
+  if (!requestedUrl && !isValidSha(expectedSha)) {
+    throw new Error(
+      "Cloudflare preview verification requires a preview URL or expected candidate commit SHA",
+    );
+  }
   if (typeof fetchImpl !== "function") {
     throw new Error("Cloudflare preview verification requires fetch");
   }
@@ -664,26 +674,40 @@ export async function resolveCloudflarePreview({
 
   const deployment = payload.result.find((candidate) => {
     if (!successfulPreviewDeployment(candidate)) return false;
+    const urls = deploymentUrls(candidate);
     if (
-      !deploymentUrls(candidate).some((url) =>
-        previewUrlsMatch(url, requestedUrl),
-      )
-    ) {
+      requestedUrl &&
+      !urls.some((url) => previewUrlsMatch(url, requestedUrl))
+    )
       return false;
-    }
     const commitSha = deploymentCommitSha(candidate);
     if (!isValidSha(commitSha)) return false;
     if (expectedSha && commitSha !== expectedSha) return false;
-    return deploymentBranch(candidate) === expectedBranch;
+    if (deploymentBranch(candidate) !== expectedBranch) return false;
+    return urls.some((url) => {
+      if (requestedUrl) return previewUrlsMatch(url, requestedUrl);
+      try {
+        previewUrl(url);
+        return true;
+      } catch {
+        return false;
+      }
+    });
   });
   if (!deployment) {
     throw new Error(
-      "no successful Cloudflare preview deployment matched the requested URL, branch, and candidate commit",
+      "no successful Cloudflare preview deployment matched the requested URL (when supplied), branch, and candidate commit",
     );
   }
-  const resolvedUrl = deploymentUrls(deployment).find((url) =>
-    previewUrlsMatch(url, requestedUrl),
-  );
+  const resolvedUrl = deploymentUrls(deployment).find((url) => {
+    if (requestedUrl) return previewUrlsMatch(url, requestedUrl);
+    try {
+      previewUrl(url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
   return {
     deploymentId: deployment.id ?? deployment.short_id ?? null,
     previewSha: deploymentCommitSha(deployment),
@@ -695,6 +719,11 @@ export async function resolveCloudflarePreview({
 function previewUrlValue(value) {
   previewUrl(value);
   return String(value).trim();
+}
+
+function optionalPreviewUrlValue(value) {
+  if (value === undefined || value === null || value === "") return null;
+  return previewUrlValue(value);
 }
 
 export function verifyCandidateIdentity(input = {}) {
@@ -735,16 +764,18 @@ export async function verifyCandidateFromSources({
     );
   }
   const tagName = env.CANDIDATE_TAG;
-  const requestedPreviewUrl = env.CANDIDATE_PREVIEW_URL ?? env.PREVIEW_URL;
-  if (!nonEmptyString(tagName) || !nonEmptyString(requestedPreviewUrl)) {
-    throw new Error(
-      "candidate verification requires CANDIDATE_TAG and CANDIDATE_PREVIEW_URL",
-    );
+  const candidatePreviewUrl = optionalPreviewUrlValue(
+    env.CANDIDATE_PREVIEW_URL,
+  );
+  const legacyPreviewUrl = optionalPreviewUrlValue(env.PREVIEW_URL);
+  const requestedPreviewUrl = candidatePreviewUrl ?? legacyPreviewUrl;
+  if (!nonEmptyString(tagName)) {
+    throw new Error("candidate verification requires CANDIDATE_TAG");
   }
   if (
-    env.CANDIDATE_PREVIEW_URL !== undefined &&
-    env.PREVIEW_URL !== undefined &&
-    env.CANDIDATE_PREVIEW_URL !== env.PREVIEW_URL
+    candidatePreviewUrl !== null &&
+    legacyPreviewUrl !== null &&
+    candidatePreviewUrl !== legacyPreviewUrl
   ) {
     throw candidatePolicyError(
       "candidate preview URL inputs must be identical",
@@ -825,8 +856,8 @@ function getCommitSubjects(repoRoot, baseSha, headSha) {
   }
 }
 
-function envPresence(name) {
-  return process.env[name] !== undefined;
+function envPresence(name, env = process.env) {
+  return env[name] !== undefined;
 }
 
 function candidatePolicyError(message) {
@@ -912,6 +943,18 @@ async function run() {
     }
   }
 
+  const exactCandidateTagPush =
+    process.env.GITHUB_EVENT_NAME === "push" &&
+    process.env.GITHUB_REF_TYPE === "tag" &&
+    process.env.GITHUB_REF_NAME === matrix.candidate?.tag;
+  const candidateEnv = exactCandidateTagPush
+    ? {
+        ...process.env,
+        CANDIDATE_VERIFICATION_MODE: CANDIDATE_VERIFICATION_MODE,
+        CANDIDATE_TAG: process.env.GITHUB_REF_NAME,
+        CANDIDATE_PREVIEW_URL: process.env.CANDIDATE_PREVIEW_URL ?? "",
+      }
+    : process.env;
   const candidateNames = [
     "CANDIDATE_TAG",
     "CANDIDATE_TAG_SHA",
@@ -919,8 +962,13 @@ async function run() {
     "CANDIDATE_PREVIEW_URL",
     "PREVIEW_URL",
   ];
-  const presentCandidateNames = candidateNames.filter(envPresence);
-  const candidateModePresent = envPresence("CANDIDATE_VERIFICATION_MODE");
+  const presentCandidateNames = candidateNames.filter((name) =>
+    envPresence(name, candidateEnv),
+  );
+  const candidateModePresent = envPresence(
+    "CANDIDATE_VERIFICATION_MODE",
+    candidateEnv,
+  );
   let candidateVerified = false;
   if (candidateModePresent || presentCandidateNames.length > 0) {
     if (!candidateModePresent) {
@@ -934,6 +982,7 @@ async function run() {
       await verifyCandidateFromSources({
         matrix,
         repoRoot: inputRepoRoot,
+        env: candidateEnv,
       });
       candidateVerified = true;
     } catch (error) {

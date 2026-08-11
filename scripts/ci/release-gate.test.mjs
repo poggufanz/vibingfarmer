@@ -336,7 +336,7 @@ test('evaluateReleaseGate: error handling — a required job entry missing `resu
 // Workflow structure assertions.
 // ---------------------------------------------------------------------------
 
-test('workflow: push, pull_request, and merge_group triggers are all present and unfiltered', () => {
+test('workflow: ordinary push/PR/merge-group triggers are present and the exact candidate tag push is included', () => {
   const workflow = loadWorkflow()
   assert.ok(workflow.on, 'workflow must declare `on`')
   assert.ok(Object.prototype.hasOwnProperty.call(workflow.on, 'push'), 'missing push trigger')
@@ -348,9 +348,33 @@ test('workflow: push, pull_request, and merge_group triggers are all present and
     Object.prototype.hasOwnProperty.call(workflow.on, 'merge_group'),
     'missing merge_group trigger'
   )
-  assertUnfiltered(workflow.on.push, 'push', { allowBranches: true })
+  assert.deepEqual(workflow.on.push.branches, ['main', 'dev'])
+  assert.deepEqual(workflow.on.push.tags, ['v1.15.0-beta'])
   assertUnfiltered(workflow.on.pull_request, 'pull_request')
   assertUnfiltered(workflow.on.merge_group, 'merge_group')
+})
+
+test('workflow: the exact candidate tag push runs required identity verification without dispatch', () => {
+  const workflow = loadWorkflow()
+  const claimEvidence = workflow.jobs['claim-evidence']
+  const candidateStep = claimEvidence.steps.find(
+    (step) => step.name === 'Verify exact candidate tag and Cloudflare preview identity' &&
+      step.if === "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.0-beta'"
+  )
+  assert.ok(candidateStep, 'exact candidate tag push must have an automatic verification step')
+  assert.equal(candidateStep.env.CANDIDATE_VERIFICATION_MODE, 'required')
+  assert.equal(candidateStep.env.CANDIDATE_TAG, '${{ github.ref_name }}')
+  assert.equal(candidateStep.env.CANDIDATE_PREVIEW_URL, '')
+  assert.ok(candidateStep.env.CLOUDFLARE_ACCOUNT_ID)
+  assert.ok(candidateStep.env.CLOUDFLARE_API_TOKEN)
+
+  const dispatchStep = claimEvidence.steps.find(
+    (step) => step.name === 'Verify manually supplied candidate tag and Cloudflare preview identity'
+  )
+  assert.ok(dispatchStep, 'manual verification may remain as an operator convenience')
+  assert.equal(dispatchStep.if, "github.event_name == 'workflow_dispatch'")
+  assert.notEqual(candidateStep.if, dispatchStep.if, 'workflow_dispatch cannot be the only candidate proof path')
+  assert.equal(workflow.on.workflow_dispatch.inputs.candidate_preview_url.required, false)
 })
 
 test('workflow: pull_request/merge_group narrowed by `branches` would not prove "unfiltered"', () => {
@@ -400,6 +424,7 @@ test('workflow: claim-evidence runs at repository root with full history, Node 2
   const checkout = job.steps.find((step) => step.uses === 'actions/checkout@v4')
   assert.ok(checkout, 'claim-evidence must check out the repository')
   assert.equal(checkout.with?.['fetch-depth'], 0)
+  assert.equal(checkout.with?.['fetch-tags'], true)
 
   const setupNode = job.steps.find((step) => step.uses === 'actions/setup-node@v4')
   assert.ok(setupNode, 'claim-evidence must set up Node')
@@ -420,9 +445,9 @@ test('workflow: claim-evidence runs at repository root with full history, Node 2
   assert.ok(claimStep, 'claim-evidence must run the claim validator')
   assert.deepEqual(claimStep.env, {
     FREEZE_BASE_SHA:
-      "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.event.before || '' }}",
+      "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.ref_type == 'branch' && github.event.before || '' }}",
     FREEZE_HEAD_SHA:
-      "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event_name == 'push' && github.sha || '' }}",
+      "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event_name == 'push' && github.ref_type == 'branch' && github.sha || '' }}",
   })
 })
 
@@ -446,6 +471,17 @@ test('workflow: deploy needs only release-gate — it cannot bypass the gate via
   const deploy = workflow.jobs.deploy
   assert.ok(deploy, 'jobs.deploy must exist')
   assert.equal(deploy.needs, 'release-gate')
+})
+
+test('workflow: tag pushes never enter preview or production deploy', () => {
+  const workflow = loadWorkflow()
+  const deploy = workflow.jobs.deploy
+  assert.match(String(deploy.if), /github\.ref_type == .branch./)
+  for (const step of deploy.steps) {
+    if (step.if && String(step.if).includes("github.event_name == 'push'")) {
+      assert.match(String(step.if), /github\.ref_type == .branch./)
+    }
+  }
 })
 
 test('workflow: deploy serializes concurrency without cancelling an in-flight deploy', () => {
@@ -482,7 +518,7 @@ test('workflow: deploy migrates each D1 environment before its matching Pages pu
   const workflow = loadWorkflow()
   const deploy = workflow.jobs.deploy
   const steps = deploy.steps
-  const previewCondition = 'github.event_name == \'push\' && github.ref_name != \'main\''
+  const previewCondition = 'github.event_name == \'push\' && github.ref_type == \'branch\' && github.ref_name != \'main\''
   const productionCondition = 'github.event_name == \'release\' || github.ref_name == \'main\''
 
   // Keep the protected production approval boundary and the branch-to-environment mapping intact.

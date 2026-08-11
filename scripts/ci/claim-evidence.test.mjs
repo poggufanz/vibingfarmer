@@ -38,7 +38,7 @@ const requiredIds = [
 function matrixWithClaims(overrides = {}) {
   const claims = requiredIds.map((id) => ({
     id,
-    status: "proven",
+    status: id === "candidate-same-commit" ? "pending" : "proven",
     owner: CLAIM_CONTRACTS[id].owner,
     verification: CLAIM_CONTRACTS[id].verification,
     evidence: [...CLAIM_CONTRACTS[id].minimumEvidence],
@@ -94,6 +94,9 @@ function runCli(env = {}, cwd = repoRoot) {
     "CLOUDFLARE_API_TOKEN",
     "CLOUDFLARE_API_BASE_URL",
     "GITHUB_EVENT_NAME",
+    "GITHUB_REF_TYPE",
+    "GITHUB_REF_NAME",
+    "GITHUB_REF",
   ]) {
     delete mergedEnv[name];
   }
@@ -152,7 +155,7 @@ function makeGitRange(subject) {
   return { root, baseSha, headSha };
 }
 
-test("validateEvidenceMatrix: the minimum valid shape passes with seven proven claims", () => {
+test("validateEvidenceMatrix: the minimum valid shape passes with ordinary claims proven and candidate pending", () => {
   const result = validateEvidenceMatrix(matrixWithClaims(), repoRoot);
   assert.equal(result.ok, true);
   assert.deepEqual(result.failures, []);
@@ -384,6 +387,15 @@ test("checked-in matrix does not mark same-commit evidence proven before candida
   );
 });
 
+test("validateEvidenceMatrix: candidate-same-commit cannot be marked proven in static evidence", () => {
+  const matrix = checkedInMatrix();
+  matrix.claims.find((claim) => claim.id === "candidate-same-commit").status =
+    "proven";
+  const result = validateEvidenceMatrix(matrix, repoRoot);
+  assert.equal(result.ok, false);
+  assert.match(result.failures.join("\n"), /candidate-same-commit.*pending/i);
+});
+
 test("candidate verifier exposes independent annotated-tag and Cloudflare resolvers", () => {
   assert.equal(typeof candidateEvidence.resolveAnnotatedTagTarget, "function");
   assert.equal(typeof candidateEvidence.resolveCloudflarePreview, "function");
@@ -456,6 +468,107 @@ test("resolveCloudflarePreview reads commit metadata and URL from an authenticat
     previewUrl: "https://dev.vibing-farmer.pages.dev/",
     branch: "dev",
   });
+});
+
+test("resolveCloudflarePreview can select a successful preview by commit and branch when URL is omitted", async () => {
+  const sha = "d".repeat(40);
+  const resolved = await candidateEvidence.resolveCloudflarePreview({
+    accountId: "account",
+    apiToken: "token",
+    expectedBranch: "dev",
+    expectedSha: sha,
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return {
+          success: true,
+          result: [
+            {
+              id: "wrong-deployment",
+              environment: "preview",
+              url: "https://wrong.vibing-farmer.pages.dev/",
+              latest_stage: { status: "success" },
+              deployment_trigger: {
+                metadata: { branch: "dev", commit_hash: "e".repeat(40) },
+              },
+            },
+            {
+              id: "matching-deployment",
+              environment: "preview",
+              url: "https://candidate.vibing-farmer.pages.dev/",
+              latest_stage: { status: "success" },
+              deployment_trigger: {
+                metadata: { branch: "dev", commit_hash: sha },
+              },
+            },
+          ],
+        };
+      },
+    }),
+  });
+  assert.deepEqual(resolved, {
+    deploymentId: "matching-deployment",
+    previewSha: sha,
+    previewUrl: "https://candidate.vibing-farmer.pages.dev/",
+    branch: "dev",
+  });
+});
+
+test("verifyCandidateFromSources accepts an omitted preview URL but still binds Cloudflare metadata to the peeled tag SHA", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "claim-evidence-candidate-"));
+  writeFileSync(path.join(root, "seed.txt"), "candidate\n");
+  git(root, ["init", "-q"]);
+  git(root, ["config", "user.name", "claim-evidence-test"]);
+  git(root, ["config", "user.email", "claim-evidence-test@example.invalid"]);
+  git(root, ["add", "seed.txt"]);
+  git(root, ["commit", "-qm", "chore: seed candidate"]);
+  const tagSha = git(root, ["rev-parse", "HEAD"]);
+  git(root, ["tag", "-a", "v1.15.0-beta", "-m", "candidate"]);
+
+  const result = await candidateEvidence.verifyCandidateFromSources({
+    matrix: matrixWithClaims(),
+    repoRoot: root,
+    env: {
+      CANDIDATE_VERIFICATION_MODE: "required",
+      CANDIDATE_TAG: "v1.15.0-beta",
+      CANDIDATE_PREVIEW_URL: "",
+      CLOUDFLARE_ACCOUNT_ID: "account",
+      CLOUDFLARE_API_TOKEN: "token",
+    },
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return {
+          success: true,
+          result: [
+            {
+              id: "matching-deployment",
+              environment: "preview",
+              url: "https://candidate.vibing-farmer.pages.dev/",
+              latest_stage: { status: "success" },
+              deployment_trigger: {
+                metadata: { branch: "dev", commit_hash: tagSha },
+              },
+            },
+          ],
+        };
+      },
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.tag.targetSha, tagSha);
+  assert.equal(result.preview.previewSha, tagSha);
+});
+
+test("CLI: the exact candidate tag push automatically enters required verification mode", () => {
+  const result = runCli({
+    GITHUB_EVENT_NAME: "push",
+    GITHUB_REF_TYPE: "tag",
+    GITHUB_REF_NAME: "v1.15.0-beta",
+    GITHUB_REF: "refs/tags/v1.15.0-beta",
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /candidate.*(tag|Cloudflare)|required/i);
 });
 
 test("CLI: legacy caller-provided identity values are rejected without required mode", () => {
