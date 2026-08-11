@@ -73,4 +73,62 @@ describe('TxDetailPage yield evidence', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Farm this vault again' }))
     expect(sessionStorage.getItem('yv_prefill_apy')).toBe('6.2')
   })
+
+  it('shows the canonical sponsored payer for a relay-backed transaction', () => {
+    fakes.useParams.mockReturnValue({ txHash: 'relay' })
+    fakes.getTransactions.mockReturnValue([
+      {
+        txHash: 'relay',
+        type: 'withdraw',
+        vaultName: 'Relay vault',
+        protocol: 'blend-usdc',
+        amountUsdc: '10',
+        channel: 'relay',
+        timestamp: Date.now(),
+      },
+    ])
+
+    render(<TxDetailPage />)
+
+    expect(screen.getByText('Network fee')).toBeTruthy()
+    expect(screen.getByText('Sponsored by fee-bump relay')).toBeTruthy()
+    expect(screen.queryByText('Network fee paid by')).toBeNull()
+  })
+
+  it('shows wallet payment for a direct transaction and unavailable for legacy records', () => {
+    fakes.useParams.mockReturnValue({ txHash: 'direct' })
+    fakes.getTransactions.mockReturnValue([
+      {
+        txHash: 'direct',
+        type: 'withdraw',
+        vaultName: 'Direct vault',
+        protocol: 'blend-usdc',
+        amountUsdc: '10',
+        channel: 'direct',
+        timestamp: Date.now(),
+      },
+    ])
+
+    const { unmount } = render(<TxDetailPage />)
+    expect(screen.getByText('Paid by wallet')).toBeTruthy()
+    expect(screen.queryByText('Sponsored by fee-bump relay')).toBeNull()
+    unmount()
+
+    fakes.useParams.mockReturnValue({ txHash: 'legacy-fee' })
+    fakes.getTransactions.mockReturnValue([
+      {
+        txHash: 'legacy-fee',
+        type: 'withdraw',
+        vaultName: 'Legacy vault',
+        protocol: 'blend-usdc',
+        amountUsdc: '10',
+        gasPayedBy: 'Fee-bump relayer',
+        timestamp: Date.now(),
+      },
+    ])
+
+    render(<TxDetailPage />)
+    expect(screen.getByText('Unavailable')).toBeTruthy()
+    expect(screen.queryByText('Fee-bump relayer')).toBeNull()
+  })
 })

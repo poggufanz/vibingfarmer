@@ -134,7 +134,7 @@ async function defaultWaitForTx(hash, server, tries = 30, intervalMs = 2000) {
  * Withdraw `amountUnits` (7-dp base units) from ONE agent to `owner`. Requires the exit signer
  * to already be registered (call ensureExitSigner first — kept separate so the UI can label
  * the one wallet popup honestly).
- * @returns {Promise<{redeemed: bigint, redeemHash: string, transferHash: string}>}
+ * @returns {Promise<{redeemed: bigint, redeemHash: string, transferHash: string, channel: 'relay'}>}
  */
 export async function partialWithdraw({
   owner,
@@ -290,7 +290,12 @@ export async function partialWithdraw({
       if (settled.status !== 'SUCCESS') throw new Error(`not confirmed: ${settled.status}`)
     }
     checkAfterDispatch('transfer', transferRes)
-    return { redeemed: bal, redeemHash: redeemRes.hash, transferHash: transferRes.hash }
+    return {
+      redeemed: bal,
+      redeemHash: redeemRes.hash,
+      transferHash: transferRes.hash,
+      channel: 'relay',
+    }
   } catch (e) {
     if (e?.code === 'ACTIVE_ACCOUNT_CHANGED' || e?.code === 'VF_SUBMISSION_UNKNOWN') throw e
     throw new Error(

@@ -212,6 +212,7 @@ describe('partialWithdraw', () => {
     expect(out.redeemed).toBe(20_000_000n)
     expect(out.redeemHash).toBe('H:XDR:redeem')
     expect(out.transferHash).toBe('H:XDR:transfer')
+    expect(out.channel).toBe('relay')
   })
   // Defect: converting the requested amount through Number changes the i128 sent to the vault.
   test('passes an above-safe-integer amount to the redeem contract input exactly', async () => {

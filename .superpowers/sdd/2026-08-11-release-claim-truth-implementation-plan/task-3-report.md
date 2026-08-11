@@ -114,3 +114,75 @@ Final scoped commit:
 ```text
 fix(copy): describe sponsored network fees
 ```
+
+## Fix round 1
+
+The follow-up closes the remaining payer-truth gaps. `docs-site/faq.md` now uses the exact
+`Network fee sponsored by fee-bump relay.` sentence and explains the direct, wallet-paid grant
+fallback, revoke kill switches, and classic-owner full-exit path (while keeping passkey full exits
+relay-only and partial exits relay-backed). `SkillDetailModal` now renders the canonical
+`Network fee` / `Sponsored by fee-bump relay` row. `TxDetailPage` derives its `Network fee` value
+only from the persisted submission channel: relay → `Sponsored by fee-bump relay`, direct →
+`Paid by wallet`, and missing legacy evidence → `Unavailable`; it never trusts a legacy
+`gasPayedBy` string.
+
+History no longer defaults an absent payer to the relay. It persists `channel` only when the
+owner-authorization result proves `relay` or `direct`, maps those to `fee-bump-relayer` or
+`wallet`, and maps missing/legacy evidence to `unavailable`. `partialWithdraw` returns its
+relay-backed channel. Full sweeps carry per-agent channels from `stellar/exit.js` through
+`agents/agentController.js`, and both the full-exit modal and emergency-exit history pass that
+evidence to `saveTransaction`.
+
+The scanner keeps discovery and reads rooted at `git rev-parse --show-toplevel`, reports root-
+relative paths, rejects `You don't.`, `Fee-bump sponsored`, and `Network fee paid by`, and now has
+fixture coverage for nested-cwd success (exit 0), finding/output details (exit 1), tracked-file
+read failure, and discovery failure (exit 2).
+
+### TDD RED
+
+Before the payer propagation implementation, the focused frontend command was RED: 7 files,
+11 failed tests, and 74 passed. Failures covered the history default, missing exit/sweep/partial
+channels, controller propagation, modal history, and canonical Skill/Tx rows. The implementation
+then made the same focused command green. Scanner follow-up fixtures were run against the existing
+fail-closed scanner implementation; the first nested-cwd assertion exposed that the test itself
+derived a second `frontend/` path when launched from the nested cwd, so it was corrected to resolve
+the repository root before constructing the nested fixture.
+
+### Verification
+
+```text
+node --test scripts/ci/public-claim-scan.test.mjs                         PASS — 11/11
+node scripts/ci/public-claim-scan.mjs                                    PASS — exit 0, clean
+cd frontend && node --test ../scripts/ci/public-claim-scan.test.mjs      PASS — 11/11
+cd frontend && node ../scripts/ci/public-claim-scan.mjs                  PASS — exit 0, clean
+```
+
+Focused payer/channel suite:
+
+```text
+cd frontend && npx vitest run src/history.yield.test.js src/stellar/exit.test.js \
+  src/stellar/partialWithdraw.test.js src/agents/agentController.test.js \
+  src/components/SkillDetailModal.test.jsx src/components/TxDetailPage.test.jsx \
+  src/components/WithdrawModal.test.jsx
+```
+
+Result: PASS, 7 files / 85 tests.
+
+Original Task 3 affected suite:
+
+```text
+cd frontend && npx vitest run src/components.sidebar.test.jsx src/components/LandingHero.test.jsx \
+  src/components/WithdrawModal.test.jsx src/components/money/WithdrawDialog.test.jsx \
+  src/money/ownerActions.test.js src/screens/Withdraw.test.jsx \
+  src/screens/Withdraw.unavailable.test.jsx src/components/strategy/ProtectStage.test.jsx \
+  src/components/strategy/PlanStage.test.jsx
+```
+
+Result: PASS, 9 files / 302 tests. Existing jsdom canvas, React Router, and reduced-motion
+notices remain; no tests failed.
+
+Targeted ESLint: exit 0, 0 errors, 56 existing warnings. Targeted Prettier check: PASS. `git
+diff --check`: PASS. Scanner commands required elevated execution in this restricted sandbox
+because child `git` processes otherwise receive `spawnSync git EPERM`; the nested-cwd runs passed
+with the approved elevation. The pre-existing untracked dependency directories were preserved and
+not staged.

@@ -112,7 +112,7 @@ describe('ownerWithdraw', () => {
 
   it('returns the hash and status on a confirmed exit', async () => {
     const out = await ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: OWNER })
-    expect(out).toMatchObject({ hash: 'h1', status: 'SUCCESS' })
+    expect(out).toMatchObject({ hash: 'h1', status: 'SUCCESS', channel: 'direct' })
   })
 
   it('C owner: sources from the relayer, signs a passkey auth entry, relay-only', async () => {
@@ -134,7 +134,7 @@ describe('ownerWithdraw', () => {
       expect.objectContaining({ contractId: OWNER_C })
     )
     expect(submitUserTx).not.toHaveBeenCalled()
-    expect(out).toMatchObject({ hash: 'hc1', status: 'SUCCESS' })
+    expect(out).toMatchObject({ hash: 'hc1', status: 'SUCCESS', channel: 'relay' })
   })
 })
 
@@ -166,6 +166,7 @@ describe('sweepAgents', () => {
     expect(call.args[1].vec()).toHaveLength(2)
     expect(out.swept).toEqual([50_000_000n, 20_000_000n])
     expect(out.txHashes).toEqual(['sweep1', 'sweep1'])
+    expect(out.channels).toEqual(['direct', 'direct'])
   })
 
   it('always derives the ordinary sweep recipient from the stored owner', async () => {
@@ -398,6 +399,7 @@ describe('sweepAgents', () => {
     )
     expect(submitUserTx).not.toHaveBeenCalled()
     expect(out.swept).toEqual([5n, 5n])
+    expect(out.channels).toEqual(['relay', 'relay'])
   })
 
   it('C owner: exact relay-unconfigured carries not-submitted through out.errors and ownerActionOutcome', async () => {

@@ -113,4 +113,18 @@ describe('history yield evidence', () => {
 
     expect(getTransactions().map((row) => row.apy)).toEqual([null, null, null])
   })
+
+  it('persists the network-fee payer only when the submission channel proves it', () => {
+    saveTransaction({ txHash: 'relay', channel: 'relay' })
+    saveTransaction({ txHash: 'direct', channel: 'direct' })
+    saveTransaction({ txHash: 'legacy-without-channel' })
+
+    const rows = Object.fromEntries(getTransactions().map((row) => [row.txHash, row]))
+    expect(rows.relay.gasPayedBy).toBe('fee-bump-relayer')
+    expect(rows.direct.gasPayedBy).toBe('wallet')
+    expect(rows['legacy-without-channel'].gasPayedBy).toBe('unavailable')
+    expect(rows.relay.channel).toBe('relay')
+    expect(rows.direct.channel).toBe('direct')
+    expect(rows['legacy-without-channel'].channel).toBeNull()
+  })
 })

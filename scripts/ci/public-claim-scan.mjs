@@ -33,6 +33,18 @@ export const BANNED_PUBLIC_CLAIM_PATTERNS = Object.freeze([
     label: "zero-network-fee",
     regex: /\bnetwork\s+fees?\s+you\s+pay\s*:\s*(?:0|zero)\b/i,
   }),
+  Object.freeze({
+    label: "categorical-fee-answer",
+    regex: /\byou\s+don[\u0027\u2019]t\s*\./i,
+  }),
+  Object.freeze({
+    label: "fee-bump-sponsored",
+    regex: /\bfee[-\s]?bump\s+sponsored\b/i,
+  }),
+  Object.freeze({
+    label: "network-fee-paid-by",
+    regex: /\bnetwork\s+fee\s+paid\s+by\b/i,
+  }),
 ]);
 
 export function isPublicSurface(file) {
@@ -73,9 +85,26 @@ export function findBannedPublicClaims(text) {
   return findings;
 }
 
+export function resolveRepositoryRoot(startPath = process.cwd()) {
+  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: startPath,
+    encoding: "utf8",
+  });
+  if (result.error || result.status !== 0) {
+    const detail =
+      result.error?.message || result.stderr?.trim() || `exit ${result.status}`;
+    throw new Error(`git rev-parse failed: ${detail}`);
+  }
+
+  const root = result.stdout.trim();
+  if (!root) throw new Error("git rev-parse returned an empty repository root");
+  return path.resolve(root);
+}
+
 export function discoverTrackedPublicSurfaces(repoRoot = process.cwd()) {
+  const root = resolveRepositoryRoot(repoRoot);
   const result = spawnSync("git", ["ls-files"], {
-    cwd: repoRoot,
+    cwd: root,
     encoding: "utf8",
   });
   if (result.error || result.status !== 0) {
@@ -92,11 +121,12 @@ export function discoverTrackedPublicSurfaces(repoRoot = process.cwd()) {
 }
 
 export function scanTrackedPublicSurfaces(repoRoot = process.cwd()) {
-  const files = discoverTrackedPublicSurfaces(repoRoot);
+  const root = resolveRepositoryRoot(repoRoot);
+  const files = discoverTrackedPublicSurfaces(root);
   const findings = [];
 
   for (const file of files) {
-    const text = readFileSync(path.join(repoRoot, file), "utf8");
+    const text = readFileSync(path.join(root, file), "utf8");
     for (const finding of findBannedPublicClaims(text)) {
       findings.push({ file, ...finding });
     }

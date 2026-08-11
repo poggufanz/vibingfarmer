@@ -36,6 +36,12 @@ function hasLiveApy(tx) {
   )
 }
 
+function networkFeePayer(channel) {
+  if (channel === 'relay') return 'Sponsored by fee-bump relay'
+  if (channel === 'direct') return 'Paid by wallet'
+  return 'Unavailable'
+}
+
 const backBtn = {
   appearance: 'none',
   border: 0,
@@ -141,7 +147,7 @@ export default function TxDetailPage() {
     { label: 'Amount', value: `${tx.amountUsdc} USDC` },
     { label: 'APY', value: apy == null ? 'Not available' : `${apy}%` },
     { label: 'Worker', value: tx.workerId || 'Not available' },
-    { label: 'Network fee paid by', value: tx.gasPayedBy || 'Fee-bump relayer', highlight: true },
+    { label: 'Network fee', value: networkFeePayer(tx.channel), highlight: true },
     { label: 'Network', value: `${tx.network || 'Stellar'} testnet` },
   ]
 

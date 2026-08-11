@@ -97,7 +97,7 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
         <div className="skill-detail-section">
           <div className="skill-detail-label">Security limits</div>
           <Row k="Maximum" v={skill.guards?.maxAmount || info.amountVal} />
-          <Row k="Fee" v="Fee-bump sponsored" />
+          <Row k="Network fee" v="Sponsored by fee-bump relay" />
           <Row k="Valid for" v={`${hours} hour${hours !== 1 ? 's' : ''} from now`} />
           <Row k="Revocable" v={skill.guards?.revocable ? 'Yes, revoke anytime' : 'No'} />
           <Row k="Risk" v={info.risk} />

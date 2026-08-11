@@ -47,6 +47,12 @@ function normalizeYieldEvidence(yieldEvidence) {
   return yieldEvidence === 'live-venue' ? 'live-venue' : null
 }
 
+function feePayerForChannel(channel) {
+  if (channel === 'relay') return 'fee-bump-relayer'
+  if (channel === 'direct') return 'wallet'
+  return 'unavailable'
+}
+
 // ─── A: Transaction History ───────────────────────────────────────────────────
 
 /**
@@ -61,7 +67,7 @@ export function saveTransaction({
   apy,
   workerLabel,
   workerId,
-  gasPayedBy, // 'fee-bump-relayer' always
+  channel, // 'relay' | 'direct' — only authoritative submission evidence
   network, // 'stellar-testnet'
   yieldEvidence,
 }) {
@@ -77,7 +83,8 @@ export function saveTransaction({
     yieldEvidence: evidence,
     workerLabel,
     workerId,
-    gasPayedBy: gasPayedBy || 'fee-bump-relayer',
+    channel: channel === 'relay' || channel === 'direct' ? channel : null,
+    gasPayedBy: feePayerForChannel(channel),
     network: network || 'stellar-testnet',
     status: 'confirmed',
     timestamp: Date.now(),

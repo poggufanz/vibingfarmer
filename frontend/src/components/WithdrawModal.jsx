@@ -198,6 +198,7 @@ export default function WithdrawModal({
         amountUsdc: balUsdc,
         apy: evidencedVaultApy,
         yieldEvidence,
+        channel: results[0]?.channel,
         type: 'withdraw',
         network: 'stellar-testnet',
       })
@@ -264,6 +265,7 @@ export default function WithdrawModal({
         amountUsdc: toDisplay(out.redeemed),
         apy: evidencedVaultApy,
         yieldEvidence,
+        channel: out.channel,
         type: 'withdraw',
         network: 'stellar-testnet',
       })

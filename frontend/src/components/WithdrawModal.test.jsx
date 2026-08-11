@@ -7,6 +7,7 @@ const partialWithdraw = vi.fn(async () => ({
   redeemed: 20_000_000n,
   redeemHash: 'H1',
   transferHash: 'H2',
+  channel: 'relay',
 }))
 const ensureExitSigner = vi.fn(async () => ({ publicKey: 'GPUB', secret: 'S' }))
 vi.mock('../stellar/partialWithdraw.js', () => ({
@@ -29,6 +30,10 @@ vi.mock('../wallet/exitKey.js', () => ({
 const withdrawAllFromVault = vi.fn()
 vi.mock('../agents/agentController.js', () => ({
   withdrawAllFromVault: (...a) => withdrawAllFromVault(...a),
+}))
+const saveTransaction = vi.fn()
+vi.mock('../history.js', () => ({
+  saveTransaction: (...a) => saveTransaction(...a),
 }))
 
 import WithdrawModal from './WithdrawModal.jsx'
@@ -67,6 +72,7 @@ describe('WithdrawModal partial mode', () => {
     )
     expect(readVaultShares.mock.calls[0][1]).toEqual({ vault: 'CVAULT' })
     await waitFor(() => expect(props.onSuccess).toHaveBeenCalledWith('CVAULT', '20000000'))
+    expect(saveTransaction).toHaveBeenCalledWith(expect.objectContaining({ channel: 'relay' }))
   })
 
   test('amount above the selected agent max disables the confirm button', async () => {
@@ -165,5 +171,16 @@ describe('WithdrawModal full mode sweep failure', () => {
     fireEvent.click(screen.getByRole('button', { name: /^withdraw$/i }))
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toContain('Insufficient trustline balance.')
+  })
+
+  test('records the full-exit channel instead of assuming relay sponsorship', async () => {
+    withdrawAllFromVault.mockResolvedValueOnce([
+      { ok: true, txHash: 'H1', channel: 'direct' },
+      { ok: true, txHash: 'H1', channel: 'direct' },
+    ])
+    render(<WithdrawModal {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: /^withdraw$/i }))
+    await waitFor(() => expect(saveTransaction).toHaveBeenCalled())
+    expect(saveTransaction).toHaveBeenCalledWith(expect.objectContaining({ channel: 'direct' }))
   })
 })

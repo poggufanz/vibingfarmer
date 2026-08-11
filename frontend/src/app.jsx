@@ -2298,6 +2298,7 @@ const App = () => {
           vaultName: 'Emergency Exit',
           vaultAddress: alert.vaultAddress,
           workerLabel: 'RiskWatcher',
+          channel: ok[0].channel,
           network: 'stellar-testnet',
         })
         addLog({

@@ -91,7 +91,7 @@ async function handleWorkerMessage(e) {
 // to SOROBAN_DEMO_AGENT, which is owned by vf-deployer and holds none of the user's funds: every
 // withdraw invoked a stranger's account, failed on-chain, and still reported success.
 
-/** Manual exit from the dashboard. Returns { txHash, status }.
+/** Manual exit from the dashboard. Returns { txHash, status, channel }.
  * `activeAccount` (VFW1's ActiveAccountV1 record) picks the owner-authorization model —
  * classic G envelope vs. passkey C auth entry (see stellar/exit.js / ownerAuthorization.js).
  * Defaults to a classic G owner, so every existing caller is unaffected. */
@@ -112,7 +112,7 @@ export async function withdrawFromVault(
       requireV1: true,
     })
   check()
-  const { hash, status } = await ownerWithdraw({
+  const { hash, status, channel } = await ownerWithdraw({
     owner: userAddress,
     agentAddress,
     to: userAddress,
@@ -123,7 +123,7 @@ export async function withdrawFromVault(
     signal,
   })
   check()
-  return { txHash: hash, status }
+  return { txHash: hash, status, ...(channel ? { channel } : {}) }
 }
 
 /**
@@ -148,7 +148,7 @@ export async function withdrawFromVault(
  * @param {{activeAccount?:object, getRelayerAddress?:Function, kit?:object}} [ownerAuth]
  *        Owner-authorization model — classic G envelope vs. passkey C auth entry. Defaults to a
  *        classic G owner, so every existing caller is unaffected.
- * @returns {Promise<Array<{agentAddress: string, ok: boolean, txHash?: string,
+ * @returns {Promise<Array<{agentAddress: string, ok: boolean, txHash?: string, channel?: 'relay'|'direct',
  *   error?: string|{message:string, code?:string, submission?:string}}>>} On the sweep path,
  *   `error` is whatever exit.js's `sweepAgents` reported for that agent — an
  *   OwnerActionSubmissionError-shaped object (Fix 1, fix loop 1) when the chain call itself threw,
@@ -176,7 +176,7 @@ export async function withdrawAllFromVault(
   check()
 
   if (SOROBAN_EXIT_ROUTER_ADDRESS) {
-    const { swept, txHashes, errors } = await sweepAgents({
+    const { swept, txHashes, channels, errors } = await sweepAgents({
       owner: userAddress,
       agentAddresses,
       to: userAddress,
@@ -193,7 +193,12 @@ export async function withdrawAllFromVault(
     return agentAddresses.map((agentAddress, i) => {
       const amount = swept[i] ?? 0n
       return amount > 0n
-        ? { agentAddress, ok: true, txHash: txHashes[i] }
+        ? {
+            agentAddress,
+            ok: true,
+            txHash: txHashes[i],
+            ...(channels?.[i] ? { channel: channels[i] } : {}),
+          }
         : {
             agentAddress,
             ok: false,
@@ -210,15 +215,21 @@ export async function withdrawAllFromVault(
     check()
     onProgress?.({ index, total: agentAddresses.length, agentAddress })
     try {
-      const { txHash } = await withdrawFromVault(vaultAddress, null, userAddress, agentAddress, {
-        activeAccount,
-        getCurrentActiveAccount,
-        getRelayerAddress,
-        kit,
-        signal,
-      })
+      const { txHash, channel } = await withdrawFromVault(
+        vaultAddress,
+        null,
+        userAddress,
+        agentAddress,
+        {
+          activeAccount,
+          getCurrentActiveAccount,
+          getRelayerAddress,
+          kit,
+          signal,
+        }
+      )
       check()
-      results.push({ agentAddress, ok: true, txHash })
+      results.push({ agentAddress, ok: true, txHash, ...(channel ? { channel } : {}) })
     } catch (err) {
       if (err?.code === 'ACTIVE_ACCOUNT_CHANGED') throw err
       // Fix 3 (fix loop 2): same structured passthrough as the sweep-router path above (Fix 1, fix
