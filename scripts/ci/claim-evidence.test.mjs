@@ -49,7 +49,7 @@ function matrixWithClaims(overrides = {}) {
   return {
     schemaVersion: 1,
     candidate: {
-      tag: "v1.15.1-beta",
+      tag: "v1.15.2-beta",
       targetBranch: "dev",
       cloudflareProject: "vibing-farmer",
       productionPublish: false,
@@ -184,7 +184,7 @@ test("validateEvidenceMatrix: every required claim must be proven", () => {
 
 test("validateEvidenceMatrix: candidate tag, freeze, and production policy are exact", () => {
   const wrongTag = matrixWithClaims();
-  wrongTag.candidate.tag = "v1.15.0";
+  wrongTag.candidate.tag = "v1.14.9-beta";
   assert.match(failuresFor(wrongTag).join("\n"), /candidate.*tag/i);
 
   const inactiveFreeze = matrixWithClaims();
@@ -258,8 +258,8 @@ test("validateEvidenceMatrix: candidate locators are required, exact, HTTPS, and
   assert.equal(validateEvidenceMatrix(missing, repoRoot).ok, false);
 
   for (const locator of [
-    "https://github.com/attacker/vibingfarmer/tree/v1.15.1-beta",
-    "https://github.com:443/poggufanz/vibingfarmer/tree/v1.15.1-beta",
+    "https://github.com/attacker/vibingfarmer/tree/v1.15.2-beta",
+    "https://github.com:443/poggufanz/vibingfarmer/tree/v1.15.2-beta",
     "https://dev.vibing-farmer.pages.dev.evil.example",
     "http://dev.vibing-farmer.pages.dev",
   ]) {
@@ -361,7 +361,7 @@ test("CLI: candidate environment variables are all-or-none malformed input", () 
 
 test("CLI: candidate inputs cannot opt into verification without required mode", () => {
   const result = runCli({
-    CANDIDATE_TAG: "v1.15.1-beta",
+    CANDIDATE_TAG: "v1.15.2-beta",
     CANDIDATE_PREVIEW_URL: "https://dev.vibing-farmer.pages.dev",
   });
   assert.equal(result.status, 2);
@@ -470,6 +470,102 @@ test("resolveCloudflarePreview reads commit metadata and URL from an authenticat
   });
 });
 
+test("resolveCloudflarePreview requests page one with Cloudflare's supported list options", async () => {
+  const sha = "f".repeat(40);
+  let requestedUrl;
+  await candidateEvidence.resolveCloudflarePreview({
+    accountId: "account",
+    apiToken: "token",
+    previewUrl: "https://dev.vibing-farmer.pages.dev",
+    expectedSha: sha,
+    fetchImpl: async (url) => {
+      requestedUrl = new URL(url);
+      return {
+        ok: true,
+        async json() {
+          return {
+            success: true,
+            result: [
+              {
+                id: "matching-deployment",
+                environment: "preview",
+                url: "https://candidate.vibing-farmer.pages.dev/",
+                aliases: ["https://dev.vibing-farmer.pages.dev/"],
+                latest_stage: { status: "success" },
+                deployment_trigger: {
+                  metadata: { branch: "dev", commit_hash: sha },
+                },
+              },
+            ],
+          };
+        },
+      };
+    },
+  });
+  assert.equal(requestedUrl.searchParams.get("page"), "1");
+  assert.equal(requestedUrl.searchParams.get("per_page"), "25");
+  assert.equal(requestedUrl.searchParams.get("env"), "preview");
+});
+
+test("resolveCloudflarePreview requests the next page when page one has no match and more pages remain", async () => {
+  const sha = "b".repeat(40);
+  const requestedPages = [];
+  const resolved = await candidateEvidence.resolveCloudflarePreview({
+    accountId: "account",
+    apiToken: "token",
+    previewUrl: "https://dev.vibing-farmer.pages.dev",
+    expectedSha: sha,
+    fetchImpl: async (url) => {
+      const requestedUrl = new URL(url);
+      requestedPages.push({
+        page: requestedUrl.searchParams.get("page"),
+        perPage: requestedUrl.searchParams.get("per_page"),
+      });
+      const page = Number(requestedUrl.searchParams.get("page"));
+      return {
+        ok: true,
+        async json() {
+          return {
+            success: true,
+            result:
+              page === 1
+                ? Array.from({ length: 25 }, (_, index) => ({
+                    id: `wrong-deployment-${index}`,
+                    environment: "preview",
+                    url: `https://wrong-${index}.vibing-farmer.pages.dev/`,
+                    latest_stage: { status: "success" },
+                    deployment_trigger: {
+                      metadata: {
+                        branch: "dev",
+                        commit_hash: "c".repeat(40),
+                      },
+                    },
+                  }))
+                : [
+                    {
+                      id: "matching-deployment",
+                      environment: "preview",
+                      url: "https://candidate.vibing-farmer.pages.dev/",
+                      aliases: ["https://dev.vibing-farmer.pages.dev/"],
+                      latest_stage: { status: "success" },
+                      deployment_trigger: {
+                        metadata: { branch: "dev", commit_hash: sha },
+                      },
+                    },
+                  ],
+            result_info: { page, per_page: 25, total_pages: 2 },
+          };
+        },
+      };
+    },
+  });
+  assert.deepEqual(requestedPages, [
+    { page: "1", perPage: "25" },
+    { page: "2", perPage: "25" },
+  ]);
+  assert.equal(resolved.previewSha, sha);
+});
+
 test("resolveCloudflarePreview can select a successful preview by commit and branch when URL is omitted", async () => {
   const sha = "d".repeat(40);
   const resolved = await candidateEvidence.resolveCloudflarePreview({
@@ -523,14 +619,14 @@ test("verifyCandidateFromSources accepts an omitted preview URL but still binds 
   git(root, ["add", "seed.txt"]);
   git(root, ["commit", "-qm", "chore: seed candidate"]);
   const tagSha = git(root, ["rev-parse", "HEAD"]);
-  git(root, ["tag", "-a", "v1.15.1-beta", "-m", "candidate"]);
+  git(root, ["tag", "-a", "v1.15.2-beta", "-m", "candidate"]);
 
   const result = await candidateEvidence.verifyCandidateFromSources({
     matrix: matrixWithClaims(),
     repoRoot: root,
     env: {
       CANDIDATE_VERIFICATION_MODE: "required",
-      CANDIDATE_TAG: "v1.15.1-beta",
+      CANDIDATE_TAG: "v1.15.2-beta",
       CANDIDATE_PREVIEW_URL: "",
       CLOUDFLARE_ACCOUNT_ID: "account",
       CLOUDFLARE_API_TOKEN: "token",
@@ -564,8 +660,8 @@ test("CLI: the exact candidate tag push automatically enters required verificati
   const result = runCli({
     GITHUB_EVENT_NAME: "push",
     GITHUB_REF_TYPE: "tag",
-    GITHUB_REF_NAME: "v1.15.1-beta",
-    GITHUB_REF: "refs/tags/v1.15.1-beta",
+    GITHUB_REF_NAME: "v1.15.2-beta",
+    GITHUB_REF: "refs/tags/v1.15.2-beta",
   });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /candidate.*(tag|Cloudflare)|required/i);
