@@ -447,39 +447,54 @@ Select optimal vault(s) from the catalog above. Trust only each entry's \`yield\
 
     // Deterministic tamper-proof hash of the ENFORCED strategy (for on-chain attestation)
     const strategyHash = hashStrategy({ ...parsed, generatedBy: provider.name })
-    const entryFor = (address) =>
-      vaultData.find((entry) => entry.address?.toLowerCase() === address?.toLowerCase())
-    const yieldEvidenceFor = (vault) =>
-      venueYield(entryFor(vault.address) || vault).state === 'live' ? 'live-venue' : null
+    const entryFor = (vault) => {
+      const address = String(vault?.address || '').toLowerCase()
+      const protocol = String(vault?.protocol || '').toLowerCase()
+      const matches = vaultData.filter((entry) => entry.address?.toLowerCase() === address)
+      if (protocol) {
+        return matches.find((entry) => entry.protocol?.toLowerCase() === protocol)
+      }
+      return matches.length === 1 ? matches[0] : undefined
+    }
+    const matchedYieldFor = (vault) => {
+      const entry = entryFor(vault)
+      if (!entry) return null
+      const state = venueYield(entry)
+      return state.state === 'live' ? state.apy : null
+    }
+    const matchedApys = parsed.selected_vaults.map(matchedYieldFor)
     const strategyYieldEvidence =
-      parsed.selected_vaults.length > 0 &&
-      parsed.selected_vaults.every((vault) => Boolean(yieldEvidenceFor(vault)))
+      parsed.selected_vaults.length > 0 && matchedApys.every((apy) => apy !== null)
         ? 'live-venue'
+        : null
+    const blendedApy =
+      strategyYieldEvidence === 'live-venue'
+        ? matchedApys
+            .reduce((sum, apy, i) => sum + apy * (parsed.selected_vaults[i].allocation || 0), 0)
+            .toFixed(2)
         : null
     // Persist strategy session + per-vault AI reasoning to history (localStorage)
     saveStrategy({
       amountUsdc: amount,
       riskLevel,
       numVaults: safeNumVaults,
-      vaultsSelected: parsed.selected_vaults.map((v) => ({
+      vaultsSelected: parsed.selected_vaults.map((v, i) => ({
         name: v.name,
         protocol: v.protocol,
-        apy: v.expected_apy,
+        apy: matchedApys[i],
         allocation: v.allocation,
       })),
       strategySource: provider.name,
       skillSource: skill.source,
       vaultDataSource,
       marketContextUsed: marketContext !== null,
-      blendedApy: parsed.selected_vaults
-        .reduce((sum, v) => sum + (v.expected_apy || 0) * (v.allocation || 0), 0)
-        .toFixed(2),
+      blendedApy,
       yieldEvidence: strategyYieldEvidence,
       strategyHash,
       dagTimings: dag.timings,
       dagWallMs: Math.round(dag.wallMs),
     })
-    parsed.selected_vaults.forEach((v) => {
+    parsed.selected_vaults.forEach((v, i) => {
       if (v.reasoning)
         saveReasoning({
           vaultName: v.name,
@@ -487,8 +502,8 @@ Select optimal vault(s) from the catalog above. Trust only each entry's \`yield\
           riskTier: v.risk_tier,
           yieldSource: v.yield_source_type,
           reasoning: v.reasoning,
-          expectedApy: v.expected_apy,
-          yieldEvidence: yieldEvidenceFor(v),
+          expectedApy: matchedApys[i],
+          yieldEvidence: matchedApys[i] !== null ? 'live-venue' : null,
           amountUsdc: amount,
           riskLevel,
           modelUsed: provider.model,

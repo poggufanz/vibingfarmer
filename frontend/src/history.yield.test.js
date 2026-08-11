@@ -85,4 +85,32 @@ describe('history yield evidence', () => {
     expect(getReasoningLog()[0]).toMatchObject({ expectedApy: 6.2, yieldEvidence: 'live-venue' })
     expect(getReasoningLog()[1]).toMatchObject({ expectedApy: null, yieldEvidence: null })
   })
+
+  it('keeps null, undefined, and empty APY unavailable even with a live evidence label', () => {
+    saveTransaction({
+      txHash: 'null-apy',
+      vaultName: 'Null APY',
+      protocol: 'blend-usdc',
+      amountUsdc: '10',
+      apy: null,
+      yieldEvidence: 'live-venue',
+    })
+    saveTransaction({
+      txHash: 'undefined-apy',
+      vaultName: 'Undefined APY',
+      protocol: 'blend-usdc',
+      amountUsdc: '10',
+      yieldEvidence: 'live-venue',
+    })
+    saveTransaction({
+      txHash: 'empty-apy',
+      vaultName: 'Empty APY',
+      protocol: 'blend-usdc',
+      amountUsdc: '10',
+      apy: '',
+      yieldEvidence: 'live-venue',
+    })
+
+    expect(getTransactions().map((row) => row.apy)).toEqual([null, null, null])
+  })
 })

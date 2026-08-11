@@ -38,6 +38,7 @@ function addEntry(key, entry) {
 }
 
 function evidencedApy(apy, yieldEvidence) {
+  if (apy == null || (typeof apy === 'string' && apy.trim() === '')) return null
   const value = Number(apy)
   return yieldEvidence === 'live-venue' && Number.isFinite(value) ? value : null
 }
