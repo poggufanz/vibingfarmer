@@ -20,14 +20,13 @@
       "preview_database_id": "00000000-0000-4000-8000-000000000001"
     }
   ],
-  // Non-secret runtime env for the /api/* Pages Functions. Secrets
-  // (STELLAR_RELAYER_SECRET, VF_*) are set per-environment via
+  // Non-secret runtime env for the /api/* Pages Functions. Secrets and dashboard-managed
+  // bindings (RELAYER_ORIGIN, STELLAR_RELAYER_SECRET, VF_*) are set per-environment via
   // `wrangler pages secret put` / dashboard, never here.
   "vars": {
     "NODE_ENV": "production",
     "ALLOWED_ORIGIN": "https://vibing-farmer.pages.dev",
     "ALLOWED_EXTENSION_ORIGINS": "",
-    "RELAYER_ORIGIN": "https://vf-relayer.example.com",
     "SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org",
     "STELLAR_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
     "SOROBAN_VAULT_ADDRESS": "CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77",
@@ -74,7 +73,6 @@
         "NODE_ENV": "production",
         "ALLOWED_ORIGIN": "https://dev.vibing-farmer.pages.dev",
         "ALLOWED_EXTENSION_ORIGINS": "",
-        "RELAYER_ORIGIN": "https://vf-relayer.example.com",
         "SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org",
         "STELLAR_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
         "SOROBAN_VAULT_ADDRESS": "CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77",

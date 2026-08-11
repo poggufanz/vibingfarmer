@@ -103,6 +103,7 @@ describe('runtime commands and Wrangler bindings', () => {
       expect(generated.env).toBeUndefined()
       expect(generated.d1_databases[0].database_id).toBe(process.env.PREVIEW_D1_DATABASE_ID)
       expect(generated.vars.ALLOWED_ORIGIN).toBe('https://dev.vibing-farmer.pages.dev')
+      expect(generated.vars.RELAYER_ORIGIN).toBeUndefined()
       expect(resolve(dirname(target), generated.pages_build_output_dir)).toBe(
         resolve(new URL('..', import.meta.url).pathname, 'dist')
       )
@@ -155,10 +156,12 @@ describe('runtime commands and Wrangler bindings', () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
     )
     expect(preview.d1_databases[0].database_id).toBe(PREVIEW_D1_SENTINEL)
-    for (const key of ['RELAYER_ORIGIN', 'ALLOWED_ORIGIN', 'SOROBAN_RPC_URL']) {
+    for (const key of ['ALLOWED_ORIGIN', 'SOROBAN_RPC_URL']) {
       expect(rawConfig.vars[key]).toBeDefined()
       expect(preview.vars[key]).toBeDefined()
     }
+    expect(rawConfig.vars.RELAYER_ORIGIN).toBeUndefined()
+    expect(preview.vars.RELAYER_ORIGIN).toBeUndefined()
     expect(JSON.stringify(rawConfig)).not.toMatch(/VITE_(?:RELAYER|ALLOWED_EXTENSION)/)
   })
 
