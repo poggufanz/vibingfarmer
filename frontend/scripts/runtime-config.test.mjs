@@ -1,12 +1,16 @@
-import { readFileSync, readdirSync } from 'node:fs'
-import { rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import { parse as parseDotenv } from 'dotenv'
 import { experimental_readRawConfig } from 'wrangler'
 import {
   PRODUCTION_D1_DATABASE_ID,
   PREVIEW_D1_SENTINEL,
+  PREVIEW_WRANGLER_CONFIG,
+  PREVIEW_WRANGLER_REDIRECT,
   validatePreviewDatabaseId,
   writePreviewConfig,
 } from './runtime-config.mjs'
@@ -40,19 +44,23 @@ describe('runtime commands and Wrangler bindings', () => {
       expect.arrayContaining(['wrangler', 'd1', 'migrations', 'apply', 'vf-gate', '--local'])
     )
     expect(tokens(scripts['d1:migrate:preview'])).toEqual(
-      expect.arrayContaining(['--env', 'preview', '--remote'])
+      expect.arrayContaining([
+        '--config',
+        '.wrangler/deploy/vibing-farmer-preview.jsonc',
+        '--remote',
+      ])
     )
     expect(tokens(scripts['d1:migrate:preview'])).not.toContain('--local')
+    expect(tokens(scripts['d1:migrate:preview'])).not.toContain('--env')
     expect(tokens(scripts['d1:migrate:production'])).toEqual(
       expect.arrayContaining(['wrangler', 'd1', 'migrations', 'apply', 'vf-gate', '--remote'])
     )
     expect(tokens(scripts['d1:migrate:production'])).not.toContain('preview')
     expect(scripts['pages:deploy:preview']).toContain('d1:migrate:preview')
-    expect(scripts['pages:deploy:preview']).toContain('--env preview')
-    expect(scripts['pages:deploy:preview']).toContain(
-      '--config /tmp/vibing-farmer-wrangler-preview.jsonc'
-    )
+    expect(tokens(scripts['pages:deploy:preview'])).not.toContain('--env')
+    expect(tokens(scripts['pages:deploy:preview'])).not.toContain('--config')
     expect(scripts['pages:deploy:production']).toContain('d1:migrate:production')
+    expect(scripts['pages:deploy:production']).toContain('runtime-config.mjs clear-preview-config')
     expect(scripts['pages:deploy:preview']).not.toContain('--branch=main')
     expect(scripts['pages:deploy:production']).toContain('--branch=main')
   })
@@ -83,22 +91,51 @@ describe('runtime commands and Wrangler bindings', () => {
     )
   })
 
-  it('materializes the externally supplied preview ID without changing the tracked config', async () => {
-    const target = '/tmp/vf-task15-preview-config-test.jsonc'
+  it("materializes a flattened preview config behind Wrangler's supported deploy redirect", async () => {
+    const root = mkdtempSync(join(tmpdir(), 'vf-preview-config-'))
+    const target = join(root, 'preview.jsonc')
+    const redirect = join(root, '.wrangler', 'deploy', 'config.json')
     const old = process.env.PREVIEW_D1_DATABASE_ID
     process.env.PREVIEW_D1_DATABASE_ID = '11111111-2222-4333-8444-555555555555'
     try {
-      await writePreviewConfig(target)
+      await writePreviewConfig(target, redirect)
       const generated = JSON.parse(readFileSync(target, 'utf8'))
-      expect(generated.env.preview.d1_databases[0].database_id).toBe(
-        process.env.PREVIEW_D1_DATABASE_ID
+      expect(generated.env).toBeUndefined()
+      expect(generated.d1_databases[0].database_id).toBe(process.env.PREVIEW_D1_DATABASE_ID)
+      expect(generated.vars.ALLOWED_ORIGIN).toBe('https://dev.vibing-farmer.pages.dev')
+      expect(resolve(dirname(target), generated.pages_build_output_dir)).toBe(
+        resolve(new URL('..', import.meta.url).pathname, 'dist')
       )
-      expect(generated.env.preview.d1_databases[0].migrations_dir).toMatch(/migrations$/)
+      expect(generated.d1_databases[0].migrations_dir).toMatch(/migrations$/)
+      expect(JSON.parse(readFileSync(redirect, 'utf8'))).toEqual({
+        configPath: '../../preview.jsonc',
+      })
       expect(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8')).toContain(
         PREVIEW_D1_SENTINEL
       )
     } finally {
-      rmSync(target, { force: true })
+      rmSync(root, { force: true, recursive: true })
+      if (old === undefined) delete process.env.PREVIEW_D1_DATABASE_ID
+      else process.env.PREVIEW_D1_DATABASE_ID = old
+    }
+  })
+
+  it('removes the preview redirect before a later production deployment', async () => {
+    const old = process.env.PREVIEW_D1_DATABASE_ID
+    process.env.PREVIEW_D1_DATABASE_ID = '11111111-2222-4333-8444-555555555555'
+    try {
+      await writePreviewConfig()
+      const result = spawnSync(
+        process.execPath,
+        [new URL('./runtime-config.mjs', import.meta.url).pathname, 'clear-preview-config'],
+        { encoding: 'utf8' }
+      )
+      expect(result.status).toBe(0)
+      expect(existsSync(PREVIEW_WRANGLER_CONFIG)).toBe(false)
+      expect(existsSync(PREVIEW_WRANGLER_REDIRECT)).toBe(false)
+    } finally {
+      rmSync(PREVIEW_WRANGLER_CONFIG, { force: true })
+      rmSync(PREVIEW_WRANGLER_REDIRECT, { force: true })
       if (old === undefined) delete process.env.PREVIEW_D1_DATABASE_ID
       else process.env.PREVIEW_D1_DATABASE_ID = old
     }
@@ -148,12 +185,14 @@ describe('runtime commands and Wrangler bindings', () => {
     expect(workflow).not.toContain('command: d1 migrations apply vf-gate --remote')
     expect(workflow).toContain("if: github.event_name == 'push' && github.ref_name != 'main'")
     expect(workflow).toContain(
-      'pages deploy ./dist --config /tmp/vibing-farmer-wrangler-preview.jsonc --project-name=vibing-farmer --env preview'
+      'command: pages deploy ./dist --project-name=vibing-farmer --branch=${{ github.ref_name }}'
     )
-    expect(workflow).toContain('--config /tmp/vibing-farmer-wrangler-preview.jsonc')
+    expect(workflow).not.toContain('pages deploy ./dist --config')
+    expect(workflow).not.toContain('pages deploy ./dist --project-name=vibing-farmer --env')
     expect(workflow).toContain(
       'command: pages deploy ./dist --project-name=vibing-farmer --branch=main'
     )
+    expect(workflow).toContain('run: node scripts/runtime-config.mjs clear-preview-config')
   })
 })
 

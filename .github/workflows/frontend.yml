@@ -193,8 +193,9 @@ jobs:
   # Cloudflare Pages deploy — needs only release-gate (the single fail-closed check across
   # frontend-unit-build/relayer/keeper/soroban/playwright); pushes and published releases only
   # (never PRs from forks). main -> Production (protected environment); any other pushed branch
-  # -> Preview (aliased by branch name). Needs repo secrets: CLOUDFLARE_API_TOKEN (Pages:Edit),
-  # CLOUDFLARE_ACCOUNT_ID. Runtime env vars/secrets are NOT set here -- they live in the Pages
+  # -> Preview (aliased by branch name). Needs repo secrets: CLOUDFLARE_API_TOKEN
+  # (Cloudflare Pages:Edit + D1:Edit), CLOUDFLARE_ACCOUNT_ID. Runtime env vars/secrets are NOT
+  # set here -- they live in the Pages
   # project (Settings -> Variables and Secrets, per Production/Preview environment).
   #
   # A published release always deploys Production: its ref is refs/tags/<tag>, so ref_name is the
@@ -258,6 +259,9 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Clear generated preview deployment config
+        if: github.event_name == 'release' || github.ref_name == 'main'
+        run: node scripts/runtime-config.mjs clear-preview-config
       - name: Deploy production Pages bundle
         if: github.event_name == 'release' || github.ref_name == 'main'
         uses: cloudflare/wrangler-action@v3
@@ -280,4 +284,6 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: frontend
-          command: pages deploy ./dist --config /tmp/vibing-farmer-wrangler-preview.jsonc --project-name=vibing-farmer --env preview --branch=${{ github.ref_name }}
+          # Pages rejects both --config and --env. The migration step writes a flattened,
+          # preview-only config plus .wrangler/deploy/config.json, Wrangler's supported redirect.
+          command: pages deploy ./dist --project-name=vibing-farmer --branch=${{ github.ref_name }}
