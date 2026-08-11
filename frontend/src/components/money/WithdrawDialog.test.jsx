@@ -228,7 +228,7 @@ describe('WithdrawDialog — G-direct vs C-sponsored fee language, and hedged co
         onClose={() => {}}
       />
     )
-    expect(screen.getByText(/relay sponsors the network fee -- 0 xlm from you/i)).toBeTruthy()
+    expect(screen.getByText(/network fee sponsored by fee-bump relay/i)).toBeTruthy()
     expect(screen.queryByText(/pay the small network fee yourself/i)).toBeNull()
   })
 

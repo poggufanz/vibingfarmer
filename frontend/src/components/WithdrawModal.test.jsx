@@ -105,7 +105,7 @@ describe('WithdrawModal partial mode', () => {
     render(<WithdrawModal {...props} userAddress="CCONTRACTOWNER1" />)
     // Mutation guard: a formulation that renders BOTH lines (rather than branching) would still
     // pass a weaker "sponsored text exists" check -- this also asserts the false claim is absent.
-    expect(screen.getByText(/0 xlm, fee-bump/i)).toBeTruthy()
+    expect(screen.getByText(/sponsored by fee-bump relay/i)).toBeTruthy()
     expect(screen.queryByText(/paid by you, in xlm/i)).toBeNull()
   })
 

@@ -32,8 +32,8 @@ export default function OverviewSection({ session }) {
       <h1 className="h-display">Welcome to the Vibing Farmer API</h1>
       <p className="lede">
         One <span className="mono">vf_</span> key gives your bot the full pipeline: AI strategy,
-        risk scan, unsigned transaction build, and gasless submit via the fee-bump relay. Server
-        secrets stay on VF; signing stays on your side.
+        risk scan, unsigned transaction build, and submit via the fee-bump relay. Server secrets
+        stay on VF; signing stays on your side.
       </p>
 
       {session && stats && (

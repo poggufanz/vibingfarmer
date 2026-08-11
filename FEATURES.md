@@ -16,7 +16,7 @@ This document explains every feature of Vibing Farmer for two audiences at once:
    - [3.3 Eligibility Gate ("F8")](#33-eligibility-gate-f8)
    - [3.4 One-Signature Grant](#34-one-signature-grant)
    - [3.5 Agent Accounts + Session Keys](#35-agent-accounts--session-keys)
-   - [3.6 Gasless Execution](#36-gasless-execution)
+   - [3.6 Sponsored Network Fees](#36-sponsored-network-fees)
    - [3.7 Parallel Agent Swarm](#37-parallel-agent-swarm)
    - [3.8 Real Yield](#38-real-yield)
    - [3.9 Keeper Autonomy + Lifeboat Radar](#39-keeper-autonomy--lifeboat-radar)
@@ -39,7 +39,7 @@ This document explains every feature of Vibing Farmer for two audiences at once:
 
 ### The elevator pitch
 
-Vibing Farmer is an AI-coordinated swarm of autonomous agents that farm yield on Stellar's Soroban smart-contract platform. You tell it how much money, how much risk, and how many "workers" you want. An AI strategist designs an allocation plan, a panel of AI specialists argues about whether it's safe, and a fail-closed risk gate double-checks the facts against live protocol data. You sign your wallet **exactly once**. From that single signature, the app deploys a small swarm of disposable, cryptographically leashed worker accounts that fund themselves, deposit into a real lending pool (Blend Capital), and keep working — compounding interest and standing ready to bail out to safety — without asking you to sign anything else, and without you paying a cent of network gas.
+Vibing Farmer is an AI-coordinated swarm of autonomous agents that farm yield on Stellar's Soroban smart-contract platform. You tell it how much money, how much risk, and how many "workers" you want. An AI strategist designs an allocation plan, a panel of AI specialists argues about whether it's safe, and a fail-closed risk gate double-checks the facts against live protocol data. You sign your wallet **exactly once**. From that single signature, the app deploys a small swarm of disposable, cryptographically leashed worker accounts that fund themselves, deposit into a real lending pool (Blend Capital), and keep working — compounding interest and standing ready to bail out to safety — without asking you to sign anything else. Network fee sponsored by fee-bump relay.
 
 ### The problem: yield farming is a chore
 
@@ -47,7 +47,7 @@ Today, "yield farming" in DeFi typically means: find a vault, check the protocol
 
 ### The one-sentence solution
 
-Vibing Farmer lets a user express intent once (amount, risk tolerance, number of agents) and enforces every boundary of what happens next in cryptography and smart-contract code — a spending allowance with an expiry, not a promise from a bot — while an AI strategist and a council of risk specialists do the deciding, and gas-sponsoring infrastructure means the user never pays a network fee.
+Vibing Farmer lets a user express intent once (amount, risk tolerance, number of agents) and enforces every boundary of what happens next in cryptography and smart-contract code — a spending allowance with an expiry, not a promise from a bot — while an AI strategist and a council of risk specialists do the deciding. Network fee sponsored by fee-bump relay.
 
 ### Explain it to my grandmother
 
@@ -89,10 +89,10 @@ This is the end-to-end user journey, step by step. Each step lists **what the us
 - **User sees:** A single wallet pop-up. That's it — one signature for the whole run.
 - **Under the hood:** The wallet signs a call to `funding_router.grant(owner, budget, expiry_ledger, agents[])`. One selected permission lifetime is encoded as an agent Unix expiry and a SEP-41 allowance ledger cutoff derived from the same captured start time. This one signature simultaneously (a) sets a SEP-41 token allowance from the user to the router (the spending leash) and (b) deploys N fresh `agent_account` contracts, one per worker, each pre-scoped to its own vault, cap, and expiry. See [§3.4](#34-one-signature-grant).
 
-### Step 6 — Agents deploy and deposit, gas-free
+### Step 6 — Agents deploy and deposit
 
 - **User sees:** A live force-graph of orchestrator → worker agents → vault, with nodes lighting up as each agent's deposit lands. No further pop-ups.
-- **Under the hood:** Each worker signs a Soroban authorization entry with its own ephemeral ed25519 **session key** (a "valet key" — see [§3.5](#35-agent-accounts--session-keys)), which authorizes only a deposit into its assigned vault, up to its cap. Workers are dispatched in sequence with a short delay between each to respect relay rate limits (not simultaneously — see the honest note in [§3.7](#37-parallel-agent-swarm)), and one worker's failure does not abort the others. Every transaction is fee-bumped by the app's own relay (see [§3.6](#36-gasless-execution)) — the user's wallet never pays XLM.
+- **Under the hood:** Each worker signs a Soroban authorization entry with its own ephemeral ed25519 **session key** (a "valet key" — see [§3.5](#35-agent-accounts--session-keys)), which authorizes only a deposit into its assigned vault, up to its cap. Workers are dispatched in sequence with a short delay between each to respect relay rate limits (not simultaneously — see the honest note in [§3.7](#37-parallel-agent-swarm)), and one worker's failure does not abort the others. Every transaction is fee-bumped by the app's own relay (see [§3.6](#36-sponsored-network-fees)). Network fee sponsored by fee-bump relay.
 
 ### Step 7 — Vault supplies Blend
 
@@ -324,9 +324,9 @@ revoked            — instant kill flag
 
 ---
 
-### 3.6 Gasless Execution
+### 3.6 Sponsored Network Fees
 
-**What & why.** On most blockchains, "gas" is a fee paid in the network's native token for every transaction — and for a user who just wants USDC yield, having to also hold and manage XLM just to pay fees is friction that kills the whole "set once, vibe forever" pitch. Vibing Farmer runs its own **fee-bump relay**: a server-side wallet that co-signs every allowed transaction and pays its network fee, like a company postage meter that stamps outgoing mail so employees never touch a stamp.
+**What & why.** On most blockchains, "gas" is a fee paid in the network's native token for every transaction. Vibing Farmer runs its own **fee-bump relay**: a server-side wallet that co-signs every allowed transaction and pays its network fee. Network fee sponsored by fee-bump relay.
 
 **The endpoint:** `POST /api/stellar-relay` (`frontend/api/stellar-relay.js`), a Cloudflare Pages Function.
 
@@ -498,7 +498,7 @@ StrategyAttested { attester, strategy_hash, ledger, label }
 
 ### 3.11 Cross-Chain Optional Leg
 
-**What & why.** For users who want exposure to Base-chain yield pools as well, Vibing Farmer has an optional `/farm` flow that bridges USDC from Stellar to Base using Circle's official cross-chain transfer protocol (CCTP v2), then deposits into whitelisted pools using a Base-side session key — all gas-sponsored, mirroring the Stellar-side experience. This leg is explicitly optional and clearly labeled as testnet/demo-grade where real yield protocols aren't reachable yet.
+**What & why.** For users who want exposure to Base-chain yield pools as well, Vibing Farmer has an optional `/farm` flow that bridges USDC from Stellar to Base using Circle's official cross-chain transfer protocol (CCTP v2), then deposits into whitelisted pools using a Base-side session key. Base network fee sponsored by relay, mirroring the Stellar-side experience. This leg is explicitly optional and clearly labeled as testnet/demo-grade where real yield protocols aren't reachable yet.
 
 **Architecture:**
 ```
@@ -520,7 +520,7 @@ Key endpoints (`relayer/src/httpRouter.mjs`, proxied at `/api/vf-cross/*`):
 
 **The Base contract:** `YieldRouter` (live at `0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d`) — no custody (funds move straight through in one transaction), whitelisted pools only (`allowedPool[pool]`), and a performance fee capped at 20% of *yield only*, never principal. Session keys (via ZeroDev's `CallPolicy`) can call *only* `deposit`/`withdraw` on whitelisted pools — `setPool`/`setFee` remain owner-only and are never delegatable.
 
-**ZeroDev session-key mechanics:** a Kernel v3.1 smart account (ERC-4337, Entry Point 0.7) with a permission validator scoped to exactly two call signatures on the YieldRouter, and a ZeroDev-sponsored paymaster covering gas for those calls.
+**ZeroDev session-key mechanics:** a Kernel v3.1 smart account (ERC-4337, Entry Point 0.7) with a permission validator scoped to exactly two call signatures on the YieldRouter. Base network fee sponsored by relay for those calls.
 
 **Honesty about yield on the Base leg:** the three Base-Sepolia pools currently whitelisted (`0x389250…`, `0x5E843A…`, `0xadD3c1…`) are `MockERC4626` contracts doing **honest 1:1 custody of real Circle CCTP USDC** — they do not fabricate yield, because a specific investigation (`relayer/scripts/check-aave-usdc.mjs`, run 2026-07-09) proved that no real lending protocol on Base Sepolia actually accepts Circle's bridged USDC (Aave's testnet deployment lists its own separate faucet token; Morpho, Moonwell, and Compound are mainnet-only on Base). A mainnet-ready `AaveV3Adapter4626` contract exists, unit-tested and fork-tested against real Aave Base-mainnet bytecode, ready to swap in as a drop-in replacement once deployed for real — but it is **not deployed on testnet** because there's nothing real for it to wrap there.
 
@@ -566,7 +566,7 @@ Key endpoints (`relayer/src/httpRouter.mjs`, proxied at `/api/vf-cross/*`):
 
 | Endpoint | Purpose | Rate limit |
 |---|---|---|
-| `POST /api/stellar-relay` | Fee-bump relay (see [§3.6](#36-gasless-execution)) | 15/min |
+| `POST /api/stellar-relay` | Fee-bump relay (see [§3.6](#36-sponsored-network-fees)) | 15/min |
 | `POST /api/ai` | DeepSeek proxy (model + message allowlist) | 30/min |
 | `POST /api/search` | Tavily web-search proxy | 30/min |
 | `POST /api/faucet` | Testnet USDC dispense (per-recipient + global daily caps) | 3/min |
@@ -756,7 +756,7 @@ The three public pages (`/explorer`, `/ecosystem`, `/replay`) are deliberately r
                                           (own fee-bump, allowlist fail-closed)
 
   Optional: Stellar USDC ──CCTP v2 burn──► own Node relayer ──mint──►
-            Base YieldRouter (whitelisted pools, ZeroDev session key, gas-sponsored)
+            Base YieldRouter (whitelisted pools, ZeroDev session key, Base network fee sponsored by relay)
 ```
 
 ---
@@ -841,7 +841,7 @@ Judges reward honesty. Here is exactly what's real, what's an honest testnet sta
 |---|---|---|
 | **Blend Capital lending yield** | ✅ Real | Actual Blend v2 testnet pool; interest and BLND emissions are genuinely accrued and harvested, not simulated |
 | **Circle CCTP bridge (both directions)** | ✅ Real, live-proven | Burn/mint corridor between Stellar and Base Sepolia proven working in both directions |
-| **Fee-bump relay (gasless deposits)** | ✅ Real, live-proven | User genuinely pays 0 XLM; relay wallet funds the network fee |
+| **Fee-bump relay** | ✅ Real, live-proven | Network fee sponsored by fee-bump relay |
 | **One-signature grant** | ✅ Real, live-proven | `funding_router.grant()` deploying N agents + setting the SEP-41 allowance in a single signed transaction |
 | **Lifeboat emergency derisk** | ✅ Real, live-proven | A "whale-attack drill" derisk-then-resume cycle has been executed live on testnet |
 | **Base-side yield pools (MockERC4626)** | ⚠️ Honest testnet stand-in | 1:1 custody of *real* CCTP-bridged USDC, but no fabricated yield — because no real lending protocol on Base Sepolia currently accepts Circle's bridged USDC (verified by a dedicated on-chain check) |
@@ -870,7 +870,7 @@ Judges reward honesty. Here is exactly what's real, what's an honest testnet sta
 - **Mandate** — a time-boxed permission the user grants specifically to the lifeboat radar, allowing it to autonomously pull funds to safety during that window only. Distinct from the funding grant — this mandate authorizes *emergency* action, not deposits.
 - **Fail-closed** — a design principle where, when something can't be verified (a missing fact, an expired permission, an unreachable signal), the system defaults to the safer/more restrictive outcome (reject, alarm, do-nothing) rather than the permissive one.
 - **BLND emissions** — reward tokens paid out by the Blend Capital protocol to lenders, on top of ordinary interest; harvested and (optionally) swapped to USDC by the strategy contract.
-- **ZeroDev Kernel** — an ERC-4337 ("account abstraction") smart-account framework used on the Base side, enabling session keys and gas sponsorship analogous to what the Stellar side achieves with custom accounts and the fee-bump relay.
+- **ZeroDev Kernel** — an ERC-4337 ("account abstraction") smart-account framework used on the Base side, enabling session keys and sponsored Base network fees analogous to what the Stellar side achieves with custom accounts and the fee-bump relay.
 - **BYOK (Bring Your Own Key)** — a design pattern where a user can supply their own API key (for an AI provider or search service) to bypass the app's own server-side key and its rate limits, with the app's key acting only as a zero-setup fallback.
 
 ---
@@ -895,8 +895,8 @@ A: Only if the user has an active, time-boxed mandate granted at that moment. Th
 **Q: Is the yield real, or is this crediting a made-up interest rate?**
 A: The Stellar-side yield is real — USDC is genuinely supplied into the Blend Capital v2 lending pool on testnet, and interest is genuinely accrued and harvested. The optional Base-side pools are explicitly disclosed as honest 1:1 custody vaults (no fabricated yield) because no real lending protocol on Base Sepolia currently accepts the bridged USDC — this is stated plainly in the deployment notes, not hidden.
 
-**Q: Why does the user pay zero gas — who's actually paying?**
-A: The project runs its own funded relayer keypair that fee-bumps every allowlisted transaction. It is not a general-purpose sponsor — it only pays for a short, explicit list of operation types (vault deposit/redeem, router grant/pull, and pinned-wasm deploys), so it cannot be tricked into subsidizing arbitrary contract calls.
+**Q: Who sponsors the network fee?**
+A: The project runs its own funded relayer keypair that fee-bumps every allowlisted transaction. Network fee sponsored by fee-bump relay. It is not a general-purpose sponsor — it only pays for a short, explicit list of operation types (vault deposit/redeem, router grant/pull, and pinned-wasm deploys), so it cannot be tricked into subsidizing arbitrary contract calls.
 
 **Q: How does the user get out, and how fast?**
 A: Several ways, depending on urgency: revoke the whole grant instantly with one signature (works even if the app's relay infrastructure is down); withdraw a single agent's position directly (`owner_withdraw`); or redeem vault shares back to USDC at any time through the normal position UI. None of these require waiting on a cooldown for the user's own exit — cooldowns exist for the *keeper's* rebalancing, not for the user pulling their own funds.

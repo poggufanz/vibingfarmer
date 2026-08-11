@@ -47,7 +47,7 @@ const HOW_STEPS = [
   {
     n: '03',
     title: 'Agents execute within the approved scope.',
-    sub: 'The fee-bump relay covers Stellar network fees.',
+    sub: 'Network fee sponsored by fee-bump relay.',
   },
   {
     n: '04',
@@ -79,7 +79,8 @@ function ValueScreen({ vaults, histories, onConnect }) {
 
           <h1 className="h-display onb-h1">Your USDC can earn yield.</h1>
           <p className="lede onb-sub">
-            Set your limits once. Agents deposit into approved vaults, and network fees are covered.
+            Set your limits once. Agents deposit into approved vaults. Network fee sponsored by
+            fee-bump relay.
           </p>
 
           <button className="btn btn-primary btn-lg onb-cta" onClick={onConnect}>

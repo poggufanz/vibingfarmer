@@ -961,7 +961,7 @@ export default function SettingsPage({
                     )}
                   </Row>
                   <Divider />
-                  <Row label="Relayer" desc="fee-bump relayer, gas cost to user: 0 USDC">
+                  <Row label="Network fee" desc="Sponsored by fee-bump relay.">
                     <span />
                   </Row>
                 </>

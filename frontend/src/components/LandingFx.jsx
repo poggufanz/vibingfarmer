@@ -509,8 +509,8 @@ export default function LandingFx({ rootRef }) {
         })
       }
 
-      // Relay: "0 XLM" arrives like the intro headline — characters blink in
-      // randomly, then keep the broken-neon flicker while on screen. The ping
+      // Relay status arrives like the intro headline — characters blink in randomly,
+      // then keep the broken-neon flicker while on screen. The ping
       // ring (CSS .is-hit) fires once the entrance finishes.
       const relayNum = root.querySelector('.vf-relay__number strong')
       if (relayNum) {

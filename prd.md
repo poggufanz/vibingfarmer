@@ -29,7 +29,7 @@ Yield farmers execute **8+ manual transactions** per rebalance cycle — remove 
 
 ### Elevator Pitch
 
-> AI-coordinated agent swarm for automated real-yield farming on **Stellar/Soroban**. An AI strategist (DeepSeek by default, Venice AI via wallet-funded x402/SIWE, deterministic fallback) generates an allocation strategy that a **multi-perspective AI council** (proposer / risk-compliance / validator debate loop + continuous market monitor) reviews before anything executes. A **fail-closed eligibility gate** checks live protocol facts (DeFiLlama TVL, curated audit data) per target. The user signs **exactly ONE wallet signature** — a `grant` that sets a spending budget and a selected permission lifetime. One selected permission lifetime is encoded as an agent Unix expiry and a SEP-41 allowance ledger cutoff derived from the same captured start time. From that single signature the on-chain **funding router** deploys one fresh, cryptographically-scoped agent account per vault, and the swarm runs gas-free: agents fund themselves within the granted allowance, deposit into a vault that supplies **real Blend lending yield**, and a keeper compounds on a cron while a ledger-speed **lifeboat radar** stands ready to de-risk the vault in an emergency. A real-time force-directed graph tracks every agent's status and memory. An optional cross-chain leg bridges USDC to Base via **Circle CCTP v2** for EVM pool exposure.
+> AI-coordinated agent swarm for automated real-yield farming on **Stellar/Soroban**. An AI strategist (DeepSeek by default, Venice AI via wallet-funded x402/SIWE, deterministic fallback) generates an allocation strategy that a **multi-perspective AI council** (proposer / risk-compliance / validator debate loop + continuous market monitor) reviews before anything executes. A **fail-closed eligibility gate** checks live protocol facts (DeFiLlama TVL, curated audit data) per target. The user signs **exactly ONE wallet signature** — a `grant` that sets a spending budget and a selected permission lifetime. One selected permission lifetime is encoded as an agent Unix expiry and a SEP-41 allowance ledger cutoff derived from the same captured start time. From that single signature the on-chain **funding router** deploys one fresh, cryptographically-scoped agent account per vault. Network fee sponsored by fee-bump relay. Agents fund themselves within the granted allowance, deposit into a vault that supplies **real Blend lending yield**, and a keeper compounds on a cron while a ledger-speed **lifeboat radar** stands ready to de-risk the vault in an emergency. A real-time force-directed graph tracks every agent's status and memory. An optional cross-chain leg bridges USDC to Base via **Circle CCTP v2** for EVM pool exposure.
 
 ### The single-signature Flow (core UX)
 
@@ -37,7 +37,7 @@ Yield farmers execute **8+ manual transactions** per rebalance cycle — remove 
 [user] budget + duration + risk  â”€â”€â–º  ONE wallet signature (router.grant)
         â””â”€ nested SEP-41 approve(budget, expiry)      ← allowance IS the leash
         â””â”€ router deploys N agent accounts             ← signer = fresh session key each
-[autonomous, 0 further signatures, 0 gas]  agent.pull(funding) → vault.deposit → Blend supply
+[autonomous, 0 further signatures, network fee sponsored by fee-bump relay]  agent.pull(funding) → vault.deposit → Blend supply
 [keeper cron]  compound / rebalance          [radar]  emergency de-risk + resume
 [anytime]      revoke = approve(router, 0)   ← user kill switch, 1 signature
 ```
@@ -53,7 +53,7 @@ First run: **1 signature** (was 6 before the funding router, 9 before that). Rep
 | Permission model | On-chain scoped agent accounts: per-agent cap + expiry + fn allowlist (`__check_auth`), budget bounded by SEP-41 allowance with native expiry, user-revocable | full manual | full custody to contract | full custody to contract |
 | AI decision layer | Strategist + council debate + continuous monitor + eligibility gate (fail-closed, live facts) | âŒ | âŒ | curated list |
 | Yield source | **Real Blend v2 lending interest** (not a mock drip) | real | real | real |
-| Gas | 0 for the user (own fee-bump relay, fail-closed allowlist) | user pays | varies | varies |
+| Network fee | Sponsored by fee-bump relay (own relay, fail-closed allowlist) | user pays | varies | varies |
 | Emergency response | Ledger-speed lifeboat radar → vault-level de-risk under a user mandate | manual | âŒ | pause at best |
 | Agent memory + live graph | âœ… per-agent memory, force-graph UI | âŒ | âŒ | âŒ |
 | Cross-chain | Optional Stellarâ†”Base USDC leg via Circle CCTP v2 | manual bridging | âŒ | rare |
@@ -77,10 +77,10 @@ First run: **1 signature** (was 6 before the funding router, 9 before that). Rep
   - Revoke = `approve(router, 0)` — a single signature, instant GLOBAL funding kill switch. Per-agent: `agent_account.revoke()` (owner-signed) flips the on-chain `revoked` flag `__check_auth` enforces and zeroes the agent's vault allowance; the Registry only mirrors it as metadata.
 - Fake-agent attacks are structurally impossible (factory registry, tested), and the agent wasm only authorizes `pull` on its deployer router.
 
-### 3. Agent Swarm (parallel, scoped, gas-free)
+### 3. Agent Swarm (parallel, scoped)
 
 - **Orchestrator** (frontend): session keys generated first → a single grant signature → dispatches N Workers in parallel (`Promise.allSettled`).
-- **Worker agents**: each is a fresh on-chain `agent_account` custom account — `__check_auth` verifies the run's ed25519 session key against a constructor-pinned scope (vault, token, cap per period, expiry, revocable). Deposits are signed by the session key and **fee-bumped by the relay** (user pays 0 XLM).
+- **Worker agents**: each is a fresh on-chain `agent_account` custom account — `__check_auth` verifies the run's ed25519 session key against a constructor-pinned scope (vault, token, cap per period, expiry, revocable). Deposits are signed by the session key and **fee-bumped by the relay**. Network fee sponsored by fee-bump relay.
 - **Agent reuse cache**: valid agents (scope headroom, unexpired) are reused across runs → signature-free repeats.
 - **Memory system**: every agent writes memory entries (step, status, shares, timing, lesson) shown in the graph node detail and fed back to the AI next session.
 
@@ -90,7 +90,7 @@ First run: **1 signature** (was 6 before the funding router, 9 before that). Rep
 - **Keeper** (Cloudflare Worker cron, 15 min, dedicated identity): `compound` / `rebalance` under on-chain cooldown + caps.
 - **Lifeboat radar** (persistent daemon): evaluates every ledger (~6s) — utilization spike, liquidity drop, oracle divergence (real reference feeds, 60s cache) — and submits `emergency_derisk`/`resume` under a user-granted mandate; fail-closed alarm when the mandate is missing.
 
-### 5. Gasless Relay (own infrastructure)
+### 5. Sponsored Network Fees (own infrastructure)
 
 - `/api/stellar-relay` (Cloudflare Pages Function): fee-bumps user/agent-signed inner txs from a funded relayer key. **Fail-closed allowlist**: vault `deposit`/`redeem`, router `grant`/`pull` (env-gated), allowlisted token transfers, and create-from-hash of pinned wasm only. Origin allowlist + per-IP rate limiting + error sanitization on every endpoint.
 
@@ -129,7 +129,7 @@ First run: **1 signature** (was 6 before the funding router, 9 before that). Rep
 | FR-04 | **single-signature grant** (budget + user-chosen expiry) → autonomous runs | Must | âœ… live-proven |
 | FR-05 | Orchestrator: parallel Worker dispatch, per-agent failure isolation | Must | âœ… |
 | FR-06 | Fresh scoped agent account per run (`__check_auth` session keys) | Must | âœ… |
-| FR-07 | Gas-free execution via own fee-bump relay (fail-closed allowlist) | Must | âœ… |
+| FR-07 | Sponsored network fees via own fee-bump relay (fail-closed allowlist) | Must | âœ… |
 | FR-08 | Real Blend v2 lending yield + keeper compound/rebalance | Must | âœ… |
 | FR-09 | Lifeboat: ledger-speed emergency de-risk under user mandate | Must | âœ… |
 | FR-10 | Real-time force-graph + per-agent memory | Must | âœ… |

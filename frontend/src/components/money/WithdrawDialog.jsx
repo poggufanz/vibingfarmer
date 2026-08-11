@@ -443,7 +443,7 @@ export function WithdrawDialog({
             router's known-pool record, so a disabled pool remains sweepable; disabling new deposits
             does not strand or silently zero the position.
           </p>
-          <p>One passkey signature. The relay sponsors Base gas — 0 ETH from you.</p>
+          <p>Base network fee sponsored by relay.</p>
         </div>
       )}
     </Dialog>

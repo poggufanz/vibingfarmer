@@ -255,9 +255,7 @@ const TopBar = ({
         <NetworkBadge networkId={NETWORK_IDS.STELLAR_TESTNET} />
       </div>
       <div className="topbar-right">
-        <span className="topbar-meta">
-          Relayer&nbsp;<b>fee-bump</b>, user gas&nbsp;<b>0</b>
-        </span>
+        <span className="topbar-meta">Network fee sponsored by fee-bump relay.</span>
         {notifications}
         {/* 2026-08-02 polish (audit item #8): there used to be TWO icon buttons here that both
             called onReset ("Restart flow", refresh icon, and "Start over", plus icon) -- two

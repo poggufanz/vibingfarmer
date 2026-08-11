@@ -14,7 +14,7 @@ The industry's usual answer to the tedium — hand a bot full wallet access and 
 
 ## The one-sentence solution
 
-Vibing Farmer lets you state intent once — an amount, a risk level, a number of agents — and enforces every boundary of what happens next in smart-contract code, not in a promise from a bot: a spending allowance with a hard expiry and a single pinned destination vault, decided by an AI strategist and a council of risk specialists, executed gas-free by infrastructure the project runs itself.
+Vibing Farmer lets you state intent once — an amount, a risk level, a number of agents — and enforces every boundary of what happens next in smart-contract code, not in a promise from a bot: a spending allowance with a hard expiry and a single pinned destination vault, decided by an AI strategist and a council of risk specialists, executed through infrastructure the project runs itself. Network fee sponsored by fee-bump relay.
 
 ## What decides the plan before you sign anything
 

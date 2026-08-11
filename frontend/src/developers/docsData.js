@@ -62,7 +62,7 @@ export const ENDPOINTS = [
     method: 'POST',
     path: '/api/vf/submit',
     scope: 'submit',
-    desc: 'Gasless relay: fee-bumps and submits a pre-signed transaction. Only a hash-backed SUCCESS or FAILED response is terminal. If submission is unknown, reconcile by the returned hash; do not rebuild or retry the transaction.',
+    desc: 'Sponsored relay: fee-bumps and submits a pre-signed transaction. Only a hash-backed SUCCESS or FAILED response is terminal. If submission is unknown, reconcile by the returned hash; do not rebuild or retry the transaction.',
     req: `{ "xdr": "AAAA…" }`,
     resp: `{ "hash": "…", "status": "SUCCESS" | "FAILED", "relayer": "G…" }
 

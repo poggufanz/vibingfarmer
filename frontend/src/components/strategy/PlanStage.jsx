@@ -834,8 +834,8 @@ export function PlanStage({
             )}
             <li className="pc-fact-row">
               <span className="pc-fact-dot" aria-hidden="true" />
-              <span>Network fees you pay</span>
-              <span className="pc-fact-value">Zero</span>
+              <span>Network fee</span>
+              <span className="pc-fact-value">Sponsored by fee-bump relay</span>
             </li>
           </ul>
           <p className="pc-provenance">

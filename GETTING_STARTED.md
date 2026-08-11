@@ -26,7 +26,7 @@ Canonical product claims: [`prd.md`](prd.md). Architecture overview: [`README.md
 * **Stellar wallet** on testnet: [Freighter](https://www.freighter.app), xBull, or Albedo
 * **Friendbot** for test XLM: https://friendbot.stellar.org
 * Optional: WSL + Rust + Stellar CLI (only if you build/deploy contracts)
-* Optional: funded `STELLAR_RELAYER_SECRET` for gasless agent txs in local Functions
+* Optional: funded `STELLAR_RELAYER_SECRET` for sponsored agent transactions in local Functions
 
 ***
 
@@ -43,7 +43,7 @@ npm run dev
 
 Open `http://localhost:5173`, connect a testnet wallet.
 
-### Minimal `.dev.vars` (local gasless + AI)
+### Minimal `.dev.vars` (local sponsored fees + AI)
 
 ```env
 # Optional host AI (leave unset for BYOK / fallback-only)
@@ -77,7 +77,7 @@ Addresses and notes: [`deployments/stellar-testnet.json`](deployments/stellar-te
 3. Open **Strategy** wizard: amount, risk, agent count.
 4. Review AI skills + council / eligibility (if shown) → approve.
 5. **a single signature:** `funding_router.grant` (budget + duration).
-6. Workers deposit gas-free via session keys + fee-bump relay.
+6. Workers deposit via session keys + fee-bump relay. Network fee sponsored by fee-bump relay.
 7. Check graph / positions; kill switch = revoke allowance / agent revoke.
 
 Optional: **`/farm`** cross-chain flow needs `relayer/` running + ZeroDev/CCTP env (see `relayer/` and `frontend/.env.example` Base section).
@@ -101,7 +101,7 @@ Deploy/seed scripts live under `scripts/soroban/` (e.g. `deploy-seed.sh`). Never
 ```
 soroban/contracts/          # funding_router, agent_account, vault, blend_strategy, registry, …
 frontend/src/stellar/       # chain client, session keys, relay client
-frontend/api/stellar-relay.js   # gasless fee-bump (replaces 1Shot)
+frontend/api/stellar-relay.js   # sponsored fee-bump (replaces 1Shot)
 frontend/src/orchestrator.js
 frontend/src/worker.js
 frontend/src/strategy/      # council, gates, Monte Carlo, monitor

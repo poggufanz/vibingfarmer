@@ -1703,8 +1703,8 @@ describe('the plan so far aside', () => {
     fireEvent.click(screen.getByRole('radio', { name: /balanced/i }))
     const aside = screen.getByRole('complementary', { name: /the plan so far/i })
     expect(aside.textContent).toMatch(/blend/i)
-    expect(aside.textContent).toMatch(/network fees/i)
-    expect(aside.textContent).toMatch(/zero/i)
+    expect(aside.textContent).toMatch(/network fee/i)
+    expect(aside.textContent).toMatch(/sponsored by fee-bump relay/i)
   })
 
   it('places the Vault Advisor directly below the plan summary and opens customization', () => {

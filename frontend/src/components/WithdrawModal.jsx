@@ -393,7 +393,9 @@ export default function WithdrawModal({
                 <div className="grant-receipt-row">
                   <span className="grant-receipt-k">Network fee</span>
                   {isSponsoredOwner ? (
-                    <span className="grant-receipt-v grant-receipt-v--ok">0 XLM, fee-bump</span>
+                    <span className="grant-receipt-v grant-receipt-v--ok">
+                      Sponsored by fee-bump relay
+                    </span>
                   ) : (
                     <span className="grant-receipt-v">Paid by you, in XLM</span>
                   )}
@@ -550,14 +552,17 @@ export default function WithdrawModal({
                   </div>
                   <div className="grant-receipt-row">
                     <span className="grant-receipt-k">Network fee</span>
-                    <span className="grant-receipt-v grant-receipt-v--ok">0 XLM, fee-bump</span>
+                    <span className="grant-receipt-v grant-receipt-v--ok">
+                      Sponsored by fee-bump relay
+                    </span>
                   </div>
                 </div>
               )}
 
               <div className="wd-callout">
                 First partial withdraw from an agent asks for one signature to register its exit
-                key. After that: zero signatures, zero gas, two relayed transactions.
+                key. After that: zero signatures and two relayed transactions. Network fee sponsored
+                by fee-bump relay.
               </div>
             </div>
           )}

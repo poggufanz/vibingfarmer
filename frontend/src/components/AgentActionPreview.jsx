@@ -61,7 +61,9 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
               </div>
               <div className="grant-receipt-row">
                 <span className="grant-receipt-k">Network fee</span>
-                <span className="grant-receipt-v grant-receipt-v--ok">~0, fee-bump relayer</span>
+                <span className="grant-receipt-v grant-receipt-v--ok">
+                  Sponsored by fee-bump relay
+                </span>
               </div>
               <div className="grant-receipt-row">
                 <span className="grant-receipt-k">Est. receive</span>
@@ -90,7 +92,9 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
               </div>
               <div className="grant-receipt-row">
                 <span className="grant-receipt-k">Network fee</span>
-                <span className="grant-receipt-v grant-receipt-v--ok">~0, fee-bump relayer</span>
+                <span className="grant-receipt-v grant-receipt-v--ok">
+                  Sponsored by fee-bump relay
+                </span>
               </div>
             </>
           )}

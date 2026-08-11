@@ -414,7 +414,7 @@ export function confirmationsCopy(count) {
 // own fee; a C (VF Wallet/passkey) account can never hold or spend XLM, so the relay sponsors it.
 export function feeModelCopy(model) {
   return model === 'C'
-    ? 'Your wallet signs an authorization; our relay sponsors the network fee -- 0 XLM from you.'
+    ? 'Network fee sponsored by fee-bump relay.'
     : 'You sign and submit directly, and you pay the small network fee yourself, in XLM.'
 }
 

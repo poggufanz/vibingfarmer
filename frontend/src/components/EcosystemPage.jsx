@@ -237,7 +237,7 @@ function ArchDiagram() {
       className="arch-svg"
       viewBox="0 0 800 560"
       role="img"
-      aria-label="Architecture: the user's limits inform the AI strategy and council gate; one Funding Router signature deploys scoped agent accounts; the agents deposit — fees covered by the relay — into a single Autofarm vault, which supplies the Blend v2 pool for yield"
+      aria-label="Architecture: the user's limits inform the AI strategy and council gate; one Funding Router signature deploys scoped agent accounts; the agents deposit — network fee sponsored by fee-bump relay — into a single Autofarm vault, which supplies the Blend v2 pool for yield"
     >
       <defs>
         <filter id="arch-glow-f">
@@ -248,7 +248,7 @@ function ArchDiagram() {
           </feMerge>
         </filter>
       </defs>
-      {/* gas badge — annotates the relayed deposit hop (fee-bump relay covers agent fees) */}
+      {/* Network-fee badge annotates the relayed deposit hop. */}
       <rect x={585} y={392} width={180} height={22} rx={6} className="arch-gas-bg" />
       <text
         x={675}
@@ -257,7 +257,7 @@ function ArchDiagram() {
         textAnchor="middle"
         dominantBaseline="central"
       >
-        Fee-bump relay: fees covered
+        Network fee sponsored by fee-bump relay
       </text>
       {/* edges first (behind nodes) */}
       {ARCH_EDGES.map((e, i) => (

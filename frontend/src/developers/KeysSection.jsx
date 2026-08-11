@@ -185,7 +185,7 @@ export default function KeysSection({ session }) {
       <h1 className="h-display">API keys</h1>
       <p className="lede">
         Authenticate with a Stellar wallet, create scoped secret keys, and call strategy, risk scan,
-        and gasless deposit relay endpoints. Server-side provider credentials stay on VF. You
+        and sponsored deposit relay endpoints. Server-side provider credentials stay on VF. You
         receive one <span className="mono">vf_</span> key, shown <b>once</b> when created.
       </p>
 
