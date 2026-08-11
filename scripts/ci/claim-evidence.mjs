@@ -30,13 +30,15 @@ export const REQUIRED_CLAIM_IDS = Object.freeze([
 ]);
 
 const CANDIDATE_LOCATORS = Object.freeze([
-  "https://github.com/poggufanz/vibingfarmer/tree/v1.15.1-beta",
+  "https://github.com/poggufanz/vibingfarmer/tree/v1.15.2-beta",
   "https://dev.vibing-farmer.pages.dev",
 ]);
 
 const CANDIDATE_CLAIM_ID = "candidate-same-commit";
 const CANDIDATE_VERIFICATION_MODE = "required";
 const DEFAULT_CLOUDFLARE_API_BASE_URL = "https://api.cloudflare.com/client/v4";
+const CLOUDFLARE_DEPLOYMENTS_PER_PAGE = 25;
+const MAX_CLOUDFLARE_DEPLOYMENT_PAGES = 100;
 
 const CONTRACT_VERIFICATIONS = Object.freeze({
   "permission-lifetime":
@@ -158,7 +160,7 @@ export const CLAIM_CONTRACTS = Object.freeze(
 );
 
 const EXPECTED_CANDIDATE = Object.freeze({
-  tag: "v1.15.1-beta",
+  tag: "v1.15.2-beta",
   targetBranch: "dev",
   cloudflareProject: "vibing-farmer",
 });
@@ -597,6 +599,35 @@ function successfulPreviewDeployment(deployment) {
   );
 }
 
+function matchingPreviewDeployment(
+  deployment,
+  requestedUrl,
+  expectedSha,
+  expectedBranch,
+) {
+  if (!successfulPreviewDeployment(deployment)) return false;
+  const urls = deploymentUrls(deployment);
+  if (
+    requestedUrl &&
+    !urls.some((url) => previewUrlsMatch(url, requestedUrl))
+  ) {
+    return false;
+  }
+  const commitSha = deploymentCommitSha(deployment);
+  if (!isValidSha(commitSha)) return false;
+  if (expectedSha && commitSha !== expectedSha) return false;
+  if (deploymentBranch(deployment) !== expectedBranch) return false;
+  return urls.some((url) => {
+    if (requestedUrl) return previewUrlsMatch(url, requestedUrl);
+    try {
+      previewUrl(url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /**
  * Resolve a preview's commit and URL from Cloudflare's deployment API. The URL supplied by the
  * operator only selects a deployment when present; otherwise the expected commit and branch select
@@ -638,62 +669,83 @@ export async function resolveCloudflarePreview({
   } catch {
     throw new Error("Cloudflare API base URL is invalid");
   }
-  endpoint.searchParams.set("per_page", "100");
+  endpoint.searchParams.set(
+    "per_page",
+    String(CLOUDFLARE_DEPLOYMENTS_PER_PAGE),
+  );
   endpoint.searchParams.set("env", "preview");
 
-  let response;
-  try {
-    response = await fetchImpl(endpoint, {
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        Accept: "application/json",
-      },
-    });
-  } catch (error) {
-    throw new Error(`unable to read Cloudflare deployments: ${error.message}`);
-  }
-  if (!response?.ok) {
-    throw new Error(
-      `Cloudflare deployments request failed with HTTP ${response?.status ?? "unknown"}`,
-    );
-  }
+  let deployment;
+  for (let page = 1; page <= MAX_CLOUDFLARE_DEPLOYMENT_PAGES; page += 1) {
+    endpoint.searchParams.set("page", String(page));
 
-  let payload;
-  try {
-    payload = await response.json();
-  } catch (error) {
-    throw new Error(
-      `Cloudflare deployments response was not JSON: ${error.message}`,
-    );
-  }
-  if (payload?.success !== true || !Array.isArray(payload.result)) {
-    throw new Error(
-      "Cloudflare deployments response was unsuccessful or malformed",
-    );
-  }
+    let response;
+    try {
+      response = await fetchImpl(endpoint, {
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          Accept: "application/json",
+        },
+      });
+    } catch (error) {
+      throw new Error(
+        `unable to read Cloudflare deployments: ${error.message}`,
+      );
+    }
+    if (!response?.ok) {
+      throw new Error(
+        `Cloudflare deployments request failed with HTTP ${response?.status ?? "unknown"}`,
+      );
+    }
 
-  const deployment = payload.result.find((candidate) => {
-    if (!successfulPreviewDeployment(candidate)) return false;
-    const urls = deploymentUrls(candidate);
+    let payload;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      throw new Error(
+        `Cloudflare deployments response was not JSON: ${error.message}`,
+      );
+    }
+    if (payload?.success !== true || !Array.isArray(payload.result)) {
+      throw new Error(
+        "Cloudflare deployments response was unsuccessful or malformed",
+      );
+    }
+
+    deployment = payload.result.find((candidate) =>
+      matchingPreviewDeployment(
+        candidate,
+        requestedUrl,
+        expectedSha,
+        expectedBranch,
+      ),
+    );
+    if (deployment) break;
+
+    if (payload.result_info === undefined) break;
+    if (!isPlainObject(payload.result_info)) {
+      throw new Error(
+        "Cloudflare deployments response was unsuccessful or malformed",
+      );
+    }
+    const totalPages = payload.result_info.total_pages;
     if (
-      requestedUrl &&
-      !urls.some((url) => previewUrlsMatch(url, requestedUrl))
-    )
-      return false;
-    const commitSha = deploymentCommitSha(candidate);
-    if (!isValidSha(commitSha)) return false;
-    if (expectedSha && commitSha !== expectedSha) return false;
-    if (deploymentBranch(candidate) !== expectedBranch) return false;
-    return urls.some((url) => {
-      if (requestedUrl) return previewUrlsMatch(url, requestedUrl);
-      try {
-        previewUrl(url);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-  });
+      !Number.isSafeInteger(totalPages) ||
+      totalPages < 1 ||
+      totalPages < page
+    ) {
+      throw new Error(
+        "Cloudflare deployments response was unsuccessful or malformed",
+      );
+    }
+    if (
+      payload.result.length < CLOUDFLARE_DEPLOYMENTS_PER_PAGE ||
+      page >= totalPages
+    ) {
+      break;
+    }
+  }
+
   if (!deployment) {
     throw new Error(
       "no successful Cloudflare preview deployment matched the requested URL (when supplied), branch, and candidate commit",
