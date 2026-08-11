@@ -6,7 +6,7 @@ Everything below runs on **Stellar testnet** — no real funds are involved.
 2. Create a **VF Wallet** — passkey-based, no seed phrase and no extension required. Prefer your own? Freighter, xBull, and Albedo all work on testnet too.
 3. Get test USDC from VF Wallet's **built-in faucet**.
 4. Go to **Strategy** → set the amount, risk level, and number of agents → review the AI's plan → sign **once**.
-5. Watch your agents deposit in parallel, gas-free, and track every decision on the **Agent** dashboard.
+5. Watch your agents deposit in parallel and track every decision on the **Agent** dashboard. Network fee sponsored by fee-bump relay.
 
 ## The happy path, step by step
 
@@ -34,9 +34,9 @@ Underneath both stages, a fail-closed eligibility gate checks each candidate pro
 
 This is the one signature the whole product is built around. It does two things in a single wallet pop-up: it sets a SEP-41 token allowance from you to the router (a budget capped at what you approved, with a hard expiry ledger), and it deploys one fresh `agent_account` per worker, each pre-scoped at creation to its own vault, its own spending cap, and that same expiry. Both effects come from the same signed transaction because your wallet is the source account for both the router's `require_auth()` and the nested token `approve()` call underneath it — there's no second signature hiding behind the first.
 
-### 6. Workers deposit gas-free using ephemeral session keys plus the fee-bump relay
+### 6. Workers deposit using ephemeral session keys plus the fee-bump relay
 
-Each worker agent signs its own deposit with a throwaway ed25519 session key generated just for it — not your wallet key, and not reusable outside that agent's scope. The signed transaction goes to the app's own fee-bump relay, which wraps it in a Stellar fee-bump transaction and pays the network fee from its own funded keypair, so your wallet never spends XLM. The relay only fee-bumps a short allowlist of operation types (vault deposit/redeem, router grant/pull, pinned-wasm deploys) — anything else is refused before it's signed. Workers are dispatched one after another with a short gap between each (to stay under the relay's rate limit, not literally all at once), but one worker's failure never blocks or rolls back the others.
+Each worker agent signs its own deposit with a throwaway ed25519 session key generated just for it — not your wallet key, and not reusable outside that agent's scope. The signed transaction goes to the app's own fee-bump relay, which wraps it in a Stellar fee-bump transaction and pays the network fee from its own funded keypair. Network fee sponsored by fee-bump relay. The relay only fee-bumps a short allowlist of operation types (vault deposit/redeem, router grant/pull, pinned-wasm deploys) — anything else is refused before it's signed. Workers are dispatched one after another with a short gap between each (to stay under the relay's rate limit, not literally all at once), but one worker's failure never blocks or rolls back the others.
 
 ### 7. Check the force-graph and your positions
 
@@ -50,7 +50,7 @@ Farming again with the same wallet, vault, and network doesn't always need a new
 
 **The strategy step seems to skip the AI, or feels instant.** That's the deterministic fallback, not a bug. If every AI provider is down, rate-limited, or unreachable within its timeout, the strategist steps down through Venice, a DeepSeek proxy, and finally a fallback that does an equal split across the vault catalog with no AI call at all. It cannot fail and cannot hang — you'll still get a valid, capped strategy to review, just without AI-written reasoning behind each pick.
 
-**The grant signature seems to cost gas, or takes longer than expected.** The relay is preferred for `funding_router.grant` so you pay 0 XLM, but if the relay is unavailable, the flow falls back to submitting the signed transaction directly, with your wallet paying the network fee — the run isn't blocked waiting on relay infrastructure, it just stops being gas-free for that one transaction. Revoking (`token.approve(router, 0)`) is deliberately *never* routed through the relay in the first place, precisely so the kill switch keeps working even when the relay is down.
+**The grant signature seems to take longer than expected.** The relay is preferred for `funding_router.grant`. Network fee sponsored by fee-bump relay. If the relay is unavailable, the flow falls back to submitting the signed transaction directly, with your wallet paying the network fee — the run isn't blocked waiting on relay infrastructure. Revoking (`token.approve(router, 0)`) is deliberately *never* routed through the relay in the first place, precisely so the kill switch keeps working even when the relay is down.
 
 **Farming again didn't ask for a signature.** This is expected — see "Repeat runs can be free of signatures" above. If you'd rather force a fresh grant every time, revoke your existing allowance first (Settings → Wallet), which clears the headroom that repeat runs depend on.
 

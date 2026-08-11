@@ -36,6 +36,7 @@ import { Icon, Sidebar, TopBar, STEPS } from './components.jsx'
 // keeping its own copy — one wrapper definition, not two that can drift.
 import { StrategyRoute } from './components/strategy/StrategyRoute.jsx'
 import { strategyFlowReducer, initialStrategyFlowState } from './strategy/flowState.js'
+import { bindPlanToPermissionWindow } from './strategy/permissionWindow.js'
 import { preflightPermission, toPermissionDecisionView } from './strategy/reusePreflight.js'
 import { PermissionPhaseError } from './strategy/permissionError.js'
 import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
@@ -1218,14 +1219,17 @@ export function hasLiveScopeForVault(rows, vaultAddress) {
 // prover carries no timestamp of its own, and ProtectStage's V3 review renders an "As of"
 // freshness stamp exactly like V2's does. Captured at the moment this check resolves, the same
 // point V2's own timestamp is taken.
-export function composeV3Decision(raw, { plan, reviewedBudgets, agentInits }) {
+export function composeV3Decision(
+  raw,
+  { plan, reviewedBudgets, agentInits, checkedAt = Math.floor(Date.now() / 1000) }
+) {
   if (raw.version !== 3) return raw
   return {
     ...raw,
     planFingerprint: plan.planFingerprint,
     reviewedBudgets,
     reviewedAgentInits: agentInits,
-    checkedAt: Math.floor(Date.now() / 1000),
+    checkedAt,
   }
 }
 
@@ -2294,6 +2298,7 @@ const App = () => {
           vaultName: 'Emergency Exit',
           vaultAddress: alert.vaultAddress,
           workerLabel: 'RiskWatcher',
+          channel: ok[0].channel,
           network: 'stellar-testnet',
         })
         addLog({
@@ -3648,7 +3653,12 @@ const App = () => {
   }
 
   async function onRetryPreflight({ durationSeconds }) {
-    const plan = strategyFlowRef.current.plan
+    const checkedAt = Math.floor(Date.now() / 1000)
+    const plan = bindPlanToPermissionWindow(strategyFlowRef.current.plan, {
+      checkedAt,
+      durationSeconds,
+    })
+    dispatchFlow({ type: 'PERMISSION_WINDOW_BOUND', plan })
     const bridgeAgent = plan.agents.find((a) => a.kind === 'bridge')
     const baseKernel = bridgeAgent ? baseView.mandateView?.kernelAddress : null
     const agentInits = plan.agents.map((a) => planAgentToAgentInit(a, baseKernel))
@@ -3662,10 +3672,16 @@ const App = () => {
         agentInits,
         reviewedBudgets,
         durationSeconds,
+        nowSec: checkedAt,
         activeAccount: captured,
         getCurrentActiveAccount: () => activeAccountRef.current,
       })
-      const composed = composeV3Decision(raw, { plan, reviewedBudgets, agentInits })
+      const composed = composeV3Decision(raw, {
+        plan,
+        reviewedBudgets,
+        agentInits,
+        checkedAt,
+      })
       const decision = toPermissionDecisionView(composed)
       dispatchFlow({ type: 'PREFLIGHT_READY', decision })
       return decision

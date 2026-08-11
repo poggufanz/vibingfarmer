@@ -109,8 +109,8 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
 
       <h1 className="h-display">How much do you want to put to work?</h1>
       <p className="lede">
-        Pick an amount and risk level. We build a plan, you review it, then sign once. Network fees
-        are covered. You can revoke anytime.
+        Pick an amount and risk level. We build a plan, you review it, then sign once. Network fee
+        sponsored by fee-bump relay. You can revoke anytime.
       </p>
 
       <div className="amount-block">
@@ -246,7 +246,7 @@ const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) =
       <h1 className="h-display">Connect your wallet</h1>
       <p className="lede">
         Use Freighter, xBull, or Albedo. Next you will set a spending budget with one signature.
-        Network fees stay covered.
+        Network fee sponsored by fee-bump relay.
       </p>
 
       {phase === 'idle' && (
@@ -286,9 +286,7 @@ const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) =
             ]}
           />
           <div className="action-row">
-            <div className="foot-note">
-              The relayer fee-bumps the authorization transaction. You pay <b>0 XLM</b>.
-            </div>
+            <div className="foot-note">Network fee sponsored by fee-bump relay.</div>
             <div className="flex gap-2">
               <button className="btn btn-ghost" onClick={onCancel}>
                 Cancel
@@ -308,7 +306,7 @@ const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) =
           rows={[
             { k: 'Type', v: 'Ed25519 session key', accent: true },
             { k: 'Relayer', v: 'Fee-bump relayer' },
-            { k: 'Network fee', v: '0 XLM, paid by relayer', accent: true },
+            { k: 'Network fee', v: 'Sponsored by fee-bump relay', accent: true },
             { k: 'Status', v: 'Confirming…' },
           ]}
           pending
@@ -394,7 +392,7 @@ const UpgradedCallout = ({ onDone }) => (
             letterSpacing: '-0.01em',
           }}
         >
-          Ed25519 session keys. You pay 0 XLM; the fee-bump relayer covers the network fee.
+          Network fee sponsored by fee-bump relay.
         </div>
       </div>
       <button className="btn btn-primary" onClick={onDone}>
@@ -649,7 +647,7 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
               marginTop: -4,
             }}
           >
-            Grant only. Network fee covered.
+            Network fee sponsored by fee-bump relay.
           </span>
         </div>
       </div>
@@ -673,7 +671,7 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
 
       <div className="action-row" style={{ marginTop: 36 }}>
         <div className="foot-note">
-          On-chain. The relayer pays network fees. Revoke from the home page anytime.
+          Network fee sponsored by fee-bump relay. Revoke from the home page anytime.
         </div>
         <div className="flex gap-2">
           <a

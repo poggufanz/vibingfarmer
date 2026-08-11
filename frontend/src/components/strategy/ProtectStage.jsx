@@ -725,6 +725,16 @@ export function ProtectStage({
             </div>
           )}
 
+          {decision && phase === 'review' && (
+            <div className="pc-protect-review-lifetime">
+              <p>Permission lifetime: {preset.label}</p>
+              <p>
+                Stellar stores this as an agent timestamp and an allowance ledger cutoff derived
+                from the same lifetime.
+              </p>
+            </div>
+          )}
+
           {decision && decision.mode === 'reuse' && usableReuse && (
             <p>0 wallet confirmations needed -- this permission already covers this run.</p>
           )}
@@ -983,7 +993,7 @@ export function ProtectStage({
               })}
               <p>Each agent signs with its own separate session key.</p>
               <p>Each agent can be stopped on its own, independent of the others.</p>
-              <p>Gas is sponsored you pay no XLM for this run.</p>
+              <p>Network fee sponsored by fee-bump relay.</p>
             </div>
           </div>
         )}

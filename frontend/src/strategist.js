@@ -23,6 +23,7 @@ import { loadSettings } from './settingsStore.js'
 import { hashStrategy } from './attestation.js'
 import { buildStrategyState, enforceActionSpace, scoreReward, riskCeiling } from './strategy/mdp.js'
 import { expandAgentSlots } from './strategy/planModel.js'
+import { venueYield } from './strategy/venueTruth.js'
 
 const DISPLAY_PROSE_RULE =
   'Write user-facing prose as one plain sentence in sentence case. Do not use em dashes, en dashes, middle dots, emoji, headings, hype, or filler.'
@@ -446,29 +447,54 @@ Select optimal vault(s) from the catalog above. Trust only each entry's \`yield\
 
     // Deterministic tamper-proof hash of the ENFORCED strategy (for on-chain attestation)
     const strategyHash = hashStrategy({ ...parsed, generatedBy: provider.name })
+    const entryFor = (vault) => {
+      const address = String(vault?.address || '').toLowerCase()
+      const protocol = String(vault?.protocol || '').toLowerCase()
+      const matches = vaultData.filter((entry) => entry.address?.toLowerCase() === address)
+      if (protocol) {
+        return matches.find((entry) => entry.protocol?.toLowerCase() === protocol)
+      }
+      return matches.length === 1 ? matches[0] : undefined
+    }
+    const matchedYieldFor = (vault) => {
+      const entry = entryFor(vault)
+      if (!entry) return null
+      const state = venueYield(entry)
+      return state.state === 'live' ? state.apy : null
+    }
+    const matchedApys = parsed.selected_vaults.map(matchedYieldFor)
+    const strategyYieldEvidence =
+      parsed.selected_vaults.length > 0 && matchedApys.every((apy) => apy !== null)
+        ? 'live-venue'
+        : null
+    const blendedApy =
+      strategyYieldEvidence === 'live-venue'
+        ? matchedApys
+            .reduce((sum, apy, i) => sum + apy * (parsed.selected_vaults[i].allocation || 0), 0)
+            .toFixed(2)
+        : null
     // Persist strategy session + per-vault AI reasoning to history (localStorage)
     saveStrategy({
       amountUsdc: amount,
       riskLevel,
       numVaults: safeNumVaults,
-      vaultsSelected: parsed.selected_vaults.map((v) => ({
+      vaultsSelected: parsed.selected_vaults.map((v, i) => ({
         name: v.name,
         protocol: v.protocol,
-        apy: v.expected_apy,
+        apy: matchedApys[i],
         allocation: v.allocation,
       })),
       strategySource: provider.name,
       skillSource: skill.source,
       vaultDataSource,
       marketContextUsed: marketContext !== null,
-      blendedApy: parsed.selected_vaults
-        .reduce((sum, v) => sum + (v.expected_apy || 0) * (v.allocation || 0), 0)
-        .toFixed(2),
+      blendedApy,
+      yieldEvidence: strategyYieldEvidence,
       strategyHash,
       dagTimings: dag.timings,
       dagWallMs: Math.round(dag.wallMs),
     })
-    parsed.selected_vaults.forEach((v) => {
+    parsed.selected_vaults.forEach((v, i) => {
       if (v.reasoning)
         saveReasoning({
           vaultName: v.name,
@@ -476,7 +502,8 @@ Select optimal vault(s) from the catalog above. Trust only each entry's \`yield\
           riskTier: v.risk_tier,
           yieldSource: v.yield_source_type,
           reasoning: v.reasoning,
-          expectedApy: v.expected_apy,
+          expectedApy: matchedApys[i],
+          yieldEvidence: matchedApys[i] !== null ? 'live-venue' : null,
           amountUsdc: amount,
           riskLevel,
           modelUsed: provider.model,
@@ -599,6 +626,7 @@ function shortRisk(riskLevel) {
  */
 export function buildFallbackForParams(amount, riskLevel) {
   const venue = VAULT_CATALOG[0]
+  const yieldState = venueYield(venue)
   const agents = expandAgentSlots({
     risk: shortRisk(riskLevel),
     stellarUnits: toBaseUnits(amount),
@@ -609,7 +637,7 @@ export function buildFallbackForParams(amount, riskLevel) {
     address: venue?.address,
     name: venue?.name,
     allocation: 1 / count,
-    expectedApy: venue?.apy ?? null,
+    expectedApy: yieldState.state === 'live' ? yieldState.apy : null,
   }))
   return {
     selected_vaults: vaults,

@@ -286,7 +286,7 @@ describe('TopBar', () => {
     // (:root default + [data-palette='mono-slate'/'liquid-mint'/'bone-paper']) -- this guard only
     // ever renders the default :root palette, so the title says so rather than implying full
     // palette coverage it doesn't have.
-    'item 10 (owner report), :root palette only: "Relayer fee-bump, user gas 0" reads at >=4.5:1 ' +
+    'item 10 (owner report), :root palette only: "Network fee sponsored by fee-bump relay." reads at >=4.5:1 ' +
       "against the bar's real painted background, measured in a real Chromium layout engine",
     async () => {
       const { container } = render(<TopBar {...baseProps} />)

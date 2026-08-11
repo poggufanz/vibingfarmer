@@ -1,0 +1,65 @@
+# Release claim evidence matrix
+
+Candidate: `v1.15.0-beta` targeting `dev` in the `vibing-farmer` Cloudflare Pages project.
+
+The machine-readable source of truth is [`release/evidence-matrix.json`](release/evidence-matrix.json).
+Every row names an owner, points to checked-in evidence, and includes the command used to verify
+it. The candidate row stays `pending` until a successful preview exists; ordinary PR/dev CI is
+allowed to pass in that pre-candidate state, but the exact `v1.15.0-beta` tag-push workflow run is
+the authoritative candidate promotion proof. Its required candidate step must resolve the tag and
+preview before the candidate claim can be treated as proven. The CI `claim-evidence` job validates
+the matrix, scans public copy, and evaluates the active feature freeze before the aggregate
+`release-gate` can pass.
+
+## Candidate locator
+
+The annotated Git tag `v1.15.0-beta` is the candidate locator. We intentionally use an annotated
+tag instead of publishing a GitHub Release: in this repository, publishing a GitHub Release
+triggers the production Cloudflare Pages deployment. The candidate tag and the successful
+Cloudflare preview must resolve to the same commit. Ordinary CI does not invent that proof: the
+candidate row remains `pending` until the exact tag-push run enters required mode automatically.
+That run peels `github.ref_name`'s annotated tag from the full-history local Git object database
+and queries the authenticated Cloudflare Pages deployment API for a successful `dev` preview whose
+metadata commit equals the tag target. The operator-supplied preview URL is optional and only
+narrowing; Cloudflare metadata is the source of the preview SHA and URL, so equal caller strings
+cannot prove the claim. A manual `workflow_dispatch` run may retry the same resolver but is not the
+only proof path.
+
+The matrix sets `candidate.productionPublish` to `false`. If GitHub nevertheless invokes the
+workflow with `GITHUB_EVENT_NAME=release`, `claim-evidence` exits with policy status `1` before
+the aggregate `release-gate`; because `deploy` needs only that gate, a published release cannot
+reach the production Pages deployment.
+
+Candidate verification prerequisites: push the annotated tag `v1.15.0-beta` so the full-history
+checkout can resolve it. The automatic tag-push run queries Cloudflare for a successful `dev`
+preview by the tag target (the preview URL need not be supplied). The repository must provide
+`CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN` allowed to read Pages deployments for the
+`vibing-farmer` project. The candidate workflow is a proof step only; tag pushes never enter
+preview or production deploy.
+
+## Claims
+
+| ID                        | Owner    | Complete local evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Exact verification                                                                                                                                                                                                                                                                                                         |
+| ------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `permission-lifetime`     | strategy | `frontend/src/strategy/permissionWindow.js`, `frontend/src/strategy/permissionWindow.test.js`, `frontend/src/strategy/flowState.js`, `frontend/src/strategy/flowState.test.js`, `frontend/src/stellar/grant.js`, `frontend/src/stellar/grant.test.js`, `frontend/src/orchestrator.js`, `frontend/src/orchestrator.test.js`, `frontend/src/orchestrator.router.test.js`, `frontend/src/orchestrator.baseleg.test.js`, `frontend/src/orchestrator.unavailable.test.js`, `frontend/src/components/strategy/ProtectStage.jsx`, `frontend/src/components/strategy/ProtectStage.test.jsx`                                                                                                                                              | `cd frontend && npx vitest run src/strategy/permissionWindow.test.js src/strategy/flowState.test.js src/stellar/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx`                |
+| `yield-availability`      | frontend | `frontend/src/strategy/venueTruth.js`, `frontend/src/strategy/venueTruth.test.js`, `frontend/src/components/strategy/PlanStage.jsx`, `frontend/src/components/strategy/PlanStage.test.jsx`, `frontend/src/components/OnboardingFlow.jsx`, `frontend/src/components/OnboardingFlow.test.jsx`, `frontend/src/components/VaultDetailPage.jsx`, `frontend/src/components/VaultDetailPage.test.jsx`, `frontend/src/history.js`, `frontend/src/history.yield.test.js`, `frontend/src/components/HistoryPanel.jsx`, `frontend/src/components/HistoryPanel.test.jsx`, `frontend/src/strategist.js`, `frontend/src/strategist.yield.test.js`, `frontend/src/components/TxDetailPage.jsx`, `frontend/src/components/TxDetailPage.test.jsx` | `cd frontend && npx vitest run src/strategy/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history.yield.test.js src/components/HistoryPanel.test.jsx src/strategist.yield.test.js src/components/TxDetailPage.test.jsx` |
+| `sponsored-network-fee`   | copy     | `scripts/ci/public-claim-scan.mjs`, `scripts/ci/public-claim-scan.test.mjs`, `frontend/src/history.js`, `frontend/src/history.yield.test.js`, `frontend/src/stellar/exit.js`, `frontend/src/stellar/exit.test.js`, `frontend/src/agents/agentController.js`, `frontend/src/agents/agentController.test.js`, `frontend/src/stellar/partialWithdraw.js`, `frontend/src/stellar/partialWithdraw.test.js`, `frontend/src/components/TxDetailPage.jsx`, `frontend/src/components/TxDetailPage.test.jsx`                                                                                                                                                                                                                               | `node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history.yield.test.js src/stellar/exit.test.js src/agents/agentController.test.js src/stellar/partialWithdraw.test.js src/components/TxDetailPage.test.jsx`                               |
+| `stellar-explorer-counts` | explorer | `frontend/src/stellar/deploymentFacts.js`, `frontend/src/stellar/deploymentFacts.test.js`, `frontend/src/components/ExplorerPage.jsx`, `frontend/src/components/ExplorerPage.test.jsx`, `deployments/stellar-testnet.json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `cd frontend && npx vitest run src/stellar/deploymentFacts.test.js src/components/ExplorerPage.test.jsx`                                                                                                                                                                                                                   |
+| `candidate-same-commit`   | release  | `release/specs/2026-08-11-release-claim-truth-design.md`, `.github/workflows/frontend.yml`, `scripts/ci/claim-evidence.mjs`, `scripts/ci/claim-evidence.test.mjs`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `CANDIDATE_VERIFICATION_MODE=required CANDIDATE_TAG=$CANDIDATE_TAG CANDIDATE_PREVIEW_URL=$CANDIDATE_PREVIEW_URL CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN node scripts/ci/claim-evidence.mjs`                                                                                |
+| `required-checks`         | release  | `.github/workflows/frontend.yml`, `scripts/ci/release-gate.mjs`, `scripts/ci/release-gate.test.mjs`, `scripts/ci/claim-evidence.mjs`, `scripts/ci/claim-evidence.test.mjs`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `node --test scripts/ci/public-claim-scan.test.mjs scripts/ci/claim-evidence.test.mjs scripts/ci/release-gate.test.mjs`                                                                                                                                                                                                    |
+| `feature-freeze`          | release  | `release/2026-08-11-release-claim-truth-implementation-plan.md`, `release/specs/2026-08-11-release-claim-truth-design.md`, `scripts/ci/claim-evidence.mjs`, `scripts/ci/claim-evidence.test.mjs`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `node --test scripts/ci/claim-evidence.test.mjs && node scripts/ci/claim-evidence.mjs`                                                                                                                                                                                                                                     |
+
+## Freeze policy
+
+The freeze was activated on `2026-08-11`. Conventional `feat` subjects, including scoped
+breaking subjects such as `feat(ui)!: ...`, are rejected in the event commit range. Fixes,
+tests, documentation, CI, and release chores remain permitted. The validator reads the range
+with `git log --format=%s BASE..HEAD`; a malformed or unreadable range fails closed with exit 2,
+while a policy violation exits 1.
+
+## Verification exit codes
+
+- Exit `0`: local claims and any supplied release identity/range checks pass. Without candidate
+  inputs, same-commit verification is explicitly reported as pending rather than proven.
+- Exit `1`: a claim, freeze, or candidate identity policy is not proven.
+- Exit `2`: the matrix, evidence input, or required environment/range input is unreadable or malformed.

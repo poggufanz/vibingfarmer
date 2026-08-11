@@ -782,8 +782,8 @@ describe('confirmationsCopy', () => {
 })
 
 describe('feeModelCopy', () => {
-  test('C -> relay-sponsored, 0 XLM', () => {
-    expect(feeModelCopy('C')).toMatch(/relay sponsors the network fee -- 0 XLM/)
+  test('C -> network fee sponsored by the fee-bump relay', () => {
+    expect(feeModelCopy('C')).toBe('Network fee sponsored by fee-bump relay.')
   })
   test('G (or anything else) -> the owner pays their own fee', () => {
     expect(feeModelCopy('G')).toMatch(/you pay the small network fee yourself/)

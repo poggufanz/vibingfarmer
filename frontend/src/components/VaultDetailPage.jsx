@@ -7,6 +7,7 @@ import { fetchApyHistory } from '../apyHistory.js'
 import { generateSparkline, calcApyStats } from '../sparkline.js'
 import { useNavigateTo } from '../router.js'
 import { toDisplay } from '../stellar/format.js'
+import { venueYield } from '../strategy/venueTruth.js'
 
 const short = (a) => (a ? `${a.slice(0, 10)}…${a.slice(-8)}` : '')
 
@@ -108,7 +109,8 @@ export default function VaultDetailPage({ positions = {} }) {
     )
   }
 
-  const apy = liveData?.apy ?? catalog.apy
+  const yieldState = venueYield(liveData || catalog)
+  const apy = yieldState.state === 'live' ? yieldState.apy : null
   const tvl = liveData?.tvlFormatted ?? '-'
   const riskColor =
     catalog.risk === 'low' ? 'var(--ok)' : catalog.risk === 'medium' ? '#f59e0b' : '#f97316'
@@ -122,7 +124,8 @@ export default function VaultDetailPage({ positions = {} }) {
   const handleFarm = () => {
     sessionStorage.setItem('yv_prefill_protocol', protocol)
     sessionStorage.setItem('yv_prefill_name', catalog.name)
-    sessionStorage.setItem('yv_prefill_apy', String(apy))
+    if (apy == null) sessionStorage.removeItem('yv_prefill_apy')
+    else sessionStorage.setItem('yv_prefill_apy', String(apy))
     navigateTo('strategy')
   }
 
@@ -160,7 +163,7 @@ export default function VaultDetailPage({ positions = {} }) {
       {/* Metrics row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
         {[
-          { label: 'APY', value: `${Number(apy).toFixed(1)}%` },
+          { label: 'APY', value: apy == null ? 'Not available' : `${Number(apy).toFixed(1)}%` },
           { label: 'TVL', value: tvl },
           { label: 'Risk', value: catalog.risk, color: riskColor },
           { label: 'Yield Source', value: catalog.yield_source },
@@ -183,7 +186,7 @@ export default function VaultDetailPage({ positions = {} }) {
       </div>
 
       {/* APY 7d trend chart (live history) */}
-      {apyStats && apyStats.values && (
+      {yieldState.state === 'live' && apyStats && apyStats.values && (
         <div className="apy-chart">
           <div className="apy-chart-header">
             <span>APY 7d</span>
@@ -244,14 +247,16 @@ export default function VaultDetailPage({ positions = {} }) {
                   {posBalance.toFixed(2)}
                 </span>
                 <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>
-                  USDC, {Number(apy).toFixed(1)}% APY
+                  {apy == null ? 'USDC' : `USDC, ${Number(apy).toFixed(1)}% APY`}
                 </span>
-                <div
-                  className="mono tnum"
-                  style={{ fontSize: 11, color: 'var(--ok)', marginTop: 5 }}
-                >
-                  +{((posBalance * Number(apy)) / 100 / 365).toFixed(4)} USDC/day estimated
-                </div>
+                {apy != null && (
+                  <div
+                    className="mono tnum"
+                    style={{ fontSize: 11, color: 'var(--ok)', marginTop: 5 }}
+                  >
+                    +{((posBalance * Number(apy)) / 100 / 365).toFixed(4)} USDC/day estimated
+                  </div>
+                )}
               </div>
               <button style={pillBtn} onClick={() => navigateTo('agent')}>
                 Withdraw

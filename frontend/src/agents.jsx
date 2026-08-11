@@ -240,8 +240,8 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
             </span>
           </div>
           <div className="memory-metric">
-            <span className="label mono">Gas paid by user</span>
-            <span className="val tnum mono">0 XLM, fee-bump relay</span>
+            <span className="label mono">Network fee</span>
+            <span className="val tnum mono">Sponsored by fee-bump relay</span>
           </div>
           <div className="memory-metric">
             <span className="label mono">Vault APY</span>
@@ -757,7 +757,8 @@ const StrategyCard = ({
           <div className="rec-vault-name">
             Your deposit plan
             <div className="strategy-sub mono">
-              {strategy.total} USDC total, one signature next, fees covered
+              {strategy.total} USDC total, one signature next. Network fee sponsored by fee-bump
+              relay.
             </div>
           </div>
           <div className="rec-vault-addr">
@@ -1002,7 +1003,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
 
   return (
     <section className="card enter exec-card-wrap">
-      <p className="grant-kicker mono">Depositing, fees covered</p>
+      <p className="grant-kicker mono">Depositing. Network fee sponsored by fee-bump relay.</p>
 
       <div className="exec-header">
         <div>

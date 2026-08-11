@@ -1,8 +1,8 @@
 // OnboardingFlow.jsx
-// APY-first onboarding for users who have never connected a wallet.
-// Screen 1: value proposition + live vault rates (no wallet needed).
+// Yield-aware onboarding for users who have never connected a wallet.
+// Screen 1: value proposition + evidence-gated vault yield (no wallet needed).
 // Screen 2: how it works (shown after connect, before Step 01).
-// Self-fetches DeFiLlama data so APY is visible with zero wallet interaction.
+// Self-fetches reference market data, but only nested live execution-venue evidence can show APY.
 import React, { useState, useEffect } from 'react'
 import { YieldLine } from './SignatureMark.jsx'
 import { useCountUp, riseDelay } from '../motion.js'
@@ -10,6 +10,7 @@ import { fetchDeFiLlamaVaults } from '../defiLlama.js'
 import { fetchApyHistoryBatch } from '../apyHistory.js'
 import { generateSparkline, calcApyStats } from '../sparkline.js'
 import { VAULT_CATALOG } from '../config.js'
+import { venueYield } from '../strategy/venueTruth.js'
 
 // APY value that counts up from 0 on mount.
 function ApyValue({ value, delay = 0 }) {
@@ -46,7 +47,7 @@ const HOW_STEPS = [
   {
     n: '03',
     title: 'Agents execute within the approved scope.',
-    sub: 'The fee-bump relay covers Stellar network fees.',
+    sub: 'Network fee sponsored by fee-bump relay.',
   },
   {
     n: '04',
@@ -64,6 +65,8 @@ const scrollWrap = {
 }
 
 function ValueScreen({ vaults, histories, onConnect }) {
+  const hasLiveYield = vaults.some((vault) => venueYield(vault).state === 'live')
+
   return (
     <div className="enter" style={scrollWrap}>
       <div className="onb-split">
@@ -76,7 +79,8 @@ function ValueScreen({ vaults, histories, onConnect }) {
 
           <h1 className="h-display onb-h1">Your USDC can earn yield.</h1>
           <p className="lede onb-sub">
-            Set your limits once. Agents deposit into approved vaults, and network fees are covered.
+            Set your limits once. Agents deposit into approved vaults. Network fee sponsored by
+            fee-bump relay.
           </p>
 
           <button className="btn btn-primary btn-lg onb-cta" onClick={onConnect}>
@@ -99,23 +103,33 @@ function ValueScreen({ vaults, histories, onConnect }) {
           </div>
           <div className="onb-rates-label">
             <span className="live-dot" />
-            Live vault rates
+            {hasLiveYield ? 'Live vault rates' : 'Vault yield'}
           </div>
           <div className="onb-rates">
             {vaults.map((v, i) => {
               const stats =
                 v.poolId && histories[v.poolId] ? calcApyStats(histories[v.poolId]) : null
+              const yieldState = venueYield(v)
               return (
                 <div key={v.name} className="onb-rate-row rise" style={riseDelay(i, 90, 250)}>
                   <span style={{ flex: 1, fontSize: 13 }}>{v.name}</span>
-                  {stats && (
+                  {yieldState.state === 'live' && stats && (
                     <span
                       dangerouslySetInnerHTML={{
                         __html: generateSparkline(stats.values, { width: 56, height: 22 }),
                       }}
                     />
                   )}
-                  <ApyValue value={v.apy} delay={350 + i * 90} />
+                  {yieldState.state === 'live' ? (
+                    <ApyValue value={yieldState.apy} delay={350 + i * 90} />
+                  ) : (
+                    <span
+                      className="mono tnum"
+                      style={{ fontSize: 13, color: 'var(--text-faint)' }}
+                    >
+                      Yield unavailable
+                    </span>
+                  )}
                 </div>
               )
             })}

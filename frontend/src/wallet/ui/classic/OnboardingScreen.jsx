@@ -1,6 +1,6 @@
 // frontend/src/wallet/ui/classic/OnboardingScreen.jsx
 // VF Wallet Task 9. This screen used to be a 3-slide marketing carousel ("Coordination Swarm",
-// "Secure Boundaries", "Gasless Relaying") that named jargon (ed25519 session-key, gasless
+// "Secure Boundaries", "Sponsored Relaying") that named jargon (ed25519 session-key, sponsored
 // relaying) never explained in plain language, and animated every slide on entry -- both live
 // rejection-checklist violations VF Wallet Task 8 deliberately deferred to this task. It is now
 // the Standard-vs-Passkey branch: the ONE fork point that happens before backup/recovery

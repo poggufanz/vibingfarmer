@@ -50,10 +50,12 @@ beforeEach(() => {
 
 describe('withdrawFromVault', () => {
   it('sweeps the agent the caller names, to the user wallet', async () => {
-    await withdrawFromVault(VAULT, '1000', USER, AGENT)
+    ownerWithdraw.mockResolvedValueOnce({ hash: 'h1', status: 'SUCCESS', channel: 'direct' })
+    const result = await withdrawFromVault(VAULT, '1000', USER, AGENT)
     expect(ownerWithdraw).toHaveBeenCalledWith(
       expect.objectContaining({ owner: USER, agentAddress: AGENT, to: USER, activeAccount: ACTIVE })
     )
+    expect(result).toMatchObject({ txHash: 'h1', status: 'SUCCESS', channel: 'direct' })
   })
 
   it('throws instead of falling back to a hardcoded demo agent', async () => {
@@ -107,6 +109,7 @@ describe('withdrawAllFromVault — one-signature sweep', () => {
     sweepAgents.mockResolvedValue({
       swept: [10n, 20n, 30n],
       txHashes: ['sweep1', 'sweep1', 'sweep1'],
+      channels: ['relay', 'relay', 'relay'],
       errors: [],
     })
     const out = await withdrawAllFromVault(VAULT, USER, AGENTS)
@@ -121,9 +124,9 @@ describe('withdrawAllFromVault — one-signature sweep', () => {
     )
     expect(ownerWithdraw).not.toHaveBeenCalled()
     expect(out).toEqual([
-      { agentAddress: 'CA_ONE', ok: true, txHash: 'sweep1' },
-      { agentAddress: 'CA_TWO', ok: true, txHash: 'sweep1' },
-      { agentAddress: 'CA_THREE', ok: true, txHash: 'sweep1' },
+      { agentAddress: 'CA_ONE', ok: true, txHash: 'sweep1', channel: 'relay' },
+      { agentAddress: 'CA_TWO', ok: true, txHash: 'sweep1', channel: 'relay' },
+      { agentAddress: 'CA_THREE', ok: true, txHash: 'sweep1', channel: 'relay' },
     ])
   })
 

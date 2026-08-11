@@ -85,6 +85,34 @@ describe('Plan moment', () => {
 })
 
 describe('Protect moment', () => {
+  it('replaces the protect plan and invalidates an older permission', () => {
+    const before = {
+      ...toProtect(),
+      permission: decision(),
+      permissionStatus: 'preflight-ready',
+      permissionError: 'stale-error',
+      protectMessage: 'stale-message',
+      retryable: true,
+    }
+    const rebound = { ...before.plan, planFingerprint: '0xnew' }
+    const after = strategyFlowReducer(before, { type: 'PERMISSION_WINDOW_BOUND', plan: rebound })
+
+    expect(after.plan).toBe(rebound)
+    expect(after.permission).toBeNull()
+    expect(after.permissionStatus).toBe('idle')
+    expect(after.permissionError).toBeNull()
+    expect(after.protectMessage).toBeNull()
+    expect(after.retryable).toBe(false)
+  })
+
+  it('ignores PERMISSION_WINDOW_BOUND outside Protect', () => {
+    const before = initialStrategyFlowState
+    const rebound = { ...eligiblePlan(), planFingerprint: '0xnew' }
+    expect(strategyFlowReducer(before, { type: 'PERMISSION_WINDOW_BOUND', plan: rebound })).toBe(
+      before
+    )
+  })
+
   it('PROTECT_OPENED/PREFLIGHT_READY/GRANT_REQUESTED all stay in Protect', () => {
     let s = toProtect()
     s = strategyFlowReducer(s, { type: 'PROTECT_OPENED' })

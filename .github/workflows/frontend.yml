@@ -1,15 +1,33 @@
 name: frontend
 
 on:
-  push: { branches: [main, dev] }
+  push:
+    branches: [main, dev]
+    tags: [v1.15.0-beta]
   # Publishing a GitHub Release is what stamps the version: vite.config.js reads
-  # `git describe --tags`, and a pushed tag alone never triggers this workflow (on.push
-  # filters branches only). `published` fires for a brand-new release and for publishing a
-  # draft -- editing an already-published release fires `edited` instead, which is
-  # deliberately NOT wired here: cut a new release per version rather than rewriting one.
+  # `git describe --tags`. The exact candidate tag push is also a first-class workflow event:
+  # its claim-evidence job is the authoritative promotion proof and never enters deploy.
+  # `published` fires for a brand-new release and for publishing a draft -- editing an
+  # already-published release fires `edited` instead, which is deliberately NOT wired here:
+  # cut a new release per version rather than rewriting one.
   release: { types: [published] }
   pull_request:
   merge_group:
+  # Manual candidate verification remains an operator retry/convenience path. The exact tag push
+  # above is the mandatory automatic proof path; its inputs are checked against the matrix, the
+  # local annotated tag, and Cloudflare's authenticated deployment metadata.
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: Annotated candidate tag to verify
+        required: true
+        default: v1.15.0-beta
+        type: string
+      candidate_preview_url:
+        description: Optional successful Cloudflare Pages preview URL to narrow the API lookup
+        required: false
+        default: ""
+        type: string
 
 jobs:
   frontend-unit-build:
@@ -169,13 +187,64 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # Claim evidence is a root-level, merge-blocking check. It deliberately fetches the complete
+  # history so the active feature freeze can inspect the event's exact commit range.
+  claim-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify claim, scanner, and release-gate tooling
+        run: node --test scripts/ci/public-claim-scan.test.mjs scripts/ci/claim-evidence.test.mjs scripts/ci/release-gate.test.mjs
+      - name: Scan tracked public surfaces
+        run: node scripts/ci/public-claim-scan.mjs
+      - name: Validate claim evidence and freeze
+        env:
+          FREEZE_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.ref_type == 'branch' && github.event.before || '' }}
+          FREEZE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event_name == 'push' && github.ref_type == 'branch' && github.sha || '' }}
+        run: node scripts/ci/claim-evidence.mjs
+      # Ordinary PR/dev checks intentionally leave candidate-same-commit pending until the
+      # preview exists. The exact tag push is the authoritative promotion proof: this required
+      # step peels github.ref_name's annotated tag locally and resolves a successful dev preview
+      # by the tag commit from Cloudflare's authenticated API. A URL is optional because the API
+      # metadata is the identity source; caller-provided equal strings cannot manufacture it.
+      - name: Verify exact candidate tag and Cloudflare preview identity
+        if: github.event_name == 'push' && github.ref == 'refs/tags/v1.15.0-beta'
+        env:
+          CANDIDATE_VERIFICATION_MODE: required
+          CANDIDATE_TAG: ${{ github.ref_name }}
+          CANDIDATE_PREVIEW_URL: ""
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/ci/claim-evidence.mjs
+      - name: Verify manually supplied candidate tag and Cloudflare preview identity
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CANDIDATE_VERIFICATION_MODE: required
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          CANDIDATE_PREVIEW_URL: ${{ inputs.candidate_preview_url }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/ci/claim-evidence.mjs
+
   # The single required check. `if: always()` plus a `needs` on every stable job above means
   # this always reports a result — success or failure — even if one of those jobs fails,
   # is cancelled, or (should a job-level `if` ever creep back in) gets skipped. release-gate.mjs
   # treats anything other than "success" on any required job as a gate failure.
   release-gate:
     name: release-gate
-    needs: [frontend-unit-build, relayer, keeper, soroban, playwright]
+    needs:
+      - frontend-unit-build
+      - relayer
+      - keeper
+      - soroban
+      - playwright
+      - claim-evidence
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -191,9 +260,9 @@ jobs:
         run: node scripts/ci/release-gate.mjs
 
   # Cloudflare Pages deploy — needs only release-gate (the single fail-closed check across
-  # frontend-unit-build/relayer/keeper/soroban/playwright); pushes and published releases only
-  # (never PRs from forks). main -> Production (protected environment); any other pushed branch
-  # -> Preview (aliased by branch name). Needs repo secrets: CLOUDFLARE_API_TOKEN
+  # frontend-unit-build/relayer/keeper/soroban/playwright); branch pushes and published releases
+  # only (never PRs from forks or candidate tags). main -> Production (protected environment);
+  # any other pushed branch -> Preview (aliased by branch name). Needs repo secrets: CLOUDFLARE_API_TOKEN
   # (Cloudflare Pages:Edit + D1:Edit), CLOUDFLARE_ACCOUNT_ID. Runtime env vars/secrets are NOT
   # set here -- they live in the Pages
   # project (Settings -> Variables and Secrets, per Production/Preview environment).
@@ -203,7 +272,7 @@ jobs:
   # merge to main shipped the code, publishing the release is what re-stamps the version banner.
   deploy:
     needs: release-gate
-    if: github.event_name == 'push' || github.event_name == 'release'
+    if: (github.event_name == 'push' && github.ref_type == 'branch') || github.event_name == 'release'
     runs-on: ubuntu-latest
     concurrency:
       group: deploy-${{ github.ref }}
@@ -242,12 +311,12 @@ jobs:
       # binding is an unprovisioned sentinel and this check intentionally fails before Wrangler
       # can run if the environment secret is absent, malformed, or production's ID.
       - name: Require distinct preview D1 before migration
-        if: github.event_name == 'push' && github.ref_name != 'main'
+        if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main'
         run: node scripts/runtime-config.mjs assert-preview-d1
         env:
           PREVIEW_D1_DATABASE_ID: ${{ secrets.PREVIEW_D1_DATABASE_ID }}
       - name: Apply preview D1 migrations before publishing Functions
-        if: github.event_name == 'push' && github.ref_name != 'main'
+        if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main'
         run: npm run d1:migrate:preview
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -277,7 +346,7 @@ jobs:
           # deploy as a preview branch instead of updating Production, so pin it to main.
           command: pages deploy ./dist --project-name=vibing-farmer --branch=main
       - name: Deploy preview Pages bundle
-        if: github.event_name == 'push' && github.ref_name != 'main'
+        if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main'
         uses: cloudflare/wrangler-action@v3
         with:
           wranglerVersion: "4.100.0"

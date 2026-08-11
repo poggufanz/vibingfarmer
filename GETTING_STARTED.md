@@ -26,7 +26,7 @@ Canonical product claims: [`prd.md`](prd.md). Architecture overview: [`README.md
 * **Stellar wallet** on testnet: [Freighter](https://www.freighter.app), xBull, or Albedo
 * **Friendbot** for test XLM: https://friendbot.stellar.org
 * Optional: WSL + Rust + Stellar CLI (only if you build/deploy contracts)
-* Optional: funded `STELLAR_RELAYER_SECRET` for gasless agent txs in local Functions
+* Optional: funded `STELLAR_RELAYER_SECRET` for sponsored agent transactions in local Functions
 
 ***
 
@@ -43,7 +43,7 @@ npm run dev
 
 Open `http://localhost:5173`, connect a testnet wallet.
 
-### Minimal `.dev.vars` (local gasless + AI)
+### Minimal `.dev.vars` (local sponsored fees + AI)
 
 ```env
 # Optional host AI (leave unset for BYOK / fallback-only)
@@ -60,13 +60,19 @@ STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 SOROBAN_VAULT_ADDRESS=CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77
 SOROBAN_ROUTER_ADDRESSES=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE,CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
 SOROBAN_AGENT_WASM_HASHES=1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1,d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba
-# Compatibility fallback for older readers; the plural V2,V1 list above is canonical.
-SOROBAN_ROUTER_ADDRESS=CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
+# Single-value compatibility fallback; V2 is the current app router. The plural V2,V1 list above
+# remains canonical for the relay's dual-support migration window.
+SOROBAN_ROUTER_ADDRESS=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE
 ```
 
 There are **no** `ONESHOT_*` variables. Do not add them.
 
 Addresses and notes: [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
+
+The public Stellar deployment facts are fixed at 7 Soroban source crates, 6 first-party Vibing
+Farmer deployments, 2 external protocol contracts, and 8 static addresses. Agent accounts are
+created dynamically per run. Values named `SOROBAN_AGENT_WASM_HASHES` are code hashes, not
+contract addresses.
 
 ***
 
@@ -77,7 +83,7 @@ Addresses and notes: [`deployments/stellar-testnet.json`](deployments/stellar-te
 3. Open **Strategy** wizard: amount, risk, agent count.
 4. Review AI skills + council / eligibility (if shown) → approve.
 5. **a single signature:** `funding_router.grant` (budget + duration).
-6. Workers deposit gas-free via session keys + fee-bump relay.
+6. Workers deposit via session keys + fee-bump relay. Network fee sponsored by fee-bump relay.
 7. Check graph / positions; kill switch = revoke allowance / agent revoke.
 
 Optional: **`/farm`** cross-chain flow needs `relayer/` running + ZeroDev/CCTP env (see `relayer/` and `frontend/.env.example` Base section).
@@ -101,7 +107,7 @@ Deploy/seed scripts live under `scripts/soroban/` (e.g. `deploy-seed.sh`). Never
 ```
 soroban/contracts/          # funding_router, agent_account, vault, blend_strategy, registry, …
 frontend/src/stellar/       # chain client, session keys, relay client
-frontend/api/stellar-relay.js   # gasless fee-bump (replaces 1Shot)
+frontend/api/stellar-relay.js   # sponsored fee-bump (replaces 1Shot)
 frontend/src/orchestrator.js
 frontend/src/worker.js
 frontend/src/strategy/      # council, gates, Monte Carlo, monitor
@@ -172,7 +178,7 @@ decision, never something CI does to itself). `npm run lint` still runs plain ES
 useful while iterating.
 
 CI (`.github/workflows/frontend.yml`) is built around one gate check, `release-gate`, which fails
-unless `frontend-unit-build`, `relayer`, `keeper`, `soroban` (pinned Rust 1.91.0 + `stellar-cli`
+unless `frontend-unit-build`, `relayer`, `keeper`, `soroban` (pinned Rust 1.93.0 + `stellar-cli`
 26.1.0 on Ubuntu 24.04), and `playwright` all report success — a skipped job fails the gate exactly
 like a failed one. Deploy to Cloudflare Pages needs only `release-gate`.
 
@@ -227,10 +233,11 @@ receipt-authority order remains:
 ```env
 SOROBAN_ROUTER_ADDRESSES=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE,CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
 SOROBAN_AGENT_WASM_HASHES=1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1,d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba
-SOROBAN_ROUTER_ADDRESS=CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
+SOROBAN_ROUTER_ADDRESS=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE
 ```
 
-The singular V1 value is compatibility fallback; it is not the canonical production relay list.
+The singular V2 value is the current compatibility fallback; it is not the canonical production
+relay list, which retains the ordered V2,V1 migration list above.
 Do not add a V3 address or hash until an authorized deployment produces one.
 
 Stellar receipt/recovery is implemented and tested: authenticated challenges, fresh ordered-router
@@ -286,8 +293,9 @@ was added by this review.
 
 ### 8.7 CI Rust pin
 
-CI pins Ubuntu 24.04, Rust 1.91.0, and `stellar-cli` 26.1.0. Rust 1.91.0 is the
-`soroban-sdk` 26.1.0 minimum; the remediation plan's 1.82.0 cannot build this tree.
+CI pins Ubuntu 24.04, Rust 1.93.0, and `stellar-cli` 26.1.0. The pinned CLI requires Rust
+1.93.0, which satisfies the `soroban-sdk` 26.1.0 minimum of 1.91.0; the remediation plan's
+1.82.0 cannot build this tree.
 
 ### 8.8 Base recovery is deliberately blocked pending durable evidence
 

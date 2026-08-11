@@ -614,6 +614,63 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     expect(document.querySelector('.pc-plan-facts').contains(note)).toBe(false)
   })
 
+  it('does not use a flat catalog APY for the plan estimate', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    render(
+      <PlanStage
+        vaultTotalShares={FUNDED_VAULT}
+        base={disconnectedBase}
+        stellarVenue={{
+          name: 'Vibing Farmer Autofarm',
+          chain: 'stellar',
+          apy: 4.8,
+        }}
+        onGenerate={onGenerate}
+      />
+    )
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+
+    expect(screen.getByText('Yield unavailable')).toBeTruthy()
+    expect(screen.queryByText('4.8% APY')).toBeNull()
+    expect(screen.queryByText('Estimated in 30 days')).toBeNull()
+    expect(screen.queryByText(/USDC\/day estimated/)).toBeNull()
+  })
+
+  it('uses only explicit live venue evidence for the plan estimate', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    render(
+      <PlanStage
+        vaultTotalShares={FUNDED_VAULT}
+        base={disconnectedBase}
+        stellarVenue={{
+          name: 'Vibing Farmer Autofarm',
+          chain: 'stellar',
+          apy: 4.8,
+          yield: { state: 'live', apy: 5.5, asOf: Date.now() },
+        }}
+        onGenerate={onGenerate}
+      />
+    )
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+
+    expect(screen.getByText('5.5% APY')).toBeTruthy()
+    expect(screen.queryByText('4.8% APY')).toBeNull()
+    expect(screen.getByText('Estimated in 30 days')).toBeTruthy()
+    expect(screen.getByText('+0.45 USDC')).toBeTruthy()
+  })
+
   it('keeps the reviewed plan until Change amount is confirmed', async () => {
     await generateStellarOnlyPlan()
     fireEvent.click(screen.getByText('Change mind?'))
@@ -1607,15 +1664,13 @@ describe('PlanStage — amount presets and crew line', () => {
 // it in the DOM) are untouched -- already covered by the describe blocks above; this block only
 // covers the new summary.
 //
-// `STELLAR_VENUE_FIXTURE` mirrors the REAL production shape (frontend/src/app.jsx's
-// `stellarVenueDisplay`, confirmed at app.jsx:2378-2388): a flat top-level `apy` number sourced
-// from `VAULT_CATALOG[0].apy` (frontend/src/config.js:38, `4.8`). This is deliberately NOT the
-// nested `{yield:{state,apy}}` shape `generateStellarOnlyPlan` above uses -- that shape feeds the
-// unrelated `venueYield()`/`stellarYield`/"X% APY" line (PlanStage.jsx), which intentionally does
-// NOT trust a flat legacy `apy` field as "live" (see venueTruth.js's own doc comment). The new
-// estimate30d row reads `stellarVenue.apy` directly, matching the brief's exact condition and the
-// real prop shape the app actually passes.
-const STELLAR_VENUE_FIXTURE = Object.freeze({ name: 'Vibing Farmer Autofarm', apy: 4.8 })
+// `STELLAR_VENUE_FIXTURE` carries the only shape that is allowed to drive a yield estimate: a
+// nested, fresh live-venue yield. Flat catalog/DeFiLlama APY remains reference data and is covered
+// by the unavailable-yield tests above.
+const STELLAR_VENUE_FIXTURE = Object.freeze({
+  name: 'Vibing Farmer Autofarm',
+  yield: { state: 'live', apy: 4.8, asOf: Date.now() },
+})
 
 // No named render helper exists elsewhere in this file for a `stellarVenue`-bearing render (every
 // other describe block above either doesn't need one or inlines `render` directly) -- this one
@@ -1648,8 +1703,8 @@ describe('the plan so far aside', () => {
     fireEvent.click(screen.getByRole('radio', { name: /balanced/i }))
     const aside = screen.getByRole('complementary', { name: /the plan so far/i })
     expect(aside.textContent).toMatch(/blend/i)
-    expect(aside.textContent).toMatch(/network fees/i)
-    expect(aside.textContent).toMatch(/zero/i)
+    expect(aside.textContent).toMatch(/network fee/i)
+    expect(aside.textContent).toMatch(/sponsored by fee-bump relay/i)
   })
 
   it('places the Vault Advisor directly below the plan summary and opens customization', () => {
@@ -1670,7 +1725,7 @@ describe('the plan so far aside', () => {
 
   // Pins REAL values (Task 3's review lesson: a test that would also pass against an empty aside
   // does not cover this task) -- proves deployedText/estimate30d are the caller's own typed
-  // amount and venue APY, not a hardcoded string that happens to satisfy the regex test above.
+  // amount and evidenced venue APY, not a hardcoded string that happens to satisfy the regex test.
   // 250 USDC * 4.8% APY * 30/365 days = 0.9863... -> "0.99" (formatDollarNumber's own rounding).
   it('shows the typed amount, the derived crew count, and the yield estimate before any plan exists', () => {
     renderPlanStage()
@@ -1688,9 +1743,9 @@ describe('the plan so far aside', () => {
     expect(within(aside).queryByText('Crew members')).toBeNull()
   })
 
-  // Constraint: never invent a number. No `stellarVenue` prop at all (the real shape before the
-  // venue catalog has loaded) -- `stellarVenue?.apy` is `undefined`, not a number, so the row
-  // must be omitted entirely rather than substituting a default/placeholder rate.
+  // Constraint: never invent a number. No `stellarVenue` prop at all (before the venue catalog has
+  // loaded) means no nested live yield, so the row must be omitted entirely rather than
+  // substituting a default/placeholder rate.
   it('omits the estimated-yield row when the venue exposes no numeric APY', () => {
     render(
       <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
@@ -1726,7 +1781,7 @@ describe('the plan so far aside', () => {
     expect(within(aside).getByText('60.00 USDC')).toBeTruthy()
     expect(within(aside).getByText('Sent to Base')).toBeTruthy()
     expect(within(aside).getByText('40.00 USDC')).toBeTruthy()
-    // Fix loop 1 -- Important 3 (review finding): the 30-day estimate must apply the 4.8% APY
+    // Fix loop 1 -- Important 3 (review finding): the 30-day estimate must apply the evidenced 4.8% APY
     // only to the 60 USDC that actually went to Blend (60 * 0.048 * 30/365 = 0.2367... -> "0.24"),
     // never to the full 100 USDC typed amount (which would have given the wrong "0.39" -- the
     // exact bug this fix closes, asserted absent below too).

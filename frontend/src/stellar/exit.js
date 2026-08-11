@@ -155,6 +155,9 @@ async function sweepChunk({
     check()
     agents.forEach((a, i) => {
       out.txHashes[a.index] = result.hash
+      if (result.channel === 'relay' || result.channel === 'direct') {
+        out.channels[a.index] = result.channel
+      }
       const decoded = swept[i]
       if (decoded == null) {
         // Fix 2 (fix loop 2): a missing slot (no retval at all, or a vec shorter than this batch)
@@ -241,7 +244,7 @@ async function sweepChunk({
  *          browser (e.g. scripts/exit-router-smoke.mjs) can sign with a local keypair instead.
  *          Unused for a C owner, which always signs via the passkey ceremony. `to` is accepted
  *          only for backwards compatibility and ignored; direct exits always pay the owner.
- * @returns {Promise<{swept:bigint[], txHashes:string[],
+ * @returns {Promise<{swept:bigint[], txHashes:string[], channels:('relay'|'direct'|undefined)[],
  *   errors:({message:string, code?:string, submission?:string}|undefined)[]}>} `errors[i].code`/
  *   `.submission` carry an OwnerActionSubmissionError's channel classification through undamaged
  *   (undefined for a bare on-chain failure) — money/ownerActions.js's ownerActionOutcome reads them.
@@ -280,6 +283,7 @@ export async function sweepAgents({
   const out = {
     swept: agentAddresses.map(() => 0n),
     txHashes: agentAddresses.map(() => undefined),
+    channels: agentAddresses.map(() => undefined),
     errors: agentAddresses.map(() => undefined),
   }
   const indexed = agentAddresses.map((address, index) => ({ address, index }))

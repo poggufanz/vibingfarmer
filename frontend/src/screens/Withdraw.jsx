@@ -451,8 +451,8 @@ export default function Withdraw({
             </p>
 
             <div className="wd-callout">
-              One passkey signature starts the unwind. The relayer sponsors Base gas and completes
-              the bridge; no second wallet popup.
+              One passkey signature starts the unwind. Base network fee sponsored by relay; the
+              bridge completes with no second wallet popup.
             </div>
 
             {!BASE_CROSS_CHAIN_AVAILABLE && (
@@ -489,8 +489,8 @@ export default function Withdraw({
                 <span className="grant-receipt-v mono">1 (passkey)</span>
               </div>
               <div className="grant-receipt-row">
-                <span className="grant-receipt-k">Network fee</span>
-                <span className="grant-receipt-v grant-receipt-v--ok">0, sponsored</span>
+                <span className="grant-receipt-k">Base network fee</span>
+                <span className="grant-receipt-v grant-receipt-v--ok">Sponsored by relay</span>
               </div>
               {BASE_CROSS_CHAIN_AVAILABLE && (
                 <div className="grant-receipt-row">

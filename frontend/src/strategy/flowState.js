@@ -120,6 +120,18 @@ export function strategyFlowReducer(state = initialStrategyFlowState, event) {
       }
     }
 
+    case 'PERMISSION_WINDOW_BOUND':
+      if (state.moment !== 'protect' || !planHasEligibleAgent(event.plan)) return state
+      return {
+        ...state,
+        plan: event.plan,
+        permission: null,
+        permissionStatus: 'idle',
+        permissionError: null,
+        protectMessage: null,
+        retryable: false,
+      }
+
     case 'PREFLIGHT_READY':
       if (state.moment !== 'protect') return state
       return {

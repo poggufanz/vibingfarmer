@@ -143,7 +143,8 @@ function randomSalt() {
  *          durationSeconds:number, agentInits:Array<{signer:Uint8Array, salt?:Uint8Array,
  *          cap:bigint, token:string, target:string, kind:number,
  *          mintRecipient:Uint8Array|string, destinationDomain:number, periodDuration:number,
- *          expiry:number}>, router?:string, server?:object, txSource?:string}} p
+ *          expiry:number}>, router?:string, server?:object, txSource?:string,
+ *          reviewedExpiryUnix?:number, nowSec?:number}} p
  * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], expiryLedger:number,
  *          bridgeAgentAddress:string|null}>}
  */
@@ -155,6 +156,8 @@ export async function buildGrantTx({
   router = SOROBAN_FUNDING_ROUTER_ADDRESS,
   server,
   txSource = owner,
+  reviewedExpiryUnix,
+  nowSec,
 }) {
   if (!router) throw new Error('The funding router is not configured.')
   if (!agentInits || agentInits.length === 0)
@@ -162,8 +165,20 @@ export async function buildGrantTx({
   const s = server || (await rpcServer())
   const { Contract, TransactionBuilder, BASE_FEE } = await sdk()
 
+  const currentUnix = nowSec ?? Math.floor(Date.now() / 1000)
+  if (reviewedExpiryUnix !== undefined) {
+    if (!Number.isInteger(currentUnix) || currentUnix <= 0)
+      throw new Error('nowSec must be a positive integer.')
+    if (!Number.isInteger(reviewedExpiryUnix) || reviewedExpiryUnix <= currentUnix) {
+      throw new Error('The reviewed permission expiry must be in the future.')
+    }
+  }
+
   const latest = await s.getLatestLedger()
-  const expiryLedger = latest.sequence + Math.ceil(durationSeconds / SECONDS_PER_LEDGER)
+  const expiryLedger =
+    reviewedExpiryUnix === undefined
+      ? latest.sequence + Math.ceil(durationSeconds / SECONDS_PER_LEDGER)
+      : latest.sequence + Math.ceil((reviewedExpiryUnix - currentUnix) / SECONDS_PER_LEDGER)
 
   const budgetsVec = xdr.ScVal.scvVec(budgets.map(tokenBudgetScVal))
 
@@ -701,6 +716,7 @@ export async function submitGrantV3({
  * `activeAccount` defaults to a classic G owner, so every existing G-only caller is unaffected.
  * @param {{owner:string, budgets:Array<{budget:bigint|number, token:string}>,
  *          durationSeconds:number, agentInits:Array, router?:string, server?:object,
+ *          reviewedExpiryUnix?:number, nowSec?:number,
  *          sign?:Function, activeAccount?:{kind:'G'|'C', address:string},
  *          getRelayerAddress?:Function, kit?:object}} p
  * @returns {Promise<{hash:string, status:string, relayer?:string, agentAddresses:string[],
@@ -713,6 +729,8 @@ export async function submitGrant({
   agentInits,
   router,
   server,
+  reviewedExpiryUnix,
+  nowSec,
   sign = signWithTimeout,
   activeAccount = { kind: 'G', address: owner },
   getRelayerAddress: getRelayer = getRelayerAddress,
@@ -744,6 +762,8 @@ export async function submitGrant({
     router,
     server,
     txSource: model.source,
+    reviewedExpiryUnix,
+    nowSec,
   })
   check()
   const result = await submitOwnerAuthorizedTx({

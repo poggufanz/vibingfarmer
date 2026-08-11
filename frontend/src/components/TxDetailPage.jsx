@@ -27,6 +27,21 @@ function formatRel(ts) {
   return `${Math.floor(h / 24)}d ago`
 }
 
+function hasLiveApy(tx) {
+  return (
+    tx?.yieldEvidence === 'live-venue' &&
+    tx?.apy != null &&
+    !(typeof tx.apy === 'string' && tx.apy.trim() === '') &&
+    Number.isFinite(Number(tx.apy))
+  )
+}
+
+function networkFeePayer(channel) {
+  if (channel === 'relay') return 'Sponsored by fee-bump relay'
+  if (channel === 'direct') return 'Paid by wallet'
+  return 'Unavailable'
+}
+
 const backBtn = {
   appearance: 'none',
   border: 0,
@@ -75,7 +90,8 @@ export default function TxDetailPage() {
     if (tx) {
       sessionStorage.setItem('yv_prefill_protocol', tx.protocol)
       sessionStorage.setItem('yv_prefill_name', tx.vaultName)
-      sessionStorage.setItem('yv_prefill_apy', String(tx.apy))
+      if (hasLiveApy(tx)) sessionStorage.setItem('yv_prefill_apy', String(tx.apy))
+      else sessionStorage.removeItem('yv_prefill_apy')
     }
     navigateTo('strategy')
   }
@@ -119,6 +135,7 @@ export default function TxDetailPage() {
   }
 
   const isWithdraw = tx.type === 'withdraw'
+  const apy = hasLiveApy(tx) ? Number(tx.apy) : null
 
   const details = [
     {
@@ -128,9 +145,9 @@ export default function TxDetailPage() {
     { label: 'Vault', value: tx.vaultName },
     { label: 'Protocol', value: tx.protocol },
     { label: 'Amount', value: `${tx.amountUsdc} USDC` },
-    { label: 'APY', value: tx.apy ? `${tx.apy}%` : 'Not available' },
+    { label: 'APY', value: apy == null ? 'Not available' : `${apy}%` },
     { label: 'Worker', value: tx.workerId || 'Not available' },
-    { label: 'Network fee paid by', value: tx.gasPayedBy || 'Fee-bump relayer', highlight: true },
+    { label: 'Network fee', value: networkFeePayer(tx.channel), highlight: true },
     { label: 'Network', value: `${tx.network || 'Stellar'} testnet` },
   ]
 

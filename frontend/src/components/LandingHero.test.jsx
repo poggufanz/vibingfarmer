@@ -65,6 +65,7 @@ describe('LandingHero', () => {
     expect(screen.getByText('AI plans. Rules can say no.')).toBeTruthy()
     expect(screen.getByText('Real lending underneath.')).toBeTruthy()
     expect(screen.getByText('Lifeboat needs a mandate.')).toBeTruthy()
+    expect(screen.getAllByText(/Network fee sponsored by fee-bump relay/)).toHaveLength(2)
     expect(document.querySelectorAll('video')).toHaveLength(0)
   })
 

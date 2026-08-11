@@ -15,6 +15,7 @@ export const REQUIRED_JOBS = Object.freeze([
   'keeper',
   'soroban',
   'playwright',
+  'claim-evidence',
 ])
 
 // Fail-closed: never throws on malformed input. A gate script that can crash on bad input is a

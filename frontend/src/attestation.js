@@ -29,7 +29,7 @@ export function hashStrategy(plan) {
  * explicit user action (e.g. a receipt-screen button) may call this. Always computes the
  * deterministic strategyHash (verifiable off-chain by reproducing it from the plan JSON). When
  * an `attester` (connected wallet) is given, additionally anchors the hash on-chain via the
- * Soroban attestation contract (user-signed inner tx, relayer fee-bumped → 0 XLM for the user,
+ * Soroban attestation contract (user-signed inner tx, network fee sponsored by fee-bump relay,
  * one additional wallet confirmation) and captures the tx hash. NEVER blocking: a missing
  * wallet or a relay failure falls back to the off-chain hash; strategy execution always
  * continues.

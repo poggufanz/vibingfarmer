@@ -52,7 +52,7 @@ const RUN_FLOW = [
 
 const PROOF = [
   { value: '1', label: 'wallet signature for the initial grant' },
-  { value: '0 XLM', label: 'paid by you on sponsored calls' },
+  { value: 'Sponsored', label: 'network fee on sponsored calls' },
   { value: '1 vault', label: 'maximum target per worker' },
   { value: '~6 sec', label: 'Lifeboat market scan cadence' },
 ]
@@ -186,7 +186,7 @@ function Hero({ onStart, reduceMotion }) {
         </motion.h1>
         <motion.p className="vf-hero__lede" variants={itemVariants}>
           Set risk and a USDC budget. Scoped agents enter real Blend lending without repeated
-          approvals or XLM on sponsored calls.
+          approvals on sponsored calls. Network fee sponsored by fee-bump relay.
         </motion.p>
         <motion.div className="vf-hero__actions" variants={itemVariants}>
           <button className="vf-button vf-button--primary" onClick={onStart}>
@@ -421,14 +421,14 @@ function RelaySection() {
   return (
     <section className="vf-section vf-relay" aria-labelledby="relay-title">
       <div className="vf-relay__number">
-        <strong>0 XLM</strong>
-        <span>required from your wallet for sponsored calls</span>
+        <strong>Sponsored</strong>
+        <span>network fee on sponsored calls</span>
       </div>
       <Reveal className="vf-relay__copy" delay={0.08} rise>
         <h2 id="relay-title">The relay pays. It does not control principal.</h2>
         <p>
-          Vibing Farmer wraps approved Stellar transactions in a fee-bump. The server pays the
-          network fee and rejects calls outside a short allowlist.
+          Network fee sponsored by fee-bump relay. Vibing Farmer wraps approved Stellar transactions
+          in a fee-bump and rejects calls outside a short allowlist.
         </p>
         <p className="vf-note">
           For the initial grant, relay failure can fall back to direct user-paid submission instead

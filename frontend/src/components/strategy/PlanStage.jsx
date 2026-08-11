@@ -331,15 +331,11 @@ export function PlanStage({
   const estimateAmount = viewModel
     ? viewModel.agents.filter((a) => a.kind === 'deposit').reduce((s, a) => s + a.allocation, 0)
     : amountNumber
-  // Never invented: only computed when the caller's own venue object exposes a genuine numeric
-  // APY (frontend/src/app.jsx's stellarVenueDisplay.apy, sourced from VAULT_CATALOG -- confirmed
-  // a flat top-level number, not the nested {state,apy} shape venueYield()/stellarYield above
-  // reads). Guarded here, not just at the JSX render site below, because `stellarVenue` is
-  // optional and most callers/tests never pass one -- an unguarded `stellarVenue.apy` read would
-  // throw on every one of them.
+  // Never invented: only a fresh nested live yield from the actual execution venue may drive this
+  // estimate. Flat catalog/DeFiLlama APY is reference data, not evidence for Autofarm-to-Blend.
   const estimate30d =
-    typeof stellarVenue?.apy === 'number' && estimateAmount > 0
-      ? `${formatDollarNumber(estimateAmount * (stellarVenue.apy / 100) * (30 / 365))} USDC`
+    stellarYield.state === 'live' && estimateAmount > 0
+      ? `${formatDollarNumber(estimateAmount * (stellarYield.apy / 100) * (30 / 365))} USDC`
       : null
 
   async function runGeneration(generate) {
@@ -828,11 +824,7 @@ export function PlanStage({
                 <span className="pc-fact-value">{RISK_PROFILES[risk].targetSlots}</span>
               </li>
             )}
-            {/* Fix loop 1 -- minor (review finding): `estimate30d` above is already `null` exactly
-                when this row shouldn't render (same guard, computed once) -- repeating the full
-                `typeof stellarVenue?.apy === 'number' && estimateAmount > 0` condition here was a
-                second copy that could silently drift out of sync with the one that actually
-                gates the value. */}
+            {/* `estimate30d` is already null unless the venue has fresh nested live evidence. */}
             {estimate30d && (
               <li className="pc-fact-row">
                 <span className="pc-fact-dot" aria-hidden="true" />
@@ -842,8 +834,8 @@ export function PlanStage({
             )}
             <li className="pc-fact-row">
               <span className="pc-fact-dot" aria-hidden="true" />
-              <span>Network fees you pay</span>
-              <span className="pc-fact-value">Zero</span>
+              <span>Network fee</span>
+              <span className="pc-fact-value">Sponsored by fee-bump relay</span>
             </li>
           </ul>
           <p className="pc-provenance">
