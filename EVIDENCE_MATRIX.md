@@ -3,26 +3,34 @@
 Candidate: `v1.15.0-beta` targeting `dev` in the `vibing-farmer` Cloudflare Pages project.
 
 The machine-readable source of truth is [`release/evidence-matrix.json`](release/evidence-matrix.json).
-Every row is marked `proven`, names an owner, points to checked-in evidence, and includes the
-command used to verify it. The CI `claim-evidence` job validates the matrix, scans public copy,
-and evaluates the active feature freeze before the aggregate `release-gate` can pass.
+Every row names an owner, points to checked-in evidence, and includes the command used to verify
+it. The candidate row stays `pending` until a successful preview exists; ordinary PR/dev CI is
+allowed to pass in that pre-candidate state, but the mandatory candidate verification workflow
+must resolve the tag and preview before the candidate claim can be treated as proven. The CI
+`claim-evidence` job validates the matrix, scans public copy, and evaluates the active feature
+freeze before the aggregate `release-gate` can pass.
 
 ## Candidate locator
 
 The annotated Git tag `v1.15.0-beta` is the candidate locator. We intentionally use an annotated
 tag instead of publishing a GitHub Release: in this repository, publishing a GitHub Release
 triggers the production Cloudflare Pages deployment. The candidate tag and the successful
-Cloudflare preview must resolve to the same commit; the release-time verifier accepts only
-matching lowercase 40-character commit SHAs and an HTTPS `vibing-farmer.pages.dev` URL. The
-annotated tag SHA and the already-successful post-preview commit SHA are supplied independently:
-`CANDIDATE_TAG_SHA` identifies the tag, while `PREVIEW_COMMIT_SHA` is populated from the preview
-deployment's own commit metadata. Reusing the tag variable for the preview value would not prove
-that the preview was built from the candidate.
+Cloudflare preview must resolve to the same commit. Ordinary CI does not invent that proof: the
+candidate row remains `pending` until the manual `workflow_dispatch` candidate run is invoked with
+`CANDIDATE_VERIFICATION_MODE=required`. That run peels the annotated tag from the local Git object
+database and resolves the successful `dev` preview's commit and URL from Cloudflare's authenticated
+deployment API. The operator supplies a preview URL only as a lookup selector; Cloudflare metadata
+is the source of the preview SHA and URL, so equal caller strings cannot prove the claim.
 
 The matrix sets `candidate.productionPublish` to `false`. If GitHub nevertheless invokes the
 workflow with `GITHUB_EVENT_NAME=release`, `claim-evidence` exits with policy status `1` before
 the aggregate `release-gate`; because `deploy` needs only that gate, a published release cannot
 reach the production Pages deployment.
+
+Candidate verification prerequisites: push annotated tag `v1.15.0-beta` so the full-history
+checkout can resolve it, wait for the successful `dev` preview, then dispatch `frontend.yml` with
+that tag and preview URL. The repository must provide `CLOUDFLARE_ACCOUNT_ID` and a
+`CLOUDFLARE_API_TOKEN` allowed to read Pages deployments for the `vibing-farmer` project.
 
 ## Claims
 
@@ -32,7 +40,7 @@ reach the production Pages deployment.
 | `yield-availability`      | frontend | `frontend/src/strategy/venueTruth.js`, `frontend/src/strategy/venueTruth.test.js`, `frontend/src/components/strategy/PlanStage.jsx`, `frontend/src/components/strategy/PlanStage.test.jsx`, `frontend/src/components/OnboardingFlow.jsx`, `frontend/src/components/OnboardingFlow.test.jsx`, `frontend/src/components/VaultDetailPage.jsx`, `frontend/src/components/VaultDetailPage.test.jsx`, `frontend/src/history.js`, `frontend/src/history.yield.test.js`, `frontend/src/components/HistoryPanel.jsx`, `frontend/src/components/HistoryPanel.test.jsx`, `frontend/src/strategist.js`, `frontend/src/strategist.yield.test.js`, `frontend/src/components/TxDetailPage.jsx`, `frontend/src/components/TxDetailPage.test.jsx` | `cd frontend && npx vitest run src/strategy/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history.yield.test.js src/components/HistoryPanel.test.jsx src/strategist.yield.test.js src/components/TxDetailPage.test.jsx` |
 | `sponsored-network-fee`   | copy     | `scripts/ci/public-claim-scan.mjs`, `scripts/ci/public-claim-scan.test.mjs`, `frontend/src/history.js`, `frontend/src/history.yield.test.js`, `frontend/src/stellar/exit.js`, `frontend/src/stellar/exit.test.js`, `frontend/src/agents/agentController.js`, `frontend/src/agents/agentController.test.js`, `frontend/src/stellar/partialWithdraw.js`, `frontend/src/stellar/partialWithdraw.test.js`, `frontend/src/components/TxDetailPage.jsx`, `frontend/src/components/TxDetailPage.test.jsx`                                                                                                                                                                                                                               | `node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history.yield.test.js src/stellar/exit.test.js src/agents/agentController.test.js src/stellar/partialWithdraw.test.js src/components/TxDetailPage.test.jsx`                               |
 | `stellar-explorer-counts` | explorer | `frontend/src/stellar/deploymentFacts.js`, `frontend/src/stellar/deploymentFacts.test.js`, `frontend/src/components/ExplorerPage.jsx`, `frontend/src/components/ExplorerPage.test.jsx`, `deployments/stellar-testnet.json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `cd frontend && npx vitest run src/stellar/deploymentFacts.test.js src/components/ExplorerPage.test.jsx`                                                                                                                                                                                                                   |
-| `candidate-same-commit`   | release  | `release/specs/2026-08-11-release-claim-truth-design.md`, `.github/workflows/frontend.yml`, `scripts/ci/claim-evidence.mjs`, `scripts/ci/claim-evidence.test.mjs`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `CANDIDATE_TAG_SHA=$CANDIDATE_SHA PREVIEW_COMMIT_SHA=$PREVIEW_SHA PREVIEW_URL=$CANDIDATE_PREVIEW_URL node scripts/ci/claim-evidence.mjs`                                                                                                                                                                                   |
+| `candidate-same-commit`   | release  | `release/specs/2026-08-11-release-claim-truth-design.md`, `.github/workflows/frontend.yml`, `scripts/ci/claim-evidence.mjs`, `scripts/ci/claim-evidence.test.mjs`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `CANDIDATE_VERIFICATION_MODE=required CANDIDATE_TAG=$CANDIDATE_TAG CANDIDATE_PREVIEW_URL=$CANDIDATE_PREVIEW_URL CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN node scripts/ci/claim-evidence.mjs`                                                                                |
 | `required-checks`         | release  | `.github/workflows/frontend.yml`, `scripts/ci/release-gate.mjs`, `scripts/ci/release-gate.test.mjs`, `scripts/ci/claim-evidence.mjs`, `scripts/ci/claim-evidence.test.mjs`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `node --test scripts/ci/public-claim-scan.test.mjs scripts/ci/claim-evidence.test.mjs scripts/ci/release-gate.test.mjs`                                                                                                                                                                                                    |
 | `feature-freeze`          | release  | `release/2026-08-11-release-claim-truth-implementation-plan.md`, `release/specs/2026-08-11-release-claim-truth-design.md`, `scripts/ci/claim-evidence.mjs`, `scripts/ci/claim-evidence.test.mjs`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `node --test scripts/ci/claim-evidence.test.mjs && node scripts/ci/claim-evidence.mjs`                                                                                                                                                                                                                                     |
 
@@ -46,6 +54,7 @@ while a policy violation exits 1.
 
 ## Verification exit codes
 
-- Exit `0`: all local claims and any supplied release identity/range checks pass.
+- Exit `0`: local claims and any supplied release identity/range checks pass. Without candidate
+  inputs, same-commit verification is explicitly reported as pending rather than proven.
 - Exit `1`: a claim, freeze, or candidate identity policy is not proven.
 - Exit `2`: the matrix, evidence input, or required environment/range input is unreadable or malformed.

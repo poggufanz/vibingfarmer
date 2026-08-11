@@ -34,6 +34,10 @@ const CANDIDATE_LOCATORS = Object.freeze([
   "https://dev.vibing-farmer.pages.dev",
 ]);
 
+const CANDIDATE_CLAIM_ID = "candidate-same-commit";
+const CANDIDATE_VERIFICATION_MODE = "required";
+const DEFAULT_CLOUDFLARE_API_BASE_URL = "https://api.cloudflare.com/client/v4";
+
 const CONTRACT_VERIFICATIONS = Object.freeze({
   "permission-lifetime":
     "cd frontend && npx vitest run src/strategy/permissionWindow.test.js src/strategy/flowState.test.js src/stellar/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
@@ -44,7 +48,7 @@ const CONTRACT_VERIFICATIONS = Object.freeze({
   "stellar-explorer-counts":
     "cd frontend && npx vitest run src/stellar/deploymentFacts.test.js src/components/ExplorerPage.test.jsx",
   "candidate-same-commit":
-    "CANDIDATE_TAG_SHA=$CANDIDATE_SHA PREVIEW_COMMIT_SHA=$PREVIEW_SHA PREVIEW_URL=$CANDIDATE_PREVIEW_URL node scripts/ci/claim-evidence.mjs",
+    "CANDIDATE_VERIFICATION_MODE=required CANDIDATE_TAG=$CANDIDATE_TAG CANDIDATE_PREVIEW_URL=$CANDIDATE_PREVIEW_URL CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN node scripts/ci/claim-evidence.mjs",
   "required-checks":
     "node --test scripts/ci/public-claim-scan.test.mjs scripts/ci/claim-evidence.test.mjs scripts/ci/release-gate.test.mjs",
   "feature-freeze":
@@ -253,7 +257,11 @@ function evidencePathFailure(root, evidencePath) {
   return null;
 }
 
-function validateEvidenceMatrixInternal(matrix, repoRoot) {
+function validateEvidenceMatrixInternal(
+  matrix,
+  repoRoot,
+  { requireCandidateProof = false } = {},
+) {
   const failures = [];
   let malformed = false;
   const fail = (message, inputError = false) => {
@@ -341,7 +349,14 @@ function validateEvidenceMatrixInternal(matrix, repoRoot) {
       continue;
     }
     const contract = CLAIM_CONTRACTS[id];
-    if (row.status !== "proven") fail(`${id}: status must be proven`);
+    const candidatePending =
+      id === CANDIDATE_CLAIM_ID && row.status === "pending";
+    if (
+      row.status !== "proven" &&
+      !(candidatePending && !requireCandidateProof)
+    ) {
+      fail(`${id}: status must be proven`);
+    }
     if (!nonEmptyString(row.owner)) {
       fail(`${id}: owner must be non-empty`);
     } else if (row.owner !== contract.owner) {
@@ -406,8 +421,16 @@ function validateEvidenceMatrixInternal(matrix, repoRoot) {
   return { ok: failures.length === 0, failures, malformed };
 }
 
-export function validateEvidenceMatrix(matrix, repoRoot = defaultRepoRoot) {
-  const { ok, failures } = validateEvidenceMatrixInternal(matrix, repoRoot);
+export function validateEvidenceMatrix(
+  matrix,
+  repoRoot = defaultRepoRoot,
+  options = {},
+) {
+  const { ok, failures } = validateEvidenceMatrixInternal(
+    matrix,
+    repoRoot,
+    options,
+  );
   return { ok, failures };
 }
 
@@ -446,6 +469,234 @@ function isValidSha(value) {
   return typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
 }
 
+function validTagName(value) {
+  return (
+    typeof value === "string" &&
+    /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value)
+  );
+}
+
+function gitOutput(repoRoot, args) {
+  try {
+    return execFileSync("git", args, {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch (error) {
+    throw new Error(`unable to resolve candidate tag: ${error.message}`);
+  }
+}
+
+/**
+ * Resolve the target commit from the local annotated tag object. A caller-supplied SHA is only
+ * ever an optional assertion; it is not the source of the candidate identity.
+ */
+export function resolveAnnotatedTagTarget(repoRoot, tagName) {
+  if (!validTagName(tagName)) {
+    throw new Error("candidate tag name is invalid");
+  }
+  const tagRef = `refs/tags/${tagName}`;
+  const tagType = gitOutput(repoRoot, ["cat-file", "-t", tagRef]);
+  if (tagType !== "tag") {
+    throw new Error("candidate tag must be an annotated tag");
+  }
+  const tagObjectSha = gitOutput(repoRoot, ["rev-parse", "--verify", tagRef]);
+  const targetSha = gitOutput(repoRoot, [
+    "rev-parse",
+    "--verify",
+    `${tagRef}^{commit}`,
+  ]);
+  if (!isValidSha(tagObjectSha) || !isValidSha(targetSha)) {
+    throw new Error("candidate tag did not resolve to a commit SHA");
+  }
+  return { tagName, tagRef, tagObjectSha, targetSha };
+}
+
+function previewUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("preview URL must be an HTTPS vibing-farmer.pages.dev URL");
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (
+    parsed.protocol !== "https:" ||
+    !hostname.endsWith(".vibing-farmer.pages.dev") ||
+    hostname === "vibing-farmer.pages.dev" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.port !== "" ||
+    parsed.pathname !== "/" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    throw new Error("preview URL must be an HTTPS vibing-farmer.pages.dev URL");
+  }
+  return parsed;
+}
+
+function deploymentCommitSha(deployment) {
+  const metadata = deployment?.deployment_trigger?.metadata;
+  const sourceConfig = deployment?.source?.config;
+  return [
+    metadata?.commit_hash,
+    metadata?.commitHash,
+    sourceConfig?.commit_hash,
+    sourceConfig?.commitHash,
+    deployment?.commit_hash,
+    deployment?.commitHash,
+  ].find(isValidSha);
+}
+
+function deploymentBranch(deployment) {
+  const metadata = deployment?.deployment_trigger?.metadata;
+  const sourceConfig = deployment?.source?.config;
+  return (
+    metadata?.branch ??
+    metadata?.branch_name ??
+    metadata?.branchName ??
+    sourceConfig?.branch ??
+    sourceConfig?.branch_name ??
+    sourceConfig?.branchName
+  );
+}
+
+function deploymentUrls(deployment) {
+  const aliases = Array.isArray(deployment?.aliases) ? deployment.aliases : [];
+  return [deployment?.url, ...aliases].filter(nonEmptyString);
+}
+
+function previewUrlsMatch(actual, expected) {
+  try {
+    const actualUrl = previewUrl(actual);
+    const expectedUrl = previewUrl(expected);
+    return (
+      actualUrl.protocol === expectedUrl.protocol &&
+      actualUrl.hostname.toLowerCase() === expectedUrl.hostname.toLowerCase() &&
+      actualUrl.port === expectedUrl.port &&
+      actualUrl.pathname === expectedUrl.pathname &&
+      actualUrl.search === expectedUrl.search &&
+      actualUrl.hash === expectedUrl.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+function successfulPreviewDeployment(deployment) {
+  return (
+    deployment?.environment === "preview" &&
+    deployment?.latest_stage?.status === "success"
+  );
+}
+
+/**
+ * Resolve a preview's commit and URL from Cloudflare's deployment API. The URL supplied by the
+ * operator only selects a deployment; the commit SHA is read from Cloudflare metadata and the
+ * deployment must be a successful preview on the expected branch.
+ */
+export async function resolveCloudflarePreview({
+  accountId,
+  apiToken,
+  projectName = "vibing-farmer",
+  previewUrl,
+  expectedBranch = "dev",
+  expectedSha,
+  fetchImpl = globalThis.fetch,
+  apiBaseUrl = DEFAULT_CLOUDFLARE_API_BASE_URL,
+} = {}) {
+  if (!nonEmptyString(accountId) || !nonEmptyString(apiToken)) {
+    throw new Error(
+      "Cloudflare preview verification requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN",
+    );
+  }
+  if (!nonEmptyString(projectName)) {
+    throw new Error("Cloudflare Pages project name is required");
+  }
+  const requestedUrl = previewUrlValue(previewUrl);
+  if (typeof fetchImpl !== "function") {
+    throw new Error("Cloudflare preview verification requires fetch");
+  }
+
+  let endpoint;
+  try {
+    endpoint = new URL(
+      `${String(apiBaseUrl).replace(/\/+$/, "")}/accounts/${encodeURIComponent(accountId)}/pages/projects/${encodeURIComponent(projectName)}/deployments`,
+    );
+  } catch {
+    throw new Error("Cloudflare API base URL is invalid");
+  }
+  endpoint.searchParams.set("per_page", "100");
+  endpoint.searchParams.set("env", "preview");
+
+  let response;
+  try {
+    response = await fetchImpl(endpoint, {
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        Accept: "application/json",
+      },
+    });
+  } catch (error) {
+    throw new Error(`unable to read Cloudflare deployments: ${error.message}`);
+  }
+  if (!response?.ok) {
+    throw new Error(
+      `Cloudflare deployments request failed with HTTP ${response?.status ?? "unknown"}`,
+    );
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    throw new Error(
+      `Cloudflare deployments response was not JSON: ${error.message}`,
+    );
+  }
+  if (payload?.success !== true || !Array.isArray(payload.result)) {
+    throw new Error(
+      "Cloudflare deployments response was unsuccessful or malformed",
+    );
+  }
+
+  const deployment = payload.result.find((candidate) => {
+    if (!successfulPreviewDeployment(candidate)) return false;
+    if (
+      !deploymentUrls(candidate).some((url) =>
+        previewUrlsMatch(url, requestedUrl),
+      )
+    ) {
+      return false;
+    }
+    const commitSha = deploymentCommitSha(candidate);
+    if (!isValidSha(commitSha)) return false;
+    if (expectedSha && commitSha !== expectedSha) return false;
+    return deploymentBranch(candidate) === expectedBranch;
+  });
+  if (!deployment) {
+    throw new Error(
+      "no successful Cloudflare preview deployment matched the requested URL, branch, and candidate commit",
+    );
+  }
+  const resolvedUrl = deploymentUrls(deployment).find((url) =>
+    previewUrlsMatch(url, requestedUrl),
+  );
+  return {
+    deploymentId: deployment.id ?? deployment.short_id ?? null,
+    previewSha: deploymentCommitSha(deployment),
+    previewUrl: resolvedUrl,
+    branch: deploymentBranch(deployment),
+  };
+}
+
+function previewUrlValue(value) {
+  previewUrl(value);
+  return String(value).trim();
+}
+
 export function verifyCandidateIdentity(input = {}) {
   const { tagSha, previewSha, previewUrl } = isPlainObject(input) ? input : {};
   const failures = [];
@@ -458,26 +709,104 @@ export function verifyCandidateIdentity(input = {}) {
     failures.push("candidate tag SHA and preview commit SHA must be identical");
   }
 
-  let url;
   try {
-    url = new URL(previewUrl);
+    previewUrlValue(previewUrl);
   } catch {
     failures.push("preview URL must be an HTTPS vibing-farmer.pages.dev URL");
   }
-  if (url) {
-    const hostname = url.hostname.toLowerCase();
-    const allowedHost = hostname.endsWith(".vibing-farmer.pages.dev");
-    if (
-      url.protocol !== "https:" ||
-      !allowedHost ||
-      url.username !== "" ||
-      url.password !== "" ||
-      (url.port !== "" && url.port !== "443")
-    ) {
-      failures.push("preview URL must be an HTTPS vibing-farmer.pages.dev URL");
+  return { ok: failures.length === 0, failures };
+}
+
+/**
+ * Resolve and verify the candidate from independent sources. The local Git object database is the
+ * source for the annotated tag target, and Cloudflare's authenticated deployment API is the source
+ * for the preview commit and URL. Any SHA supplied through the environment is checked only as an
+ * assertion against those independently resolved values.
+ */
+export async function verifyCandidateFromSources({
+  matrix,
+  repoRoot = defaultRepoRoot,
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  if (env.CANDIDATE_VERIFICATION_MODE !== CANDIDATE_VERIFICATION_MODE) {
+    throw new Error(
+      `candidate verification mode must be ${CANDIDATE_VERIFICATION_MODE}`,
+    );
+  }
+  const tagName = env.CANDIDATE_TAG;
+  const requestedPreviewUrl = env.CANDIDATE_PREVIEW_URL ?? env.PREVIEW_URL;
+  if (!nonEmptyString(tagName) || !nonEmptyString(requestedPreviewUrl)) {
+    throw new Error(
+      "candidate verification requires CANDIDATE_TAG and CANDIDATE_PREVIEW_URL",
+    );
+  }
+  if (
+    env.CANDIDATE_PREVIEW_URL !== undefined &&
+    env.PREVIEW_URL !== undefined &&
+    env.CANDIDATE_PREVIEW_URL !== env.PREVIEW_URL
+  ) {
+    throw candidatePolicyError(
+      "candidate preview URL inputs must be identical",
+    );
+  }
+  if (!isPlainObject(matrix?.candidate)) {
+    throw new Error("candidate matrix metadata is missing");
+  }
+  if (tagName !== matrix.candidate.tag) {
+    throw candidatePolicyError(
+      "candidate tag does not match the evidence matrix",
+    );
+  }
+
+  const tag = resolveAnnotatedTagTarget(repoRoot, tagName);
+  if (env.CANDIDATE_TAG_SHA !== undefined) {
+    if (!isValidSha(env.CANDIDATE_TAG_SHA)) {
+      throw new Error("CANDIDATE_TAG_SHA must be lowercase 40-character hex");
+    }
+    if (env.CANDIDATE_TAG_SHA !== tag.targetSha) {
+      throw candidatePolicyError(
+        "CANDIDATE_TAG_SHA does not match the annotated tag target",
+      );
     }
   }
-  return { ok: failures.length === 0, failures };
+
+  let preview;
+  try {
+    preview = await resolveCloudflarePreview({
+      accountId: env.CLOUDFLARE_ACCOUNT_ID,
+      apiToken: env.CLOUDFLARE_API_TOKEN,
+      projectName: matrix.candidate.cloudflareProject,
+      previewUrl: requestedPreviewUrl,
+      expectedBranch: matrix.candidate.targetBranch,
+      expectedSha: tag.targetSha,
+      fetchImpl,
+      apiBaseUrl: DEFAULT_CLOUDFLARE_API_BASE_URL,
+    });
+  } catch (error) {
+    if (error.message.startsWith("no successful Cloudflare preview")) {
+      error.exitCode = 1;
+    }
+    throw error;
+  }
+  if (env.PREVIEW_COMMIT_SHA !== undefined) {
+    if (!isValidSha(env.PREVIEW_COMMIT_SHA)) {
+      throw new Error("PREVIEW_COMMIT_SHA must be lowercase 40-character hex");
+    }
+    if (env.PREVIEW_COMMIT_SHA !== preview.previewSha) {
+      throw candidatePolicyError(
+        "PREVIEW_COMMIT_SHA does not match Cloudflare deployment metadata",
+      );
+    }
+  }
+
+  const identity = verifyCandidateIdentity({
+    tagSha: tag.targetSha,
+    previewSha: preview.previewSha,
+    previewUrl: preview.previewUrl,
+  });
+  if (!identity.ok) throw candidatePolicyError(identity.failures.join("; "));
+  return { ...identity, tag, preview };
 }
 
 function getCommitSubjects(repoRoot, baseSha, headSha) {
@@ -500,7 +829,13 @@ function envPresence(name) {
   return process.env[name] !== undefined;
 }
 
-function run() {
+function candidatePolicyError(message) {
+  const error = new Error(message);
+  error.exitCode = 1;
+  return error;
+}
+
+async function run() {
   const configuredMatrixPath = process.env.CLAIM_EVIDENCE_MATRIX_PATH;
   const configuredRepoRoot = process.env.CLAIM_EVIDENCE_REPO_ROOT;
   const inputMatrixPath =
@@ -578,43 +913,55 @@ function run() {
   }
 
   const candidateNames = [
+    "CANDIDATE_TAG",
     "CANDIDATE_TAG_SHA",
     "PREVIEW_COMMIT_SHA",
+    "CANDIDATE_PREVIEW_URL",
     "PREVIEW_URL",
   ];
   const presentCandidateNames = candidateNames.filter(envPresence);
-  if (presentCandidateNames.length > 0) {
-    if (presentCandidateNames.length !== candidateNames.length) {
+  const candidateModePresent = envPresence("CANDIDATE_VERIFICATION_MODE");
+  let candidateVerified = false;
+  if (candidateModePresent || presentCandidateNames.length > 0) {
+    if (!candidateModePresent) {
       console.error(
-        "claim-evidence ERROR: candidate identity requires all three environment variables",
+        "claim-evidence ERROR: candidate identity environment inputs (all three sources) require candidate verification mode",
       );
       process.exitCode = 2;
       return;
     }
-    const candidateResult = verifyCandidateIdentity({
-      tagSha: process.env.CANDIDATE_TAG_SHA,
-      previewSha: process.env.PREVIEW_COMMIT_SHA,
-      previewUrl: process.env.PREVIEW_URL,
-    });
-    if (!candidateResult.ok) {
+    try {
+      await verifyCandidateFromSources({
+        matrix,
+        repoRoot: inputRepoRoot,
+      });
+      candidateVerified = true;
+    } catch (error) {
       console.error(
-        "claim-evidence FAILED — candidate identity is not proven:",
+        `claim-evidence ${error?.exitCode === 1 ? "FAILED" : "ERROR"} — candidate identity is not proven: ${error.message}`,
       );
-      for (const failure of candidateResult.failures)
-        console.error(`  - ${failure}`);
-      process.exitCode = 1;
+      process.exitCode = error?.exitCode ?? 2;
       return;
     }
   }
 
-  console.log(
-    "claim-evidence OK — matrix, freeze, and candidate checks passed",
-  );
+  if (candidateVerified) {
+    console.log(
+      "claim-evidence OK — matrix, freeze, and independently resolved candidate identity passed",
+    );
+  } else {
+    console.log(
+      "claim-evidence OK — local matrix and freeze checks passed; candidate identity verification pending",
+    );
+  }
 }
 
 if (
   process.argv[1] &&
   fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
 ) {
-  run();
+  run().catch((error) => {
+    console.error(`claim-evidence ERROR: ${error.message}`);
+    process.exitCode = error?.exitCode ?? 2;
+  });
 }

@@ -86,10 +86,10 @@ The repository publishes:
 
 - `release/evidence-matrix.json` as the machine-readable source of truth.
 - `EVIDENCE_MATRIX.md` as the human-readable index linked from the README.
-- `scripts/ci/claim-evidence.mjs` to validate schema, required rows, local evidence paths, freeze state, and candidate tag format.
+- `scripts/ci/claim-evidence.mjs` to validate schema, required rows, local evidence paths, freeze state, and candidate identity resolution.
 - Unit tests for the validator and freeze decision.
 
-Each claim row records an owner, status, verification command, and one or more evidence locators. No row may be `proven` with an empty command or missing local evidence. External release evidence is expressed through stable locators—the candidate tag and the Cloudflare deployment API/URL—and is verified at release time against the resolved commit rather than copied into a recursively changing source file.
+Each claim row records an owner, status, verification command, and one or more evidence locators. No row may be `proven` with an empty command or missing local evidence. The candidate same-commit row remains `pending` until the candidate verification run; ordinary CI may validate that pre-preview state, while the required candidate mode resolves the annotated tag target locally and the successful Cloudflare preview commit/URL from the authenticated deployment API. External release evidence is expressed through stable locators—the candidate tag and the Cloudflare deployment API/URL—and is verified at release time against those independently resolved values rather than copied into a recursively changing source file.
 
 The active freeze config rejects `feat` conventional commits in the event's candidate range. The workflow runs the claim scanner and evidence/freeze validator before the aggregate release gate can succeed.
 
@@ -100,7 +100,9 @@ The work lands through a pull request into `dev`, because the existing workflow 
 1. Resolve the merge commit SHA.
 2. Resolve the successful Cloudflare preview deployment for that exact SHA.
 3. Create and push annotated tag `v1.15.0-beta` on that same merge commit.
-4. Re-run the release-evidence verifier with the tag SHA and Cloudflare deployment SHA.
+4. Dispatch the workflow's candidate verification run with `candidate_tag` and the successful
+   `candidate_preview_url` inputs. The required mode resolves the annotated tag target and the
+   preview deployment metadata itself; it does not trust caller-supplied equal SHA strings.
 
 Only the tag is created; no GitHub Release is published because this repository intentionally maps a published GitHub Release to a production deployment.
 

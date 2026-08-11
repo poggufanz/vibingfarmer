@@ -19,6 +19,7 @@ import {
   validateEvidenceMatrix,
   verifyCandidateIdentity,
 } from "./claim-evidence.mjs";
+import * as candidateEvidence from "./claim-evidence.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
@@ -83,9 +84,15 @@ function runCli(env = {}, cwd = repoRoot) {
   for (const name of [
     "FREEZE_BASE_SHA",
     "FREEZE_HEAD_SHA",
+    "CANDIDATE_VERIFICATION_MODE",
+    "CANDIDATE_TAG",
     "CANDIDATE_TAG_SHA",
     "PREVIEW_COMMIT_SHA",
+    "CANDIDATE_PREVIEW_URL",
     "PREVIEW_URL",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_API_BASE_URL",
     "GITHUB_EVENT_NAME",
   ]) {
     delete mergedEnv[name];
@@ -349,14 +356,116 @@ test("CLI: candidate environment variables are all-or-none malformed input", () 
   assert.match(result.stderr, /candidate.*environment|all three/i);
 });
 
-test("CLI: candidate identity mismatch is a policy failure", () => {
+test("CLI: candidate inputs cannot opt into verification without required mode", () => {
+  const result = runCli({
+    CANDIDATE_TAG: "v1.15.0-beta",
+    CANDIDATE_PREVIEW_URL: "https://dev.vibing-farmer.pages.dev",
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /candidate.*mode|verification.*required/i);
+});
+
+test("CLI: required candidate mode fails closed when candidate inputs are omitted", () => {
+  const result = runCli({ CANDIDATE_VERIFICATION_MODE: "required" });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /candidate.*(tag|preview)|required/i);
+});
+
+test("checked-in matrix does not mark same-commit evidence proven before candidate verification", () => {
+  const candidate = checkedInMatrix().claims.find(
+    (claim) => claim.id === "candidate-same-commit",
+  );
+  assert.equal(candidate.status, "pending");
+  assert.equal(
+    validateEvidenceMatrix(checkedInMatrix(), repoRoot, {
+      requireCandidateProof: true,
+    }).ok,
+    false,
+  );
+});
+
+test("candidate verifier exposes independent annotated-tag and Cloudflare resolvers", () => {
+  assert.equal(typeof candidateEvidence.resolveAnnotatedTagTarget, "function");
+  assert.equal(typeof candidateEvidence.resolveCloudflarePreview, "function");
+});
+
+test("resolveAnnotatedTagTarget rejects lightweight tags and peels annotated tags to commits", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "claim-evidence-tag-"));
+  writeFileSync(path.join(root, "seed.txt"), "candidate\n");
+  git(root, ["init", "-q"]);
+  git(root, ["config", "user.name", "claim-evidence-test"]);
+  git(root, ["config", "user.email", "claim-evidence-test@example.invalid"]);
+  git(root, ["add", "seed.txt"]);
+  git(root, ["commit", "-qm", "chore: seed candidate tag"]);
+  const targetSha = git(root, ["rev-parse", "HEAD"]);
+  git(root, ["tag", "v9.9.9-light"]);
+  assert.throws(
+    () => candidateEvidence.resolveAnnotatedTagTarget(root, "v9.9.9-light"),
+    /annotated/i,
+  );
+  git(root, ["tag", "-a", "v9.9.9-beta", "-m", "candidate"]);
+  assert.deepEqual(
+    candidateEvidence.resolveAnnotatedTagTarget(root, "v9.9.9-beta"),
+    {
+      tagName: "v9.9.9-beta",
+      tagRef: "refs/tags/v9.9.9-beta",
+      tagObjectSha: git(root, ["rev-parse", "refs/tags/v9.9.9-beta"]),
+      targetSha,
+    },
+  );
+});
+
+test("resolveCloudflarePreview reads commit metadata and URL from an authenticated successful deployment", async () => {
+  const sha = "c".repeat(40);
+  const resolved = await candidateEvidence.resolveCloudflarePreview({
+    accountId: "account",
+    apiToken: "token",
+    previewUrl: "https://dev.vibing-farmer.pages.dev",
+    expectedSha: sha,
+    fetchImpl: async (url, init) => {
+      assert.match(
+        String(url),
+        /\/client\/v4\/accounts\/account\/pages\/projects\/vibing-farmer\/deployments/,
+      );
+      assert.equal(init.headers.Authorization, "Bearer token");
+      return {
+        ok: true,
+        async json() {
+          return {
+            success: true,
+            result: [
+              {
+                id: "deployment-id",
+                environment: "preview",
+                url: "https://candidate-id.vibing-farmer.pages.dev/",
+                aliases: ["https://dev.vibing-farmer.pages.dev/"],
+                latest_stage: { status: "success" },
+                deployment_trigger: {
+                  metadata: { branch: "dev", commit_hash: sha },
+                },
+              },
+            ],
+          };
+        },
+      };
+    },
+  });
+  assert.deepEqual(resolved, {
+    deploymentId: "deployment-id",
+    previewSha: sha,
+    previewUrl: "https://dev.vibing-farmer.pages.dev/",
+    branch: "dev",
+  });
+});
+
+test("CLI: legacy caller-provided identity values are rejected without required mode", () => {
   const result = runCli({
     CANDIDATE_TAG_SHA: "a".repeat(40),
     PREVIEW_COMMIT_SHA: "b".repeat(40),
     PREVIEW_URL: "https://dev.vibing-farmer.pages.dev",
   });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /candidate|identity/i);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /candidate.*mode|verification.*required/i);
 });
 
 test("CLI: a published GitHub Release is a policy failure when production publishing is disabled", () => {
@@ -425,12 +534,33 @@ test("checked-in candidate verification resolves the preview SHA independently",
   const row = matrix.claims.find(
     (claim) => claim.id === "candidate-same-commit",
   );
-  assert.match(row.verification, /CANDIDATE_TAG_SHA=\$CANDIDATE_SHA/);
-  assert.match(row.verification, /PREVIEW_COMMIT_SHA=\$PREVIEW_SHA/);
+  assert.match(row.verification, /CANDIDATE_VERIFICATION_MODE=required/);
+  assert.match(row.verification, /CANDIDATE_TAG=\$CANDIDATE_TAG/);
+  assert.match(
+    row.verification,
+    /CANDIDATE_PREVIEW_URL=\$CANDIDATE_PREVIEW_URL/,
+  );
   assert.doesNotMatch(row.verification, /PREVIEW_COMMIT_SHA=\$CANDIDATE_SHA/);
   const human = readFileSync(path.join(repoRoot, "EVIDENCE_MATRIX.md"), "utf8");
-  assert.match(human, /PREVIEW_COMMIT_SHA=\$PREVIEW_SHA/);
+  assert.match(human, /CANDIDATE_VERIFICATION_MODE=required/);
+  assert.match(human, /CANDIDATE_PREVIEW_URL=\$CANDIDATE_PREVIEW_URL/);
   assert.doesNotMatch(human, /PREVIEW_COMMIT_SHA=\$CANDIDATE_SHA/);
+});
+
+test("workflow has a mandatory manual candidate verification path distinct from ordinary CI", () => {
+  const workflow = readFileSync(
+    path.join(repoRoot, ".github", "workflows", "frontend.yml"),
+    "utf8",
+  );
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /candidate_tag:/);
+  assert.match(workflow, /candidate_preview_url:/);
+  assert.match(workflow, /CANDIDATE_VERIFICATION_MODE: required/);
+  assert.match(workflow, /if: github\.event_name == 'workflow_dispatch'/);
+  assert.match(
+    workflow,
+    /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/,
+  );
 });
 
 test("CLI: evaluates an allowed commit range from FREEZE_BASE_SHA/FREEZE_HEAD_SHA", () => {

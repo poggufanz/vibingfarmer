@@ -40,7 +40,8 @@
 - `frontend/src/components/ExplorerPage.jsx` and `.test.jsx`: render complete, categorized Stellar deployment facts.
 - `release/evidence-matrix.json`: machine-readable claim evidence and freeze policy.
 - `EVIDENCE_MATRIX.md`: public human-readable evidence index.
-- `scripts/ci/claim-evidence.mjs` and `.test.mjs`: matrix, freeze-range, and same-commit validators.
+- `scripts/ci/claim-evidence.mjs` and `.test.mjs`: matrix, freeze-range, and independently
+  resolved same-commit validators.
 - `.github/workflows/frontend.yml`, `scripts/ci/release-gate.mjs`, and `.test.mjs`: make claim evidence a required job.
 
 ---
@@ -71,30 +72,46 @@
 Add cases equivalent to:
 
 ```js
-it('binds every agent and the fingerprint to the same selected lifetime', () => {
-  const original = makePlan({ expiries: [101, 202] })
+it("binds every agent and the fingerprint to the same selected lifetime", () => {
+  const original = makePlan({ expiries: [101, 202] });
   const rebound = bindPlanToPermissionWindow(original, {
     checkedAt: 1_800_000_000,
     durationSeconds: 86_400,
-  })
-  expect(rebound.agents.map((agent) => agent.expiry)).toEqual([1_800_086_400, 1_800_086_400])
-  expect(rebound.planFingerprint).toBe(hashStrategy(rebound))
-  expect(original.agents.map((agent) => agent.expiry)).toEqual([101, 202])
-})
+  });
+  expect(rebound.agents.map((agent) => agent.expiry)).toEqual([
+    1_800_086_400, 1_800_086_400,
+  ]);
+  expect(rebound.planFingerprint).toBe(hashStrategy(rebound));
+  expect(original.agents.map((agent) => agent.expiry)).toEqual([101, 202]);
+});
 
-it.each([0, -1, 1.5, Number.NaN])('rejects invalid duration %s', (durationSeconds) => {
-  expect(() => bindPlanToPermissionWindow(makePlan(), { checkedAt: 1_800_000_000, durationSeconds }))
-    .toThrow('durationSeconds must be a positive integer')
-})
+it.each([0, -1, 1.5, Number.NaN])(
+  "rejects invalid duration %s",
+  (durationSeconds) => {
+    expect(() =>
+      bindPlanToPermissionWindow(makePlan(), {
+        checkedAt: 1_800_000_000,
+        durationSeconds,
+      }),
+    ).toThrow("durationSeconds must be a positive integer");
+  },
+);
 
-it('replaces the protect plan and invalidates an older permission', () => {
-  const before = { ...toProtect(), permission: decision(), permissionStatus: 'preflight-ready' }
-  const rebound = { ...before.plan, planFingerprint: '0xnew' }
-  const after = strategyFlowReducer(before, { type: 'PERMISSION_WINDOW_BOUND', plan: rebound })
-  expect(after.plan).toBe(rebound)
-  expect(after.permission).toBeNull()
-  expect(after.permissionStatus).toBe('idle')
-})
+it("replaces the protect plan and invalidates an older permission", () => {
+  const before = {
+    ...toProtect(),
+    permission: decision(),
+    permissionStatus: "preflight-ready",
+  };
+  const rebound = { ...before.plan, planFingerprint: "0xnew" };
+  const after = strategyFlowReducer(before, {
+    type: "PERMISSION_WINDOW_BOUND",
+    plan: rebound,
+  });
+  expect(after.plan).toBe(rebound);
+  expect(after.permission).toBeNull();
+  expect(after.permissionStatus).toBe("idle");
+});
 ```
 
 - [ ] **Step 2: Run the focused tests and confirm RED**
@@ -108,22 +125,26 @@ Expected: FAIL because `permissionWindow.js` and `PERMISSION_WINDOW_BOUND` do no
 Use this contract:
 
 ```js
-import { hashStrategy } from '../attestation.js'
+import { hashStrategy } from "../attestation.js";
 
-export function bindPlanToPermissionWindow(plan, { checkedAt, durationSeconds } = {}) {
+export function bindPlanToPermissionWindow(
+  plan,
+  { checkedAt, durationSeconds } = {},
+) {
   if (!Number.isInteger(checkedAt) || checkedAt <= 0) {
-    throw new Error('checkedAt must be a positive integer')
+    throw new Error("checkedAt must be a positive integer");
   }
   if (!Number.isInteger(durationSeconds) || durationSeconds <= 0) {
-    throw new Error('durationSeconds must be a positive integer')
+    throw new Error("durationSeconds must be a positive integer");
   }
-  if (!plan || !Array.isArray(plan.agents)) throw new Error('plan.agents must be an array')
-  const expiry = checkedAt + durationSeconds
+  if (!plan || !Array.isArray(plan.agents))
+    throw new Error("plan.agents must be an array");
+  const expiry = checkedAt + durationSeconds;
   const rebound = {
     ...plan,
     agents: plan.agents.map((agent) => ({ ...agent, expiry })),
-  }
-  return { ...rebound, planFingerprint: hashStrategy(rebound) }
+  };
+  return { ...rebound, planFingerprint: hashStrategy(rebound) };
 }
 ```
 
@@ -134,14 +155,16 @@ The reducer event must clear `permission`, reset `permissionStatus` to `idle`, c
 In `onRetryPreflight`, replace reads from the old plan with:
 
 ```js
-const checkedAt = Math.floor(Date.now() / 1000)
+const checkedAt = Math.floor(Date.now() / 1000);
 const plan = bindPlanToPermissionWindow(strategyFlowRef.current.plan, {
   checkedAt,
   durationSeconds,
-})
-dispatchFlow({ type: 'PERMISSION_WINDOW_BOUND', plan })
-const agentInits = plan.agents.map((agent) => planAgentToAgentInit(agent, baseKernel))
-const reviewedBudgets = planReviewedBudgets(plan.agents)
+});
+dispatchFlow({ type: "PERMISSION_WINDOW_BOUND", plan });
+const agentInits = plan.agents.map((agent) =>
+  planAgentToAgentInit(agent, baseKernel),
+);
+const reviewedBudgets = planReviewedBudgets(plan.agents);
 ```
 
 Pass `nowSec: checkedAt` to `preflightPermission`. Compose the V3 decision and all plan fingerprints from this rebound `plan`, never `strategyFlowRef.current.plan` again inside the call.
@@ -211,9 +234,16 @@ git commit -m "fix(strategy): bind one permission lifetime"
 Cover all of these exact cases:
 
 ```js
-expect(venueYield({ ...stellar, apy: 4.8 })).toEqual({ state: 'unavailable', apy: null })
-expect(venueYield({ ...stellar, yield: { state: 'live', apy: 4.8, asOf: Date.now() } }))
-  .toEqual({ state: 'live', apy: 4.8 })
+expect(venueYield({ ...stellar, apy: 4.8 })).toEqual({
+  state: "unavailable",
+  apy: null,
+});
+expect(
+  venueYield({
+    ...stellar,
+    yield: { state: "live", apy: 4.8, asOf: Date.now() },
+  }),
+).toEqual({ state: "live", apy: 4.8 });
 ```
 
 For each component, render a catalog APY without `yield.state === 'live'` and assert `Yield unavailable` or `Not available` is present while `4.8%`, `Estimated in 30 days`, and `USDC/day estimated` are absent. Render an explicit live yield and assert the number appears.
@@ -246,9 +276,9 @@ Use `venueYield(...)` on each surface. The Plan estimate must use `stellarYield.
 
 ```js
 const estimate30d =
-  stellarYield.state === 'live' && estimateAmount > 0
+  stellarYield.state === "live" && estimateAmount > 0
     ? `${formatDollarNumber(estimateAmount * (stellarYield.apy / 100) * (30 / 365))} USDC`
-    : null
+    : null;
 ```
 
 Onboarding's static seed and current flat fetched rows render names plus `Yield unavailable`; only a row carrying explicit nested live-venue evidence renders `ApyValue`. Label the section `Vault yield` instead of `Live vault rates` until at least one row is live. Wallet balance may remain `0.0% APY` because it is a non-yielding balance, not an unavailable vault rate.
@@ -256,8 +286,8 @@ Onboarding's static seed and current flat fetched rows render names plus `Yield 
 Vault detail uses:
 
 ```js
-const yieldState = venueYield(liveData || catalog)
-const apy = yieldState.state === 'live' ? yieldState.apy : null
+const yieldState = venueYield(liveData || catalog);
+const apy = yieldState.state === "live" ? yieldState.apy : null;
 ```
 
 Render APY as `Not available` when null, omit the daily estimate, omit APY from the position sentence, and remove `yv_prefill_apy` from session storage when null.
@@ -268,8 +298,10 @@ Add `yieldEvidence` to transaction and reasoning inputs. Normalize persisted APY
 
 ```js
 function evidencedApy(apy, yieldEvidence) {
-  const value = Number(apy)
-  return yieldEvidence === 'live-venue' && Number.isFinite(value) ? value : null
+  const value = Number(apy);
+  return yieldEvidence === "live-venue" && Number.isFinite(value)
+    ? value
+    : null;
 }
 ```
 
@@ -371,21 +403,26 @@ Expected: FAIL because the scanner module does not exist.
 Export regex definitions and a line-aware function. The CLI must discover tracked files with `git ls-files`, then scan root/docs copy and the shipped UI-copy modules (not internal APIs whose library identifiers legitimately use `GaslessClient`):
 
 ```js
-const ROOT_DOCS = new Set(['README.md', 'prd.md', 'GETTING_STARTED.md', 'FEATURES.md'])
+const ROOT_DOCS = new Set([
+  "README.md",
+  "prd.md",
+  "GETTING_STARTED.md",
+  "FEATURES.md",
+]);
 const isPublicSurface = (file) =>
   ROOT_DOCS.has(file) ||
-  file.startsWith('docs-site/') ||
-  (/\.(?:js|jsx)$/.test(file) && !/\.test\./.test(file) && (
-    file === 'frontend/src/components.jsx' ||
-    file === 'frontend/src/agents.jsx' ||
-    file === 'frontend/src/screens.jsx' ||
-    file === 'frontend/src/app.jsx' ||
-    file === 'frontend/src/money/ownerActions.js' ||
-    file.startsWith('frontend/src/components/') ||
-    file.startsWith('frontend/src/screens/') ||
-    file.startsWith('frontend/src/developers/') ||
-    file.startsWith('frontend/src/wallet/ui/')
-  ))
+  file.startsWith("docs-site/") ||
+  (/\.(?:js|jsx)$/.test(file) &&
+    !/\.test\./.test(file) &&
+    (file === "frontend/src/components.jsx" ||
+      file === "frontend/src/agents.jsx" ||
+      file === "frontend/src/screens.jsx" ||
+      file === "frontend/src/app.jsx" ||
+      file === "frontend/src/money/ownerActions.js" ||
+      file.startsWith("frontend/src/components/") ||
+      file.startsWith("frontend/src/screens/") ||
+      file.startsWith("frontend/src/developers/") ||
+      file.startsWith("frontend/src/wallet/ui/")));
 ```
 
 Reserve exit 2 for inability to discover or read inputs. Print `path:line`, pattern label, and excerpt for each violation. Do not silently exempt source comments; stale product claims in shipped source must be corrected too.
@@ -452,13 +489,21 @@ The deployment-facts test must read `deployments/stellar-testnet.json` and asser
   manifest.registry,
   manifest.strategy1.pool,
   manifest.fundingRouter.token,
-]
+];
 ```
 
 Assert `SOROBAN_SOURCE_CRATES` equals:
 
 ```js
-['agent_account', 'attestation', 'autofarm_vault', 'blend_strategy', 'exit_router', 'funding_router', 'registry']
+[
+  "agent_account",
+  "attestation",
+  "autofarm_vault",
+  "blend_strategy",
+  "exit_router",
+  "funding_router",
+  "registry",
+];
 ```
 
 ExplorerPage rendering must assert `7`, `6`, `2`, `8 static addresses`, and `N per run`, and must find all eight manifest addresses. It must not render the agent WASM hash or the labels `Contract Tests` and `Every deployed contract`.
@@ -537,6 +582,8 @@ git commit -m "fix(explorer): separate source and deployment counts"
 - Produces: `validateEvidenceMatrix(matrix, repoRoot) -> { ok, failures }`.
 - Produces: `evaluateFeatureFreeze(freeze, subjects) -> { ok, failures }`.
 - Produces: `verifyCandidateIdentity({ tagSha, previewSha, previewUrl }) -> { ok, failures }`.
+- Produces: required candidate mode that peels the annotated tag locally and resolves the
+  successful Cloudflare preview commit/URL from the authenticated deployment API.
 - Adds required CI job key `claim-evidence` to `REQUIRED_JOBS` and the aggregate `release-gate.needs` array.
 
 - [ ] **Step 1: Write failing validator and workflow tests**
@@ -563,7 +610,9 @@ Test this minimum matrix shape:
 
 Assert validation fails for a missing evidence path, empty verification command, non-`proven` claim, wrong candidate tag, inactive freeze, or `productionPublish: true`. Assert freeze rejects `feat: add pool`, `feat(ui)!: replace flow`, and accepts `fix: align expiry`, `test: cover unavailable yield`, `docs: publish evidence`, and `chore(release): cut candidate`.
 
-Assert candidate identity passes only when tag SHA and preview SHA are identical 40-character lowercase hex strings and preview URL is HTTPS under `vibing-farmer.pages.dev`.
+Assert pure candidate identity accepts only matching lowercase 40-character SHA values and a
+valid Pages URL; separately assert required mode resolves an annotated tag target and successful
+Cloudflare deployment metadata rather than trusting caller-provided equal strings.
 
 Extend release-gate workflow tests to require a `claim-evidence` job, require it in `release-gate.needs`, and forbid `continue-on-error`.
 
@@ -575,32 +624,44 @@ Expected: FAIL because the validator and required job do not exist.
 
 - [ ] **Step 3: Implement fail-closed validators**
 
-The matrix validator requires these claim IDs, each with `status: 'proven'`, non-empty `owner`, non-empty `verification`, and existing local evidence paths:
+The matrix validator requires these claim IDs, non-empty `owner`, non-empty `verification`, and
+existing local evidence paths. All rows except `candidate-same-commit` must have
+`status: 'proven'`; that row is allowed to remain `pending` only before required candidate mode
+has a successful preview to verify:
 
 ```js
 [
-  'permission-lifetime',
-  'yield-availability',
-  'sponsored-network-fee',
-  'stellar-explorer-counts',
-  'candidate-same-commit',
-  'required-checks',
-  'feature-freeze',
-]
+  "permission-lifetime",
+  "yield-availability",
+  "sponsored-network-fee",
+  "stellar-explorer-counts",
+  "candidate-same-commit",
+  "required-checks",
+  "feature-freeze",
+];
 ```
 
-For CLI use, load `release/evidence-matrix.json`; run local validation unconditionally. If `FREEZE_BASE_SHA` and `FREEZE_HEAD_SHA` are present, obtain subjects with `git log --format=%s BASE..HEAD` using `execFileSync` and evaluate the freeze. If any of `CANDIDATE_TAG_SHA`, `PREVIEW_COMMIT_SHA`, or `PREVIEW_URL` is present, require all three and run candidate identity verification. Exit 1 for a failed policy and 2 for unreadable/malformed inputs.
+For CLI use, load `release/evidence-matrix.json`; run local validation unconditionally. The checked-in
+`candidate-same-commit` row is `pending` until the preview exists, so ordinary PR/dev CI remains
+green while reporting that identity verification is pending. If `FREEZE_BASE_SHA` and
+`FREEZE_HEAD_SHA` are present, obtain subjects with `git log --format=%s BASE..HEAD` using
+`execFileSync` and evaluate the freeze. Candidate inputs are rejected unless
+`CANDIDATE_VERIFICATION_MODE=required` is explicit. In that mode, require the matrix tag name,
+preview URL, and Cloudflare account/token; resolve the annotated tag target from Git and resolve
+the successful preview's branch, URL, and commit metadata from Cloudflare's deployment API. Any
+caller SHA is an optional assertion only. Exit 1 for a failed policy and 2 for unreadable,
+malformed, or missing candidate inputs.
 
 - [ ] **Step 4: Publish machine and human evidence matrices**
 
-Create seven rows using the IDs above. Each row names exact changed source/test evidence and the command that proves it. The same-commit row uses stable locators:
+Create seven rows using the IDs above. Each row names exact changed source/test evidence and the command that proves it. The same-commit row starts as `pending` until the required candidate verification run proves its stable locators:
 
 ```json
 {
   "id": "candidate-same-commit",
-  "status": "proven",
+  "status": "pending",
   "owner": "release",
-  "verification": "CANDIDATE_TAG_SHA=$CANDIDATE_SHA PREVIEW_COMMIT_SHA=$PREVIEW_SHA PREVIEW_URL=$CANDIDATE_PREVIEW_URL node scripts/ci/claim-evidence.mjs",
+  "verification": "CANDIDATE_VERIFICATION_MODE=required CANDIDATE_TAG=$CANDIDATE_TAG CANDIDATE_PREVIEW_URL=$CANDIDATE_PREVIEW_URL CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN node scripts/ci/claim-evidence.mjs",
   "evidence": [
     "release/specs/2026-08-11-release-claim-truth-design.md",
     ".github/workflows/frontend.yml"
@@ -612,10 +673,11 @@ Create seven rows using the IDs above. Each row names exact changed source/test 
 }
 ```
 
-`CANDIDATE_TAG_SHA` and `PREVIEW_COMMIT_SHA` are independent inputs: the former identifies the
-annotated tag and the latter identifies the successful post-preview deployment's source commit.
-The preview SHA must be resolved from that deployment and must not be copied from the tag
-variable.
+`CANDIDATE_TAG` and `CANDIDATE_PREVIEW_URL` are lookup inputs, not proof values. The verifier
+peels the annotated tag from the local Git object database and resolves the successful post-preview
+deployment's source commit and URL from Cloudflare metadata. Caller-supplied `CANDIDATE_TAG_SHA`
+or `PREVIEW_COMMIT_SHA` values, when present, are checked only as assertions against those
+independent sources.
 
 In `EVIDENCE_MATRIX.md`, state that the annotated tag—not a published GitHub Release—is the candidate locator, because publishing a GitHub Release deploys production. Link README to this file.
 
@@ -682,5 +744,7 @@ git commit -m "chore(release): publish claim evidence and freeze features"
 - [ ] Merge only after GitHub `release-gate` succeeds.
 - [ ] Resolve the successful Cloudflare preview whose source SHA equals the `dev` merge SHA.
 - [ ] Create annotated tag `v1.15.0-beta` on that exact merge SHA and push only the tag.
-- [ ] Set task-specific variables `CANDIDATE_SHA`, `PREVIEW_SHA`, and `CANDIDATE_PREVIEW_URL`, then run `CANDIDATE_TAG_SHA=$CANDIDATE_SHA PREVIEW_COMMIT_SHA=$PREVIEW_SHA PREVIEW_URL=$CANDIDATE_PREVIEW_URL node scripts/ci/claim-evidence.mjs` from the tagged commit.
+- [ ] Dispatch `frontend.yml` with `candidate_tag=v1.15.0-beta` and the successful `dev`
+      preview URL. The workflow's required candidate mode needs `CLOUDFLARE_ACCOUNT_ID` and
+      `CLOUDFLARE_API_TOKEN` and resolves both sides independently.
 - [ ] Confirm no GitHub Release was published and no production Cloudflare deployment was created.
