@@ -178,7 +178,7 @@ decision, never something CI does to itself). `npm run lint` still runs plain ES
 useful while iterating.
 
 CI (`.github/workflows/frontend.yml`) is built around one gate check, `release-gate`, which fails
-unless `frontend-unit-build`, `relayer`, `keeper`, `soroban` (pinned Rust 1.91.0 + `stellar-cli`
+unless `frontend-unit-build`, `relayer`, `keeper`, `soroban` (pinned Rust 1.93.0 + `stellar-cli`
 26.1.0 on Ubuntu 24.04), and `playwright` all report success — a skipped job fails the gate exactly
 like a failed one. Deploy to Cloudflare Pages needs only `release-gate`.
 
@@ -293,8 +293,9 @@ was added by this review.
 
 ### 8.7 CI Rust pin
 
-CI pins Ubuntu 24.04, Rust 1.91.0, and `stellar-cli` 26.1.0. Rust 1.91.0 is the
-`soroban-sdk` 26.1.0 minimum; the remediation plan's 1.82.0 cannot build this tree.
+CI pins Ubuntu 24.04, Rust 1.93.0, and `stellar-cli` 26.1.0. The pinned CLI requires Rust
+1.93.0, which satisfies the `soroban-sdk` 26.1.0 minimum of 1.91.0; the remediation plan's
+1.82.0 cannot build this tree.
 
 ### 8.8 Base recovery is deliberately blocked pending durable evidence
 
