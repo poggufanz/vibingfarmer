@@ -37,8 +37,12 @@ function formatTime(ts) {
   return `${d}d ago`
 }
 const short = (h) => (h ? `${h.slice(0, 8)}…${h.slice(-6)}` : '')
-const hasLiveApy = (row, field) =>
-  row?.yieldEvidence === 'live-venue' && row?.[field] != null && Number.isFinite(Number(row[field]))
+const hasLiveApy = (row, field) => {
+  const value = row?.[field]
+  if (row?.yieldEvidence !== 'live-venue' || value == null) return false
+  if (typeof value === 'string' && value.trim() === '') return false
+  return Number.isFinite(Number(value))
+}
 
 const TABS = [
   { id: 'transactions', label: 'Transactions' },

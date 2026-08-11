@@ -83,4 +83,61 @@ describe('HistoryPanel yield evidence', () => {
     expect(screen.getByText(/6.2% APY/)).toBeTruthy()
     expect(screen.queryByText(/4.8% APY/)).toBeNull()
   })
+
+  it('does not render zero APY for blank values in raw persisted live-labeled records', () => {
+    localStorage.setItem(
+      'yv_history_transactions',
+      JSON.stringify([
+        {
+          id: 'legacy-blank-transaction',
+          txHash: 'legacy-blank-transaction',
+          vaultName: 'Legacy blank transaction',
+          protocol: 'blend-usdc',
+          amountUsdc: '10',
+          apy: '   ',
+          yieldEvidence: 'live-venue',
+          timestamp: Date.now(),
+        },
+      ])
+    )
+    localStorage.setItem(
+      'yv_history_strategies',
+      JSON.stringify([
+        {
+          id: 'legacy-blank-strategy',
+          amountUsdc: 10,
+          riskLevel: 'low',
+          numVaults: 1,
+          blendedApy: '',
+          yieldEvidence: 'live-venue',
+          vaultDataSource: 'fallback',
+          timestamp: Date.now(),
+        },
+      ])
+    )
+    localStorage.setItem(
+      'yv_history_reasoning',
+      JSON.stringify([
+        {
+          id: 'legacy-blank-reasoning',
+          vaultName: 'Legacy blank reasoning',
+          protocol: 'blend-usdc',
+          reasoning: 'Legacy reasoning text',
+          expectedApy: '\t',
+          yieldEvidence: 'live-venue',
+          timestamp: Date.now(),
+        },
+      ])
+    )
+
+    render(<HistoryPanel />)
+
+    expect(screen.queryByText(/% APY/)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Strategies/ }))
+    expect(screen.queryByText(/blended APY/)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /AI Reasoning/ }))
+    expect(screen.queryByText(/% APY/)).toBeNull()
+  })
 })

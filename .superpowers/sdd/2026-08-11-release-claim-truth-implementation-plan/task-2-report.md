@@ -116,3 +116,55 @@ Outcome: 3 files passed, 43 tests passed.
 Targeted ESLint exited 0 with 0 errors and 20 existing warnings. Targeted Prettier checking passed. `git diff --check` passed. The untracked dependency directories were preserved and excluded from the commit.
 
 The live APY path still depends on a producer supplying nested fresh execution-venue yield; flat catalog or DeFiLlama APY remains intentionally unavailable.
+
+## Fix round 2
+
+The follow-up review found that `HistoryPanel`'s `hasLiveApy` predicate accepted raw empty or whitespace APY strings: `Number('')` and `Number('   ')` are both `0`. A legacy persisted record carrying a `live-venue` label could therefore render an APY suffix despite having no evidenced value. The predicate now rejects trimmed-empty strings before numeric coercion.
+
+The regression writes true raw legacy records directly to the three `yv_history_*` localStorage keys, bypassing `saveTransaction`/`saveStrategy`/`saveReasoning` normalization. It covers whitespace transaction APY, empty strategy blended APY, and tab-only reasoning APY.
+
+## RED
+
+Exact command:
+
+```bash
+cd frontend && npx vitest run src/components/HistoryPanel.test.jsx
+```
+
+Before the predicate fix: 1 test failed and 3 passed. The raw persisted transaction rendered `blend-usdc,    % APY`, demonstrating that the blank value was treated as live evidence because numeric coercion returned `0`.
+
+## GREEN and verification
+
+Exact focused command, after the fix:
+
+```bash
+cd frontend && npx vitest run src/components/HistoryPanel.test.jsx
+```
+
+Outcome: 1 file passed, 4 tests passed.
+
+Focused HistoryPanel/history command:
+
+```bash
+cd frontend && npx vitest run src/components/HistoryPanel.test.jsx src/history.yield.test.js
+```
+
+Outcome: 2 files passed, 7 tests passed.
+
+Original six-file Task 2 suite:
+
+```bash
+cd frontend && npx vitest run src/strategy/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history.yield.test.js src/components/HistoryPanel.test.jsx
+```
+
+Outcome: 6 files passed, 105 tests passed. The existing jsdom `HTMLCanvasElement.getContext()` warnings remain in the accessibility checks.
+
+Targeted ESLint:
+
+```bash
+cd frontend && npx eslint src/components/HistoryPanel.jsx src/components/HistoryPanel.test.jsx
+```
+
+Outcome: exit 0, 0 errors, 1 existing unused-`React` warning.
+
+Targeted Prettier check passed for both changed component files. `git diff --check` passed.
