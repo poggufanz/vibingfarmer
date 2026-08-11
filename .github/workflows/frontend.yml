@@ -169,13 +169,34 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # Claim evidence is a root-level, merge-blocking check. It deliberately fetches the complete
+  # history so the active feature freeze can inspect the event's exact commit range.
+  claim-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify claim, scanner, and release-gate tooling
+        run: node --test scripts/ci/public-claim-scan.test.mjs scripts/ci/claim-evidence.test.mjs scripts/ci/release-gate.test.mjs
+      - name: Scan tracked public surfaces
+        run: node scripts/ci/public-claim-scan.mjs
+      - name: Validate claim evidence and freeze
+        env:
+          FREEZE_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.event.before || '' }}
+          FREEZE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event_name == 'push' && github.sha || '' }}
+        run: node scripts/ci/claim-evidence.mjs
+
   # The single required check. `if: always()` plus a `needs` on every stable job above means
   # this always reports a result — success or failure — even if one of those jobs fails,
   # is cancelled, or (should a job-level `if` ever creep back in) gets skipped. release-gate.mjs
   # treats anything other than "success" on any required job as a gate failure.
   release-gate:
     name: release-gate
-    needs: [frontend-unit-build, relayer, keeper, soroban, playwright]
+    needs: [frontend-unit-build, relayer, keeper, soroban, playwright, claim-evidence]
     if: always()
     runs-on: ubuntu-latest
     steps:

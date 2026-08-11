@@ -379,13 +379,51 @@ test('workflow: no blocking check anywhere uses the continue-on-error key at all
   assert.deepEqual(hits, [], 'no step or job in this workflow may use continue-on-error, in any form')
 })
 
-test('workflow: release-gate needs exactly the five required jobs and runs with if: always()', () => {
+test('workflow: release-gate needs every required job, including claim evidence, and runs with if: always()', () => {
   const workflow = loadWorkflow()
   const releaseGate = workflow.jobs['release-gate']
   assert.ok(releaseGate, 'jobs.release-gate must exist')
   assert.equal(releaseGate.if, 'always()')
   assert.ok(Array.isArray(releaseGate.needs), 'release-gate.needs must be a list')
+  assert.ok(REQUIRED_JOBS.includes('claim-evidence'), 'REQUIRED_JOBS must include claim-evidence')
   assert.deepEqual([...releaseGate.needs].sort(), [...REQUIRED_JOBS].sort())
+})
+
+test('workflow: claim-evidence runs at repository root with full history, Node 22, and no soft-fail escape', () => {
+  const workflow = loadWorkflow()
+  const job = workflow.jobs['claim-evidence']
+  assert.ok(job, 'jobs.claim-evidence must exist')
+  assert.equal(Object.prototype.hasOwnProperty.call(job, 'defaults'), false)
+  assert.equal(Object.prototype.hasOwnProperty.call(job, 'if'), false)
+  assert.equal(findAllContinueOnErrorKeys(job).length, 0)
+
+  const checkout = job.steps.find((step) => step.uses === 'actions/checkout@v4')
+  assert.ok(checkout, 'claim-evidence must check out the repository')
+  assert.equal(checkout.with?.['fetch-depth'], 0)
+
+  const setupNode = job.steps.find((step) => step.uses === 'actions/setup-node@v4')
+  assert.ok(setupNode, 'claim-evidence must set up Node')
+  assert.equal(setupNode.with?.['node-version'], 22)
+
+  const testStep = job.steps.find(
+    (step) => typeof step.run === 'string' && step.run.includes('claim-evidence.test.mjs')
+  )
+  assert.ok(testStep, 'claim-evidence must run its validator and gate tests')
+  assert.match(testStep.run, /public-claim-scan\.test\.mjs/)
+  assert.match(testStep.run, /release-gate\.test\.mjs/)
+
+  assert.ok(
+    job.steps.some((step) => step.run === 'node scripts/ci/public-claim-scan.mjs'),
+    'claim-evidence must run the public claim scanner'
+  )
+  const claimStep = job.steps.find((step) => step.run === 'node scripts/ci/claim-evidence.mjs')
+  assert.ok(claimStep, 'claim-evidence must run the claim validator')
+  assert.deepEqual(claimStep.env, {
+    FREEZE_BASE_SHA:
+      "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.event.before || '' }}",
+    FREEZE_HEAD_SHA:
+      "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event_name == 'push' && github.sha || '' }}",
+  })
 })
 
 test('workflow: deploy needs only release-gate — it cannot bypass the gate via any other job', () => {

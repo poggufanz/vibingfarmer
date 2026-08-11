@@ -1,0 +1,371 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync, spawnSync } from "node:child_process";
+import { test } from "node:test";
+
+import {
+  evaluateFeatureFreeze,
+  validateEvidenceMatrix,
+  verifyCandidateIdentity,
+} from "./claim-evidence.mjs";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(here, "..", "..");
+const scriptPath = path.join(here, "claim-evidence.mjs");
+
+const requiredIds = [
+  "permission-lifetime",
+  "yield-availability",
+  "sponsored-network-fee",
+  "stellar-explorer-counts",
+  "candidate-same-commit",
+  "required-checks",
+  "feature-freeze",
+];
+
+function matrixWithClaims(overrides = {}) {
+  const claims = requiredIds.map((id) => ({
+    id,
+    status: "proven",
+    owner: "release",
+    verification: `node verify ${id}`,
+    evidence: ["README.md"],
+  }));
+  return {
+    schemaVersion: 1,
+    candidate: {
+      tag: "v1.15.0-beta",
+      targetBranch: "dev",
+      cloudflareProject: "vibing-farmer",
+      productionPublish: false,
+    },
+    freeze: {
+      active: true,
+      activatedOn: "2026-08-11",
+      forbiddenCommitTypes: ["feat"],
+    },
+    claims,
+    ...overrides,
+  };
+}
+
+function failuresFor(matrix, root = repoRoot) {
+  const result = validateEvidenceMatrix(matrix, root);
+  assert.equal(result.ok, false);
+  return result.failures;
+}
+
+function runCli(env = {}, cwd = repoRoot) {
+  const mergedEnv = { ...process.env };
+  for (const name of [
+    "FREEZE_BASE_SHA",
+    "FREEZE_HEAD_SHA",
+    "CANDIDATE_TAG_SHA",
+    "PREVIEW_COMMIT_SHA",
+    "PREVIEW_URL",
+  ]) {
+    delete mergedEnv[name];
+  }
+  Object.assign(mergedEnv, env);
+  for (const [key, value] of Object.entries(mergedEnv)) {
+    if (value === undefined) delete mergedEnv[key];
+  }
+  return spawnSync(process.execPath, [scriptPath], {
+    cwd,
+    env: mergedEnv,
+    encoding: "utf8",
+  });
+}
+
+function git(cwd, args) {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "claim-evidence-test",
+      GIT_AUTHOR_EMAIL: "claim-evidence-test@example.invalid",
+      GIT_COMMITTER_NAME: "claim-evidence-test",
+      GIT_COMMITTER_EMAIL: "claim-evidence-test@example.invalid",
+    },
+  }).trim();
+}
+
+function makeGitRange(subject) {
+  const root = mkdtempSync(path.join(tmpdir(), "claim-evidence-range-"));
+  mkdirSync(path.join(root, "release"), { recursive: true });
+  writeFileSync(path.join(root, "README.md"), "fixture evidence\n");
+  writeFileSync(
+    path.join(root, "release", "evidence-matrix.json"),
+    JSON.stringify(matrixWithClaims(), null, 2),
+  );
+  git(root, ["init", "-q"]);
+  git(root, ["config", "user.name", "claim-evidence-test"]);
+  git(root, ["config", "user.email", "claim-evidence-test@example.invalid"]);
+  git(root, ["add", "."]);
+  git(root, ["commit", "-qm", "chore: seed evidence fixture"]);
+  const baseSha = git(root, ["rev-parse", "HEAD"]);
+  writeFileSync(path.join(root, "change.txt"), "range fixture\n");
+  git(root, ["add", "change.txt"]);
+  git(root, ["commit", "-qm", subject]);
+  const headSha = git(root, ["rev-parse", "HEAD"]);
+  return { root, baseSha, headSha };
+}
+
+test("validateEvidenceMatrix: the minimum valid shape passes with seven proven claims", () => {
+  const result = validateEvidenceMatrix(matrixWithClaims(), repoRoot);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.failures, []);
+});
+
+test("validateEvidenceMatrix: missing evidence path fails closed", () => {
+  const matrix = matrixWithClaims();
+  matrix.claims[0].evidence = ["does-not-exist.txt"];
+  assert.match(
+    failuresFor(matrix).join("\n"),
+    /permission-lifetime.*evidence/i,
+  );
+});
+
+test("validateEvidenceMatrix: empty verification command fails closed", () => {
+  const matrix = matrixWithClaims();
+  matrix.claims[0].verification = "   ";
+  assert.match(failuresFor(matrix).join("\n"), /verification/i);
+});
+
+test("validateEvidenceMatrix: every required claim must be proven", () => {
+  const matrix = matrixWithClaims();
+  matrix.claims[0].status = "planned";
+  assert.match(failuresFor(matrix).join("\n"), /permission-lifetime.*proven/i);
+});
+
+test("validateEvidenceMatrix: candidate tag, freeze, and production policy are exact", () => {
+  const wrongTag = matrixWithClaims();
+  wrongTag.candidate.tag = "v1.15.0";
+  assert.match(failuresFor(wrongTag).join("\n"), /candidate.*tag/i);
+
+  const inactiveFreeze = matrixWithClaims();
+  inactiveFreeze.freeze.active = false;
+  assert.match(failuresFor(inactiveFreeze).join("\n"), /freeze.*active/i);
+
+  const productionPublish = matrixWithClaims();
+  productionPublish.candidate.productionPublish = true;
+  assert.match(failuresFor(productionPublish).join("\n"), /productionPublish/i);
+});
+
+test("validateEvidenceMatrix: evidence paths cannot escape the repository root", () => {
+  const matrix = matrixWithClaims();
+  matrix.claims[0].evidence = ["../outside.txt"];
+  assert.match(failuresFor(matrix).join("\n"), /inside.*repo|evidence.*path/i);
+});
+
+test("validateEvidenceMatrix: an absolute evidence path is accepted only inside the repository root", () => {
+  const matrix = matrixWithClaims();
+  matrix.claims[0].evidence = [path.join(repoRoot, "README.md")];
+  assert.equal(validateEvidenceMatrix(matrix, repoRoot).ok, true);
+});
+
+test("evaluateFeatureFreeze: rejects conventional feat subjects including scoped breaking changes", () => {
+  const freeze = matrixWithClaims().freeze;
+  for (const subject of ["feat: add pool", "feat(ui)!: replace flow"]) {
+    const result = evaluateFeatureFreeze(freeze, [subject]);
+    assert.equal(result.ok, false, subject);
+    assert.ok(result.failures.some((failure) => failure.includes(subject)));
+  }
+});
+
+test("evaluateFeatureFreeze: allows fixes, tests, docs, and release chores", () => {
+  const freeze = matrixWithClaims().freeze;
+  const subjects = [
+    "fix: align expiry",
+    "test: cover unavailable yield",
+    "docs: publish evidence",
+    "chore(release): cut candidate",
+  ];
+  assert.deepEqual(evaluateFeatureFreeze(freeze, subjects), {
+    ok: true,
+    failures: [],
+  });
+});
+
+test("verifyCandidateIdentity: accepts matching lowercase 40-hex SHAs and a Pages preview URL", () => {
+  const sha = "a".repeat(40);
+  assert.deepEqual(
+    verifyCandidateIdentity({
+      tagSha: sha,
+      previewSha: sha,
+      previewUrl: "https://dev.vibing-farmer.pages.dev",
+    }),
+    { ok: true, failures: [] },
+  );
+});
+
+test("verifyCandidateIdentity: rejects nonmatching, non-lowercase, and non-Pages identities", () => {
+  const valid = "a".repeat(40);
+  const cases = [
+    {
+      tagSha: valid,
+      previewSha: "b".repeat(40),
+      previewUrl: "https://dev.vibing-farmer.pages.dev",
+    },
+    {
+      tagSha: valid.toUpperCase(),
+      previewSha: valid,
+      previewUrl: "https://dev.vibing-farmer.pages.dev",
+    },
+    {
+      tagSha: valid,
+      previewSha: valid,
+      previewUrl: "http://dev.vibing-farmer.pages.dev",
+    },
+    {
+      tagSha: valid,
+      previewSha: valid,
+      previewUrl: "https://vibing-farmer.pages.dev.evil.example",
+    },
+  ];
+  for (const candidate of cases) {
+    assert.equal(
+      verifyCandidateIdentity(candidate).ok,
+      false,
+      JSON.stringify(candidate),
+    );
+  }
+  assert.equal(verifyCandidateIdentity(null).ok, false);
+});
+
+test("CLI: validates the checked-in matrix locally and exits 0", () => {
+  const result = runCli({
+    FREEZE_BASE_SHA: "",
+    FREEZE_HEAD_SHA: "",
+    CANDIDATE_TAG_SHA: undefined,
+    PREVIEW_COMMIT_SHA: undefined,
+    PREVIEW_URL: undefined,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /claim-evidence OK/);
+});
+
+test("CLI: candidate environment variables are all-or-none malformed input", () => {
+  const result = runCli({ CANDIDATE_TAG_SHA: "a".repeat(40) });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /candidate.*environment|all three/i);
+});
+
+test("CLI: candidate identity mismatch is a policy failure", () => {
+  const result = runCli({
+    CANDIDATE_TAG_SHA: "a".repeat(40),
+    PREVIEW_COMMIT_SHA: "b".repeat(40),
+    PREVIEW_URL: "https://dev.vibing-farmer.pages.dev",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /candidate|identity/i);
+});
+
+test("CLI: unreadable matrix input exits 2", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "claim-evidence-unreadable-"));
+  const result = runCli(
+    {
+      CLAIM_EVIDENCE_MATRIX_PATH: path.join(
+        root,
+        "release",
+        "evidence-matrix.json",
+      ),
+    },
+    root,
+  );
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /matrix|read|release\/evidence-matrix/i);
+});
+
+test("CLI: malformed matrix JSON exits 2", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "claim-evidence-malformed-"));
+  const releaseDir = path.join(root, "release");
+  const matrix = path.join(releaseDir, "evidence-matrix.json");
+  mkdirSync(releaseDir, { recursive: true });
+  writeFileSync(matrix, "{ not valid json");
+  const result = runCli({ CLAIM_EVIDENCE_MATRIX_PATH: matrix }, root);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /matrix|parse|JSON/i);
+});
+
+test("CLI: evaluates an allowed commit range from FREEZE_BASE_SHA/FREEZE_HEAD_SHA", () => {
+  const fixture = makeGitRange("fix: align expiry");
+  const result = runCli(
+    {
+      CLAIM_EVIDENCE_MATRIX_PATH: path.join(
+        fixture.root,
+        "release",
+        "evidence-matrix.json",
+      ),
+      CLAIM_EVIDENCE_REPO_ROOT: fixture.root,
+      FREEZE_BASE_SHA: fixture.baseSha,
+      FREEZE_HEAD_SHA: fixture.headSha,
+    },
+    fixture.root,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /claim-evidence OK/);
+});
+
+test("CLI: rejects a feat commit in the supplied freeze range as policy exit 1", () => {
+  const fixture = makeGitRange("feat(ui)!: replace flow");
+  const result = runCli(
+    {
+      CLAIM_EVIDENCE_MATRIX_PATH: path.join(
+        fixture.root,
+        "release",
+        "evidence-matrix.json",
+      ),
+      CLAIM_EVIDENCE_REPO_ROOT: fixture.root,
+      FREEZE_BASE_SHA: fixture.baseSha,
+      FREEZE_HEAD_SHA: fixture.headSha,
+    },
+    fixture.root,
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /feature freeze|feat\(ui\)!/i);
+});
+
+test("CLI: rejects an unreadable freeze range as malformed exit 2", () => {
+  const fixture = makeGitRange("fix: align expiry");
+  const result = runCli(
+    {
+      CLAIM_EVIDENCE_MATRIX_PATH: path.join(
+        fixture.root,
+        "release",
+        "evidence-matrix.json",
+      ),
+      CLAIM_EVIDENCE_REPO_ROOT: fixture.root,
+      FREEZE_BASE_SHA: "missing-base-sha",
+      FREEZE_HEAD_SHA: fixture.headSha,
+    },
+    fixture.root,
+  );
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /freeze commit range|unable to read/i);
+});
+
+test("CLI: requires both freeze range environment variables together", () => {
+  const fixture = makeGitRange("fix: align expiry");
+  const result = runCli(
+    {
+      CLAIM_EVIDENCE_MATRIX_PATH: path.join(
+        fixture.root,
+        "release",
+        "evidence-matrix.json",
+      ),
+      CLAIM_EVIDENCE_REPO_ROOT: fixture.root,
+      FREEZE_BASE_SHA: fixture.baseSha,
+    },
+    fixture.root,
+  );
+  assert.equal(result.status, 2);
+  assert.match(
+    result.stderr,
+    /FREEZE_BASE_SHA.*FREEZE_HEAD_SHA|provided together/i,
+  );
+});
