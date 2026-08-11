@@ -102,16 +102,27 @@ Primary chain: Stellar / Soroban. Optional cross-chain leg to Base via Circle CC
 
 ## Deployed contracts (Stellar testnet)
 
-| Contract                                    | Address                                                    |
-| ------------------------------------------- | ---------------------------------------------------------- |
-| Autofarm vault (live deposit, `vfVLT` 7-dp) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` |
-| Funding router V2 (current app)             | `CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE` |
-| Funding router V1 (relay compatibility)     | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` |
-| Registry                                    | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
-| Blend USDC token (7-dp)                     | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
-| Blend v2 pool                               | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
+The Explorer tracks 7 Soroban source crates, 6 first-party Vibing Farmer deployments, and 2
+external protocol contracts: 8 static Stellar testnet addresses in total. Agent accounts are
+created dynamically per run and are not static deployments.
 
-Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet): `https://stellar.expert/explorer/testnet/contract/<address>`. Full manifest (wasm hashes, deploy receipts): [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
+| Ownership | Contract | Address |
+| --------- | -------- | ------- |
+| first-party | Funding Router V2 (current app) | `CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE` |
+| first-party | Autofarm vault (live deposit, `vfVLT` 7-dp) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` |
+| first-party | Blend strategy | `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE` |
+| first-party | Exit router | `CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J` |
+| first-party | Strategy attestation | `CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6` |
+| first-party | Agent registry | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
+| external | Blend v2 pool | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
+| external | Stellar testnet USDC token (7-dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
+
+Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet):
+`https://stellar.expert/explorer/testnet/contract/<address>`. The manifest also records WASM
+hashes and deployment receipts; an agent WASM value is a hash, not a contract address:
+[`deployments/stellar-testnet.json`](deployments/stellar-testnet.json). The retired V1 router
+remains a relay compatibility address in that manifest, but is not the active app router or an
+Explorer static-deployment count.
 
 ***
 
@@ -143,7 +154,7 @@ Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet)
 | `/agent`    | Dashboard: scopes, revoke, monitor status, journal, decision log |
 | `/history`  | Tx and strategy history                                          |
 | `/settings` | Wallet, permissions, agent config, language, skill source        |
-| `/explorer` | On-chain verification (contracts, TVL, test stats); no wallet    |
+| `/explorer` | Stellar deployment facts and on-chain attestations; no wallet  |
 | `/replay`   | Timeline replay from static JSON (no RPC)                        |
 
 ***
@@ -193,7 +204,7 @@ STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 SOROBAN_VAULT_ADDRESS=CDWHNHIH…KM77               # autofarm vault
 SOROBAN_ROUTER_ADDRESSES=CB675TTS…TRSE,CCEWWRQV…CYE5  # canonical V2,V1 order
 SOROBAN_AGENT_WASM_HASHES=1fdbe175…fbe1,d61ceaaa…a2ba # matching ordered hashes
-SOROBAN_ROUTER_ADDRESS=CCEWWRQV…CYE5              # singular V1 compatibility fallback
+SOROBAN_ROUTER_ADDRESS=CB675TTS…TRSE              # singular current-V2 compatibility fallback
 ALLOWED_ORIGIN=https://your-project.pages.dev     # /api/* origin allowlist
 DEEPSEEK_API_KEY=sk-...                           # optional AI fallback (BYOK-first)
 TAVILY_API_KEY=tvly-...                           # optional market search

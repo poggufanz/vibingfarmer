@@ -2,17 +2,23 @@
 
 All contracts run on **Stellar testnet** (`Test SDF Network ; September 2015`, RPC `https://soroban-testnet.stellar.org`). Verify any of them on [Stellar Expert](https://stellar.expert/explorer/testnet) at `https://stellar.expert/explorer/testnet/contract/<address>`.
 
-| Contract | Address | Role |
-|----------|---------|------|
-| Funding router | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` | Single-signature grant factory + funding gate, zero custody |
-| Agent account (wasm v3, per-run deploy) | wasm hash `d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba` | Scoped, disposable worker account |
-| Autofarm vault (live deposit, `vfVLT` 7-dp) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` | Share-ledger yield vault |
-| Blend strategy | `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE` | Supplies vault deposits into Blend, harvests interest + BLND |
-| Blend v2 pool | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` | The lending market — the actual yield source |
-| Blend USDC token (7-dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` | Funding asset |
-| Exit router | `CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J` | One-signature batch exit — sweeps a whole run's agents in one transaction |
-| Attestation | `CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6` | On-chain strategy-hash record |
-| Registry | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` | Per-agent scope registry — live, but not called by the current deposit path (see below) |
+The Explorer separates 7 Soroban source crates, 6 first-party Vibing Farmer deployments, and 2
+external protocol contracts: 8 static Stellar testnet addresses total. Agent accounts are created
+dynamically per run.
+
+| Ownership | Contract | Address | Role |
+|-----------|----------|---------|------|
+| first-party | Funding router V2 | `CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE` | Current single-signature grant factory + funding gate, zero custody |
+| first-party | Autofarm vault (live deposit, `vfVLT` 7-dp) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` | Share-ledger yield vault |
+| first-party | Blend strategy | `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE` | Supplies vault deposits into Blend, harvests interest + BLND |
+| first-party | Exit router | `CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J` | One-signature batch exit — sweeps a whole run's agents in one transaction |
+| first-party | Attestation | `CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6` | On-chain strategy-hash record |
+| first-party | Registry | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` | Per-agent scope registry — live, but not called by the current deposit path (see below) |
+| external | Blend v2 pool | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` | The lending market — the actual yield source |
+| external | Stellar testnet USDC token (7-dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` | Funding asset |
+
+The current `agent_account` WASM value is hash
+`1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1`, not a contract address.
 
 The full manifest — wasm hashes, deploy transactions, and every legacy address — is in [`deployments/stellar-testnet.json`](../deployments/stellar-testnet.json). The optional Base Sepolia leg is manifested in [`deployments/base-sepolia.json`](../deployments/base-sepolia.json).
 

@@ -1,54 +1,29 @@
 // ExplorerPage.jsx
 // Public on-chain verification surface for Vibing Farmer. No wallet required —
-// judges and users can audit every deployed contract, live stat, and strategy
-// attestation against Stellar testnet directly.
+// judges and users can audit the static Stellar deployments and strategy
+// attestations against Stellar testnet directly.
 //
 // Aesthetic: matches LandingHero's editorial-finance terminal — one dominant
 // surface, single accent, mono for every address/hash/stat. Inherits Pocket
 // Crew's semantic tokens so it re-themes with the rest of the app.
 
 import { useEffect, useState } from 'react'
-import {
-  SOROBAN_FUNDING_ROUTER_ADDRESS,
-  SOROBAN_ACTIVE_VAULT_ADDRESS,
-  SOROBAN_TOKEN_ADDRESS,
-  SOROBAN_DECIMALS,
-} from '../stellar/config.js'
-import { readTotalAssets } from '../stellar/vaultReads.js'
 import { getStrategies } from '../history.js'
+import {
+  EXTERNAL_PROTOCOL_COUNT,
+  FIRST_PARTY_DEPLOYMENT_COUNT,
+  SOROBAN_SOURCE_CRATES,
+  STATIC_ADDRESS_COUNT,
+  STELLAR_STATIC_DEPLOYMENTS,
+} from '../stellar/deploymentFacts.js'
 import NavBar from './NavBar.jsx'
 
 /* ----------------------------- constants ----------------------------- */
 
 const STELLAR_EXPERT = 'https://stellar.expert/explorer/testnet/contract/'
-const DECIMALS_DIV = 10 ** SOROBAN_DECIMALS // 1 VFUSD = 10_000_000 base units (7-dp)
-
-const CONTRACTS = [
-  {
-    name: 'Funding Router',
-    type: 'CORE',
-    address: SOROBAN_FUNDING_ROUTER_ADDRESS,
-    description: 'One signed grant sets the run budget, expiry, and scoped agent accounts',
-  },
-  {
-    name: 'Autofarm Vault (vfVLT)',
-    type: 'VAULT',
-    protocol: 'Blend v2',
-    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
-    description: 'SEP-41 shares track yield from the vault strategy and keeper compounding',
-  },
-  {
-    name: 'USDC Token',
-    type: 'TOKEN',
-    protocol: 'SAC',
-    address: SOROBAN_TOKEN_ADDRESS,
-    description: 'Stellar Asset Contract with 7 decimal places',
-  },
-]
-
-// Deployed-contract count + the soroban/ unit-test count (grep-verifiable: 103 #[test]s).
-const CONTRACT_COUNT = String(CONTRACTS.length)
-const CONTRACT_TESTS = '103'
+const ACTIVE_VAULT_ADDRESS = STELLAR_STATIC_DEPLOYMENTS.find(
+  ({ id }) => id === 'autofarm-vault'
+).address
 
 const SECURITY = [
   'Funding Router grants limit the total budget and expiry',
@@ -74,21 +49,10 @@ function timeAgo(ts) {
 
 const shortHash = (h) => (h ? `${String(h).slice(0, 10)}…` : '0x…')
 
-// Live: the vault's total_assets() (idle USDC + every strategy's reported balance, i128 base
-// units, 7-dp) — real TVL, not tied to any single depositor (the pre-seeded demo agent's scope
-// pins a retired vault, so its own balance would always read 0 here). readTotalAssets catches its
-// own RPC errors and returns null; we show that as unavailable.
-async function fetchTotalDeposits() {
-  const assets = await readTotalAssets()
-  if (assets == null) return null
-  return Number(assets) / DECIMALS_DIV
-}
-
 /* ----------------------------- pieces ----------------------------- */
 
-function TypeBadge({ type }) {
-  const label = type === 'CORE' ? 'CORE CONTRACT' : type
-  return <span className={`ex-badge ex-badge--${type.toLowerCase()}`}>{label}</span>
+function OwnershipBadge({ ownership }) {
+  return <span className={`ex-badge ex-badge--${ownership}`}>{ownership}</span>
 }
 
 function ContractCard({ contract, copied, onCopy }) {
@@ -100,7 +64,7 @@ function ContractCard({ contract, copied, onCopy }) {
           {contract.name}
           {contract.protocol && <span className="ex-card__proto">, {contract.protocol}</span>}
         </h3>
-        <TypeBadge type={contract.type} />
+        <OwnershipBadge ownership={contract.ownership} />
       </div>
 
       <button
@@ -115,7 +79,7 @@ function ContractCard({ contract, copied, onCopy }) {
         </span>
       </button>
 
-      <p className="ex-card__desc">{contract.description}</p>
+      <p className="ex-card__desc">{contract.role}</p>
 
       <div className="ex-card__links">
         <a
@@ -227,24 +191,7 @@ function AttestationsTable({ strategies }) {
 
 export default function ExplorerPage() {
   const [copied, setCopied] = useState(null)
-  const [totalDeposits, setTotalDeposits] = useState(undefined) // undefined = loading
   const [strategies] = useState(() => getStrategies().slice(0, 5))
-
-  const attestationCount = getStrategies().length
-
-  useEffect(() => {
-    let alive = true
-    fetchTotalDeposits()
-      .then((v) => {
-        if (alive) setTotalDeposits(v)
-      })
-      .catch(() => {
-        if (alive) setTotalDeposits(null)
-      })
-    return () => {
-      alive = false
-    }
-  }, [])
 
   const copy = (address) => {
     navigator.clipboard
@@ -255,14 +202,6 @@ export default function ExplorerPage() {
       })
       .catch(() => {})
   }
-
-  const loadingDeposits = totalDeposits === undefined
-  // == null covers BOTH null (reads failed) and undefined (still loading) — the
-  // loading branch never reaches .toLocaleString, so render can't throw.
-  const depositsLabel =
-    totalDeposits == null
-      ? 'Not available'
-      : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} USDC`
 
   return (
     <div className="ex-page">
@@ -279,8 +218,8 @@ export default function ExplorerPage() {
             </span>
           </div>
           <p className="ex-lede">
-            On-chain verification for Vibing Farmer. Every deployed contract and live vault balance
-            is publicly verifiable on Stellar; strategy hashes verify off-chain.
+            8 static Stellar testnet addresses: 6 Vibing Farmer deployments and 2 external protocol
+            contracts. Agent accounts are created dynamically per run.
           </p>
         </header>
 
@@ -290,7 +229,7 @@ export default function ExplorerPage() {
             Deployed Contracts
           </h2>
           <div className="ex-cards">
-            {CONTRACTS.map((c) => (
+            {STELLAR_STATIC_DEPLOYMENTS.map((c) => (
               <ContractCard key={c.address + c.name} contract={c} copied={copied} onCopy={copy} />
             ))}
           </div>
@@ -300,18 +239,15 @@ export default function ExplorerPage() {
         <section className="ex-section" aria-labelledby="ex-stats">
           <div className="ex-section__head">
             <h2 id="ex-stats" className="ex-section__title">
-              Live Stats
+              Deployment Facts
             </h2>
-            <span className="ex-section__note">Fetched from Soroban RPC and updated live</span>
+            <span className="ex-section__note">{STATIC_ADDRESS_COUNT} static addresses</span>
           </div>
           <div className="ex-stats">
-            <StatBlock label="Vault TVL" value={depositsLabel} loading={loadingDeposits} />
-            <StatBlock
-              label="Strategy Attestations"
-              value={attestationCount > 0 ? `${attestationCount}` : '0'}
-            />
-            <StatBlock label="Contracts" value={CONTRACT_COUNT} />
-            <StatBlock label="Contract Tests" value={CONTRACT_TESTS} />
+            <StatBlock label="Soroban source crates" value={SOROBAN_SOURCE_CRATES.length} />
+            <StatBlock label="VF deployments" value={FIRST_PARTY_DEPLOYMENT_COUNT} />
+            <StatBlock label="Protocol contracts" value={EXTERNAL_PROTOCOL_COUNT} />
+            <StatBlock label="Dynamic agents" value="N per run" />
           </div>
         </section>
 
@@ -327,7 +263,7 @@ export default function ExplorerPage() {
           <AttestationsTable strategies={strategies} />
           <a
             className="ex-extlink ex-extlink--block"
-            href={`${STELLAR_EXPERT}${SOROBAN_ACTIVE_VAULT_ADDRESS}`}
+            href={`${STELLAR_EXPERT}${ACTIVE_VAULT_ADDRESS}`}
             target="_blank"
             rel="noreferrer noopener"
           >
@@ -514,9 +450,8 @@ function ExplorerStyle() {
   text-transform: uppercase;
   white-space: nowrap;
 }
-.ex-badge--core { color: var(--accent-fg); background: var(--accent); }
-.ex-badge--vault { color: var(--text-muted); background: var(--bg-elev); border: 1px solid var(--border); }
-.ex-badge--token { color: var(--text-muted); background: var(--bg-elev); border: 1px solid var(--border); }
+.ex-badge--first-party { color: var(--accent-fg); background: var(--accent); }
+.ex-badge--external { color: var(--text-muted); background: var(--bg-elev); border: 1px solid var(--border); }
 
 .ex-addr {
   appearance: none;

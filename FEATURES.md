@@ -258,7 +258,7 @@ An **eligibility token** (`mintToken` / `verifyToken`) is minted once a verdict 
 
 **What & why.** This is the headline feature. Instead of signing a separate transaction for every agent's setup and every deposit (the old flow required up to 6–9 signatures), the user signs **once**. That one signature does two things simultaneously: it sets a spending allowance — like a monthly budget with an expiry date on a shared credit card — and it deploys a batch of fresh, disposable worker accounts that are only allowed to spend from within that budget. Revoking is just as simple: setting that same allowance back to zero, in one more signature, instantly kills every worker's ability to pull more funds.
 
-**The contract:** `funding_router` (Soroban, `soroban/contracts/funding_router/src/lib.rs`) — live at `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5`. It is a **factory + funding gate with no admin and zero custody** — it never holds user funds itself.
+**The contract:** `funding_router` (Soroban, `soroban/contracts/funding_router/src/lib.rs`) — live at `CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE` (V2, the current app router). It is a **factory + funding gate with no admin and zero custody** — it never holds user funds itself.
 
 **Public functions:**
 
@@ -294,7 +294,7 @@ An **eligibility token** (`mintToken` / `verifyToken`) is minted once a verdict 
 
 **What & why.** Each worker agent is not a wallet the user hands out — it's a purpose-built, disposable Soroban smart account, deployed fresh for this run, that can *only* do one thing: deposit up to its cap into its one assigned vault, using its own throwaway signing key. Think of it as a valet key for a car: it starts the engine and lets the valet park the car, but it can't open the trunk, glovebox, or garage. If that valet key is ever compromised, the attacker can, at absolute worst, push the remaining allowance into the *user's own* vault position — they cannot redirect it anywhere else, and they cannot touch the user's real wallet.
 
-**The contract:** `agent_account` (Soroban custom account implementing `CustomAccountInterface`, `soroban/contracts/agent_account/src/lib.rs` + `account.rs`). A fresh instance is deployed per worker, per run, by the funding router (pinned wasm hash `d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba`, "v3" — the hardened build: on-chain enforced revoke, `owner_withdraw` terminal exit, and `scope_of()` for the registry's derived records).
+**The contract:** `agent_account` (Soroban custom account implementing `CustomAccountInterface`, `soroban/contracts/agent_account/src/lib.rs` + `account.rs`). A fresh instance is deployed per worker, per run, by the funding router (pinned current V2 wasm hash `1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1`, not a contract address — the hardened build: on-chain enforced revoke, `owner_withdraw` terminal exit, and `scope_of()` for the registry's derived records).
 
 **The scope, pinned at deploy time and enforced on every authorization check:**
 ```
@@ -765,18 +765,24 @@ The three public pages (`/explorer`, `/ecosystem`, `/replay`) are deliberately r
 
 ### Stellar Testnet (network: `Test SDF Network ; September 2015`, RPC: `https://soroban-testnet.stellar.org`)
 
-| Contract | Address | Role |
-|---|---|---|
-| **funding_router** | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` | One-signature grant factory + funding gate (zero custody) |
-| **agent_account** (wasm v3, per-run deploy) | wasm hash `d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba` | Scoped, disposable worker account, deployed fresh per grant |
-| **autofarm_vault** ("autofarmVault") | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` | Share-ledger yield vault (`vfVLT`, 7-dp), current live deposit target |
-| **blend_strategy** ("strategy1") | `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE` | Supplies vault deposits into Blend, harvests interest + BLND |
-| **Blend v2 pool** | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` | The actual lending market (real yield source) |
-| **Blend USDC token** | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` | 7-decimal funding asset |
-| **attestation** | `CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6` | On-chain strategy-hash attestation counter |
-| **exit_router** | `CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J` | Exit-side mirror of the grant: `sweep(owner, agents, to)` batches every agent's `owner_withdraw` into one signed transaction. Stateless — no admin, no upgrade path, zero custody; grants no authority (each agent still checks its stored owner) |
-| **registry** | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` | Per-agent scope registry. `authorize(agent)` derives the record from the agent's own `scope_of()` (caller supplies nothing but the address); `revoke(owner, agent)` is a metadata mirror — `AgentAccount.revoke()` is the enforcing kill switch. Not required by the deposit path |
-| **Demo agent** (legacy) | `CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC` | Pre-seeded smoke agent on **v1** wasm; its constructor-only scope pins the retired vault, so deposits from it do **not** reach the live vault. Explorer/history only — product flows use per-run agents from the grant path |
+The public Explorer facts are 7 Soroban source crates, 6 first-party Vibing Farmer deployments,
+and 2 external protocol contracts: 8 static Stellar testnet addresses total. Agent accounts are
+created dynamically per run.
+
+| Ownership | Contract | Address | Role |
+|---|---|---|---|
+| first-party | **funding_router V2** | `CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE` | Current one-signature grant factory + funding gate (zero custody) |
+| first-party | **autofarm_vault** ("autofarmVault") | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` | Share-ledger yield vault (`vfVLT`, 7-dp), current live deposit target |
+| first-party | **blend_strategy** ("strategy1") | `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE` | Supplies vault deposits into Blend, harvests interest + BLND |
+| first-party | **exit_router** | `CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J` | Exit-side mirror of the grant; batches agent withdrawals into one signed transaction |
+| first-party | **attestation** | `CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6` | On-chain strategy-hash attestation counter |
+| first-party | **registry** | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` | Per-agent scope registry and metadata mirror; not required by the deposit path |
+| external | **Blend v2 pool** | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` | The actual lending market (real yield source) |
+| external | **Blend USDC token** | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` | 7-decimal funding asset |
+
+The current `agent_account` WASM value is hash `1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1`,
+not a contract address. A pre-seeded demo agent remains a historical smoke fixture; product flows
+deploy fresh per-run agents through the grant path.
 
 **Superseded by the 2026-07-14 hardening redeploy** (kept live for history/rollback only — do not interact):
 

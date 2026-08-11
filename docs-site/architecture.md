@@ -53,11 +53,20 @@ Each stage below hands a specific payload to the next, and each external depende
 
 **Vault → autonomy plane.** From here, three separate background actors take over routine and emergency maintenance without further user signatures — described in full below.
 
+## Explorer deployment facts
+
+The Stellar-only Explorer keeps source and deployment facts separate: 7 Soroban source crates,
+6 first-party Vibing Farmer deployments, and 2 external protocol contracts make 8 static Stellar
+testnet addresses. Agent accounts are created dynamically per run. The active funding router is
+V2 at `CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE`; the agent-account WASM value
+is a code hash, not a contract address. See the complete categorized table in
+[Deployed contracts](contracts.md).
+
 ## Layers
 
 | Layer | Technology |
 |-------|------------|
-| Smart contracts | Rust, Soroban SDK, OpenZeppelin Stellar contracts |
+| Smart contracts | Rust, Soroban SDK, OpenZeppelin Stellar contracts (`agent_account`, `attestation`, `autofarm_vault`, `blend_strategy`, `exit_router`, `funding_router`, `registry`) |
 | Frontend | React 18, Vite 5, React Router v6, Framer Motion, react-force-graph-2d |
 | Chain client | `@stellar/stellar-sdk`, Stellar Wallets Kit (Freighter / xBull / Albedo) |
 | Wallet | VF Wallet (passkey smart account + extension) or any standard Stellar wallet |

@@ -2,6 +2,12 @@
 
 Vibing Farmer turns a multi-step farming chore into a single approval followed by autonomous, bounded execution. You set an amount, a risk level, and a number of worker agents; an AI strategist and a council of specialists decide how to split the deposit; you sign one wallet transaction; disposable agent accounts do the rest. Network fee sponsored by fee-bump relay. Here is the full lifecycle, stage by stage, with the mechanics underneath each step.
 
+The Stellar Explorer keeps deployment facts explicit: 7 Soroban source crates, 6 first-party Vibing
+Farmer deployments, and 2 external protocol contracts make 8 static testnet addresses. Agent
+accounts are created dynamically per run. The active funding router is V2 at
+`CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE`; an agent-account WASM value is a
+code hash, not a contract address. See the [categorized deployment table](contracts.md).
+
 ## 1. Strategy
 
 The strategist (`frontend/src/strategist.js`) is built as a chain of fallbacks that never blocks, because AI providers can be slow, unavailable, or simply refuse to answer:

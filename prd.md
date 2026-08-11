@@ -160,16 +160,24 @@ First run: **1 signature** (was 6 before the funding router, 9 before that). Rep
 
 ### Deployed Addresses — Stellar Testnet (`deployments/stellar-testnet.json`)
 
-| Contract | Address |
-|----------|---------|
-| Autofarm vault (LIVE deposit target) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` |
-| Funding router (single-signature grant) | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` |
-| agent_account wasm v3 (per-run agents) | `d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba` |
-| Blend v2 pool (yield source) | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
-| USDC (Blend testnet, 7dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
-| Strategy #1 (vault→Blend) | `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE` |
-| Registry | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
-| Attestation | `CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6` |
+The Stellar Explorer separates 7 Soroban source crates from 6 first-party Vibing Farmer
+deployments and 2 external protocol contracts: 8 static addresses total. Agent accounts are
+created dynamically per run.
+
+| Ownership | Contract | Address |
+|-----------|----------|---------|
+| first-party | Funding Router V2 (single-signature grant) | `CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE` |
+| first-party | Autofarm vault (LIVE deposit target) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` |
+| first-party | Strategy #1 (vault→Blend) | `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE` |
+| first-party | Exit router | `CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J` |
+| first-party | Attestation | `CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6` |
+| first-party | Registry | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
+| external | Blend v2 pool (yield source) | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
+| external | USDC (Blend testnet, 7dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
+
+The `agent_account` WASM value in the manifest is a code hash, not a deployed contract address;
+the current V2 grant factory pins hash `1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1`,
+and fresh agent account addresses are produced by each grant run.
 
 ### Deployed Addresses — Base Sepolia (`deployments/base-sepolia.json`)
 

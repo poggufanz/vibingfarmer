@@ -60,13 +60,19 @@ STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 SOROBAN_VAULT_ADDRESS=CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77
 SOROBAN_ROUTER_ADDRESSES=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE,CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
 SOROBAN_AGENT_WASM_HASHES=1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1,d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba
-# Compatibility fallback for older readers; the plural V2,V1 list above is canonical.
-SOROBAN_ROUTER_ADDRESS=CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
+# Single-value compatibility fallback; V2 is the current app router. The plural V2,V1 list above
+# remains canonical for the relay's dual-support migration window.
+SOROBAN_ROUTER_ADDRESS=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE
 ```
 
 There are **no** `ONESHOT_*` variables. Do not add them.
 
 Addresses and notes: [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
+
+The public Stellar deployment facts are fixed at 7 Soroban source crates, 6 first-party Vibing
+Farmer deployments, 2 external protocol contracts, and 8 static addresses. Agent accounts are
+created dynamically per run. Values named `SOROBAN_AGENT_WASM_HASHES` are code hashes, not
+contract addresses.
 
 ***
 
@@ -227,10 +233,11 @@ receipt-authority order remains:
 ```env
 SOROBAN_ROUTER_ADDRESSES=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE,CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
 SOROBAN_AGENT_WASM_HASHES=1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1,d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba
-SOROBAN_ROUTER_ADDRESS=CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
+SOROBAN_ROUTER_ADDRESS=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE
 ```
 
-The singular V1 value is compatibility fallback; it is not the canonical production relay list.
+The singular V2 value is the current compatibility fallback; it is not the canonical production
+relay list, which retains the ordered V2,V1 migration list above.
 Do not add a V3 address or hash until an authorized deployment produces one.
 
 Stellar receipt/recovery is implemented and tested: authenticated challenges, fresh ordered-router
