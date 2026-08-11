@@ -22,23 +22,17 @@ describe('bindPlanToPermissionWindow', () => {
       durationSeconds: 86_400,
     })
 
-    expect(rebound.agents.map((agent) => agent.expiry)).toEqual([
-      1_800_086_400,
-      1_800_086_400,
-    ])
+    expect(rebound.agents.map((agent) => agent.expiry)).toEqual([1_800_086_400, 1_800_086_400])
     expect(rebound.planFingerprint).toBe(hashStrategy(rebound))
     expect(original.agents.map((agent) => agent.expiry)).toEqual([101, 202])
   })
 
-  it.each([0, -1, 1.5, Number.NaN])(
-    'rejects invalid duration %s',
-    (durationSeconds) => {
-      expect(() =>
-        bindPlanToPermissionWindow(makePlan(), {
-          checkedAt: 1_800_000_000,
-          durationSeconds,
-        })
-      ).toThrow('durationSeconds must be a positive integer')
-    }
-  )
+  it.each([0, -1, 1.5, Number.NaN])('rejects invalid duration %s', (durationSeconds) => {
+    expect(() =>
+      bindPlanToPermissionWindow(makePlan(), {
+        checkedAt: 1_800_000_000,
+        durationSeconds,
+      })
+    ).toThrow('durationSeconds must be a positive integer')
+  })
 })

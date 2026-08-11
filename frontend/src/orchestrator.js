@@ -2428,7 +2428,9 @@ export class OrchestratorAgent {
       token: b.token,
     }))
     const reviewedExpiryUnix =
-      agentInits.length > 0 ? Math.min(...agentInits.map((agent) => Number(agent.expiry))) : undefined
+      agentInits.length > 0
+        ? Math.min(...agentInits.map((agent) => Number(agent.expiry)))
+        : undefined
 
     let submitted
     try {
