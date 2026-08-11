@@ -49,7 +49,7 @@ function matrixWithClaims(overrides = {}) {
   return {
     schemaVersion: 1,
     candidate: {
-      tag: "v1.15.0-beta",
+      tag: "v1.15.1-beta",
       targetBranch: "dev",
       cloudflareProject: "vibing-farmer",
       productionPublish: false,
@@ -258,8 +258,8 @@ test("validateEvidenceMatrix: candidate locators are required, exact, HTTPS, and
   assert.equal(validateEvidenceMatrix(missing, repoRoot).ok, false);
 
   for (const locator of [
-    "https://github.com/attacker/vibingfarmer/tree/v1.15.0-beta",
-    "https://github.com:443/poggufanz/vibingfarmer/tree/v1.15.0-beta",
+    "https://github.com/attacker/vibingfarmer/tree/v1.15.1-beta",
+    "https://github.com:443/poggufanz/vibingfarmer/tree/v1.15.1-beta",
     "https://dev.vibing-farmer.pages.dev.evil.example",
     "http://dev.vibing-farmer.pages.dev",
   ]) {
@@ -361,7 +361,7 @@ test("CLI: candidate environment variables are all-or-none malformed input", () 
 
 test("CLI: candidate inputs cannot opt into verification without required mode", () => {
   const result = runCli({
-    CANDIDATE_TAG: "v1.15.0-beta",
+    CANDIDATE_TAG: "v1.15.1-beta",
     CANDIDATE_PREVIEW_URL: "https://dev.vibing-farmer.pages.dev",
   });
   assert.equal(result.status, 2);
@@ -523,14 +523,14 @@ test("verifyCandidateFromSources accepts an omitted preview URL but still binds 
   git(root, ["add", "seed.txt"]);
   git(root, ["commit", "-qm", "chore: seed candidate"]);
   const tagSha = git(root, ["rev-parse", "HEAD"]);
-  git(root, ["tag", "-a", "v1.15.0-beta", "-m", "candidate"]);
+  git(root, ["tag", "-a", "v1.15.1-beta", "-m", "candidate"]);
 
   const result = await candidateEvidence.verifyCandidateFromSources({
     matrix: matrixWithClaims(),
     repoRoot: root,
     env: {
       CANDIDATE_VERIFICATION_MODE: "required",
-      CANDIDATE_TAG: "v1.15.0-beta",
+      CANDIDATE_TAG: "v1.15.1-beta",
       CANDIDATE_PREVIEW_URL: "",
       CLOUDFLARE_ACCOUNT_ID: "account",
       CLOUDFLARE_API_TOKEN: "token",
@@ -564,8 +564,8 @@ test("CLI: the exact candidate tag push automatically enters required verificati
   const result = runCli({
     GITHUB_EVENT_NAME: "push",
     GITHUB_REF_TYPE: "tag",
-    GITHUB_REF_NAME: "v1.15.0-beta",
-    GITHUB_REF: "refs/tags/v1.15.0-beta",
+    GITHUB_REF_NAME: "v1.15.1-beta",
+    GITHUB_REF: "refs/tags/v1.15.1-beta",
   });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /candidate.*(tag|Cloudflare)|required/i);

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "tag": "v1.15.0-beta",
+    "tag": "v1.15.1-beta",
     "targetBranch": "dev",
     "cloudflareProject": "vibing-farmer",
     "productionPublish": false
@@ -102,7 +102,7 @@
         "scripts/ci/claim-evidence.test.mjs"
       ],
       "externalLocators": [
-        "https://github.com/poggufanz/vibingfarmer/tree/v1.15.0-beta",
+        "https://github.com/poggufanz/vibingfarmer/tree/v1.15.1-beta",
         "https://dev.vibing-farmer.pages.dev"
       ]
     },
