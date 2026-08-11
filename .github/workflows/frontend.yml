@@ -3,7 +3,7 @@ name: frontend
 on:
   push:
     branches: [main, dev]
-    tags: [v1.15.0-beta]
+    tags: [v1.15.1-beta]
   # Publishing a GitHub Release is what stamps the version: vite.config.js reads
   # `git describe --tags`. The exact candidate tag push is also a first-class workflow event:
   # its claim-evidence job is the authoritative promotion proof and never enters deploy.
@@ -21,7 +21,7 @@ on:
       candidate_tag:
         description: Annotated candidate tag to verify
         required: true
-        default: v1.15.0-beta
+        default: v1.15.1-beta
         type: string
       candidate_preview_url:
         description: Optional successful Cloudflare Pages preview URL to narrow the API lookup
@@ -196,6 +196,11 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+      - name: Restore exact candidate annotated tag object
+        if: github.event_name == 'push' && github.ref == 'refs/tags/v1.15.1-beta'
+        run: |
+          git fetch --force --no-tags origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          test "$(git cat-file -t "refs/tags/${{ github.ref_name }}")" = tag
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -204,6 +209,7 @@ jobs:
       - name: Scan tracked public surfaces
         run: node scripts/ci/public-claim-scan.mjs
       - name: Validate claim evidence and freeze
+        if: github.event_name != 'push' || github.ref != 'refs/tags/v1.15.1-beta'
         env:
           FREEZE_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.ref_type == 'branch' && github.event.before || '' }}
           FREEZE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event_name == 'push' && github.ref_type == 'branch' && github.sha || '' }}
@@ -214,7 +220,7 @@ jobs:
       # by the tag commit from Cloudflare's authenticated API. A URL is optional because the API
       # metadata is the identity source; caller-provided equal strings cannot manufacture it.
       - name: Verify exact candidate tag and Cloudflare preview identity
-        if: github.event_name == 'push' && github.ref == 'refs/tags/v1.15.0-beta'
+        if: github.event_name == 'push' && github.ref == 'refs/tags/v1.15.1-beta'
         env:
           CANDIDATE_VERIFICATION_MODE: required
           CANDIDATE_TAG: ${{ github.ref_name }}
@@ -342,7 +348,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: frontend
-          # On a release, ref_name is the tag (v1.15.0-beta) — passing that would alias the
+          # On a release, ref_name is the tag (v1.15.1-beta) — passing that would alias the
           # deploy as a preview branch instead of updating Production, so pin it to main.
           command: pages deploy ./dist --project-name=vibing-farmer --branch=main
       - name: Deploy preview Pages bundle

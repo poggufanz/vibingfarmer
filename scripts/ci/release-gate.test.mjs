@@ -349,7 +349,7 @@ test('workflow: ordinary push/PR/merge-group triggers are present and the exact 
     'missing merge_group trigger'
   )
   assert.deepEqual(workflow.on.push.branches, ['main', 'dev'])
-  assert.deepEqual(workflow.on.push.tags, ['v1.15.0-beta'])
+  assert.deepEqual(workflow.on.push.tags, ['v1.15.1-beta'])
   assertUnfiltered(workflow.on.pull_request, 'pull_request')
   assertUnfiltered(workflow.on.merge_group, 'merge_group')
 })
@@ -359,7 +359,7 @@ test('workflow: the exact candidate tag push runs required identity verification
   const claimEvidence = workflow.jobs['claim-evidence']
   const candidateStep = claimEvidence.steps.find(
     (step) => step.name === 'Verify exact candidate tag and Cloudflare preview identity' &&
-      step.if === "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.0-beta'"
+      step.if === "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.1-beta'"
   )
   assert.ok(candidateStep, 'exact candidate tag push must have an automatic verification step')
   assert.equal(candidateStep.env.CANDIDATE_VERIFICATION_MODE, 'required')
@@ -375,6 +375,61 @@ test('workflow: the exact candidate tag push runs required identity verification
   assert.equal(dispatchStep.if, "github.event_name == 'workflow_dispatch'")
   assert.notEqual(candidateStep.if, dispatchStep.if, 'workflow_dispatch cannot be the only candidate proof path')
   assert.equal(workflow.on.workflow_dispatch.inputs.candidate_preview_url.required, false)
+})
+
+test('workflow: exact candidate tag restores the remote annotated tag object before claim evidence runs', () => {
+  const workflow = loadWorkflow()
+  const steps = workflow.jobs['claim-evidence'].steps
+  const checkoutIdx = steps.findIndex((step) => step.uses === 'actions/checkout@v4')
+  const restoreIdx = steps.findIndex(
+    (step) => step.name === 'Restore exact candidate annotated tag object'
+  )
+  const firstClaimIdx = steps.findIndex(
+    (step) =>
+      typeof step.run === 'string' && step.run.includes('node scripts/ci/claim-evidence.mjs')
+  )
+
+  assert.ok(checkoutIdx !== -1, 'claim-evidence must check out the repository first')
+  assert.ok(restoreIdx !== -1, 'exact candidate tag push must restore its annotated tag object')
+  assert.ok(firstClaimIdx !== -1, 'claim-evidence must invoke the claim-evidence CLI')
+  assert.ok(checkoutIdx < restoreIdx, 'tag restoration must run after checkout')
+  assert.ok(
+    restoreIdx < firstClaimIdx,
+    'tag restoration must run before any claim-evidence CLI invocation'
+  )
+
+  const restoreStep = steps[restoreIdx]
+  assert.equal(
+    restoreStep.if,
+    "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.1-beta'"
+  )
+  assert.match(String(restoreStep.run), /git fetch\s+--force\s+--no-tags\s+origin/)
+  assert.match(
+    String(restoreStep.run),
+    /refs\/tags\/\$\{\{ github\.ref_name \}\}:refs\/tags\/\$\{\{ github\.ref_name \}\}/
+  )
+  assert.match(String(restoreStep.run), /git cat-file -t/)
+})
+
+test('workflow: generic claim validation skips only the exact candidate tag push while dedicated proof stays automatic', () => {
+  const workflow = loadWorkflow()
+  const steps = workflow.jobs['claim-evidence'].steps
+  const genericStep = steps.find((step) => step.name === 'Validate claim evidence and freeze')
+  const candidateStep = steps.find(
+    (step) => step.name === 'Verify exact candidate tag and Cloudflare preview identity'
+  )
+
+  assert.ok(genericStep, 'claim-evidence must retain generic claim validation')
+  assert.equal(
+    genericStep.if,
+    "github.event_name != 'push' || github.ref != 'refs/tags/v1.15.1-beta'",
+    'generic validation must skip only the exact candidate tag push'
+  )
+  assert.ok(candidateStep, 'dedicated exact-candidate verification must remain present')
+  assert.equal(
+    candidateStep.if,
+    "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.1-beta'"
+  )
 })
 
 test('workflow: pull_request/merge_group narrowed by `branches` would not prove "unfiltered"', () => {
