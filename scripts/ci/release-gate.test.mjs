@@ -440,6 +440,9 @@ test('workflow: deploy migrates each D1 environment before its matching Pages pu
 
   const previewMigrationIdx = steps.findIndex((step) => step.run === 'npm run d1:migrate:preview')
   const productionMigrationIdx = steps.findIndex((step) => step.run === 'npm run d1:migrate:production')
+  const clearPreviewConfigIdx = steps.findIndex(
+    (step) => step.run === 'node scripts/runtime-config.mjs clear-preview-config'
+  )
   const previewDeployIdx = steps.findIndex(
     (step) =>
       step.uses?.startsWith('cloudflare/wrangler-action') &&
@@ -459,6 +462,7 @@ test('workflow: deploy migrates each D1 environment before its matching Pages pu
   assert.equal(steps[productionMigrationIdx].if, productionCondition)
   assert.ok(previewDeployIdx !== -1, 'preview deploy must publish Pages')
   assert.ok(productionDeployIdx !== -1, 'production deploy must publish Pages')
+  assert.ok(clearPreviewConfigIdx !== -1, 'production deploy must clear preview config redirect')
   assert.ok(
     previewMigrationIdx < previewDeployIdx,
     'preview D1 migrations must finish before preview Pages Functions are published'
@@ -467,13 +471,16 @@ test('workflow: deploy migrates each D1 environment before its matching Pages pu
     productionMigrationIdx < productionDeployIdx,
     'production D1 migrations must finish before production Pages Functions are published'
   )
+  assert.ok(
+    productionMigrationIdx < clearPreviewConfigIdx && clearPreviewConfigIdx < productionDeployIdx,
+    'preview config redirect must be cleared inside the production deployment boundary'
+  )
 
   assert.equal(steps[previewDeployIdx].if, previewCondition)
   assert.equal(steps[productionDeployIdx].if, productionCondition)
-  assert.match(
-    steps[previewDeployIdx].with.command,
-    /--env preview .*--branch=\$\{\{ github\.ref_name \}\}/
-  )
+  assert.equal(steps[clearPreviewConfigIdx].if, productionCondition)
+  assert.match(steps[previewDeployIdx].with.command, /--branch=\$\{\{ github\.ref_name \}\}/)
+  assert.doesNotMatch(steps[previewDeployIdx].with.command, /(?:^|\s)--(?:config|env)(?:\s|=)/)
   assert.match(steps[productionDeployIdx].with.command, /--branch=main(?:\s|$)/)
 
   // The old single Wrangler migration action must not return as a bypass around the guarded
