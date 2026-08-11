@@ -409,6 +409,10 @@ test('workflow: exact candidate tag restores the remote annotated tag object bef
     /refs\/tags\/\$\{\{ github\.ref_name \}\}:refs\/tags\/\$\{\{ github\.ref_name \}\}/
   )
   assert.match(String(restoreStep.run), /git cat-file -t/)
+  assert.match(
+    String(restoreStep.run),
+    /test "\$\(git rev-parse refs\/tags\/\$\{\{ github\.ref_name \}\}\^\{commit\}\)" = "\$\{\{ github\.sha \}\}"/
+  )
 })
 
 test('workflow: generic claim validation skips only the exact candidate tag push while dedicated proof stays automatic', () => {

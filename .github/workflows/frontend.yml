@@ -201,6 +201,7 @@ jobs:
         run: |
           git fetch --force --no-tags origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
           test "$(git cat-file -t "refs/tags/${{ github.ref_name }}")" = tag
+          test "$(git rev-parse refs/tags/${{ github.ref_name }}^{commit})" = "${{ github.sha }}"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
