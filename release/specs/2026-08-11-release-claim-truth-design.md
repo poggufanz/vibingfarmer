@@ -1,7 +1,7 @@
 # Release Claim Truth — Design
 
-Date: 2026-08-11  
-Candidate: `v1.15.0-beta`  
+Date: 2026-08-11
+Candidate: `v1.15.0-beta`
 Target branch: `dev`
 
 ## Objective
