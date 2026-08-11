@@ -16,15 +16,24 @@ function hashReboundPlan(plan) {
   }
 }
 
-export function bindPlanToPermissionWindow(plan, { checkedAt, durationSeconds } = {}) {
+/**
+ * Capture one reviewed permission lifetime. Both the wall-clock agent expiry and the allowance
+ * cutoff are derived from this same `{checkedAt, durationSeconds}` pair; callers must carry this
+ * value through signing instead of starting a fresh window at submission time.
+ */
+export function capturePermissionWindow({ checkedAt, durationSeconds } = {}) {
   if (!Number.isInteger(checkedAt) || checkedAt <= 0) {
     throw new Error('checkedAt must be a positive integer')
   }
   if (!Number.isInteger(durationSeconds) || durationSeconds <= 0) {
     throw new Error('durationSeconds must be a positive integer')
   }
+  return { checkedAt, durationSeconds, expiry: checkedAt + durationSeconds }
+}
+
+export function bindPlanToPermissionWindow(plan, { checkedAt, durationSeconds } = {}) {
   if (!plan || !Array.isArray(plan.agents)) throw new Error('plan.agents must be an array')
-  const expiry = checkedAt + durationSeconds
+  const { expiry } = capturePermissionWindow({ checkedAt, durationSeconds })
   const rebound = {
     ...plan,
     agents: plan.agents.map((agent) => ({ ...agent, expiry })),

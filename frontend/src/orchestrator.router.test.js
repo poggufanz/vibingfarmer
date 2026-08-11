@@ -1178,6 +1178,24 @@ describe('dispatch(strategy, totalAmount) — LEGACY router path (setupViaRouter
   })
 
   describe('first run (a single signature)', () => {
+    it('keeps a reviewed legacy permission window absolute through grant signing', async () => {
+      const reviewedWindow = { checkedAt: 2_000_000_000, durationSeconds: 900 }
+      const orch = new OrchestratorAgent({
+        user: 'GUSER',
+        sessionId: 'legacy-reviewed-window',
+        onEvent: () => {},
+        // The reviewed window must win over this legacy default, even if setup/signing is delayed.
+        grantDurationSeconds: 3600,
+      })
+
+      await orch.dispatch(legacyStrategy, 100, reviewedWindow)
+
+      const grantArgs = submitGrantMock.mock.calls[0][0]
+      expect(grantArgs.durationSeconds).toBe(reviewedWindow.durationSeconds)
+      expect(grantArgs.reviewedExpiryUnix).toBe(2_000_000_900)
+      expect(grantArgs.agentInits.every((init) => init.expiry === 2_000_000_900)).toBe(true)
+    })
+
     it('issues exactly a single grant signature for N=3 agents, then a relayed pull per worker', async () => {
       const orch = new OrchestratorAgent({
         user: 'GUSER',

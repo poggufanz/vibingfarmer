@@ -29,6 +29,7 @@ import {
 } from './stellar/config.js'
 import { isLegacyDirectSetupAllowed } from './stellar/agentCreatorManifest.js'
 import { PermissionPhaseError } from './strategy/permissionError.js'
+import { capturePermissionWindow } from './strategy/permissionWindow.js'
 import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
 import {
   activeAccountSubmissionUnknown,
@@ -684,6 +685,8 @@ export class OrchestratorAgent {
    * @param {string|null} config.devApiKey - DeepSeek API key for dev mode
    * @param {string} config.sessionId
    * @param {function} config.onEvent - (eventName, data) => void
+   * @param {number|null} config.grantCheckedAt - optional review-time Unix seconds for the legacy
+   *   compatibility path; when omitted, that path captures its window at dispatch entry
    * @param {object|null} config.baseLegContext - { connectedAddress, signTx } — required only when
    *   strategy.vaults contains a chain:'base' entry (only .connectedAddress is read; signTx is
    *   unused since the grant-covers-burn rework — the Base leg's bridge agent is authorized by the
@@ -699,6 +702,7 @@ export class OrchestratorAgent {
     registryAuthorize = false,
     grantBudgetUnits = null,
     grantDurationSeconds = null,
+    grantCheckedAt = null,
     baseLegContext = null,
     activeAccount = null,
     getCurrentActiveAccount = getActiveAccount,
@@ -733,6 +737,7 @@ export class OrchestratorAgent {
     // step supplies both; null = use defaults.
     this.grantBudgetUnits = grantBudgetUnits != null ? BigInt(grantBudgetUnits) : null
     this.grantDurationSeconds = grantDurationSeconds || null
+    this.grantCheckedAt = grantCheckedAt || null
     // Registry.authorize is record-keeping only (deposits are enforced by the agent account's
     // OWN constructor-pinned scope; nothing on the deposit path reads the Registry). Default
     // off: it would cost one extra wallet signature per agent. Flip on to also write the on-chain
@@ -746,10 +751,12 @@ export class OrchestratorAgent {
    * as a settled sibling of the Stellar worker pipeline — one leg failing never aborts the other.
    * @param {object} strategy - { vaults: [{ address, allocation, chain? }], ... } — chain defaults
    *   to the Stellar path when absent (regression-safe for every pre-Task-3 strategy).
-   * @param {number} totalAmount - total asset amount (human-readable VFUSD)
+   * @param {number|object} totalAmountOrOptions - total asset amount (human-readable VFUSD), or
+   *   legacy `{totalAmount, permissionWindow}` options
+   * @param {object|null} [legacyPermissionWindow] - reviewed `{checkedAt,durationSeconds}` window
    * @returns {Promise<{completed:number, failed:number, results:Array, sessionId:string, baseLeg:object|null}>}
    */
-  async dispatch(strategyOrPlan, totalAmountOrOptions) {
+  async dispatch(strategyOrPlan, totalAmountOrOptions, legacyPermissionWindow = null) {
     const hasBaseAllocation =
       (strategyOrPlan?.agents || []).some((agent) => agent?.kind === 'bridge') ||
       (strategyOrPlan?.vaults || []).some((vault) => vault?.chain === 'base')
@@ -760,10 +767,23 @@ export class OrchestratorAgent {
     // human-readable `totalAmount` number) is untouched byte-for-byte and keeps taking the legacy
     // path below. A reviewed StrategyPlan + PermissionDecisionV1 always passes an OBJECT
     // (`{ permissionDecision }`) as the second argument — that shape is the discriminator.
-    if (totalAmountOrOptions != null && typeof totalAmountOrOptions === 'object') {
+    if (
+      totalAmountOrOptions != null &&
+      typeof totalAmountOrOptions === 'object' &&
+      Object.prototype.hasOwnProperty.call(totalAmountOrOptions, 'permissionDecision')
+    ) {
       return this.dispatchPermissioned(strategyOrPlan, totalAmountOrOptions)
     }
-    return this.dispatchLegacy(strategyOrPlan, totalAmountOrOptions)
+    if (totalAmountOrOptions != null && typeof totalAmountOrOptions === 'object') {
+      const { totalAmount, permissionWindow, checkedAt, durationSeconds } = totalAmountOrOptions
+      const inlinePermissionWindow =
+        permissionWindow ||
+        (checkedAt !== undefined || durationSeconds !== undefined
+          ? { checkedAt, durationSeconds }
+          : null)
+      return this.dispatchLegacy(strategyOrPlan, totalAmount, inlinePermissionWindow)
+    }
+    return this.dispatchLegacy(strategyOrPlan, totalAmountOrOptions, legacyPermissionWindow)
   }
 
   /**
@@ -2533,7 +2553,7 @@ export class OrchestratorAgent {
     }
   }
 
-  async dispatchLegacy(strategy, totalAmount) {
+  async dispatchLegacy(strategy, totalAmount, reviewedPermissionWindow = null) {
     const allVaults = strategy.vaults || []
     if (allVaults.some((vault) => vault?.chain === 'base')) assertBaseCrossChainAvailable()
     const receiptRunId = strategy.runId || this.sessionId
@@ -2566,7 +2586,14 @@ export class OrchestratorAgent {
     }
     const stellarStrategy = { ...strategy, vaults: stellarVaults }
     const scopeTtl = this.grantDurationSeconds || SCOPE_TTL_SECONDS
-    const expiry = Math.floor(Date.now() / 1000) + scopeTtl
+    const permissionWindow = capturePermissionWindow(
+      reviewedPermissionWindow ||
+        strategy?.permissionWindow || {
+          checkedAt: this.grantCheckedAt || Math.floor(Date.now() / 1000),
+          durationSeconds: scopeTtl,
+        }
+    )
+    const { expiry } = permissionWindow
 
     // Grant-covers-burn (docs/superpowers/specs/2026-07-21-grant-covers-burn-design.md §4-5): a
     // mixed run's bridge agent joins the SAME single grant as the Stellar deposit workers — never
@@ -2734,7 +2761,8 @@ export class OrchestratorAgent {
             expiry,
             bridgeInit,
             resolveBridgeAgent,
-            bridgeSessionKey
+            bridgeSessionKey,
+            permissionWindow
           )
           this.assertCurrentAccount()
         } else if (
@@ -3083,13 +3111,16 @@ export class OrchestratorAgent {
    * @param {object|null} [bridgeInit] - a Bridge-kind AgentInit to fold into the SAME grant
    * @param {(bridgeAgentAddress:string|null)=>void} [resolveBridgeAgent] - settles once the bridge
    *   agent's address is known (or null, when no grant ran or it failed)
+   * @param {{checkedAt:number,durationSeconds:number,expiry:number}|null} [permissionWindow] - the
+   *   review-time lifetime carried through the legacy compatibility path
    */
   async setupViaRouter(
     workers,
     expiry,
     bridgeInit = null,
     resolveBridgeAgent = () => {},
-    bridgeCredential = null
+    bridgeCredential = null,
+    permissionWindow = null
   ) {
     if (bridgeInit) assertBaseCrossChainAvailable()
     const nowSec = Math.floor(Date.now() / 1000)
@@ -3109,7 +3140,8 @@ export class OrchestratorAgent {
           expiry,
           nowSec,
           bridgeInit,
-          bridgeCredential
+          bridgeCredential,
+          permissionWindow
         )
       } catch (err) {
         // A grant covers ALL workers (+ the bridge agent) under one signature — its failure
@@ -3246,7 +3278,8 @@ export class OrchestratorAgent {
     expiry,
     nowSec,
     bridgeInit = null,
-    bridgeCredential = null
+    bridgeCredential = null,
+    permissionWindow = null
   ) {
     if (bridgeInit) assertBaseCrossChainAvailable()
     if (
@@ -3266,7 +3299,7 @@ export class OrchestratorAgent {
       this.grantBudgetUnits != null && this.grantBudgetUnits > totalUnits
         ? this.grantBudgetUnits
         : totalUnits
-    const durationSeconds = Math.max(1, expiry - nowSec)
+    const durationSeconds = permissionWindow?.durationSeconds ?? Math.max(1, expiry - nowSec)
     // v2 AgentInit (funding_router/src/types.rs): kind 0 = Deposit, target = the vault the agent
     // deposits into. mintRecipient/destinationDomain are Bridge-only fields — a Deposit agent's
     // scope never reads them, so they're pinned to the same harmless zero/none the Rust side
@@ -3298,6 +3331,10 @@ export class OrchestratorAgent {
       budgets,
       durationSeconds,
       agentInits,
+      // The agent scopes and SEP-41 allowance must terminate at the same absolute reviewed
+      // expiry. Passing this through prevents buildGrantTx from starting a fresh duration clock
+      // after setup/signing delay.
+      reviewedExpiryUnix: expiry,
     })
     this.assertCurrentAccount()
     if (
