@@ -3,7 +3,7 @@
 ## Implemented
 
 - Added the checked-in machine-readable evidence matrix with the seven required proven claim IDs,
-  exact `v1.15.0-beta` candidate metadata, active `feat` freeze, local evidence paths, commands,
+  exact `v1.15.1-beta` candidate metadata, active `feat` freeze, local evidence paths, commands,
   and stable candidate/preview locators.
 - Added the human-readable [EVIDENCE_MATRIX.md](../../../EVIDENCE_MATRIX.md). It documents why
   the annotated tag is the candidate locator instead of a published GitHub Release: publishing a
