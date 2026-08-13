@@ -1,46 +1,36 @@
+import { FOUNDATION_THEMES } from './pocket-crew-contract.js'
+
 export const THEME_IDS = Object.freeze({ FOREST: 'forest', DAY_FIELD: 'day-field' })
 
-const freezeTheme = (theme) => Object.freeze(theme)
+const themeFromContract = (themeId) => {
+  const tokens = FOUNDATION_THEMES[themeId]
+  const forestTokens = FOUNDATION_THEMES[THEME_IDS.FOREST]
+
+  return Object.freeze({
+    canvas: tokens['--pc-canvas'],
+    workspace: tokens['--pc-workspace'],
+    owned: tokens['--pc-owned'],
+    text: tokens['--pc-ink'],
+    textMuted: tokens['--pc-muted'],
+    ownedInk: tokens['--pc-owned-ink'],
+    ownedMuted: tokens['--pc-owned-muted'],
+    harvest: tokens['--pc-harvest'],
+    harvestInk: tokens['--pc-harvest-ink'],
+    danger: tokens['--pc-danger'],
+    dangerOnLight: tokens['--pc-danger-on-light'],
+    dangerInk: tokens['--pc-danger-ink'],
+    focusOnDark: forestTokens['--pc-focus'],
+    focusOnLight:
+      themeId === THEME_IDS.FOREST ? tokens['--pc-focus-contrast'] : tokens['--pc-focus'],
+    disabledOnDark: forestTokens['--pc-faint'],
+    disabledOnLight: FOUNDATION_THEMES[THEME_IDS.DAY_FIELD]['--pc-faint'],
+    light: themeId === THEME_IDS.DAY_FIELD,
+  })
+}
 
 export const THEMES = Object.freeze({
-  forest: freezeTheme({
-    canvas: '#17251F',
-    workspace: '#20342B',
-    owned: '#F2F5EF',
-    text: '#F2F5EF',
-    textMuted: '#A8B5AD',
-    ownedInk: '#17251F',
-    ownedMuted: '#536159',
-    harvest: '#DFF56C',
-    harvestInk: '#17251F',
-    danger: '#E26E67',
-    dangerOnLight: '#A8403C',
-    dangerInk: '#17251F',
-    focusOnDark: '#DFF56C',
-    focusOnLight: '#17251F',
-    disabledOnDark: '#8C9B93',
-    disabledOnLight: '#5F6C65',
-    light: false,
-  }),
-  'day-field': freezeTheme({
-    canvas: '#E9EEE8',
-    workspace: '#F7F9F5',
-    owned: '#F2F5EF',
-    text: '#17251F',
-    textMuted: '#536159',
-    ownedInk: '#17251F',
-    ownedMuted: '#536159',
-    harvest: '#DFF56C',
-    harvestInk: '#17251F',
-    danger: '#A8403C',
-    dangerOnLight: '#A8403C',
-    dangerInk: '#F2F5EF',
-    focusOnDark: '#DFF56C',
-    focusOnLight: '#17251F',
-    disabledOnDark: '#8C9B93',
-    disabledOnLight: '#5F6C65',
-    light: true,
-  }),
+  forest: themeFromContract(THEME_IDS.FOREST),
+  'day-field': themeFromContract(THEME_IDS.DAY_FIELD),
 })
 
 export function normalizeTheme(value) {

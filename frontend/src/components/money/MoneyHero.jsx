@@ -22,12 +22,13 @@ import { useMemo } from 'react'
 import { MoneyFigure, StatusNotice } from '../pocket/Primitives.jsx'
 import { choosePrimaryMoneyAction } from '../../money/myMoneyModel.js'
 import { formatUtcMs } from './formatUtc.js'
-
-// Same boundary math PlanStage.jsx/StrategyReceipt.jsx already use for a canonical
-// {token,units,decimals} amount -- display-only, never touches the underlying bigint.
-function unitsToDisplay(units, decimals) {
-  return Number(BigInt(units)) / 10 ** decimals
-}
+import {
+  formatCoreAmount,
+  normalizeCoreAmount,
+  toFactView,
+  toLiveVenueView,
+  toFreshnessView,
+} from '../../core/coreRouteAdapters.js'
 
 // Fix loop 2, I1: staleness is a property of the model's own freshness triple (freshness.js),
 // NOT of `model.state` alone. `problem` (myMoneyModel.js:196-208) and `partial-discovery`
@@ -45,15 +46,66 @@ function isStale(model) {
 // the hero figure may honestly show. Never invents a number: 'known' only when confirmedTotal
 // itself says 'known' AND carries a real amount -- every other case is 'loading' (MoneyFigure's
 // own honest in-flight placeholder) or 'unavailable' (this file's own literal text, see header).
-function heroFigureState(model) {
+function factStateForModel(model) {
+  if (!model || typeof model !== 'object') return 'unavailable'
+  if (model.state === 'loading') return 'loading'
+  if (model.state === 'empty') return 'empty'
+  if (model.state === 'stale') return 'stale'
+  if (model.state === 'partial-discovery') {
+    return model.freshness === 'stale' ? 'stale' : 'partial'
+  }
+  if (['current', 'problem'].includes(model.state)) {
+    return model.freshness === 'stale' ? 'stale' : 'current'
+  }
+  return 'unavailable'
+}
+
+function checkedAtTimestamp(value) {
+  if (typeof value === 'number') return value
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+/**
+ * One canonical presentation fact for every My Money surface.  The route model remains the
+ * business boundary; this adapter only translates its state/freshness triple into the shared
+ * Foundation fact contract.  Exporting the seam lets the other owned surfaces consume the same
+ * fact without growing competing freshness/view-model rules.
+ */
+export function toMoneyFactView(model) {
+  const state = factStateForModel(model)
+  const value =
+    model?.confirmedTotal?.state === 'known' && model.confirmedTotal.amount != null
+      ? model.confirmedTotal.amount
+      : null
+  const fact = toFactView({
+    state,
+    value,
+    source: model?.source,
+    checkedAt: checkedAtTimestamp(model?.checkedAt),
+    confirmedLedger: model?.confirmedLedger,
+    confirmedBlock: model?.confirmedBlock,
+  })
+  return Object.freeze({ fact, freshness: toFreshnessView(fact) })
+}
+
+function sourceLabel(model, freshness) {
+  if (freshness.source) return freshness.source
+  if (model?.source) return model.source
+  if (model?.state === 'loading') return 'Money read'
+  if (model?.state === 'disconnected') return 'Wallet connection'
+  return 'Unavailable'
+}
+
+function heroFigureState(model, freshness) {
   if (model.state === 'loading') return { kind: 'loading' }
   if (
     model.confirmedTotal?.state === 'known' &&
     model.confirmedTotal.amount != null &&
-    (model.state === 'current' ||
-      model.state === 'stale' ||
-      model.state === 'problem' ||
-      model.state === 'partial-discovery')
+    ['current', 'stale', 'problem', 'partial-discovery'].includes(model.state)
   ) {
     // Fix loop 2, I1: a known total whose freshness is itself 'unavailable' (corrupt/missing
     // checkedAt -- only reachable today via 'problem', since 'partial-discovery' can only carry
@@ -61,17 +113,21 @@ function heroFigureState(model) {
     // must never be rounded up to a confident current figure either -- mirrors the same
     // absence-never-confidence rule myMoneyModel.js's own Fix 2 (review loop 2) already enforces
     // one layer up.
-    if (model.freshness === 'unavailable') return { kind: 'unavailable' }
+    if (!['current', 'stale', 'partial'].includes(freshness.state)) {
+      return { kind: 'unavailable' }
+    }
+    let amount
+    try {
+      amount = normalizeCoreAmount(model.confirmedTotal.amount)
+    } catch {
+      return { kind: 'unavailable' }
+    }
     return {
       kind: 'known',
       // MoneyFigure's own 'stale' state renders the real number PLUS its built-in "(stale)" flag
       // (Primitives.jsx:42) -- reused as-is rather than re-implemented here.
-      figureState: isStale(model) ? 'stale' : 'current',
-      value: unitsToDisplay(
-        model.confirmedTotal.amount.units,
-        model.confirmedTotal.amount.decimals
-      ),
-      currency: model.confirmedTotal.amount.token,
+      figureState: freshness.state === 'stale' || isStale(model) ? 'stale' : 'current',
+      amount,
     }
   }
   if (model.state === 'empty') return { kind: 'empty' }
@@ -85,15 +141,17 @@ function heroFigureState(model) {
 // faithfully against the documented MoneySnapshot shape (myMoneyModel.js:14-39) rather than
 // dropped, and is exercised here via injected model fixtures.
 function hasValidEarned(model) {
-  return model.earned?.state === 'known' && model.earned.amount != null
+  if (model.earned?.state !== 'known' || model.earned.amount == null) return false
+  try {
+    normalizeCoreAmount(model.earned.amount)
+    return true
+  } catch {
+    return false
+  }
 }
 
-function hasLiveYield(model) {
-  return (
-    model.yield?.state === 'live' &&
-    typeof model.yield.apy === 'number' &&
-    Number.isFinite(model.yield.apy)
-  )
+function liveYieldView(model) {
+  return toLiveVenueView({ venueKind: 'stellar-live', yield: model?.yield })
 }
 
 // "Unknown must never render as absent" (brief) applies beyond the formal 'partial-discovery'
@@ -114,10 +172,19 @@ const PRIMARY_ACTION_PENDING_LABEL = Object.freeze({
   'add-money': 'Working…',
 })
 
-export function MoneyHero({ model, onAction, actionPending = false }) {
+export function MoneyHero({
+  model,
+  factView: providedFactView = null,
+  onAction,
+  actionPending = false,
+}) {
   const primary = useMemo(() => choosePrimaryMoneyAction(model), [model])
-  const figure = heroFigureState(model)
+  const { freshness } = providedFactView ?? toMoneyFactView(model)
+  const figure = heroFigureState(model, freshness)
   const unknownCount = unattributedUnknownCount(model)
+  const yieldView = liveYieldView(model)
+  const checkedAt = checkedAtTimestamp(freshness.checkedAt)
+  const source = sourceLabel(model, freshness)
 
   return (
     <section
@@ -132,11 +199,7 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
           {figure.kind === 'loading' && <MoneyFigure state="loading" />}
           {figure.kind === 'empty' && <MoneyFigure state="empty" />}
           {figure.kind === 'known' && (
-            <MoneyFigure
-              state={figure.figureState}
-              value={figure.value}
-              currency={figure.currency}
-            />
+            <MoneyFigure state={figure.figureState} amount={figure.amount} freshness={freshness} />
           )}
           {figure.kind === 'unavailable' && (
             <p className="pc-money pc-money--unknown" role="status">
@@ -144,17 +207,12 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
             </p>
           )}
 
-          {hasLiveYield(model) && (
+          {yieldView.state === 'live' && (
             <p>
-              Earning {model.yield.apy}% APY{isStale(model) ? ' (stale)' : ''}
+              Earning {yieldView.apy}% APY{isStale(model) ? ' (stale)' : ''}
             </p>
           )}
-          {hasValidEarned(model) && (
-            <p>
-              Earned {unitsToDisplay(model.earned.amount.units, model.earned.amount.decimals)}{' '}
-              {model.earned.amount.token}
-            </p>
-          )}
+          {hasValidEarned(model) && <p>Earned {formatCoreAmount(model.earned.amount)}</p>}
 
           {model.state === 'problem' && (
             <StatusNotice state="danger" title="Action needed">
@@ -187,7 +245,9 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
         </div>
 
         <div className="pc-money-hero-meta">
-          <p>Last checked: {formatUtcMs(model.checkedAt)}</p>
+          <p>Source: {source}</p>
+          <p>Freshness: {freshness.label}</p>
+          <p>Last checked: {formatUtcMs(checkedAt)}</p>
           <p>
             {model.agentCount != null
               ? `${model.agentCount} agent${model.agentCount === 1 ? '' : 's'} confirmed`

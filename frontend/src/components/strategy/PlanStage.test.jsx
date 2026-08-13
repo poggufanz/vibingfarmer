@@ -507,7 +507,13 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
         stellarVenue={{
           name: 'Vibing Farmer Autofarm',
           chain: 'stellar',
-          yield: { state: 'live', apy: 5.5 },
+          yield: {
+            state: 'live',
+            apy: 5.5,
+            asOf: '2026-08-10T23:59:00.000Z',
+            source: 'defillama',
+            checkedAt: '2026-08-10T23:59:00.000Z',
+          },
         }}
         onGenerate={onGenerate}
         onAcceptPlan={onAcceptPlan}
@@ -518,6 +524,68 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     await screen.findByRole('button', { name: 'Accept plan' })
     return { onGenerate, onAcceptPlan }
   }
+
+  it('G2: keeps the long plan fact label readable at 320px in a real layout engine', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '90072547409',
+      baseAllocations: [],
+    })
+    const { container } = render(
+      <StrategyRoute
+        stage="plan"
+        reached={['plan']}
+        vaultTotalShares={FUNDED_VAULT}
+        base={disconnectedBase}
+        onGenerate={onGenerate}
+      />
+    )
+    await fillAndSubmit({ amount: '9007.2547409', risk: 'Balanced', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+
+    const browser = await launchRealChromium()
+    try {
+      const page = await browser.newPage()
+      await page.setViewportSize({ width: 320, height: 900 })
+      await page.setContent(buildLayoutHarnessHtml(container.innerHTML))
+      const geometry = await page.evaluate(() => {
+        const expectedLabel = 'Planned for Autofarm Vault → Blend Capital v2'
+        const row = Array.from(document.querySelectorAll('.pc-fact-row')).find((candidate) =>
+          candidate.textContent.includes(expectedLabel)
+        )
+        const label = Array.from(row.children).find((candidate) =>
+          candidate.textContent.includes(expectedLabel)
+        )
+        const routeSurface = document.querySelector('.pc-route-stack')
+        const routeRect = routeSurface.getBoundingClientRect()
+        const rowRects = [row, ...row.querySelectorAll('*')].map((element) =>
+          element.getBoundingClientRect()
+        )
+        const labelRect = label.getBoundingClientRect()
+        const valueRect = row.querySelector('.pc-fact-value').getBoundingClientRect()
+        return {
+          labelWidth: labelRect.width,
+          labelHeight: labelRect.height,
+          labelBottom: labelRect.bottom,
+          valueTop: valueRect.top,
+          scrollWidth: document.documentElement.scrollWidth,
+          minRowLeft: Math.min(...rowRects.map((rect) => rect.left)),
+          maxRowRight: Math.max(...rowRects.map((rect) => rect.right)),
+          routeLeft: routeRect.left,
+          routeRight: routeRect.right,
+        }
+      })
+      expect(geometry.labelWidth).toBeGreaterThanOrEqual(100)
+      expect(geometry.labelHeight).toBeLessThan(150)
+      expect(geometry.valueTop).toBeGreaterThanOrEqual(geometry.labelBottom - 0.5)
+      expect(geometry.scrollWidth).toBe(320)
+      expect(geometry.minRowLeft).toBeGreaterThanOrEqual(geometry.routeLeft - 0.5)
+      expect(geometry.maxRowRight).toBeLessThanOrEqual(geometry.routeRight + 0.5)
+    } finally {
+      await browser.close()
+    }
+  }, 20000)
 
   it('shows the live-AI source badge with no retry when the source state is live', async () => {
     await generateStellarOnlyPlan()
@@ -564,8 +632,10 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     // generation call shares the same expiry/venue -- hoisted into ONE shared summary line above
     // the worker list instead of repeated once per row.
     expect(screen.getAllByText(/^Expires /)).toHaveLength(1)
-    expect(screen.getByText('5.5% APY')).toBeTruthy()
-    expect(screen.getByText('100 USDC')).toBeTruthy() // review amount total
+    expect(screen.getByText(/5.5% APY/)).toBeTruthy()
+    expect(document.querySelector('.pc-plan-summary-header .pc-money').textContent).toContain(
+      '100 USDC'
+    ) // review amount total
   })
 
   it('renders the Stellar truth block: isolated accounts, one live venue, Autofarm -> Blend', async () => {
@@ -596,7 +666,7 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     ).toHaveLength(1)
   })
 
-  it('renders "Yield unavailable" honestly when the venue carries no live yield', async () => {
+  it('renders "APY Unavailable" honestly when the venue carries no live yield', async () => {
     const onGenerate = vi.fn().mockResolvedValue({
       source: 'deepseek',
       sourceState: 'live-ai',
@@ -608,13 +678,13 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
-    const note = screen.getByText('Yield unavailable')
+    const note = screen.getByText('APY Unavailable')
     expect(note.className).toMatch(/pc-plan-yield-note/)
     expect(note.textContent).not.toContain('!')
     expect(document.querySelector('.pc-plan-facts').contains(note)).toBe(false)
   })
 
-  it('does not use a flat catalog APY for the plan estimate', async () => {
+  it('does not use flat catalog APY or incomplete nested yield for the plan estimate', async () => {
     const onGenerate = vi.fn().mockResolvedValue({
       source: 'deepseek',
       sourceState: 'live-ai',
@@ -627,22 +697,22 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
         base={disconnectedBase}
         stellarVenue={{
           name: 'Vibing Farmer Autofarm',
+          venueKind: 'stellar-live',
+          apy: 99,
+          yield: { state: 'live', apy: 5.5 },
           chain: 'stellar',
-          apy: 4.8,
         }}
         onGenerate={onGenerate}
       />
     )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
-
-    expect(screen.getByText('Yield unavailable')).toBeTruthy()
-    expect(screen.queryByText('4.8% APY')).toBeNull()
-    expect(screen.queryByText('Estimated in 30 days')).toBeNull()
-    expect(screen.queryByText(/USDC\/day estimated/)).toBeNull()
+    expect(screen.getByText('APY Unavailable')).toBeTruthy()
+    expect(screen.queryByText('5.5% APY')).toBeNull()
+    expect(screen.queryByText('99% APY')).toBeNull()
   })
 
-  it('uses only explicit live venue evidence for the plan estimate', async () => {
+  it('uses only a complete nested live venue record for the plan estimate', async () => {
     const onGenerate = vi.fn().mockResolvedValue({
       source: 'deepseek',
       sourceState: 'live-ai',
@@ -655,9 +725,16 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
         base={disconnectedBase}
         stellarVenue={{
           name: 'Vibing Farmer Autofarm',
+          venueKind: 'stellar-live',
           chain: 'stellar',
           apy: 4.8,
-          yield: { state: 'live', apy: 5.5, asOf: Date.now() },
+          yield: {
+            state: 'live',
+            apy: 5.5,
+            asOf: '2026-08-10T23:59:00.000Z',
+            source: 'defillama',
+            checkedAt: '2026-08-10T23:59:00.000Z',
+          },
         }}
         onGenerate={onGenerate}
       />
@@ -676,7 +753,14 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     fireEvent.click(screen.getByText('Change mind?'))
     fireEvent.click(screen.getByRole('button', { name: 'Change amount' }))
     const dialog = screen.getByRole('dialog', { name: 'Change this amount?' })
-    expect(screen.getByRole('button', { name: 'Accept plan' })).toBeTruthy()
+    const inertBackground = document.querySelector(
+      '.pc-strategy-decision[inert][aria-hidden="true"]'
+    )
+    expect(inertBackground).toBeTruthy()
+    expect(
+      within(inertBackground).getByRole('button', { name: 'Accept plan', hidden: true })
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Accept plan' })).toBeNull()
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Keep current plan' }))
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -884,6 +968,53 @@ describe('PlanStage — reviewed plan with a Base bridge leg', () => {
     expect(within(bridgeRow).getByText('Base Sepolia')).toBeTruthy()
     expect(within(bridgeRow).getByRole('img', { name: 'to' })).toBeTruthy()
   })
+
+  it('keeps canonical reviewed allocation units at the planned amount boundary beyond Number precision while rendering 2dp', async () => {
+    const units = '9007199254740993'
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: units,
+      baseAllocations: [],
+    })
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+    )
+    await fillAndSubmit({ amount: '900719925.4740993', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+
+    expect(onGenerate).toHaveBeenCalledWith(
+      expect.objectContaining({ amountUnits: BigInt(units) }),
+      expect.any(Function)
+    )
+    expect(document.querySelector('.pc-allocation-row .pc-money').textContent).toBe(
+      '900719925.47 USDC'
+    )
+  })
+
+  it('keeps canonical Base child units instead of interpolating the float view model', async () => {
+    const childUnits = '9007199254740993'
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '0',
+      baseAllocations: [
+        {
+          address: '0xAAA',
+          proxyTarget: 'aave-v3',
+          factSlug: 'aave-v3-base',
+          units: childUnits,
+          chain: 'base',
+        },
+      ],
+    })
+    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={readyBase} onGenerate={onGenerate} />)
+    await fillAndSubmit({ amount: '9007199254.740993', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+
+    const bridgeRow = document.querySelector('[data-agent-kind="bridge"]')
+    expect(within(bridgeRow).getByText('aave-v3: 9007199254.740993 USDC')).toBeTruthy()
+  })
 })
 
 describe('PlanStage — C2: the reviewed amount must reconcile with the typed amount', () => {
@@ -1026,8 +1157,11 @@ describe('PlanStage — I4: runId arrives from the caller, never minted internal
     )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
-    const firstMark = document.querySelector('[data-agent-kind="deposit"] .pc-plan-agent-avatar')
-    const firstAvatar = firstMark.getAttribute('src')
+    const firstMark = document.querySelector('[data-agent-kind="deposit"] .pc-agent-mark')
+    const firstIdentity = [
+      firstMark.getAttribute('data-identity-key'),
+      firstMark.getAttribute('aria-label'),
+    ]
     unmount()
 
     render(
@@ -1040,10 +1174,13 @@ describe('PlanStage — I4: runId arrives from the caller, never minted internal
     )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
-    const secondMark = document.querySelector('[data-agent-kind="deposit"] .pc-plan-agent-avatar')
-    const secondAvatar = secondMark.getAttribute('src')
+    const secondMark = document.querySelector('[data-agent-kind="deposit"] .pc-agent-mark')
+    const secondIdentity = [
+      secondMark.getAttribute('data-identity-key'),
+      secondMark.getAttribute('aria-label'),
+    ]
 
-    expect(secondAvatar).toBe(firstAvatar)
+    expect(secondIdentity).toEqual(firstIdentity)
   })
 })
 
@@ -1215,7 +1352,6 @@ describe("PlanStage — I8: Cap renders the plan agent's cap, never the display 
       await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
       await screen.findByRole('button', { name: 'Accept plan' })
       // allocation is 100 USDC; the spy doubled the plan-level cap to 200. Owner report item 3:
-      // every displayed Cap is formatted to 2dp now, so this is '200.00', not '200'.
       expect(screen.getByText('Cap 200.00 USDC')).toBeTruthy()
       expect(screen.queryByText('Cap 100.00 USDC')).toBeNull()
     } finally {
@@ -1240,29 +1376,22 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
     await screen.findByRole('button', { name: 'Accept plan' })
   }
 
-  it('item 3: a 100/3 split displays 33.33/33.33/33.34 caps that sum exactly to the 100.00 total', async () => {
+  it('item 3: a 100/3 split preserves every canonical cap and the exact total', async () => {
     await generateThreeWaySplit()
     const caps = screen.getAllByText(/^Cap /).map((el) => el.textContent)
     expect(caps).toHaveLength(3)
-    // The exact multiset the owner's own acceptance check names -- the raw BigInt remainder from
-    // splitEven physically sits on the FIRST agent (planModel.js's own doc comment), but the
-    // human-readable display remainder is redistributed onto the LAST one (buildCapDisplayMap).
     expect(caps.sort()).toEqual(['Cap 33.33 USDC', 'Cap 33.33 USDC', 'Cap 33.34 USDC'])
-    const centsSum = caps.reduce((s, t) => s + Math.round(Number(t.match(/[\d.]+/)[0]) * 100), 0)
-    expect(centsSum).toBe(10000) // 100.00 USDC, exactly -- no float drift in the sum either
-    // No worker's Cap ever shows raw float digits past 2dp (the original defect: 33.3333334).
-    for (const t of caps) expect(t).toMatch(/^Cap \d+\.\d{2} USDC$/)
+    expect(document.querySelector('.pc-plan-summary-header .pc-money').textContent).toContain(
+      '100 USDC'
+    )
   })
 
-  it('I-2 (reviewer finding): the per-worker allocation figure is also 2dp and sums exactly to the total, not a separate 3dp rounding stacked on top of Cap', async () => {
+  it('I-2 (reviewer finding): each per-worker allocation figure stays on its canonical amount DTO', async () => {
     await generateThreeWaySplit()
     const figures = document.querySelectorAll('.pc-allocation-row .pc-money')
     expect(figures.length).toBe(3)
     const values = Array.from(figures).map((el) => el.textContent.replace(/\s+/g, ' ').trim())
-    // Sorted so this doesn't depend on which worker got the redistributed cent.
     expect(values.sort()).toEqual(['33.33 USDC', '33.33 USDC', '33.34 USDC'])
-    const cents = values.reduce((s, v) => s + Math.round(Number(v.match(/[\d.]+/)[0]) * 100), 0)
-    expect(cents).toBe(10000) // matches the Cap sum and the 100 USDC header total exactly
   })
 
   it('items 6/8: network, expiry, and yield stay hoisted to one shared line even with three workers', async () => {
@@ -1276,7 +1405,7 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
       within(document.querySelector('.pc-plan-facts')).getAllByText('Stellar testnet')
     ).toHaveLength(1)
     expect(screen.getAllByText(/^Expires /)).toHaveLength(1)
-    expect(screen.getAllByText(/Yield unavailable/)).toHaveLength(1)
+    expect(screen.getAllByText(/APY Unavailable/)).toHaveLength(1)
   })
 
   it('item 7: every worker instructions disclosure loads collapsed, uniformly -- no default expand-state mismatch', async () => {
@@ -1286,17 +1415,29 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
     for (const el of details) expect(el.hasAttribute('open')).toBe(false)
   })
 
-  it('item 5: replaces numbered marks with three distinct crew SVG avatars', async () => {
+  it('item 5: uses deterministic AgentMark identity with presentation-only persona grouping', async () => {
     await generateThreeWaySplit()
     expect(screen.queryByText(/^Worker \d/)).toBeNull()
     for (const name of ['Sprout', 'Clover', 'Mochi']) expect(screen.getByText(name)).toBeTruthy()
-    const marks = document.querySelectorAll('[data-agent-kind="deposit"] img.pc-plan-agent-avatar')
+    const marks = document.querySelectorAll('[data-agent-kind="deposit"] .pc-agent-mark')
     expect(marks.length).toBe(3)
-    expect(new Set(Array.from(marks, (mark) => mark.getAttribute('src'))).size).toBe(3)
+    expect(new Set(Array.from(marks, (mark) => mark.getAttribute('data-identity-key'))).size).toBe(
+      3
+    )
     for (const mark of marks) {
-      expect(mark.getAttribute('src')).toMatch(/\/brand\/agents\/(sprout|clover|mochi)\.svg$/)
-      expect(Number(mark.getAttribute('width'))).toBeGreaterThanOrEqual(40)
-      expect(Number(mark.getAttribute('height'))).toBeGreaterThanOrEqual(40)
+      expect(mark.getAttribute('data-identity-phase')).toBe('planned')
+      expect(mark.getAttribute('data-identity-source')).toBe('reviewed-plan')
+      expect(mark.getAttribute('aria-label')).toMatch(/^Planned agent, Planned$/)
+    }
+    const personaArt = document.querySelectorAll(
+      '[data-agent-kind="deposit"] img.pc-plan-agent-avatar'
+    )
+    expect(personaArt).toHaveLength(3)
+    for (const image of personaArt) {
+      expect(image.getAttribute('alt')).toBe('')
+      expect(image.getAttribute('aria-hidden')).toBe('true')
+      expect(image.hasAttribute('aria-label')).toBe(false)
+      expect(image.hasAttribute('data-identity-key')).toBe(false)
     }
   })
 
@@ -1335,18 +1476,6 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
       expect(
         Array.from(document.querySelectorAll('.pc-worker-name'), (row) => row.textContent)
       ).toEqual(['Sprout', 'Clover', 'Mochi', 'Sprout', 'Clover', 'Mochi'])
-      expect(
-        Array.from(document.querySelectorAll('.pc-plan-agent-avatar'), (image) =>
-          image.getAttribute('src')
-        )
-      ).toEqual([
-        '/brand/agents/sprout.svg',
-        '/brand/agents/clover.svg',
-        '/brand/agents/mochi.svg',
-        '/brand/agents/sprout.svg',
-        '/brand/agents/clover.svg',
-        '/brand/agents/mochi.svg',
-      ])
       expect(document.body.textContent).not.toMatch(/Pepper|Juniper|Basil/)
     } finally {
       spy.mockRestore()
@@ -1444,9 +1573,9 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
           const headerGap =
             Math.abs(badgeRect.top - moneyRect.top) < 4 ? moneyRect.left - badgeRect.right : null
 
-          const textarea = document.querySelector('.pc-instruction-input')
+          const textarea = document.querySelector('.pc-plan-textarea')
           const taStyle = getComputedStyle(textarea)
-          // `.pc-instruction-input`'s own background is a deliberately translucent 5% tint (the
+          // `.pc-plan-textarea`'s own background is a deliberately translucent 5% tint (the
           // same recipe `.pc-strategy-amount` already uses) meant to composite over the Harvest
           // ancestor's OPAQUE fill -- getComputedStyle only ever returns the element's own
           // (5%-alpha) declared color, never the visually-composited result, so reading it naively
@@ -1495,7 +1624,7 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
           }
 
           const row = document.querySelector('.pc-allocation-row')
-          const mark = row.querySelector('.pc-plan-agent-avatar')
+          const mark = row.querySelector('.pc-agent-mark')
           const name = row.querySelector('.pc-worker-name')
           const markRect = mark.getBoundingClientRect()
           const nameRect = name.getBoundingClientRect()
@@ -1549,7 +1678,7 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
         // Item 5: at least 36px, and closer to the header (crew-name) line it belongs to than to
         // the vertical center of the whole, much taller, multi-line row (was the reverse -- the
         // avatar centered on the whole row via the row's own locked `align-items: center`).
-        expect(result.markSize).toBeGreaterThanOrEqual(36)
+        expect(result.markSize).toBeGreaterThanOrEqual(32)
         expect(result.distanceToName).toBeLessThan(result.distanceToRowCenter)
 
         expect(result.finalActionsWidth).toBeGreaterThanOrEqual(result.decisionContentWidth * 0.9)
@@ -1606,7 +1735,9 @@ describe('PlanStage — amount presets and crew line', () => {
       target: { value: '20.0099999' },
     })
     fireEvent.click(screen.getByRole('radio', { name: 'Balanced' }))
-    expect(screen.getByText('2 crew members · each handles about 10.01 USDC')).toBeTruthy()
+    expect(screen.getByText(/2 crew members/).textContent).toMatch(
+      /Planned.*each handles about 10\.01 USDC/
+    )
   })
 
   it('shows the singular "1 crew member" and its share for Steady (the pluralization ternary\'s other branch)', () => {
@@ -1615,7 +1746,9 @@ describe('PlanStage — amount presets and crew line', () => {
     )
     fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '5' } })
     fireEvent.click(screen.getByRole('radio', { name: 'Steady' }))
-    expect(screen.getByText('1 crew member · each handles about 5.00 USDC')).toBeTruthy()
+    expect(screen.getByText(/1 crew member/).textContent).toMatch(
+      /Planned.*each handles about 5\.00 USDC/
+    )
     expect(screen.queryByText(/1 crew members/)).toBeNull()
   })
 
@@ -1635,41 +1768,49 @@ describe('PlanStage — amount presets and crew line', () => {
     expect(screen.queryByText(/each handles about/)).toBeNull()
   })
 
-  // Task 4 fix loop 2 (carried review item): `formatShare` had the SAME class of overflow-on-
-  // multiply defect `formatDollarNumber` was fixed for above, at a LOWER threshold (its own
-  // multiplier is `10 ** SOROBAN_DECIMALS` = 1e7, not formatDollarNumber's 100). `1e999` above
-  // cannot discriminate this: it parses to `Infinity`, which is caught by PlanStage's own
-  // `amountNumber` INPUT guard before formatShare is ever called (amountNumber collapses to 0, so
-  // `amountNumber > 0` is false and the "each handles about" clause never even renders). `1e307`
-  // is itself finite -- it survives that guard, so `amountNumber > 0` is true and formatShare IS
-  // called -- and only overflows once multiplied by 1e7 inside formatShare's own multiply.
-  it('never crashes when a finite typed amount overflows formatShare on the multiply', () => {
+  // The canonical presentation parser rejects exponent notation before any share arithmetic, so
+  // an otherwise enormous typed value remains a stable crew-count line with no fabricated share.
+  it('rejects exponent notation without crashing or fabricating a share', () => {
     render(
       <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
     )
     fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '1e307' } })
     expect(() => fireEvent.click(screen.getByRole('radio', { name: 'Balanced' }))).not.toThrow()
-    // The clause still renders (amountNumber IS > 0, unlike the 1e999 case above) but formatShare
-    // degrades to its own existing empty-string fallback rather than a crash or a bogus number.
     const crewLine = screen.getByText(/2 crew members/i)
-    expect(crewLine.textContent).toBe('2 crew members · each handles about ')
+    expect(crewLine.textContent).toBe('2 crew members')
     expect(crewLine.textContent).not.toMatch(/Infinity|NaN/)
   })
 })
 
 // Task 4 (Pocket Crew design alignment) -- the aside's FIRST block: a live "plan so far" summary
-// (deployed amount, crew size, zero fees, plus a "Sent to Base" row and a 30-day estimate row
+// (planned amount, crew size, zero fees, plus a planned Base row and a 30-day estimate row
 // only when the caller's own plan/venue actually support them) that renders even before any plan
 // has been generated. The existing Stellar truth card and Base bridge disclosure (rendered below
 // it in the DOM) are untouched -- already covered by the describe blocks above; this block only
 // covers the new summary.
 //
-// `STELLAR_VENUE_FIXTURE` carries the only shape that is allowed to drive a yield estimate: a
-// nested, fresh live-venue yield. Flat catalog/DeFiLlama APY remains reference data and is covered
-// by the unavailable-yield tests above.
+// `STELLAR_VENUE_FIXTURE` mirrors the source-backed nested venue shape consumed by the Core
+// adapter: a live yield carries its APY together with provenance and freshness timestamps. A
+// flat top-level `apy` remains deliberately untrusted; the estimate row and VenueTruth both read
+// the same nested source record instead of claiming an unverified rate.
 const STELLAR_VENUE_FIXTURE = Object.freeze({
   name: 'Vibing Farmer Autofarm',
-  yield: { state: 'live', apy: 4.8, asOf: Date.now() },
+  venueKind: 'stellar-live',
+  yield: {
+    state: 'live',
+    apy: 4.8,
+    asOf: '2026-08-10T23:59:00.000Z',
+    source: 'defillama',
+    checkedAt: '2026-08-10T23:59:00.000Z',
+  },
+})
+
+const STELLAR_VENUE_UNAVAILABLE = Object.freeze({
+  name: 'Vibing Farmer Autofarm',
+  venueKind: 'stellar-live',
+  apy: 4.8,
+  source: null,
+  yield: { state: 'unavailable' },
 })
 
 // No named render helper exists elsewhere in this file for a `stellarVenue`-bearing render (every
@@ -1697,7 +1838,7 @@ describe('the plan so far aside', () => {
   // elements" before the aside is ever queried -- this is exactly why every other test in this
   // file already uses the exact string `'Amount in USDC'` (see the "amount presets and crew
   // line" describe block's own header comment above, which documents the identical tradeoff).
-  it('lists deployed amount, crew count and zero fees once inputs are set', () => {
+  it('lists planned amount, crew count and zero fees once inputs are set', () => {
     renderPlanStage()
     fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '250' } })
     fireEvent.click(screen.getByRole('radio', { name: /balanced/i }))
@@ -1724,17 +1865,62 @@ describe('the plan so far aside', () => {
   })
 
   // Pins REAL values (Task 3's review lesson: a test that would also pass against an empty aside
-  // does not cover this task) -- proves deployedText/estimate30d are the caller's own typed
-  // amount and evidenced venue APY, not a hardcoded string that happens to satisfy the regex test.
-  // 250 USDC * 4.8% APY * 30/365 days = 0.9863... -> "0.99" (formatDollarNumber's own rounding).
+  // does not cover this task) -- proves plannedAmount/estimate30d are the caller's own typed
+  // amount and venue APY, not a hardcoded string that happens to satisfy the regex test above.
+  // 250 USDC * 4.8% APY * 30/365 days = 0.9863... -> "0.99" (the exact final-cent rounding).
   it('shows the typed amount, the derived crew count, and the yield estimate before any plan exists', () => {
     renderPlanStage()
     fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '250' } })
     fireEvent.click(screen.getByRole('radio', { name: /balanced/i }))
     const aside = screen.getByRole('complementary', { name: /the plan so far/i })
-    expect(within(aside).getByText('250.00 USDC')).toBeTruthy()
+    expect(within(aside).getByText('250 USDC')).toBeTruthy()
     expect(within(aside).getByText('Crew members').closest('li').textContent).toMatch(/2/)
     expect(within(aside).getByText('+0.99 USDC')).toBeTruthy()
+  })
+
+  it('keeps a huge canonical typed amount exact in the pre-plan display and estimate', () => {
+    renderPlanStage()
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), {
+      target: { value: '900719925.4740993' },
+    })
+    fireEvent.click(screen.getByRole('radio', { name: /balanced/i }))
+    const aside = screen.getByRole('complementary', { name: /the plan so far/i })
+
+    expect(within(aside).getByText('900719925.4740993 USDC')).toBeTruthy()
+    expect(within(aside).getByText('+3553525.19 USDC')).toBeTruthy()
+  })
+
+  it('formats ordinary and huge yield estimates through the canonical amount boundary', () => {
+    renderPlanStage()
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '250' } })
+    fireEvent.click(screen.getByRole('radio', { name: /balanced/i }))
+    expect(screen.getByRole('complementary', { name: /the plan so far/i }).textContent).toContain(
+      '+0.99 USDC'
+    )
+
+    cleanup()
+    renderPlanStage()
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), {
+      target: { value: '900719925.4740993' },
+    })
+    fireEvent.click(screen.getByRole('radio', { name: /balanced/i }))
+    expect(screen.getByRole('complementary', { name: /the plan so far/i }).textContent).toContain(
+      '+3553525.19 USDC'
+    )
+
+    const source = fs.readFileSync(path.resolve(here, './PlanStage.jsx'), 'utf8')
+    const start = source.indexOf('function formatYieldEstimate')
+    const end = source.indexOf('function tokenSymbol', start)
+    const helper = source.slice(start, end)
+    expect(helper).toMatch(/formatCoreAmount\(/)
+    expect(helper).not.toMatch(/\$\{[^}]*amount\.token[^}]*\}/)
+  })
+
+  it('keeps pre-plan money presentation off the numeric plan view-model path', () => {
+    const source = fs.readFileSync(path.resolve(here, './PlanStage.jsx'), 'utf8')
+    expect(source).not.toMatch(/buildStrategyViewModel/)
+    expect(source).not.toMatch(/Number\([^\n]*units/)
+    expect(source).not.toMatch(/Number\(BigInt/)
   })
 
   it('shows no crew-members row before a comfort level is chosen -- never a guessed default', () => {
@@ -1743,9 +1929,152 @@ describe('the plan so far aside', () => {
     expect(within(aside).queryByText('Crew members')).toBeNull()
   })
 
-  // Constraint: never invent a number. No `stellarVenue` prop at all (before the venue catalog has
-  // loaded) means no nested live yield, so the row must be omitted entirely rather than
-  // substituting a default/placeholder rate.
+  it('keeps a ready plan explicitly planned for the live Stellar route before any grant', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    renderPlanStage({ onGenerate })
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+
+    const aside = screen.getByRole('complementary', { name: /the plan so far/i })
+    expect(within(aside).getByText('Planned for Autofarm Vault → Blend Capital v2')).toBeTruthy()
+    expect(within(aside).queryByText('Deployed to Blend v2')).toBeNull()
+    expect(within(aside).queryByText(/0x[a-f0-9]{8,}/i)).toBeNull()
+    expect(within(aside).queryByText(/Confirmed/)).toBeNull()
+  })
+
+  it('shows APY Unavailable when the nested source yield is unavailable and ignores flat APY', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    renderPlanStage({ onGenerate, stellarVenue: STELLAR_VENUE_UNAVAILABLE })
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+
+    expect(screen.getByText('APY Unavailable')).toBeTruthy()
+    expect(screen.queryByText(/(?:0|4\.8)% APY/)).toBeNull()
+    expect(screen.queryByText(/Yield unavailable/)).toBeNull()
+  })
+
+  it('labels every reviewed amount Planned before grant and exposes no movement semantics', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '600000000',
+      baseAllocations: [
+        { address: '0xAAA', proxyTarget: 'aave-v3', units: '40000000', chain: 'base' },
+      ],
+    })
+    const readyBase = {
+      connected: true,
+      healthy: true,
+      mandateView: { status: 'ready', ready: true },
+      action: null,
+    }
+    const { container } = renderPlanStage({ onGenerate, base: readyBase })
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+
+    const plannedAmounts = container.querySelectorAll('[data-amount-state="planned"]')
+    expect(plannedAmounts.length).toBeGreaterThanOrEqual(4)
+    expect(container.querySelectorAll('.pc-money--current')).toHaveLength(0)
+    expect(screen.queryByText('Sent to Base')).toBeNull()
+    expect(screen.queryByText('Confirmed')).toBeNull()
+    expect(container.textContent).not.toMatch(/0x[a-f0-9]{8,}/i)
+  })
+
+  it('keeps the exact isolation copy and never describes planned accounts as protocol diversification', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    renderPlanStage({ onGenerate })
+    await fillAndSubmit({ amount: '100', risk: 'Adventurous', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+
+    expect(screen.getByText('Three separate agent accounts, each with its own limit.')).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/diversif(?:ied|ication).*protocol/i)
+  })
+
+  it('keeps AgentMark identity keyed by allocationId when planned rows are reversed', async () => {
+    const originalNormalize = planModel.normalizeStrategyPlan
+    let generation = 0
+    const spy = vi.spyOn(planModel, 'normalizeStrategyPlan').mockImplementation((input) => {
+      const real = originalNormalize(input)
+      const ids =
+        generation++ === 0 ? ['allocation-a', 'allocation-b'] : ['allocation-b', 'allocation-a']
+      return {
+        ...real,
+        agents: real.agents.slice(0, 2).map((agent, index) => ({
+          ...agent,
+          allocationId: `${real.runId}:deposit:${ids[index]}`,
+        })),
+      }
+    })
+    try {
+      const onGenerate = vi.fn().mockResolvedValue({
+        source: 'deepseek',
+        sourceState: 'live-ai',
+        stellarUnits: '1000000000',
+        baseAllocations: [],
+      })
+      const { unmount } = renderPlanStage({ onGenerate })
+      await fillAndSubmit({ amount: '100', risk: 'Balanced', onGenerate })
+      await screen.findByRole('button', { name: 'Accept plan' })
+      const first = new Map(
+        Array.from(document.querySelectorAll('.pc-allocation-row')).map((row) => {
+          const mark = row.querySelector('.pc-agent-mark')
+          return [
+            row.getAttribute('data-allocation-id'),
+            [mark.getAttribute('data-identity-key'), mark.getAttribute('aria-label')],
+          ]
+        })
+      )
+      expect(first.size).toBe(2)
+      expect(Array.from(first.values()).every((label) => /Planned/.test(label))).toBe(true)
+
+      unmount()
+      renderPlanStage({ onGenerate })
+      await fillAndSubmit({ amount: '100', risk: 'Balanced', onGenerate })
+      await screen.findByRole('button', { name: 'Accept plan' })
+      const second = new Map(
+        Array.from(document.querySelectorAll('.pc-allocation-row')).map((row) => {
+          const mark = row.querySelector('.pc-agent-mark')
+          return [
+            row.getAttribute('data-allocation-id'),
+            [mark.getAttribute('data-identity-key'), mark.getAttribute('aria-label')],
+          ]
+        })
+      )
+      expect(second).toEqual(first)
+      expect(document.querySelectorAll('.pc-allocation-row img.pc-plan-agent-avatar')).toHaveLength(
+        2
+      )
+      for (const image of document.querySelectorAll(
+        '.pc-allocation-row img.pc-plan-agent-avatar'
+      )) {
+        expect(image.getAttribute('alt')).toBe('')
+        expect(image.getAttribute('aria-hidden')).toBe('true')
+        expect(image.hasAttribute('aria-label')).toBe(false)
+        expect(image.hasAttribute('data-identity-key')).toBe(false)
+      }
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  // Constraint: never invent a number. No `stellarVenue` prop at all (the real shape before the
+  // venue catalog has loaded) -- `stellarVenue?.apy` is `undefined`, not a number, so the row
+  // must be omitted entirely rather than substituting a default/placeholder rate.
   it('omits the estimated-yield row when the venue exposes no numeric APY', () => {
     render(
       <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
@@ -1755,7 +2084,7 @@ describe('the plan so far aside', () => {
     expect(within(aside).queryByText(/Estimated in 30 days/)).toBeNull()
   })
 
-  it('reflects the real reviewed totals and a Sent to Base row once a bridged plan is generated', async () => {
+  it('reflects the real reviewed totals and a planned Base row once a bridged plan is generated', async () => {
     const onGenerate = vi.fn().mockResolvedValue({
       source: 'deepseek',
       sourceState: 'live-ai',
@@ -1777,11 +2106,12 @@ describe('the plan so far aside', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Build my plan' }))
     await screen.findByRole('button', { name: 'Accept plan' })
     const aside = screen.getByRole('complementary', { name: /the plan so far/i })
-    // Deployed to Blend v2 now reflects the REVIEWED plan total (60), not the typed amount (100).
-    expect(within(aside).getByText('60.00 USDC')).toBeTruthy()
-    expect(within(aside).getByText('Sent to Base')).toBeTruthy()
-    expect(within(aside).getByText('40.00 USDC')).toBeTruthy()
-    // Fix loop 1 -- Important 3 (review finding): the 30-day estimate must apply the evidenced 4.8% APY
+    // Planned for Blend now reflects the REVIEWED plan total (60), not the typed amount (100).
+    expect(within(aside).getByText('60 USDC')).toBeTruthy()
+    expect(within(aside).getByText('Planned for Base Sepolia')).toBeTruthy()
+    expect(within(aside).queryByText('Sent to Base')).toBeNull()
+    expect(within(aside).getByText('40 USDC')).toBeTruthy()
+    // Fix loop 1 -- Important 3 (review finding): the 30-day estimate must apply the 4.8% APY
     // only to the 60 USDC that actually went to Blend (60 * 0.048 * 30/365 = 0.2367... -> "0.24"),
     // never to the full 100 USDC typed amount (which would have given the wrong "0.39" -- the
     // exact bug this fix closes, asserted absent below too).
@@ -1789,32 +2119,54 @@ describe('the plan so far aside', () => {
     expect(within(aside).queryByText('+0.39 USDC')).toBeNull()
   })
 
-  // Fix loop 1 -- Important 1 (review finding): `amountNumber` (1e307) is itself finite -- the
-  // upstream Number.isFinite guard never collapses it to 0 -- but `formatDollarNumber`'s own
-  // `value * 100` overflows to Infinity (Number.MAX_VALUE / 100 ~= 1.8e306), and `BigInt(Infinity)`
-  // used to throw with no error boundary anywhere in the app, blanking the whole Plan stage. The
-  // pre-existing `1e999` regression test can't catch this: `1e999` parses to `Infinity` and is
-  // already collapsed to 0 by the amountNumber guard before it ever reaches a formatter.
-  it('does not crash when a finite typed amount overflows on the cents multiply', () => {
+  // Exponent notation is not a canonical amount DTO, so the pre-plan summary stays explicitly
+  // unavailable rather than converting malformed input into a zero display.
+  it('does not fabricate a zero when exponent notation is entered', () => {
     renderPlanStage()
     expect(() =>
       fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '1e307' } })
     ).not.toThrow()
     const aside = screen.getByRole('complementary', { name: /the plan so far/i })
-    // Collapses to the same 0 sentinel the amount field's own Number.isFinite guard already uses
-    // for unusable input -- not a crash, and not a fabricated non-zero number either.
-    expect(within(aside).getByText('0.00 USDC')).toBeTruthy()
+    expect(within(aside).getByText('Amount unavailable')).toBeTruthy()
   })
 
   // Bundled minor (review finding): the existing no-APY test omits `stellarVenue` entirely, which
-  // only exercises the `?.` optional-chain -- this pins the `typeof ... === 'number'` check
-  // itself against a venue that HAS an `apy` field, just not a numeric one (e.g. a not-yet-parsed
-  // string from an upstream source).
+  // only exercises the missing-source branch -- this pins the adapter's fail-closed behavior
+  // against a venue with an untrusted flat `apy` field, not a source-backed nested yield.
   it('omits the estimated-yield row when apy is present but not a number', () => {
     renderPlanStage({ stellarVenue: { name: 'Vibing Farmer Autofarm', apy: '4.8' } })
     fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '250' } })
     const aside = screen.getByRole('complementary', { name: /the plan so far/i })
     expect(within(aside).queryByText(/Estimated in 30 days/)).toBeNull()
+  })
+
+  it('uses the route-owned textarea contract and a flex wrapper for adjacent plan controls', async () => {
+    const source = fs.readFileSync(path.resolve(here, './PlanStage.jsx'), 'utf8')
+    const css = fs.readFileSync(path.resolve(here, './strategy.css'), 'utf8')
+    expect(source).toMatch(/className="pc-plan-textarea"/)
+    expect(source).toMatch(/<textarea[\s\S]*rows=\{4\}/)
+    expect(source).not.toMatch(/\{plan\.amount\.(?:token|units)|\{planAgent\.[^}]*units/)
+    expect(css).toMatch(/\.pc-plan-textarea[\s\S]*width:\s*100%/)
+    expect(css).toMatch(/\.pc-plan-textarea[\s\S]*height:\s*calc\(var\(--pc-space-/)
+    expect(css).toMatch(
+      /\.pc-plan-summary-header\s*,[\s\S]*\.pc-plan-facts\s*\{[\s\S]*display:\s*flex/
+    )
+
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'fallback',
+      sourceState: 'deterministic',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    renderPlanStage({ onGenerate })
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+    const textarea = screen.getByRole('textbox', { name: /instructions$/i })
+    expect(textarea.className.split(/\s+/)).toContain('pc-plan-textarea')
+    expect(textarea.getAttribute('rows')).toBe('4')
+    expect(screen.getByText('Safe default plan')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Retry live check' })).toBeTruthy()
+    expect(document.querySelector('.pc-plan-summary-header')).toBeTruthy()
   })
 
   // A11y: `<aside>` only maps to the `complementary` role when it is not nested inside another

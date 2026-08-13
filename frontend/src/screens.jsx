@@ -25,6 +25,12 @@ const RISK_OPTIONS = [
   { id: 'high', label: 'High', sub: '3 vaults, diversified' },
 ]
 
+function formatPrefillApy(apy) {
+  if (typeof apy !== 'string' || apy.trim() === '') return 'APY unavailable'
+  const numericApy = Number(apy)
+  return Number.isFinite(numericApy) ? `${numericApy.toFixed(1)}% APY` : 'APY unavailable'
+}
+
 /* ============================================
    INPUT — money-app: amount + risk only
    ============================================ */
@@ -101,7 +107,7 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
             <strong style={{ color: 'inherit', fontWeight: 600, fontFamily: 'inherit' }}>
               {prefill.name}
             </strong>
-            , {Number(prefill.apy).toFixed(1)}% APY
+            , {formatPrefillApy(prefill.apy)}
           </span>
         </div>
       )}

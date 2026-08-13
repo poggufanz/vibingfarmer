@@ -1,7 +1,7 @@
 // frontend/src/components/strategy/ProtectStage.jsx
 // Strategy Task 11 (Pocket Crew redesign, Wave 5). Protect is where the user actually authorizes
-// the run: either a fresh `funding_router.grant` (one REAL wallet signature) or a revalidated
-// reuse of an already-proven permission (zero signatures). This component never fakes any part of
+// the run: either a fresh `funding_router.grant` with the source-reported wallet confirmation
+// count or a revalidated reuse of an already-proven permission. This component never fakes any part of
 // that: no modal, no timer, no simulated signing screen of its own. The real wallet/chain
 // work (preflight, connect, the actual grant/revalidation) is injected via async props, exactly
 // like PlanStage's `onGenerate` -- this file owns only the phase state machine and the view, never
@@ -66,6 +66,7 @@
 //     not by an integration correctly reading `decision.mode` on its own.
 import { useState } from 'react'
 import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
+import { AgentMark } from '../pocket/AgentMark.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
 import { PermissionPhaseError } from '../../strategy/permissionError.js'
 import { toPermissionDecisionView } from '../../strategy/reusePreflight.js'
@@ -74,6 +75,13 @@ import { buildAmountDisplayMap } from '../../strategy/planModel.js'
 import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
 import { CREW_PERSONAS, personaForOrdinal } from '../../crew/personas.js'
+import {
+  formatCoreAmount,
+  normalizeCoreAmount,
+  toAgentIdentityView,
+  toBaseCustodyTruth,
+  toPermissionCopy,
+} from '../../core/coreRouteAdapters.js'
 
 const DEFAULT_WALLETS = ['VF Wallet', 'Freighter', 'xBull', 'Albedo']
 
@@ -97,8 +105,8 @@ const DURATION_PRESETS = [
 
 // Task 5 chunk C: the canonical-decimal-integer convention `permissionGrantV3.js`'s (private,
 // unexported) `UNITS_RE` enforces -- re-declared here for the same reason this file already
-// re-declares `unitsToDisplay`/`BRIDGE_NETWORK_CONTEXT` locally: the shared version isn't exported
-// and the source file is off-limits to edit for this chunk. Serves two callers: the reusable-
+// re-declares `BRIDGE_NETWORK_CONTEXT` locally: the shared version isn't exported and the source
+// file is off-limits to edit for this chunk. Serves two callers: the reusable-
 // ceiling control's own edit validation (`buildReusableApproval` is the actual gate that will one
 // day consume the committed value; this regex only decides what the CONTROL itself will let a user
 // commit to, never a second, competing validation authority) and `reuseIsUsable`'s V3 defense-in-
@@ -125,6 +133,41 @@ function tokenSymbol(token) {
   return token
 }
 
+function exactCoreAmountText(amount) {
+  if (!amount || typeof amount !== 'object') return 'Amount unavailable'
+  try {
+    return formatCoreAmount(normalizeCoreAmount({ ...amount, token: tokenSymbol(amount.token) }))
+  } catch {
+    return 'Amount unavailable'
+  }
+}
+
+// Display-only 2dp projection shared with PlanStage/StartStage.  Keep the canonical unit DTO as
+// the source of truth and never round anything that is handed to a grant or reuse callback.  A
+// malformed decision must fail closed at the decision gate, not crash this presentation surface.
+function safeAmountDisplayMap(rows, amountKey) {
+  if (!Array.isArray(rows) || rows.length === 0) return {}
+  try {
+    // Keep independent token rows independent.  buildAmountDisplayMap redistributes a final-cent
+    // remainder within a group; grouping only by kind would let a mixed-token decision move that
+    // cent from one asset into another and imply a blended total.
+    const groups = new Map()
+    for (const row of rows) {
+      const amount = row?.[amountKey]
+      const groupKey = `${row?.kind ?? ''}:${amount?.token ?? ''}:${amount?.decimals ?? ''}`
+      const group = groups.get(groupKey) || []
+      group.push(row)
+      groups.set(groupKey, group)
+    }
+    return [...groups.values()].reduce(
+      (all, group) => Object.assign(all, buildAmountDisplayMap(group, amountKey)),
+      {}
+    )
+  } catch {
+    return {}
+  }
+}
+
 // Same source network context PlanStage.jsx builds for its own bridge row -- not exported there,
 // so re-declared here identically (PlanStage.jsx is a sibling surface, not a shared module).
 const BRIDGE_NETWORK_CONTEXT = Object.freeze({
@@ -134,13 +177,6 @@ const BRIDGE_NETWORK_CONTEXT = Object.freeze({
   custodyNetworkId: 'stellar-testnet',
   transitState: 'source',
 })
-
-// Same boundary math as planModel.js's private unitsToDecimal -- re-declared here for the same
-// reason PlanStage.jsx does (that helper isn't exported and planModel.js is out of this task's
-// file list). Display-only, never touches anything that becomes a grant/burn unit.
-function unitsToDisplay(units, decimals) {
-  return Number(BigInt(units)) / 10 ** decimals
-}
 
 function formatExpiry(expirySeconds) {
   return Number.isFinite(expirySeconds) ? new Date(expirySeconds * 1000).toISOString() : 'Unknown'
@@ -196,20 +232,30 @@ function periodLabel(seconds) {
 // sequence) and deserve their own usability rule, not a merged one.
 function reuseIsUsable(decision) {
   if (!decision || decision.mode !== 'reuse') return false
+  // `toPermissionDecisionView` deliberately strips the credential lookup key.  The caller-side
+  // projection below carries only this boolean proof forward; an absent/unknown V2 credential can
+  // therefore never turn into an enabled zero-signature Continue action.
+  if (decision.credentialProofValid === false) return false
   if (decision.version === 3) {
     // Fix round 1, Important 1 (reviewer finding): this used to check ONLY `executions[]`/
     // `liveUntilLedger`, but the V3 render also reads `reviewedBudgets[0]` (for every money
     // figure's token/decimals) and a `reviewedAgentInit` per execution `allocationId` (for its own
     // token/decimals) -- neither was validated, so a decision missing either rendered "NaN
     // undefined" with an ENABLED Continue button (probed: `reviewedBudgets: []`), or threw
-    // outright (an execution with no matching reviewed init -> `BigInt(NaN)` inside
-    // `buildAmountDisplayMap`). This function's own header says it "treats the decision as
-    // untrusted input regardless" -- this branch now actually does.
+    // outright (an execution with no matching reviewed init -> an unavailable amount). This
+    // function's own header says it "treats the decision as untrusted input regardless" -- this
+    // branch now actually does.
     if (
       !Array.isArray(decision.executions) ||
       decision.executions.length === 0 ||
       !Number.isInteger(decision.liveUntilLedger) ||
-      decision.liveUntilLedger <= 0
+      decision.liveUntilLedger <= 0 ||
+      typeof decision.permissionId !== 'string' ||
+      decision.permissionId.trim().length === 0 ||
+      typeof decision.scopeId !== 'string' ||
+      decision.scopeId.trim().length === 0 ||
+      !Number.isFinite(decision.checkedAt) ||
+      decision.checkedAt <= 0
     )
       return false
     const budget = decision.reviewedBudgets?.[0]
@@ -226,11 +272,101 @@ function reuseIsUsable(decision) {
     )
     return decision.executions.every((e) => {
       const r = reviewedByAllocation.get(e.allocationId)
-      return Boolean(r) && typeof r.cap?.token === 'string' && Number.isInteger(r.cap?.decimals)
+      return (
+        Boolean(r) &&
+        typeof r.cap?.token === 'string' &&
+        Number.isInteger(r.cap?.decimals) &&
+        typeof e.agentAddress === 'string' &&
+        e.agentAddress.trim().length > 0 &&
+        typeof e.executionId === 'string' &&
+        e.executionId.trim().length > 0 &&
+        typeof e.scopeId === 'string' &&
+        e.scopeId.trim().length > 0 &&
+        e.scopeId === decision.scopeId &&
+        CANONICAL_UNITS_RE.test(e.amountUnits)
+      )
     })
   }
   if (!Array.isArray(decision.agents) || decision.agents.length === 0) return false
-  return decision.agents.every((a) => Number.isFinite(a.scopeExpiry) && a.scopeExpiry > 0)
+  return decision.agents.every(
+    (agent) =>
+      typeof agent?.allocationId === 'string' &&
+      agent.allocationId.trim().length > 0 &&
+      typeof agent.agentAddress === 'string' &&
+      agent.agentAddress.trim().length > 0 &&
+      typeof agent.scopeFingerprint === 'string' &&
+      agent.scopeFingerprint.trim().length > 0 &&
+      Number.isFinite(agent.scopeExpiry) &&
+      agent.scopeExpiry > 0 &&
+      typeof agent.headroom?.token === 'string' &&
+      agent.headroom.token.trim().length > 0 &&
+      Number.isInteger(agent.headroom.decimals) &&
+      agent.headroom.decimals >= 0 &&
+      CANONICAL_UNITS_RE.test(agent.headroom.units)
+  )
+}
+
+function freshDecisionIsUsable(decision) {
+  if (!decision || decision.mode !== 'fresh') return false
+  if (!Number.isInteger(decision.confirmationCount) || decision.confirmationCount < 0) return false
+  if (!Number.isFinite(decision.checkedAt) || decision.checkedAt <= 0) return false
+  if (!Array.isArray(decision.reviewedBudgets) || decision.reviewedBudgets.length === 0)
+    return false
+  if (
+    !decision.reviewedBudgets.every(
+      (budget) =>
+        typeof budget?.token === 'string' &&
+        budget.token.trim().length > 0 &&
+        Number.isInteger(budget.decimals) &&
+        budget.decimals >= 0 &&
+        CANONICAL_UNITS_RE.test(budget.units)
+    )
+  )
+    return false
+  if (!Array.isArray(decision.reviewedAgentInits) || decision.reviewedAgentInits.length === 0)
+    return false
+  return decision.reviewedAgentInits.every(
+    (agent) =>
+      typeof agent?.allocationId === 'string' &&
+      agent.allocationId.trim().length > 0 &&
+      Number.isFinite(agent.expiry) &&
+      agent.expiry > 0 &&
+      typeof agent.signerFingerprint === 'string' &&
+      agent.signerFingerprint.trim().length > 0 &&
+      typeof agent.saltFingerprint === 'string' &&
+      agent.saltFingerprint.trim().length > 0 &&
+      typeof agent.cap?.token === 'string' &&
+      agent.cap.token.trim().length > 0 &&
+      Number.isInteger(agent.cap.decimals) &&
+      agent.cap.decimals >= 0 &&
+      CANONICAL_UNITS_RE.test(agent.cap.units)
+  )
+}
+
+function hasV2CredentialProof(decision) {
+  if (!decision || decision.mode !== 'reuse' || decision.version === 3) return true
+  return (
+    Array.isArray(decision.agents) &&
+    decision.agents.length > 0 &&
+    decision.agents.every(
+      (agent) =>
+        typeof agent?.executionCredentialRef === 'string' &&
+        agent.executionCredentialRef.trim().length > 0
+    )
+  )
+}
+
+function toV3PermissionView(decision, reusable) {
+  const adapterView = toPermissionCopy('stellar-reuse-verified', decision)
+  const available = reusable && decision?.confirmationCount === 0
+  return Object.freeze({
+    ...adapterView,
+    status: available ? 'Available' : 'Unavailable',
+    confirmationCount: available ? decision.confirmationCount : null,
+    copy: available
+      ? `Confirmation count: ${decision.confirmationCount}.`
+      : 'The existing permission cannot be verified for this run.',
+  })
 }
 
 export function ProtectStage({
@@ -280,11 +416,63 @@ export function ProtectStage({
 
   const preset = DURATION_PRESETS.find((d) => d.id === durationId) || DURATION_PRESETS[1]
   const hasBridge = plan.agents.some((a) => a.kind === 'bridge')
-  const usableReuse = reuseIsUsable(decision)
+  const permissionView =
+    decision?.mode === 'fresh'
+      ? toPermissionCopy('fresh-grant', decision)
+      : decision?.mode === 'reuse'
+        ? decision?.version === 3
+          ? toV3PermissionView(decision, reuseIsUsable(decision))
+          : toPermissionCopy('stellar-reuse-verified', decision)
+        : decision
+          ? toPermissionCopy(decision.mode, decision)
+          : null
+  const usableReuse = reuseIsUsable(decision) && permissionView?.status === 'Available'
+  const freshPermissionAvailable =
+    decision?.mode === 'fresh' &&
+    decision?.freshProofValid !== false &&
+    permissionView?.status === 'Available'
+  const stopFutureAccessCopy = toPermissionCopy('stop-future-access', decision)
+  const withdrawalSeparateCopy = toPermissionCopy('withdrawal-separate', decision)
+  const baseCustodyTruth = toBaseCustodyTruth()
+  const baseStellarOwner = baseMandateView?.evidence?.stellarOwner
+  const basePerCallCap = baseMandateView?.perCallCap
+  const baseAllowedActions = baseMandateView?.allowedActions
+  const baseMandateReady = Boolean(
+    baseMandateView?.status === 'ready' &&
+    baseMandateView?.ready === true &&
+    typeof baseMandateView.primaryCopy === 'string' &&
+    baseMandateView.primaryCopy.includes('while this smart account has funds') &&
+    baseMandateView.primaryCopy.includes('It cannot withdraw.') &&
+    typeof baseStellarOwner === 'string' &&
+    baseStellarOwner.trim().length > 0 &&
+    typeof baseMandateView.kernelAddress === 'string' &&
+    baseMandateView.kernelAddress.trim().length > 0 &&
+    Array.isArray(baseAllowedActions) &&
+    baseAllowedActions.length === 2 &&
+    new Set(baseAllowedActions).size === 2 &&
+    baseAllowedActions.includes('Circle USDC approve') &&
+    baseAllowedActions.includes('YieldRouter deposit') &&
+    baseMandateView.destination === 'allowlisted Base Sepolia custody proxies' &&
+    baseMandateView.repeatedCalls === true &&
+    basePerCallCap?.usdc === '10,000' &&
+    basePerCallCap?.cumulative === false &&
+    basePerCallCap?.nonCumulative === true &&
+    baseMandateView.durationDays === 7 &&
+    Number.isInteger(baseMandateView.validUntilSeconds) &&
+    baseMandateView.validUntilSeconds > 0 &&
+    typeof baseMandateView.technicalDisclosure === 'string' &&
+    baseMandateView.technicalDisclosure.trim().length > 0 &&
+    typeof baseMandateView.renewalCopy === 'string' &&
+    baseMandateView.renewalCopy.trim().length > 0 &&
+    typeof baseMandateView.revokeCopy === 'string' &&
+    baseMandateView.revokeCopy.trim().length > 0 &&
+    typeof baseMandateView.outageCopy === 'string' &&
+    baseMandateView.outageCopy.trim().length > 0
+  )
 
   // Task 6 (Pocket Crew design alignment) -- the boundaries list and the ceiling card below both
   // need the SAME total-amount/expiry/per-agent-cap figures this component already renders in its
-  // review/summary blocks further down (unitsToDisplay/tokenSymbol -- no new arithmetic).
+  // review/summary blocks further down (canonical amount DTOs -- no display arithmetic).
   // `totalAmountText` mirrors exactly what the fresh-mode MoneyFigure below prints for `plan.amount`
   // (same two calls, plus the same `.toLocaleString()` MoneyFigure itself applies -- see
   // Primitives.jsx).
@@ -298,9 +486,16 @@ export function ProtectStage({
   // preposition English needs for each case ("in 24 hours" vs. "on Jan 15, 2027, 11:00 AM") for the
   // boundary sentence; the ceiling row is a labelled row ("Stops working  <value>"), so it renders
   // `expiryValue` bare.
-  const totalAmountText = `${unitsToDisplay(plan.amount.units, plan.amount.decimals).toLocaleString()} ${tokenSymbol(plan.amount.token)}`
+  const totalAmount = (() => {
+    try {
+      return normalizeCoreAmount({ ...plan.amount, token: tokenSymbol(plan.amount.token) })
+    } catch {
+      return null
+    }
+  })()
+  const totalAmountText = totalAmount ? formatCoreAmount(totalAmount) : 'Amount unavailable'
   // Task 5 chunk C: a V3 reuse decision carries `executions[]`, never V2's `agents[]` -- so
-  // `firstReuseAgent` (and everything below the reads off it) stays `undefined` for V3 by
+  // `firstReuseAgent` (and the reads below it) stays `undefined` for V3 by
   // construction. The fresh-mode path is untouched: `firstReviewedAgent` reads `reviewedAgentInits`,
   // which chunk C's own decision composition (app.jsx) populates identically for V2 and V3, so
   // fresh-mode rendering needs no version branch at all.
@@ -330,28 +525,17 @@ export function ProtectStage({
       ? `at ledger ${decision.liveUntilLedger}`
       : `on ${expiryValue}`
   const perAgentCap = firstReuseAgent?.headroom || firstReviewedAgent?.cap
-  // Final-review fix, F2: `unitsToDisplay` is a raw float division -- a 100 USDC / 3-agent split
-  // at 7 decimals rendered "33.3333334 USDC" here while PlanStage/StartStage both show "33.33 USDC"
-  // for the SAME agent via planModel.js's `buildAmountDisplayMap` (lifted there in Task 7 for
-  // exactly this reason). Reuse that SAME exported helper over the real reviewed/reused agent
-  // list rather than re-implementing rounding here -- re-implementing money rounding is how this
-  // repo has reintroduced rounding bugs before. Its only operation on `units` is `BigInt(units)`
-  // (never a multiply-by-float), so this can never hit the BigInt(Math.round(x*N)) overflow class
-  // either. `decision.reviewedAgentInits`/`decision.agents` preserve plan.agents' own order (see
-  // reusePreflight.js's fingerprintAgentInits/selectAgents comments), so `firstReviewedAgent`/
-  // `firstReuseAgent` (index 0) is the SAME agent Plan/Start compute their own displayed figure
-  // for -- and buildAmountDisplayMap's remainder-redistribution only ever touches the LAST member
-  // of a same-kind group, so index 0's formatted cents is byte-identical whether read from the
-  // full-array map (here) or rounded alone (Plan/Start's own per-row lookup).
   const perAgentDisplayMap = decision
-    ? buildAmountDisplayMap(
+    ? safeAmountDisplayMap(
         decision.mode === 'reuse' ? decision.agents : decision.reviewedAgentInits,
         decision.mode === 'reuse' ? 'headroom' : 'cap'
       )
     : {}
   const perAgentAllocationId = firstReuseAgent?.allocationId ?? firstReviewedAgent?.allocationId
   const perAgentText = perAgentCap
-    ? `${perAgentDisplayMap[perAgentAllocationId]} ${tokenSymbol(perAgentCap.token)}`
+    ? perAgentDisplayMap[perAgentAllocationId]
+      ? `${perAgentDisplayMap[perAgentAllocationId]} ${tokenSymbol(perAgentCap.token)}`
+      : exactCoreAmountText(perAgentCap)
     : 'Unknown'
 
   // Task 5 chunk C -- the V3 projection. `decision.agents` is always `[]` on a V3 decision
@@ -360,8 +544,8 @@ export function ProtectStage({
   // looks up each execution's token/decimals off the composed `reviewedAgentInits` (chunk C's own
   // app.jsx composition; see that file's `onRetryPreflight`) -- `executions[]` itself carries no
   // token, since one V3 permission binds exactly one token (permissionGrantV3.js's own header).
-  // Money figures resolve through the SAME tokenSymbol()/buildAmountDisplayMap() this file already
-  // uses everywhere else -- no new formatting logic.
+  // Money figures resolve through the same tokenSymbol()/exactCoreAmountText() boundary used by
+  // every other amount path here -- no float display reconstruction.
   const reviewedByAllocation = new Map(
     (decision?.reviewedAgentInits || []).map((r) => [r.allocationId, r])
   )
@@ -375,9 +559,21 @@ export function ProtectStage({
   const v3Figures =
     isV3Reuse && usableReuse
       ? {
-          ceiling: `${unitsToDisplay(decision.mandateCeilingUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
-          spent: `${unitsToDisplay(decision.confirmedSpentUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
-          headroom: `${unitsToDisplay(decision.remainingHeadroomUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
+          ceiling: exactCoreAmountText({
+            token: v3Token,
+            units: decision.mandateCeilingUnits,
+            decimals: v3TokenDecimals,
+          }),
+          spent: exactCoreAmountText({
+            token: v3Token,
+            units: decision.confirmedSpentUnits,
+            decimals: v3TokenDecimals,
+          }),
+          headroom: exactCoreAmountText({
+            token: v3Token,
+            units: decision.remainingHeadroomUnits,
+            decimals: v3TokenDecimals,
+          }),
         }
       : null
   const executionAmountRows =
@@ -395,7 +591,7 @@ export function ProtectStage({
           }
         })
       : []
-  const executionDisplayMap = buildAmountDisplayMap(executionAmountRows, 'amount')
+  const executionDisplayMap = safeAmountDisplayMap(executionAmountRows, 'amount')
   const personaForAllocation = (allocationId, fallbackOrdinal) => {
     const ordinal = plan.agents.findIndex((agent) => agent.allocationId === allocationId)
     return personaForOrdinal(ordinal >= 0 ? ordinal : fallbackOrdinal)
@@ -437,10 +633,12 @@ export function ProtectStage({
           <span>1 vault</span>
         </li>
         <li>
-          <span>Cancel any time</span>
-          <span>1 signature</span>
+          <span>Future access</span>
+          <span>Bounded</span>
         </li>
       </ul>
+      <p>{stopFutureAccessCopy.copy}</p>
+      <p>{withdrawalSeparateCopy.label}</p>
     </>
   )
 
@@ -499,11 +697,17 @@ export function ProtectStage({
     setFailureMessage(null)
     try {
       const raw = await onRetryPreflight({ durationSeconds: preset.seconds })
-      setDecision(toPermissionDecisionView(raw))
+      const projected = toPermissionDecisionView(raw)
+      const decisionView = {
+        ...projected,
+        freshProofValid: raw?.mode === 'fresh' ? freshDecisionIsUsable(raw) : true,
+        credentialProofValid: hasV2CredentialProof(raw),
+      }
+      setDecision(decisionView)
       setPhase('review')
-    } catch (err) {
+    } catch {
       setFailureKind('preflight')
-      setFailureMessage(err?.message || 'Could not check your permission. Try again.')
+      setFailureMessage('Could not check your permission. Nothing moved.')
       setPhase('failed')
     }
   }
@@ -524,12 +728,13 @@ export function ProtectStage({
         // The world moved since this was reviewed -- the held decision is proven stale.
         setFailureKind('preflight')
         setDecision(null)
+        setFailureMessage('The permission is no longer current. Nothing moved.')
       } else {
         // A plain wallet rejection/failure invalidates only the signature attempt, not the
         // permission review itself.
         setFailureKind('wallet')
+        setFailureMessage('The wallet request did not complete. Nothing moved.')
       }
-      setFailureMessage(err?.message || 'The wallet request did not complete.')
       setPhase('failed')
     }
   }
@@ -543,8 +748,33 @@ export function ProtectStage({
     onEditPlan?.()
   }
 
+  const permissionAnnouncement =
+    phase === 'checking'
+      ? 'Checking your existing permissions.'
+      : phase === 'failed'
+        ? 'Nothing moved. Review the permission and retry safely.'
+        : decision?.mode === 'fresh'
+          ? permissionView?.confirmationCount != null
+            ? `${permissionView.label}: ${permissionView.confirmationCount} wallet confirmation${permissionView.confirmationCount === 1 ? '' : 's'} required.`
+            : permissionView?.copy || 'Permission details are unavailable.'
+          : decision?.mode === 'reuse' && usableReuse && permissionView?.status === 'Available'
+            ? `${permissionView.label}: confirmation count ${permissionView.confirmationCount}.`
+            : decision?.mode === 'reuse'
+              ? 'The existing permission cannot be verified for this run.'
+              : decision
+                ? permissionView?.copy || 'Permission details are unavailable.'
+                : ''
+
   return (
     <div className="pc-protect-stage">
+      <p
+        className="pc-visually-hidden"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="protect-live-region"
+      >
+        {permissionAnnouncement}
+      </p>
       <div className="pc-protect-boundary">
         <div className="pc-dominant pc-dominant--decision pc-strategy-decision">
           <h2 className="pc-strategy-question">Protect this run</h2>
@@ -559,10 +789,9 @@ export function ProtectStage({
             </h2>
             <ul className="pc-boundary-list">
               <li>
-                They can spend at most {totalAmountText}, ever. The token contract itself refuses
-                more.
+                They can spend at most {totalAmountText}. The token contract itself refuses more.
               </li>
-              <li>Everything they can do stops {expiryPhrase}, with no action from you.</li>
+              <li>The permission stops {expiryPhrase}, with no action from you.</li>
               <li>
                 Each crew member is pinned to one vault. They cannot send money anywhere else.
               </li>
@@ -669,17 +898,21 @@ export function ProtectStage({
                     // Fix round 1, Critical 2 (reviewer finding): the byte-for-byte constraint is
                     // about the COMMITTED value (`ceilingUnits`), never the draft the user is mid-
                     // typing (`ceilingDraft`, which is what `value` above renders). Exposed as its
-                    // own data attribute -- not folded into the help sentence below, which already
-                    // rounds through `.toLocaleString()` and would hide a sub-0.001-unit drift.
+                    // own data attribute -- not folded into the help sentence below, which is a
+                    // human-readable projection rather than the committed value.
                     data-ceiling-units={ceilingUnits}
                     aria-describedby="protect-ceiling-help"
                     aria-invalid={ceilingError ? 'true' : undefined}
                     onChange={(e) => handleCeilingInput(e.target.value)}
                   />
                   <p id="protect-ceiling-help" className="pc-field-help">
-                    Applies {unitsToDisplay(ceilingUnits, plan.amount.decimals).toLocaleString()}{' '}
-                    {tokenSymbol(plan.amount.token)} as the most this permission can ever move,
-                    across every future run, until you raise it again.
+                    Applies{' '}
+                    {exactCoreAmountText({
+                      ...plan.amount,
+                      units: ceilingUnits,
+                    })}{' '}
+                    as the most this permission can ever move, across every future run, until you
+                    raise it again.
                   </p>
                   {ceilingError && (
                     <p className="pc-field-error" role="alert">
@@ -710,20 +943,35 @@ export function ProtectStage({
             </StatusNotice>
           )}
 
-          {decision && decision.mode === 'fresh' && (
+          {decision && decision.mode === 'fresh' && freshPermissionAvailable && (
             <div className="pc-protect-review-summary">
-              <p>
-                This needs {decision.confirmationCount} wallet confirmation
-                {decision.confirmationCount === 1 ? '' : 's'}.
+              <p className="pc-permission-status">
+                {permissionView.label}: {permissionView.status}
               </p>
-              <MoneyFigure
-                state="current"
-                value={unitsToDisplay(plan.amount.units, plan.amount.decimals)}
-                currency={tokenSymbol(plan.amount.token)}
-              />
+              <p>{permissionView.copy}</p>
+              <MoneyFigure state="current" amount={totalAmount} />
               <p>Valid for {preset.label} once confirmed.</p>
             </div>
           )}
+
+          {decision &&
+            decision.mode === 'fresh' &&
+            !freshPermissionAvailable &&
+            phase === 'review' && (
+              <StatusNotice state="warning" title="Permission unavailable">
+                <p className="pc-permission-status">
+                  {permissionView.label}: {permissionView.status}
+                </p>
+                <p>{permissionView?.copy || 'Permission details are unavailable.'}</p>
+                <button
+                  type="button"
+                  className="pc-button pc-button--primary"
+                  onClick={handleCheckPermission}
+                >
+                  Check again
+                </button>
+              </StatusNotice>
+            )}
 
           {decision && phase === 'review' && (
             <div className="pc-protect-review-lifetime">
@@ -736,11 +984,20 @@ export function ProtectStage({
           )}
 
           {decision && decision.mode === 'reuse' && usableReuse && (
-            <p>0 wallet confirmations needed -- this permission already covers this run.</p>
+            <>
+              <p className="pc-permission-status">
+                {permissionView.label}: {permissionView.status}
+              </p>
+              <p>{permissionView.copy}</p>
+            </>
           )}
 
           {decision && decision.mode === 'reuse' && !usableReuse && (
             <StatusNotice state="warning" title="Could not confirm your existing permission">
+              <p className="pc-permission-status">
+                {permissionView?.label || 'Existing permission'}:{' '}
+                {permissionView?.status || 'Unavailable'}
+              </p>
               <p>This permission's expiry could not be confirmed, so it cannot be reused.</p>
               <button
                 type="button"
@@ -752,20 +1009,47 @@ export function ProtectStage({
             </StatusNotice>
           )}
 
-          {phase === 'review' && decision && decision.mode === 'fresh' && (
-            <div className="pc-protect-review-actions">
-              <button
-                type="button"
-                className="pc-button pc-button--primary"
-                onClick={handleAuthorize}
-              >
-                Authorize with wallet
-              </button>
-              <button type="button" className="pc-button pc-button--secondary" onClick={handleEdit}>
-                Edit plan
-              </button>
-            </div>
-          )}
+          {decision &&
+            decision.mode !== 'fresh' &&
+            decision.mode !== 'reuse' &&
+            phase === 'review' && (
+              <StatusNotice state="warning" title="Permission unavailable">
+                <p className="pc-permission-status">
+                  {permissionView?.label || 'Permission unavailable'}:{' '}
+                  {permissionView?.status || 'Unavailable'}
+                </p>
+                <p>{permissionView?.copy || 'Permission details are unavailable.'}</p>
+                <button
+                  type="button"
+                  className="pc-button pc-button--primary"
+                  onClick={handleCheckPermission}
+                >
+                  Check again
+                </button>
+              </StatusNotice>
+            )}
+
+          {phase === 'review' &&
+            decision &&
+            decision.mode === 'fresh' &&
+            freshPermissionAvailable && (
+              <div className="pc-protect-review-actions">
+                <button
+                  type="button"
+                  className="pc-button pc-button--primary"
+                  onClick={handleAuthorize}
+                >
+                  Authorize with wallet
+                </button>
+                <button
+                  type="button"
+                  className="pc-button pc-button--secondary"
+                  onClick={handleEdit}
+                >
+                  Edit plan
+                </button>
+              </div>
+            )}
 
           {phase === 'review' && decision && decision.mode === 'reuse' && usableReuse && (
             <div className="pc-protect-review-actions">
@@ -844,28 +1128,42 @@ export function ProtectStage({
             {decision.agents.map((a, index) => {
               const assigned = addressPersona(personaByAddress, a.agentAddress)
               const persona = assigned || personaForAllocation(a.allocationId, index)
+              const identity = toAgentIdentityView({
+                phase: 'reused',
+                allocationId: a.allocationId,
+                runId: plan.runId,
+                address: a.agentAddress,
+                verified: true,
+                source: 'owner-discovery',
+                state: 'existing',
+              })
               return (
                 <div
                   key={a.allocationId}
                   className="pc-protect-bound-agent"
                   data-agent-address={a.agentAddress}
                 >
-                  <img
-                    className="pc-protect-agent-avatar pc-crew-avatar"
-                    src={persona.avatar}
-                    alt={`${persona.name} agent${assigned ? '' : ', assignment syncing'}`}
-                    width="44"
-                    height="44"
-                  />
+                  <div className="pc-protect-agent-identity">
+                    <AgentMark identity={identity} state="existing" size={44} label="agent" />
+                    <img
+                      className="pc-protect-agent-avatar pc-crew-avatar"
+                      src={persona.avatar}
+                      alt=""
+                      aria-hidden="true"
+                      width="44"
+                      height="44"
+                    />
+                  </div>
                   <div>
                     <p className="pc-worker-name">{persona.name}</p>
                     {!assigned && <p className="pc-crew-syncing">Crew assignment syncing.</p>}
-                    <p>{a.agentAddress}</p>
-                    <p>
-                      Headroom: {unitsToDisplay(a.headroom.units, a.headroom.decimals)}{' '}
-                      {tokenSymbol(a.headroom.token)}
-                    </p>
+                    <p>Headroom: {exactCoreAmountText(a.headroom)}</p>
                     <p>Expires {formatExpiry(a.scopeExpiry)}</p>
+                    <TechnicalDetails summary={`${persona.name} agent technical details`} open>
+                      <p>
+                        Soroban C-account: <span className="pc-technical">{a.agentAddress}</span>
+                      </p>
+                    </TechnicalDetails>
                   </div>
                 </div>
               )
@@ -921,31 +1219,47 @@ export function ProtectStage({
               </p>
             </TechnicalDetails>
             {decision.executions.map((e, index) => {
-              const reviewed = reviewedByAllocation.get(e.allocationId)
               const assigned = addressPersona(personaByAddress, e.agentAddress)
               const persona = assigned || personaForAllocation(e.allocationId, index)
+              const identity = toAgentIdentityView({
+                phase: 'reused',
+                allocationId: e.allocationId,
+                runId: plan.runId,
+                address: e.agentAddress,
+                verified: true,
+                source: 'owner-discovery',
+                state: 'existing',
+              })
               return (
                 <div
                   key={e.allocationId}
                   className="pc-protect-bound-agent"
                   data-agent-address={e.agentAddress}
                 >
-                  <img
-                    className="pc-protect-agent-avatar pc-crew-avatar"
-                    src={persona.avatar}
-                    alt={`${persona.name} agent${assigned ? '' : ', assignment syncing'}`}
-                    width="44"
-                    height="44"
-                  />
+                  <div className="pc-protect-agent-identity">
+                    <AgentMark identity={identity} state="existing" size={44} label="agent" />
+                    <img
+                      className="pc-protect-agent-avatar pc-crew-avatar"
+                      src={persona.avatar}
+                      alt=""
+                      aria-hidden="true"
+                      width="44"
+                      height="44"
+                    />
+                  </div>
                   <div>
                     <p className="pc-worker-name">{persona.name}</p>
                     {!assigned && <p className="pc-crew-syncing">Crew assignment syncing.</p>}
-                    <p>{e.agentAddress}</p>
                     <p>
-                      Moves {executionDisplayMap[e.allocationId]}{' '}
-                      {tokenSymbol(reviewed?.cap?.token)}
+                      Moves{' '}
+                      {executionDisplayMap[e.allocationId]
+                        ? `${executionDisplayMap[e.allocationId]} ${tokenSymbol(reviewedByAllocation.get(e.allocationId)?.cap?.token)}`
+                        : 'Amount unavailable'}
                     </p>
-                    <TechnicalDetails summary={`${persona.name} execution technical details`}>
+                    <TechnicalDetails summary={`${persona.name} execution technical details`} open>
+                      <p>
+                        Soroban C-account: <span className="pc-technical">{e.agentAddress}</span>
+                      </p>
                       <p>
                         Execution: <span className="pc-technical">{e.executionId}</span>
                       </p>
@@ -957,15 +1271,12 @@ export function ProtectStage({
           </div>
         )}
 
-        {decision && decision.mode === 'fresh' && (
+        {decision && decision.mode === 'fresh' && freshPermissionAvailable && (
           <div className="pc-support">
             <div className="pc-support-content">
               {ceilingCard}
               {decision.reviewedBudgets.map((b) => (
-                <p key={b.token}>
-                  Headroom after granting: {unitsToDisplay(b.units, b.decimals)}{' '}
-                  {tokenSymbol(b.token)}
-                </p>
+                <p key={b.token}>Headroom after granting: {exactCoreAmountText(b)}</p>
               ))}
               {decision.reviewedAgentInits.map((r, i) => {
                 const exposure = maxAtRisk({
@@ -987,7 +1298,10 @@ export function ProtectStage({
                         plan.amount.token -- a mixed-token plan's second agent can be budgeted in a
                         different Stellar contract than the plan's display token names. */}
                     Worst case for agent {i + 1}:{' '}
-                    {unitsToDisplay(exposure.toString(), r.cap.decimals)} {tokenSymbol(r.cap.token)}
+                    {exactCoreAmountText({
+                      ...r.cap,
+                      units: exposure.toString(),
+                    })}
                   </p>
                 )
               })}
@@ -1010,19 +1324,30 @@ export function ProtectStage({
             )
             const isBridge = planAgent.kind === 'bridge'
             const persona = personaForOrdinal(i)
+            const identity = toAgentIdentityView({
+              phase: 'planned',
+              allocationId: planAgent.allocationId,
+              runId: plan.runId,
+              source: 'reviewed-plan',
+              state: 'planned',
+            })
             return (
               <li
                 key={planAgent.allocationId}
                 className="pc-agent-lane"
                 data-agent-kind={planAgent.kind}
               >
-                <img
-                  className="pc-protect-agent-avatar pc-crew-avatar"
-                  src={persona.avatar}
-                  alt={`${persona.name} agent, planned`}
-                  width="44"
-                  height="44"
-                />
+                <div className="pc-protect-agent-identity">
+                  <AgentMark identity={identity} state="planned" size={44} label="agent" />
+                  <img
+                    className="pc-protect-agent-avatar pc-crew-avatar"
+                    src={persona.avatar}
+                    alt=""
+                    aria-hidden="true"
+                    width="44"
+                    height="44"
+                  />
+                </div>
                 <div>
                   <p className="pc-worker-name">{persona.name}</p>
                   {isBridge ? (
@@ -1036,8 +1361,10 @@ export function ProtectStage({
                         {/* Fix loop 1 -- I3/C1: label from THIS agent's own reviewed cap token, never
                             plan.amount.token -- a mixed-token plan's second agent can be budgeted in a
                             different Stellar contract than the plan's display token names. */}
-                        Cap per period: {perAgentDisplayMap[reviewed.allocationId]}{' '}
-                        {tokenSymbol(reviewed.cap.token)}
+                        Cap per period:{' '}
+                        {perAgentDisplayMap[reviewed.allocationId]
+                          ? `${perAgentDisplayMap[reviewed.allocationId]} ${tokenSymbol(reviewed.cap.token)}`
+                          : exactCoreAmountText(reviewed.cap)}
                       </p>
                       <p>Resets every {periodLabel(reviewed.periodSeconds)}</p>
                       <p>Expires {humanExpiry(reviewed.expiry)}</p>
@@ -1070,14 +1397,51 @@ export function ProtectStage({
         <div className="pc-support">
           <div className="pc-support-content">
             <h2>Base Sepolia bridge</h2>
-            <VenueTruth kind="base-proxy" />
-            <p>
-              {baseMandateView?.technicalDisclosure ||
-                'Base mandate details are unavailable right now.'}
-            </p>
-            {baseMandateView?.renewalCopy && <p>{baseMandateView.renewalCopy}</p>}
-            {baseMandateView?.revokeCopy && <p>{baseMandateView.revokeCopy}</p>}
-            {baseMandateView?.outageCopy && <p>{baseMandateView.outageCopy}</p>}
+            <VenueTruth kind={baseCustodyTruth.custody === 'custody' ? 'base-proxy' : 'unknown'} />
+            {baseMandateReady ? (
+              <>
+                <p>{baseMandateView.primaryCopy}</p>
+                <dl>
+                  <div>
+                    <dt>Stellar owner</dt>
+                    <dd className="pc-technical">{baseStellarOwner}</dd>
+                  </div>
+                  <div>
+                    <dt>Base kernel</dt>
+                    <dd className="pc-technical">{baseMandateView.kernelAddress}</dd>
+                  </div>
+                  <div>
+                    <dt>Session-key custody</dt>
+                    <dd>Relayer-held session key</dd>
+                  </div>
+                  <div>
+                    <dt>Approved calls</dt>
+                    <dd>{baseAllowedActions.join(' + ')}</dd>
+                  </div>
+                  <div>
+                    <dt>Pool / destination</dt>
+                    <dd>{baseMandateView.destination}</dd>
+                  </div>
+                  <div>
+                    <dt>Per-call cap</dt>
+                    <dd>{basePerCallCap.usdc} USDC per call, non-cumulative</dd>
+                  </div>
+                  <div>
+                    <dt>Expiry</dt>
+                    <dd>{baseMandateView.durationDays} days</dd>
+                  </div>
+                </dl>
+                <TechnicalDetails summary="Base mandate technical details" open>
+                  <p>{baseMandateView.technicalDisclosure}</p>
+                </TechnicalDetails>
+                <p>{baseMandateView.renewalCopy}</p>
+                <p>{baseMandateView.revokeCopy}</p>
+                <p>{baseMandateView.outageCopy}</p>
+              </>
+            ) : (
+              <p>Base mandate details are unavailable right now.</p>
+            )}
+            <a href="/settings?tab=wallet#base-mandate">Base mandate settings</a>
           </div>
         </div>
       )}

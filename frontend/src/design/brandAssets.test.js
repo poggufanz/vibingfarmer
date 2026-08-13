@@ -8,15 +8,49 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import {
+  FOUNDATION_ASSET_PATHS,
+  assertFoundationAssetManifest,
+  getFoundationAsset,
+} from './brandAssets.js'
+import { getNetworkMeta } from './networks.js'
 
 const FRONTEND_DIR = resolve(import.meta.dirname, '../..')
 const PUBLIC_DIR = resolve(FRONTEND_DIR, 'public')
 const MANIFEST_PATH = resolve(PUBLIC_DIR, 'brand/assets.manifest.json')
+const MANIFEST_PUBLIC_PATH = '/brand/assets.manifest.json'
 const BUILD_SCRIPT = resolve(FRONTEND_DIR, 'scripts/build-brand-assets.mjs')
 const CHECK_SCRIPT = resolve(FRONTEND_DIR, 'scripts/check-brand-assets.mjs')
+
+const BUILDER_OWNED_PATHS = [
+  '/brand/vibing-farmer-mark.svg',
+  '/brand/vibing-farmer-mark-forest.svg',
+  '/brand/vibing-farmer-mark-day.svg',
+  '/brand/vibing-farmer-mark-mono.svg',
+  '/brand/vibing-farmer-lockup-forest.svg',
+  '/brand/vibing-farmer-lockup-day.svg',
+  '/brand/vibing-farmer-lockup-mono.svg',
+  '/brand/favicon.svg',
+  '/brand/agents/sprout.svg',
+  '/brand/agents/clover.svg',
+  '/brand/agents/mochi.svg',
+  '/brand/icon-192.png',
+  '/brand/icon-512.png',
+  '/brand/apple-touch-icon.png',
+  '/brand/social-card.png',
+]
+
+const BUILDER_OUTPUT_PATHS = [
+  '/brand/icon-192.png',
+  '/brand/icon-512.png',
+  '/brand/apple-touch-icon.png',
+  '/brand/social-card.png',
+  '/vibing_farmer.logo.svg',
+  '/vibing_farmer.logo.png',
+]
 
 // Fixed pocket body path — must appear byte-identical in every mark variant.
 // No chat tail, face, leaf, coin, gradient, blur, or network symbol allowed
@@ -71,7 +105,97 @@ function readPngSize(buffer) {
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) }
 }
 
+function snapshotFiles(paths) {
+  return paths.map((path) => {
+    const filePath = resolve(PUBLIC_DIR, path.replace(/^\//, ''))
+    const stat = statSync(filePath, { bigint: true })
+    return {
+      path,
+      bytes: readFileSync(filePath),
+      mtimeNs: stat.mtimeNs,
+    }
+  })
+}
+
+function restoreFiles(snapshots) {
+  const currentByPath = new Map(
+    snapshotFiles(snapshots.map(({ path }) => path)).map((entry) => [entry.path, entry])
+  )
+  for (const { path, bytes, mtimeNs } of snapshots) {
+    const filePath = resolve(PUBLIC_DIR, path.replace(/^\//, ''))
+    const current = currentByPath.get(path)
+    if (current && current.mtimeNs === mtimeNs && Buffer.compare(current.bytes, bytes) === 0) {
+      continue
+    }
+    writeFileSync(filePath, bytes)
+    const mtimeMs = Number(mtimeNs / 1_000_000n)
+    utimesSync(filePath, new Date(mtimeMs), new Date(mtimeMs))
+  }
+}
+
 describe('brand asset contract', () => {
+  it('closes the five foundation assets with matching hashes and provenance', () => {
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
+
+    expect(FOUNDATION_ASSET_PATHS).toEqual([
+      '/brand/vibing-farmer-mark-forest.svg',
+      '/brand/vibing-farmer-mark-day.svg',
+      '/brand/vibing-farmer-mark-mono.svg',
+      '/brand/networks/stellar.svg',
+      '/brand/networks/base.svg',
+    ])
+    expect(assertFoundationAssetManifest(manifest, FOUNDATION_ASSET_PATHS)).toBe(true)
+
+    for (const path of FOUNDATION_ASSET_PATHS) {
+      const entry = getFoundationAsset(path, manifest)
+      expect(entry, path).toEqual(
+        expect.objectContaining({
+          path,
+          kind: expect.any(String),
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          source: expect.any(String),
+          sourceUrl: expect.any(String),
+          retrievedAt: expect.any(String),
+          trademarkTreatment: expect.any(String),
+        })
+      )
+      const filePath = resolve(PUBLIC_DIR, path.replace(/^\//, ''))
+      expect(sha256(readFileSync(filePath)), path).toBe(entry.sha256)
+    }
+  })
+
+  it('rejects foundation entries missing sha256, sourceUrl, or trademarkTreatment with the asset path', () => {
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
+    const targetPath = FOUNDATION_ASSET_PATHS[0]
+
+    for (const field of ['sha256', 'sourceUrl', 'trademarkTreatment']) {
+      const mutated = manifest.map((entry) => {
+        if (entry.path !== targetPath) return entry
+        const copy = { ...entry }
+        delete copy[field]
+        return copy
+      })
+
+      expect(
+        () => assertFoundationAssetManifest(mutated, FOUNDATION_ASSET_PATHS),
+        `missing ${field}`
+      ).toThrow(new RegExp(targetPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    }
+  })
+
+  it.each([
+    ['/brand/networks/stellar.svg', 'unrelated'],
+    [FOUNDATION_ASSET_PATHS[0], 'foundation'],
+  ])('rejects duplicate %s manifest records with a path-named error (%s)', (path) => {
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
+    const entry = manifest.find((candidate) => candidate.path === path)
+    expect(entry, `fixture must include ${path}`).toBeTruthy()
+
+    expect(() =>
+      assertFoundationAssetManifest([...manifest, { ...entry }], FOUNDATION_ASSET_PATHS)
+    ).toThrow(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  })
+
   it('every manifest path exists on disk', () => {
     expect(existsSync(MANIFEST_PATH)).toBe(true)
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
@@ -169,10 +293,13 @@ describe('brand asset contract', () => {
     expect(fillsOf(white)).toEqual(['#FFFFFF', '#FFFFFF'])
   })
 
-  it('brand:build preserves manifest entries it does not generate (no clobber)', () => {
+  it('brand:build preserves every manifest entry it does not generate (no clobber)', () => {
     const before = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
-    const networkEntryBefore = before.find((e) => e.path === '/brand/networks/stellar.svg')
-    expect(networkEntryBefore, 'fixture assumes a hand-recorded network entry exists').toBeTruthy()
+    const unrelatedBefore = before.filter((entry) => !BUILDER_OWNED_PATHS.includes(entry.path))
+    expect(
+      unrelatedBefore.length,
+      'fixture assumes hand-recorded unrelated entries exist'
+    ).toBeGreaterThan(0)
 
     execFileSync('node', [BUILD_SCRIPT], { cwd: FRONTEND_DIR })
 
@@ -180,8 +307,100 @@ describe('brand asset contract', () => {
     expect(after.length).toBe(before.length)
     expect(after.map((e) => e.path).sort()).toEqual(before.map((e) => e.path).sort())
     // Preserved verbatim — the build script doesn't own these files, so it must
-    // not recompute/rewrite their manifest entry even if the file is unchanged.
-    expect(after.find((e) => e.path === '/brand/networks/stellar.svg')).toEqual(networkEntryBefore)
+    // not recompute/rewrite any unrelated manifest entry even if the file is unchanged.
+    expect(after.filter((entry) => !BUILDER_OWNED_PATHS.includes(entry.path))).toEqual(
+      unrelatedBefore
+    )
+  })
+
+  it.each([
+    ['an object', '{}\n'],
+    ['null', 'null\n'],
+  ])(
+    'brand:build rejects a valid non-array manifest (%s) before writing any output',
+    (_label, invalidManifest) => {
+      const originalManifest = snapshotFiles([MANIFEST_PUBLIC_PATH])[0]
+      const outputBefore = snapshotFiles(BUILDER_OUTPUT_PATHS)
+      try {
+        writeFileSync(MANIFEST_PATH, invalidManifest)
+        const invalidManifestSnapshot = snapshotFiles([MANIFEST_PUBLIC_PATH])[0]
+
+        expect(() =>
+          execFileSync('node', [BUILD_SCRIPT], { cwd: FRONTEND_DIR, stdio: 'pipe' })
+        ).toThrow()
+        expect(snapshotFiles([MANIFEST_PUBLIC_PATH])).toEqual([invalidManifestSnapshot])
+        expect(snapshotFiles(BUILDER_OUTPUT_PATHS)).toEqual(outputBefore)
+      } finally {
+        restoreFiles([originalManifest])
+        restoreFiles(outputBefore)
+        expect(readFileSync(MANIFEST_PATH)).toEqual(originalManifest.bytes)
+      }
+    }
+  )
+
+  it.each([
+    ['null entry', [null]],
+    ['primitive entry', ['not-an-entry']],
+    ['non-array object', {}],
+    ['empty path', [{ path: '' }]],
+    ['non-string path', [{ path: 123 }]],
+  ])(
+    'brand:build rejects malformed manifest entries (%s) before writing any output',
+    (_label, invalidManifest) => {
+      const originalManifest = snapshotFiles([MANIFEST_PUBLIC_PATH])[0]
+      const outputBefore = snapshotFiles(BUILDER_OUTPUT_PATHS)
+      const invalidBytes = Buffer.from(`${JSON.stringify(invalidManifest, null, 2)}\n`)
+      try {
+        writeFileSync(MANIFEST_PATH, invalidBytes)
+        const invalidManifestSnapshot = snapshotFiles([MANIFEST_PUBLIC_PATH])[0]
+
+        expect(() =>
+          execFileSync('node', [BUILD_SCRIPT], { cwd: FRONTEND_DIR, stdio: 'pipe' })
+        ).toThrow()
+        expect(snapshotFiles([MANIFEST_PUBLIC_PATH])).toEqual([invalidManifestSnapshot])
+        expect(snapshotFiles(BUILDER_OUTPUT_PATHS)).toEqual(outputBefore)
+      } finally {
+        restoreFiles([originalManifest])
+        restoreFiles(outputBefore)
+        expect(readFileSync(MANIFEST_PATH)).toEqual(originalManifest.bytes)
+      }
+    }
+  )
+
+  it.each([
+    [
+      'duplicate unrelated path',
+      (manifest) => [
+        ...manifest,
+        { ...manifest.find((entry) => !BUILDER_OWNED_PATHS.includes(entry.path)) },
+      ],
+    ],
+    [
+      'duplicate generated path',
+      (manifest) => [
+        ...manifest,
+        { ...manifest.find((entry) => BUILDER_OWNED_PATHS.includes(entry.path)) },
+      ],
+    ],
+  ])('brand:build rejects %s before writing any output', (_label, mutateManifest) => {
+    const originalManifest = snapshotFiles([MANIFEST_PUBLIC_PATH])[0]
+    const outputBefore = snapshotFiles(BUILDER_OUTPUT_PATHS)
+    const manifest = JSON.parse(originalManifest.bytes.toString('utf8'))
+    const invalidBytes = Buffer.from(`${JSON.stringify(mutateManifest(manifest), null, 2)}\n`)
+    try {
+      writeFileSync(MANIFEST_PATH, invalidBytes)
+      const invalidManifestSnapshot = snapshotFiles([MANIFEST_PUBLIC_PATH])[0]
+
+      expect(() =>
+        execFileSync('node', [BUILD_SCRIPT], { cwd: FRONTEND_DIR, stdio: 'pipe' })
+      ).toThrow()
+      expect(snapshotFiles([MANIFEST_PUBLIC_PATH])).toEqual([invalidManifestSnapshot])
+      expect(snapshotFiles(BUILDER_OUTPUT_PATHS)).toEqual(outputBefore)
+    } finally {
+      restoreFiles([originalManifest])
+      restoreFiles(outputBefore)
+      expect(readFileSync(MANIFEST_PATH)).toEqual(originalManifest.bytes)
+    }
   })
 
   it('brand:check fails when a public/brand file has no manifest entry', () => {
@@ -194,5 +413,34 @@ describe('brand asset contract', () => {
     } finally {
       rmSync(strayPath, { force: true })
     }
+  })
+
+  it('brand:check rejects a duplicate foundation manifest path and names the path', () => {
+    const originalManifest = snapshotFiles([MANIFEST_PUBLIC_PATH])[0]
+    const manifest = JSON.parse(originalManifest.bytes.toString('utf8'))
+    const targetPath = FOUNDATION_ASSET_PATHS[0]
+    const entry = manifest.find((candidate) => candidate.path === targetPath)
+    expect(entry, `fixture must include ${targetPath}`).toBeTruthy()
+    writeFileSync(MANIFEST_PATH, `${JSON.stringify([...manifest, { ...entry }], null, 2)}\n`)
+
+    try {
+      let thrown
+      try {
+        execFileSync('node', [CHECK_SCRIPT], { cwd: FRONTEND_DIR, stdio: 'pipe' })
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).toBeTruthy()
+      expect(thrown.stderr.toString()).toContain(targetPath)
+    } finally {
+      restoreFiles([originalManifest])
+    }
+  })
+
+  it('unknown future networks remain visible as Unknown network without a mark', () => {
+    expect(getNetworkMeta('future-chain')).toMatchObject({
+      label: 'Unknown network',
+      markPath: null,
+    })
   })
 })

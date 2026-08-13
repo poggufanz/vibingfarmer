@@ -11,6 +11,13 @@ afterEach(() => {
 })
 
 describe('AddAssetScreen', () => {
+  it('renders a supplied success notice and a named quick-action class', () => {
+    const { container } = render(<AddAssetScreen onAddAsset={vi.fn()} success="Trustline added" />)
+    expect(screen.getByText('Trustline added')).toBeTruthy()
+    expect(container.querySelector('.pc-asset-quick-actions')).toBeTruthy()
+    expect(container.querySelector('[style]')).toBeNull()
+  })
+
   it('quick-add chip fills code + issuer, enabling the button', () => {
     const onAddAsset = vi.fn()
     render(<AddAssetScreen onAddAsset={onAddAsset} />)
@@ -154,12 +161,18 @@ describe('AddAssetScreen — real-Chromium proof of rejection-checklist item 5 (
   // field), not just finding an empty offender list because nothing on the page is ever mono.
   it('positive control: the issuer input itself DOES compute JetBrains Mono (proves the filter excludes it correctly, not vacuously)', async () => {
     const { container, unmount } = render(<AddAssetInShell />)
-    const html = container.innerHTML
+    // buildHarnessHtml intentionally carries only the pinned body font for layout metrics; this
+    // positive control adds the technical-face declaration locally so it tests the selector filter,
+    // not whether an isolated harness happened to load the extension stylesheet.
+    const html = buildHarnessHtml(container.innerHTML).replace(
+      '</style>',
+      "input.pc-technical{font-family:'JetBrains Mono',monospace}</style>"
+    )
     unmount()
     const browser = await launchRealChromium()
     try {
       const page = await browser.newPage()
-      await page.setContent(buildHarnessHtml(html))
+      await page.setContent(html)
       const issuerFont = await page.evaluate(
         () => getComputedStyle(document.querySelector('#add-asset-issuer')).fontFamily
       )

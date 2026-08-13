@@ -1,5 +1,5 @@
 // frontend/src/wallet/ui/WalletActivity.jsx
-// VF Wallet Task 10, Step 3 -- truthful Activity, account-agnostic. Wires WalletShell (account
+// VF Wallet Task 4 -- truthful Activity, account-agnostic. Wires WalletShell (account
 // chip, "Stellar testnet" text, the beginner nav) around classic/HistoryScreen.jsx for the
 // Stellar leg (money-truth: unavailable vs. genuinely empty is HistoryScreen's job, see its own
 // header) and renders a structurally-separate Base Sepolia leg when given one.
@@ -15,17 +15,47 @@
 // documented scope decision, not a silently missing feature -- see the task report.
 import { WalletShell } from './WalletShell.jsx'
 import HistoryScreen from './classic/HistoryScreen.jsx'
+import { formatTokenUnits } from '../../design/pocket-crew-foundation.js'
 
-// VF Wallet Task 12, Part A2 -- HistoryScreen.jsx's own empty-state copy ("No activity yet.
-// Transactions will appear here once you send or receive.") sits under this component's
-// unqualified "Activity" heading, but this component structurally cannot see Base activity (see
-// this file's own header above) -- an unscoped "no activity" claim overclaims what was actually
-// checked (Stellar only). HistoryScreen.jsx is not in this task's authorized file list (and its
-// own empty-state string has no prop to override), so the fix lives here: intercept the exact
-// "genuinely empty" case (items is a non-null, zero-length array) BEFORE handing off to
-// HistoryScreen, and render the Stellar-scoped copy directly. The `items == null` (unavailable)
-// and non-empty (real rows) cases still fall through to HistoryScreen unchanged.
-const isGenuinelyEmpty = (items) => Array.isArray(items) && items.length === 0
+function verifiedBaseRows(baseItems) {
+  if (Array.isArray(baseItems)) return baseItems
+  if (baseItems?.verified === true && Array.isArray(baseItems.items)) return baseItems.items
+  return []
+}
+
+function formatBaseAmount(item) {
+  const amount = item?.amount
+  const candidate =
+    amount && typeof amount === 'object'
+      ? amount
+      : item?.units !== undefined
+        ? { token: item.asset || 'Token', units: item.units, decimals: item.decimals }
+        : null
+  if (candidate) {
+    try {
+      if (
+        typeof candidate.token === 'string' &&
+        (typeof candidate.units === 'string' || typeof candidate.units === 'bigint') &&
+        Number.isInteger(candidate.decimals) &&
+        candidate.decimals >= 0
+      ) {
+        return `${formatTokenUnits(candidate.units, candidate.decimals)} ${candidate.token}`
+      }
+    } catch {
+      return 'Unavailable'
+    }
+  }
+  if (typeof amount === 'string' && amount.trim()) return `${amount} ${item?.asset ?? 'Token'}`
+  if (typeof amount === 'number' && Number.isFinite(amount))
+    return `${amount} ${item?.asset ?? 'Token'}`
+  return `Unavailable ${item?.asset ?? 'Token'}`
+}
+
+function baseAssetCode(item) {
+  if (typeof item?.asset === 'string') return item.asset
+  if (item?.asset && typeof item.asset.token === 'string') return item.asset.token
+  return item?.code || 'Token'
+}
 
 const NAV_TABS = [
   { id: 'home', label: 'Home' },
@@ -41,6 +71,8 @@ export function WalletActivity({
   baseItems = null,
   children = null,
 }) {
+  const baseRows = verifiedBaseRows(baseItems)
+
   return (
     <WalletShell
       heading="Activity"
@@ -48,26 +80,18 @@ export function WalletActivity({
       status={status}
       nav={{ tabs: NAV_TABS, active: 'activity', onNav }}
     >
-      {isGenuinelyEmpty(items) ? (
-        <div data-testid="history-screen">
-          <p className="pc-field-help">
-            No Stellar activity yet. Stellar transactions will appear here once you send or receive.
-          </p>
-        </div>
-      ) : (
-        <HistoryScreen items={items} />
-      )}
+      <HistoryScreen items={items} />
 
-      {baseItems != null && baseItems.length > 0 && (
+      {baseRows.length > 0 && (
         <div data-testid="base-activity">
           <h2>Base Sepolia</h2>
           <ul className="pc-activity-list">
-            {baseItems.map((x) => (
-              <li key={x.id} className="pc-row">
+            {baseRows.map((x, index) => (
+              <li key={x.id ?? `base-${index}`} className="pc-row">
                 <span className="pc-network-badge">Base Sepolia</span>
                 <div>
                   <div>
-                    {x.direction === 'in' ? 'Received' : 'Sent'} {x.asset}
+                    {x.direction === 'in' ? 'Received' : 'Sent'} {baseAssetCode(x)}
                   </div>
                   <div className="pc-field-help">
                     {x.custodyNote ?? 'Custody-only proxy balance — no yield.'}
@@ -79,7 +103,7 @@ export function WalletActivity({
                 <div>
                   <div className="pc-technical">
                     {x.direction === 'in' ? '+' : '-'}
-                    {x.amount}
+                    {formatBaseAmount(x)}
                   </div>
                   {x.explorerUrl && (
                     <a

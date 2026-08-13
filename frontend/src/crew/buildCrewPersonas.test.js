@@ -593,6 +593,75 @@ describe('buildCrewPersonas — global Base deduplication', () => {
 })
 
 describe('buildCrewPersonas — pending and incomplete evidence', () => {
+  it('keeps unavailable identity rows visible but excludes their money from confirmed totals/counts', () => {
+    const missingAddress = indexedRow('', 0, {
+      phase: 'deployed',
+      verified: false,
+      source: 'creation-event',
+      allocationId: 'allocation-missing',
+      runId: 'run-missing',
+    })
+    const healthyAddress = indexedRow(ADDRESS_A, 1, {
+      phase: 'deployed',
+      verified: true,
+      source: 'creation-event',
+      allocationId: 'allocation-healthy',
+      runId: 'run-healthy',
+    })
+    const out = buildCrewPersonas({
+      discovery: discovery([missingAddress, healthyAddress], 'partial'),
+      moneyAgents: [
+        moneyAgent('', {
+          identity: { allocationId: 'allocation-missing', runId: 'run-missing' },
+          custodyBreakdown: [stellarLeg('900000000')],
+        }),
+        moneyAgent(ADDRESS_A, {
+          identity: { allocationId: 'allocation-healthy', runId: 'run-healthy' },
+          custodyBreakdown: [stellarLeg('100000000')],
+        }),
+      ],
+    })
+
+    expect(out.pendingAssignments).toHaveLength(1)
+    expect(out.pendingAssignments[0].identity.status).toBe('unavailable')
+    expect(out.personas.flatMap((persona) => persona.children)).toHaveLength(1)
+    expect(out.productiveAgentCount).toBe(1)
+    expect(out.activeCount).toBe(1)
+    expect(out.totals).toEqual([{ token: 'USDC', units: '100000000', decimals: 7 }])
+    expect(out.personas.find((persona) => persona.children.length)?.totals).toEqual([
+      { token: 'USDC', units: '100000000', decimals: 7 },
+    ])
+  })
+
+  it('fails closed when discovery and money addresses disagree despite a shared allocation id', () => {
+    const out = buildCrewPersonas({
+      discovery: discovery([
+        indexedRow(ADDRESS_B, 0, {
+          phase: 'deployed',
+          verified: true,
+          source: 'creation-event',
+          allocationId: 'allocation-mismatch',
+          runId: 'run-mismatch',
+        }),
+      ]),
+      moneyAgents: [
+        moneyAgent(ADDRESS_A, {
+          identity: { allocationId: 'allocation-mismatch', runId: 'run-mismatch' },
+          custodyBreakdown: [stellarLeg('500000000')],
+        }),
+      ],
+    })
+
+    const child = [
+      ...out.personas.flatMap((persona) => persona.children),
+      ...out.pendingAssignments,
+    ][0]
+    expect(child.identity.status).toBe('unavailable')
+    expect(child.identity.address).toBeNull()
+    expect(out.totals).toEqual([])
+    expect(out.productiveAgentCount).toBe(0)
+  })
+
   it.each(['scope-read-failed', 'unexpected-error'])(
     'keeps a complete discovery partial when its joined money row has %s and is non-productive',
     (problem) => {
@@ -634,12 +703,10 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
     expect(out.personas.every((persona) => persona.children.length === 0)).toBe(true)
     expect(out.pendingAssignments).toHaveLength(1)
     expect(out.pendingAssignments[0].agent.address).toBe(ADDRESS_A)
-    expect(out.pendingAssignments[0].workingTotals).toEqual([
-      { token: 'USDC', units: '10000000', decimals: 7 },
-    ])
-    expect(out.productiveAgentCount).toBe(1)
+    expect(out.pendingAssignments[0].workingTotals).toEqual([])
+    expect(out.productiveAgentCount).toBe(0)
     expect(out.activeCount).toBe(0)
-    expect(out.totals).toEqual([{ token: 'USDC', units: '10000000', decimals: 7 }])
+    expect(out.totals).toEqual([])
   })
 
   it('counts a shared Base leg once when its other association is pending', () => {
@@ -659,8 +726,8 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
     const assignedLeg = out.personas[0].children[0].workingLegs[0]
     const pendingLeg = out.pendingAssignments[0].workingLegs[0]
 
-    expect(assignedLeg).toMatchObject({ shared: true, counted: true })
-    expect(pendingLeg).toMatchObject({ shared: true, counted: false })
+    expect(assignedLeg).toMatchObject({ shared: false, counted: true })
+    expect(pendingLeg).toMatchObject({ shared: false, counted: false })
     expect(out.personas[0].totals).toEqual([{ token: 'USDC', units: '700000000', decimals: 7 }])
     expect(out.totals).toEqual([{ token: 'USDC', units: '700000000', decimals: 7 }])
   })
@@ -774,6 +841,98 @@ describe('buildCrewPersonas — pending and incomplete evidence', () => {
     expect(out.activeCount).toBe(0)
     expect(out.totals).toEqual([])
     expect(out.status).toBe('partial')
+  })
+
+  it.each([' 1', '+1', '0x10', '1.5'])('rejects non-canonical productive units %j', (units) => {
+    const out = buildCrewPersonas({
+      discovery: discovery([indexedRow(ADDRESS_A, 0)]),
+      moneyAgents: [moneyAgent(ADDRESS_A, { custodyBreakdown: [stellarLeg(units)] })],
+    })
+    expect(out.personas[0].children).toEqual([])
+    expect(out.totals).toEqual([])
+    expect(out.status).toBe('partial')
+  })
+
+  it('preserves source-backed phase identity and an unverified child without changing healthy siblings', () => {
+    const missingAddress = indexedRow('', 0, {
+      phase: 'deployed',
+      verified: false,
+      source: 'creation-event',
+      allocationId: 'allocation-missing',
+      runId: 'run-missing',
+    })
+    const unverifiedAddress = indexedRow(ADDRESS_B, 1, {
+      phase: 'reused',
+      verified: false,
+      source: 'owner-discovery',
+      allocationId: 'allocation-unverified',
+      runId: 'run-unverified',
+    })
+    const healthy = indexedRow(ADDRESS_A, 2, {
+      phase: 'deployed',
+      verified: true,
+      source: 'creation-event',
+      allocationId: 'allocation-healthy',
+      runId: 'run-healthy',
+    })
+    const out = buildCrewPersonas({
+      discovery: discovery([missingAddress, unverifiedAddress, healthy]),
+      moneyAgents: [
+        moneyAgent('', {
+          identity: { allocationId: 'allocation-missing', runId: 'run-missing' },
+          custodyBreakdown: [stellarLeg('900000000')],
+        }),
+        moneyAgent(ADDRESS_B, { custodyBreakdown: [stellarLeg('800000000')] }),
+        moneyAgent(ADDRESS_A, { custodyBreakdown: [stellarLeg('100000000')] }),
+      ],
+    })
+
+    const children = [
+      ...out.personas.flatMap((persona) => persona.children),
+      ...out.pendingAssignments,
+    ]
+    expect(children.map((entry) => entry.agent.address)).toEqual(
+      expect.arrayContaining(['', ADDRESS_B, ADDRESS_A])
+    )
+    expect(children.find((entry) => entry.agent.address === '').identity).toMatchObject({
+      phase: 'deployed',
+      address: null,
+      verified: false,
+      source: 'creation-event',
+      allocationId: 'allocation-missing',
+      runId: 'run-missing',
+    })
+    expect(children.find((entry) => entry.agent.address === ADDRESS_B).identity).toMatchObject({
+      phase: 'reused',
+      address: null,
+      verified: false,
+      source: 'owner-discovery',
+    })
+    expect(children.find((entry) => entry.agent.address === ADDRESS_A).identity).toMatchObject({
+      phase: 'deployed',
+      address: ADDRESS_A,
+      verified: true,
+      source: 'creation-event',
+    })
+
+    const reversed = buildCrewPersonas({
+      discovery: discovery([healthy, unverifiedAddress, missingAddress]),
+      moneyAgents: [
+        moneyAgent(ADDRESS_A, { custodyBreakdown: [stellarLeg('100000000')] }),
+        moneyAgent(ADDRESS_B, { custodyBreakdown: [stellarLeg('800000000')] }),
+        moneyAgent('', {
+          identity: { allocationId: 'allocation-missing', runId: 'run-missing' },
+          custodyBreakdown: [stellarLeg('900000000')],
+        }),
+      ],
+    })
+    expect(
+      [
+        ...reversed.personas.flatMap((persona) => persona.children),
+        ...reversed.pendingAssignments,
+      ].map((entry) => entry.identity)
+    ).toEqual(expect.arrayContaining(children.map((entry) => entry.identity)))
+    expect(reversed.totals).toEqual(out.totals)
   })
 })
 

@@ -1,12 +1,11 @@
 // frontend/src/wallet/ui/classic/BackupScreen.jsx
 // VF Wallet Task 9. Recomposed onto the shared WalletShell/pc-* primitives -- dropped the
-// gradient icon box, the entry-fade keyframe applied to every step, and the monospace styling on
+// decorative icon box, the entry-fade keyframe applied to every step, and the monospace styling on
 // friendly copy ("Your recovery phrase is hidden", "I've saved my recovery phrase securely",
 // "Confirm you saved it by entering these words:") that the old scoped style block carried. The
-// step progress indicator (dots/labels + a transform-only fill bar, no keyframes) is KEPT --
-// BackupScreen.test.jsx (pre-existing, unmodified) asserts its exact scaleX progression, and nothing
-// about it was ever a flagged violation: it is a state-driven CSS transition, not an entry
-// animation, matching the contract's own `.pc-agent-lane-progress > span` dynamic-value pattern.
+// step progress indicator (labels + a transform-only fill bar, no keyframes) remains state driven,
+// but its transform now lives in three explicit stylesheet classes so this screen owns no inline
+// design values.
 // The 3-step Reveal -> Save -> Verify flow and its wiring (checkConfirm gates onConfirm; the
 // mnemonic is only ever held in the caller's transient state, never here) are UNCHANGED --
 // verification before completion still cannot be skipped. Mnemonic words themselves keep
@@ -27,7 +26,12 @@
 // this file needed to change as a result.
 import { useState, useCallback } from 'react'
 import { checkConfirm } from './backupConfirm.js'
-import { HonestyLabels } from '../HonestyLabels.jsx'
+
+const BACKUP_PROGRESS_CLASS = {
+  1: 'pc-backup-progress--one',
+  2: 'pc-backup-progress--two',
+  3: 'pc-backup-progress--three',
+}
 
 export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, error }) {
   const [step, setStep] = useState(1) // 1 = reveal, 2 = read/copy, 3 = confirm
@@ -53,7 +57,7 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
 
   return (
     <div className="pc-standard-form" data-testid="standard-backup">
-      <div className="pc-backup-progress">
+      <div className={`pc-backup-progress ${BACKUP_PROGRESS_CLASS[step]}`}>
         <ol aria-label="Backup progress">
           {[1, 2, 3].map((s) => (
             <li key={s} aria-current={s === step ? 'step' : undefined}>
@@ -62,11 +66,9 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
           ))}
         </ol>
         <div className="bk-prog-track">
-          <div className="bk-prog-fill" style={{ transform: `scaleX(${(step - 1) / 2})` }} />
+          <div className="bk-prog-fill" aria-hidden="true" />
         </div>
       </div>
-
-      <HonestyLabels scope="global" />
 
       {step === 1 && (
         <div className="pc-backup-step">

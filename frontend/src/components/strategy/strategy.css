@@ -645,56 +645,29 @@
 
 .pc-agent-lane-progress > span {
   display: block;
-  width: var(--pc-progress, 0%);
+  width: 0%;
   height: 100%;
   border-radius: inherit;
   background: currentcolor;
   transform-origin: left center;
 }
 
-/* Task 12 -- Start's own addition (not a contract selector): per-phase progress width, set via a
- * data attribute on the lane row rather than an inline style -- matching Plan/Protect's convention
- * of zero inline styles in this route's JSX (see PlanStage.test.jsx/ProtectStage.test.jsx's own
- * "no component in this surface sets an inline style" guards). The reducer only ever reports which
- * named milestone was reached, never a continuous percentage, so discrete steps (not a literal
- * live percentage) are the honest representation here. A finite width transition, never a GSAP
- * tween -- src/design/usePocketTransition.js may only animate opacity/x/y/scale. */
-.pc-agent-lane-progress > span {
-  transition: width var(--pc-duration-base) var(--pc-ease-standard);
+/* Width is a discrete, event-backed value. The component only mounts this element when the
+ * adapter has one of the four canonical milestones, so no CSS state can invent progress. */
+.pc-agent-lane-progress[data-progress='0'] > span {
+  width: 0%;
 }
 
-[data-lane-phase='pending'] .pc-agent-lane-progress,
-[data-lane-phase='creating'] .pc-agent-lane-progress,
-[data-lane-phase='ready'] .pc-agent-lane-progress {
-  --pc-progress: 15%;
+.pc-agent-lane-progress[data-progress='22'] > span {
+  width: 22%;
 }
 
-[data-lane-phase='queued'] .pc-agent-lane-progress {
-  --pc-progress: 30%;
+.pc-agent-lane-progress[data-progress='66'] > span {
+  width: 66%;
 }
 
-[data-lane-phase='moving'] .pc-agent-lane-progress,
-[data-lane-phase='burning'] .pc-agent-lane-progress {
-  --pc-progress: 50%;
-}
-
-[data-lane-phase='depositing'] .pc-agent-lane-progress,
-[data-lane-phase='awaiting-attestation'] .pc-agent-lane-progress {
-  --pc-progress: 70%;
-}
-
-[data-lane-phase='minting'] .pc-agent-lane-progress,
-[data-lane-phase='in-transit'] .pc-agent-lane-progress {
-  --pc-progress: 85%;
-}
-
-[data-lane-phase='working'] .pc-agent-lane-progress,
-[data-lane-phase='confirmed'] .pc-agent-lane-progress {
-  --pc-progress: 100%;
-}
-
-[data-lane-phase='failed'] .pc-agent-lane-progress > span {
-  background: var(--pc-danger);
+.pc-agent-lane-progress[data-progress='100'] > span {
+  width: 100%;
 }
 
 /* Task 12 -- Start's custody receipt. `.pc-dominant--owned` (Rice) is ported verbatim from the
@@ -809,8 +782,7 @@
   border-bottom: 0;
 }
 
-.pc-start-stage .pc-agent-mark,
-.pc-start-stage .pc-start-agent-avatar {
+.pc-start-stage .pc-agent-mark {
   margin-top: var(--pc-space-1);
 }
 
@@ -1269,12 +1241,41 @@
 /* Strategy Task 14 fix loop N -- owner report, items 1/6/8. Two new, scoped flex rows (neither is
  * a locked contract selector -- `.pc-plan-summary-header`/`.pc-plan-facts` don't exist in the
  * contract at all, this route's own addition): the source badge, the optional Retry-live-check
- * button, and the plan total MoneyFigure were three bare inline siblings with no separating
+ * button, and the plan total amount were three bare inline siblings with no separating
  * container, concatenating as "Live AI + live market checks100 USDC" with zero CSS gap (item 1).
  * `.pc-plan-facts` holds the network/expiry/yield facts PlanStage.jsx now hoists out of every
  * worker row into one shared line above the list (items 6/8) -- same reused tokens, same
  * flex+gap shape, so both rows read consistently.
  */
+.pc-planned-amount {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pc-space-2);
+}
+
+.pc-proof-label {
+  color: var(--pc-owned-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+.pc-plan-cap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pc-space-2);
+  margin: 0;
+}
+
+.pc-plan-isolation,
+.pc-plan-route {
+  margin: var(--pc-space-3) 0 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  text-wrap: pretty;
+}
+
 .pc-plan-summary-header,
 .pc-plan-facts {
   display: flex;
@@ -1464,9 +1465,10 @@
  * `inherit`) reuse the exact tinted-surface-on-Harvest recipe `.pc-strategy-amount` above already
  * established for the same surface -- no new literal invented.
  */
-.pc-instruction-input {
+.pc-plan-textarea {
   width: 100%;
-  min-height: 96px;
+  height: calc(var(--pc-space-16) * 2);
+  min-height: calc(var(--pc-space-16) * 2);
   margin-top: var(--pc-space-2);
   border: 1px solid color-mix(in srgb, currentcolor 26%, transparent);
   border-radius: var(--pc-radius-control);
@@ -1536,7 +1538,7 @@
   position: absolute;
   right: 0;
   bottom: calc(100% + var(--pc-space-2));
-  z-index: 2;
+  z-index: var(--pc-z-popover);
   display: grid;
   gap: var(--pc-space-2);
   min-width: 200px;
@@ -1620,6 +1622,21 @@
 
   .pc-strategy-aside {
     grid-template-columns: 1fr;
+  }
+
+  /* Task 11 -- the Plan so far facts retain three desktop tracks, but the long Autofarm/Blend
+   * label can be starved by its value at 320px. Keep the dot and label in the first row, then
+   * place the value beneath the label in the same flexible second track. The existing spacing and
+   * track tokens preserve the desktop anatomy without clipping or hiding any copy. */
+  .pc-fact-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pc-fact-value {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+    min-width: 0;
   }
 
   .pc-strategy-decision {

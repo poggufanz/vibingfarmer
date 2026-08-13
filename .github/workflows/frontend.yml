@@ -175,7 +175,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:visual
+      # Keep the browser-level functional, layout, and accessibility assertions in CI while
+      # leaving pixel baselines opt-in for local/manual review (the repository does not commit
+      # generated screenshot evidence).
+      - run: npm run test:visual -- --ignore-snapshots
       - name: Upload Playwright report/screenshots/traces
         if: failure()
         uses: actions/upload-artifact@v4

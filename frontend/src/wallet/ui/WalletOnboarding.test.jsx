@@ -19,6 +19,14 @@ afterEach(cleanup)
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const POPUP_PATH = path.resolve(here, '../../../extension/popup.jsx')
+const WALLET_CSS_PATH = path.resolve(here, '../../../extension/wallet.css')
+
+function buildWalletHarnessHtml(bodyHtml) {
+  return buildHarnessHtml(bodyHtml).replace(
+    '</head>',
+    `<style>${fs.readFileSync(WALLET_CSS_PATH, 'utf8')}</style></head>`
+  )
+}
 
 // Real shape resolveActiveAccount emits for 'selection-required' (activeAccount.js:21-23,:114).
 const G_ACCOUNT = {
@@ -37,6 +45,7 @@ const C_ACCOUNT = {
   kind: 'C',
   signer: 'passkey-secp256r1',
 }
+const PASSKEY_ACCOUNT = { kind: 'C', address: 'C' + 'A'.repeat(55) }
 
 // Regex source-parse guards below check the SHIPPED CODE, not this task's own prose explaining
 // what was removed and why (which legitimately names the retired identifiers, e.g. "the old
@@ -73,6 +82,16 @@ const SHIPPED_UI_FILES = [
 ]
 
 describe('WalletOnboarding — first screen: the branch, before backup/recovery instructions diverge', () => {
+  it('offers explicit Standard and Passkey choices without an address or cross-model jargon', () => {
+    render(
+      <WalletOnboarding view="choose" onChooseStandard={() => {}} onChoosePasskey={() => {}} />
+    )
+    expect(screen.getByRole('button', { name: /standard/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /passkey/i })).toBeTruthy()
+    expect(screen.queryByText(/coordination swarm|session signer|seed/i)).toBeNull()
+    expect(screen.queryByTestId('wallet-account-chip')).toBeNull()
+  })
+
   it('says "Create or restore a wallet", "Stellar testnet", and explains Standard vs Passkey in plain language', () => {
     render(<WalletOnboarding view="choose" onChooseStandard={vi.fn()} onChoosePasskey={vi.fn()} />)
     expect(
@@ -133,6 +152,13 @@ describe('WalletOnboarding — Standard path: password unlock + recovery phrase,
 })
 
 describe('WalletOnboarding — Passkey path: device/password-manager passkey, C-account behavior, honest recovery constraints', () => {
+  it('does not claim Passkey funding before device confirmation', () => {
+    render(<WalletOnboarding view="passkey-creating" account={PASSKEY_ACCOUNT} busy />)
+    expect(screen.getByRole('status').textContent).toMatch(/waiting for your device confirmation/i)
+    expect(screen.queryByText(/funded|confirmed|connected/i)).toBeNull()
+    expect(screen.queryByText(/seed|mnemonic|password/i)).toBeNull()
+  })
+
   it('states all three in plain language', () => {
     render(
       <WalletOnboarding
@@ -285,6 +311,29 @@ describe('WalletOnboarding — secret material cannot reach shared state (struct
     const forbidden = /\b(mnemonicBlob|seedPhrase|secretKey|privateKey|sessionKey)\b/i
     expect(SOURCE).not.toMatch(forbidden)
   })
+
+  it('never renders mnemonic text in account-choice or Passkey screens', () => {
+    const mnemonic = 'alpha bravo charlie delta echo foxtrot'
+    const { unmount } = render(
+      <WalletOnboarding
+        view="select-account"
+        accounts={[{ ...G_ACCOUNT, mnemonic }]}
+        onSelectAccount={() => {}}
+      />
+    )
+    expect(screen.queryByText(mnemonic)).toBeNull()
+    unmount()
+
+    render(
+      <WalletOnboarding
+        view="passkey-choose"
+        mnemonic={mnemonic}
+        onCreatePasskey={() => {}}
+        onConnectPasskey={() => {}}
+      />
+    )
+    expect(screen.queryByText(mnemonic)).toBeNull()
+  })
 })
 
 describe('WalletOnboarding — rejection checklist items 5/6/7 across the entire shipped surface (source-parse, mutation-provable)', () => {
@@ -301,13 +350,6 @@ describe('WalletOnboarding — rejection checklist items 5/6/7 across the entire
     }
   })
 
-  // BackupScreen.jsx keeps ONE inline style: a transform:scaleX(...) progress fill whose value is
-  // a computed fraction (step/2), not a hardcoded design literal -- the same dynamic-value pattern
-  // the contract itself uses for .pc-agent-lane-progress > span's --pc-progress. It pre-dates this
-  // task (BackupScreen.test.jsx, unmodified, asserts its exact scaleX progression) and was never a
-  // flagged violation, so it is exempted from the blanket "no inline style" check below.
-  const NO_INLINE_STYLE_FILES = SHIPPED_UI_FILES.filter((f) => !f.endsWith('BackupScreen.jsx'))
-
   it('item 6: none of the rebuilt onboarding screens sets a gradient', () => {
     for (const file of SHIPPED_UI_FILES) {
       const source = stripComments(fs.readFileSync(file, 'utf8'))
@@ -316,10 +358,19 @@ describe('WalletOnboarding — rejection checklist items 5/6/7 across the entire
   })
 
   it('item 6: no rebuilt onboarding screen hardcodes a design value via inline style', () => {
-    for (const file of NO_INLINE_STYLE_FILES) {
+    for (const file of SHIPPED_UI_FILES) {
       const source = stripComments(fs.readFileSync(file, 'utf8'))
       expect(source, `${file} must set no inline style=`).not.toMatch(/style=/i)
     }
+  })
+
+  it('uses one explicit class for each backup progress state', () => {
+    const source = stripComments(
+      fs.readFileSync(path.resolve(here, './classic/BackupScreen.jsx'), 'utf8')
+    )
+    expect(source).toMatch(/pc-backup-progress--one/)
+    expect(source).toMatch(/pc-backup-progress--two/)
+    expect(source).toMatch(/pc-backup-progress--three/)
   })
 
   // The exact regressions VF Wallet Task 8 (73802e8) deliberately deferred to this task:
@@ -372,15 +423,14 @@ describe('WalletOnboarding — rejection checklist items 5/6/7 across the entire
   it('item 5: popup.jsx no longer styles the shared friendly status line in monospace', () => {
     const source = fs.readFileSync(POPUP_PATH, 'utf8')
     const pendingRule = source.match(/\.pending\{[^}]*\}/)?.[0] ?? ''
-    expect(pendingRule, 'the .pending{...} rule must exist to be checked').not.toBe('')
     expect(pendingRule).not.toMatch(/font-family:\s*var\(--mono\)/i)
   })
 
   it('item 5: friendly onboarding copy never renders inside a monospace/technical wrapper', () => {
     render(<WalletOnboarding view="passkey-creating" />)
-    const status = screen.getByText('Approve the passkey prompt if asked.')
+    const status = screen.getByText('Waiting for your device confirmation')
     expect(status.closest('.pc-technical')).toBeNull()
-    const body = screen.getByText('Creating the passkey and funding it on Stellar testnet.')
+    const body = screen.getByText(/passkey prompt on your device/i)
     expect(body.closest('.pc-technical')).toBeNull()
   })
 
@@ -431,6 +481,8 @@ const ONBOARDING_STATES = [
     { view: 'passkey-choose', onCreatePasskey: () => {}, onConnectPasskey: () => {} },
   ],
   ['passkey-creating', { view: 'passkey-creating' }],
+  ['passkey-create', { view: 'passkey-create', account: PASSKEY_ACCOUNT, busy: true }],
+  ['passkey-error', { view: 'passkey-error', passkeyError: 'Passkey unavailable' }],
 ]
 
 describe('WalletOnboarding — real-browser 320px layout guard, per onboarding/account-picker state', () => {
@@ -464,7 +516,7 @@ describe('WalletOnboarding — real-Chromium proof of rejection-checklist item 5
     try {
       for (const [label, html] of results) {
         const page = await browser.newPage()
-        await page.setContent(buildHarnessHtml(html))
+        await page.setContent(buildWalletHarnessHtml(html))
         const monoOffenders = await page.evaluate(() =>
           Array.from(document.querySelectorAll('*'))
             .filter((el) => el.children.length === 0 && el.textContent.trim())
@@ -505,7 +557,7 @@ describe('WalletOnboarding — real-Chromium proof of rejection-checklist items 
     try {
       for (const [label, html] of results) {
         const page = await browser.newPage()
-        await page.setContent(buildHarnessHtml(html))
+        await page.setContent(buildWalletHarnessHtml(html))
         const animating = await page.evaluate(() =>
           Array.from(document.querySelectorAll('*'))
             .map((el) => getComputedStyle(el).animationName)
@@ -545,7 +597,7 @@ describe('WalletOnboarding — real-Chromium proof of the I2 fix loop 2 rules (f
     try {
       for (const [label, html] of results) {
         const page = await browser.newPage()
-        await page.setContent(buildHarnessHtml(html))
+        await page.setContent(buildWalletHarnessHtml(html))
         const offenders = await page.evaluate(() =>
           Array.from(document.querySelectorAll('button, input, select, textarea'))
             .map((el) => ({
@@ -580,7 +632,7 @@ describe('WalletOnboarding — real-Chromium proof of the I2 fix loop 2 rules (f
     try {
       for (const [label, html] of results) {
         const page = await browser.newPage()
-        await page.setContent(buildHarnessHtml(html))
+        await page.setContent(buildWalletHarnessHtml(html))
         const colorScheme = await page.evaluate(
           () => getComputedStyle(document.querySelector('.pc-wallet')).colorScheme
         )

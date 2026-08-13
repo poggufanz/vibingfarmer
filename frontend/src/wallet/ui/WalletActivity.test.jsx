@@ -106,6 +106,18 @@ describe('WalletActivity — Base Sepolia leg (structural, proxy/custody wording
     expect(screen.queryByText('Base Sepolia')).toBeNull()
   })
 
+  it('does not render an unverified Base payload as activity', () => {
+    render(
+      <WalletActivity
+        account={G_ACCOUNT}
+        onNav={() => {}}
+        items={[]}
+        baseItems={{ verified: false, items: [{ id: 'unverified', asset: 'USDC' }] }}
+      />
+    )
+    expect(screen.queryByTestId('base-activity')).toBeNull()
+  })
+
   it('renders a Base row with its own network badge, direction, amount, and retains proxy/custody wording', () => {
     render(
       <WalletActivity

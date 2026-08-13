@@ -14,6 +14,7 @@ import {
   selectorTokens,
   checkManifestFreshness,
 } from '../../../scripts/generate-wallet-contract-manifest.mjs'
+import { NETWORK_IDS, getNetworkMeta } from '../../design/networks.js'
 import CONTRACT_MANIFEST from './walletContractManifest.generated.json'
 
 afterEach(cleanup)
@@ -24,6 +25,9 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 // whether this checkout has the component file checked out with CRLF or LF line endings.
 const RAW_SOURCE = fs
   .readFileSync(path.resolve(here, './WalletShell.jsx'), 'utf8')
+  .replace(/\r\n/g, '\n')
+const WALLET_CSS = fs
+  .readFileSync(path.resolve(here, '../../../extension/wallet.css'), 'utf8')
   .replace(/\r\n/g, '\n')
 // Structural/checklist guards below check the SHIPPED CODE, not this file's own header comment
 // (which legitimately names the properties it structurally lacks, e.g. "no password prop") --
@@ -58,7 +62,7 @@ describe('WalletShell — trust anchor, network text, heading, account chip', ()
 
   it('always shows the literal Stellar testnet network text', () => {
     render(<WalletShell heading="x">content</WalletShell>)
-    expect(screen.getByText('Stellar testnet')).toBeTruthy()
+    expect(screen.getByText(getNetworkMeta(NETWORK_IDS.STELLAR_TESTNET).label)).toBeTruthy()
   })
 
   it('shows a small product lockup naming VF Wallet', () => {
@@ -117,6 +121,11 @@ describe('WalletShell — polite status region', () => {
     render(<WalletShell heading="x">content</WalletShell>)
     const status = screen.getByRole('status')
     expect(status.getAttribute('aria-live')).toBe('polite')
+  })
+
+  it('renders structural output without an injected style tag', () => {
+    render(<WalletShell heading="x">content</WalletShell>)
+    expect(document.querySelector('.pc-wallet style')).toBeNull()
   })
 
   it('shows a status message and marks the error tone', () => {
@@ -214,13 +223,7 @@ describe('WalletShell — rejection-checklist items 6/7 (source-parse, mutation-
 // color-scheme rules were not "wrong value," they were ABSENT.
 describe('WalletShell — contract manifest drift guard: every manifest entry has a shipped counterpart (VF Wallet Task 10, Part A1)', () => {
   function shippedStyleRules() {
-    const marker = 'const STYLE = `'
-    const start = RAW_SOURCE.indexOf(marker) + marker.length
-    const end = RAW_SOURCE.indexOf('`\n\nexport function WalletShell')
-    if (start < marker.length || end < 0) {
-      throw new Error('could not locate the STYLE template literal in WalletShell.jsx')
-    }
-    return parseCss(RAW_SOURCE.slice(start, end))
+    return parseCss(WALLET_CSS)
   }
 
   const baseProp = (prop) => {
@@ -284,14 +287,10 @@ describe('WalletShell — pins the .pc-technical mono guarantee against reorderi
   // `var(--pc-font-mono)`, the competing `.pc-wallet :where(...)` rule declares
   // `var(--pc-font-body)` -- two different strings, so asserting the exact literal distinguishes
   // them precisely, without needing jsdom to resolve either variable.
-  it('computes the mono custom-property reference (not the body one) for a rendered .pc-input.pc-technical element', () => {
-    render(
-      <WalletShell heading="x">
-        <input className="pc-input pc-technical" data-testid="probe" readOnly value="" />
-      </WalletShell>
+  it('ships the mono custom-property rule for a rendered .pc-input.pc-technical element', () => {
+    expect(WALLET_CSS).toMatch(
+      /code,\s*pre,\s*\.pc-technical\s*\{[^}]*font-family:\s*var\(--pc-font-mono\)/s
     )
-    const fontFamily = getComputedStyle(screen.getByTestId('probe')).fontFamily
-    expect(fontFamily).toBe('var(--pc-font-mono)')
   })
 })
 
@@ -305,17 +304,10 @@ describe('WalletShell — pins the .pc-technical mono guarantee against reorderi
 // carrying the exact class BackupScreen.jsx actually renders (label.pc-backup-check > input), not
 // a synthetic stand-in.
 describe('WalletShell — pins the backup confirmation checkbox to mono, matching the words it confirms (VF Wallet Task 10 fix loop 1, M1)', () => {
-  it('computes the mono custom-property reference for the unclassed checkbox inside .pc-backup-check', () => {
-    render(
-      <WalletShell heading="x">
-        <label className="pc-backup-check">
-          <input type="checkbox" data-testid="probe" readOnly />
-          I&rsquo;ve saved my recovery phrase securely
-        </label>
-      </WalletShell>
+  it('ships the mono custom-property rule for the unclassed checkbox inside .pc-backup-check', () => {
+    expect(WALLET_CSS).toMatch(
+      /\.pc-backup-check input\s*\{[^}]*font-family:\s*var\(--pc-font-mono\)/s
     )
-    const fontFamily = getComputedStyle(screen.getByTestId('probe')).fontFamily
-    expect(fontFamily).toBe('var(--pc-font-mono)')
   })
 })
 

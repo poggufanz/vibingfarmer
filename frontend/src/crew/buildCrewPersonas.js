@@ -1,5 +1,6 @@
 import { assignCrewPersona, CREW_PERSONAS } from './personas.js'
 import { SOROBAN_DECIMALS } from '../stellar/config.js'
+import { toAgentIdentityView } from '../core/coreRouteAdapters.js'
 
 const PRODUCTIVE_LOCATIONS = new Set(['stellar-vault', 'base-proxy'])
 const INCOMPLETE_MONEY_PROBLEMS = new Set([
@@ -34,11 +35,87 @@ function compareOptionalIndex(left, right) {
 }
 
 function compareChildren(left, right) {
+  const leftIdentity =
+    left.identity?.key ??
+    left.discoveryRow?.identity?.allocationId ??
+    left.discoveryRow?.allocationId ??
+    left.discoveryRow?.identity?.runId ??
+    left.discoveryRow?.runId ??
+    ''
+  const rightIdentity =
+    right.identity?.key ??
+    right.discoveryRow?.identity?.allocationId ??
+    right.discoveryRow?.allocationId ??
+    right.discoveryRow?.identity?.runId ??
+    right.discoveryRow?.runId ??
+    ''
   return (
     compareOptionalIndex(left.discoveryRow.createdLedger, right.discoveryRow.createdLedger) ||
     compareOptionalIndex(left.discoveryRow.runOrdinal, right.discoveryRow.runOrdinal) ||
-    compareExactStrings(left.agent.address, right.agent.address)
+    compareExactStrings(
+      String(left.identity?.address ?? ''),
+      String(right.identity?.address ?? '')
+    ) ||
+    compareExactStrings(String(leftIdentity), String(rightIdentity))
   )
+}
+
+const IDENTITY_SOURCES = new Set(['reviewed-plan', 'creation-event', 'owner-discovery', 'receipt'])
+
+function identityPhase(agent, discoveryRow) {
+  const explicit =
+    discoveryRow?.identity?.phase ??
+    discoveryRow?.phase ??
+    agent?.identity?.phase ??
+    (discoveryRow?.reused === true ? 'reused' : null)
+  if (['planned', 'deployed', 'reused'].includes(explicit)) return explicit
+  return discoveryRow?.address || agent?.address ? 'deployed' : 'unknown'
+}
+
+function identitySource(agent, discoveryRow) {
+  const explicit = discoveryRow?.identity?.source ?? discoveryRow?.source ?? agent?.identity?.source
+  if (IDENTITY_SOURCES.has(explicit)) return explicit
+  if (discoveryRow?.provenance?.source === 'router-event') return 'creation-event'
+  if (discoveryRow?.provenance?.source === 'registry-event') return 'creation-event'
+  if (discoveryRow?.discoverySources?.includes('agent-index-api')) return 'owner-discovery'
+  return 'unknown'
+}
+
+function identityVerified(agent, discoveryRow, phase, address) {
+  const explicit =
+    discoveryRow?.identity?.verified ?? discoveryRow?.verified ?? agent?.identity?.verified
+  if (typeof explicit === 'boolean') return explicit
+  if (phase === 'planned') return false
+  return (
+    Boolean(address) &&
+    (discoveryRow?.discoverySources?.includes('agent-index-api') ||
+      discoveryRow?.provenance?.source === 'router-event' ||
+      discoveryRow?.provenance?.source === 'registry-event')
+  )
+}
+
+function childIdentity(agent, discoveryRow) {
+  const phase = identityPhase(agent, discoveryRow)
+  const discoveryAddress =
+    typeof discoveryRow?.address === 'string' && discoveryRow.address.trim().length > 0
+      ? discoveryRow.address
+      : null
+  const agentAddress =
+    typeof agent?.address === 'string' && agent.address.trim().length > 0 ? agent.address : null
+  const addressMismatch = discoveryAddress && agentAddress && discoveryAddress !== agentAddress
+  const address = addressMismatch ? null : (discoveryAddress ?? agentAddress)
+  return toAgentIdentityView({
+    phase,
+    runId: discoveryRow?.identity?.runId ?? discoveryRow?.runId ?? agent?.identity?.runId,
+    allocationId:
+      discoveryRow?.identity?.allocationId ??
+      discoveryRow?.allocationId ??
+      agent?.identity?.allocationId,
+    verifiedAddress: address,
+    verified: !addressMismatch && identityVerified(agent, discoveryRow, phase, address),
+    source: identitySource(agent, discoveryRow),
+    state: agent?.executionStatus,
+  })
 }
 
 function readExactAmount(amount) {
@@ -47,8 +124,10 @@ function readExactAmount(amount) {
     typeof amount.token !== 'string' ||
     amount.token.length === 0 ||
     typeof amount.units !== 'string' ||
+    !/^[0-9]+$/.test(amount.units) ||
     !Number.isSafeInteger(amount.decimals) ||
-    amount.decimals < 0
+    amount.decimals < 0 ||
+    amount.decimals > 38
   ) {
     return { state: 'unavailable', amount: null }
   }
@@ -197,26 +276,33 @@ function isActive(agent) {
 function makeChild({ agent, discoveryRow, assignment, networkId }) {
   const evidence = extractMoneyEvidence(agent, networkId)
   const incomplete = hasIncompleteEvidence(agent, evidence)
+  const identity = childIdentity(agent, discoveryRow)
   // A technical location without a readable positive balance is coverage evidence, not a
   // productive Crew child. Mixed rows keep every leg because their positive sibling proves the
   // child is productive; unreadable-only rows stay outside both productive and active counts.
-  if (!evidence.workingLegs.some((leg) => leg.amount != null)) {
+  if (!evidence.workingLegs.some((leg) => leg.amount != null) && identity.status === 'available') {
     return { child: null, incomplete }
   }
+
+  const effectiveAssignment =
+    identity.status === 'available'
+      ? assignment
+      : { ...assignment, state: 'pending', reason: 'identity-unavailable' }
 
   return {
     incomplete,
     child: {
       agent,
       discoveryRow,
-      assignment,
+      assignment: effectiveAssignment,
+      identity,
       workingLegs: evidence.workingLegs,
       workingTotals: [],
       idleAmount: evidence.idleAmount,
       hasWithdrawableStellar: evidence.workingLegs.some(
         (leg) => leg.location === 'stellar-vault' && leg.amount != null
       ),
-      active: assignment.state === 'assigned' && isActive(agent),
+      active: effectiveAssignment.state === 'assigned' && isActive(agent),
       incomplete,
     },
   }
@@ -357,6 +443,11 @@ function markBaseOwnership(children, moneyRead) {
 }
 
 function finishChild(child) {
+  if (child.identity?.status !== 'available') {
+    child.workingLegs = child.workingLegs.map((leg) => ({ ...leg, counted: false }))
+    child.workingTotals = []
+    return child
+  }
   child.workingTotals = sumAmounts(
     child.workingLegs.filter((leg) => leg.counted && leg.amount != null).map((leg) => leg.amount)
   )
@@ -386,6 +477,7 @@ function projectionStatus(
  */
 export function buildCrewPersonas({ moneyRead = null, moneyAgents = [], discovery } = {}) {
   const discoveryByAddress = new Map()
+  const discoveryByIdentity = new Map()
   for (const row of discovery?.agents ?? []) {
     if (
       typeof row?.address === 'string' &&
@@ -393,6 +485,15 @@ export function buildCrewPersonas({ moneyRead = null, moneyAgents = [], discover
       !discoveryByAddress.has(row.address)
     ) {
       discoveryByAddress.set(row.address, row)
+    }
+    const identityKey =
+      row?.identity?.allocationId ?? row?.allocationId ?? row?.identity?.runId ?? row?.runId
+    if (
+      typeof identityKey === 'string' &&
+      identityKey.length > 0 &&
+      !discoveryByIdentity.has(identityKey)
+    ) {
+      discoveryByIdentity.set(identityKey, row)
     }
   }
 
@@ -404,7 +505,10 @@ export function buildCrewPersonas({ moneyRead = null, moneyAgents = [], discover
   const joinedMoneyAgents = moneyRead == null ? moneyAgents : moneyRead?.agents
   for (const agent of Array.isArray(joinedMoneyAgents) ? joinedMoneyAgents : []) {
     if (typeof agent?.address !== 'string') continue
-    const discoveryRow = discoveryByAddress.get(agent.address)
+    const agentIdentityKey = agent?.identity?.allocationId ?? agent?.identity?.runId
+    const discoveryRow =
+      discoveryByAddress.get(agent.address) ??
+      (typeof agentIdentityKey === 'string' ? discoveryByIdentity.get(agentIdentityKey) : null)
     if (!discoveryRow) continue
 
     const assignment = assignCrewPersona({ networkId, discoveryRow })
@@ -414,14 +518,15 @@ export function buildCrewPersonas({ moneyRead = null, moneyAgents = [], discover
       continue
     }
 
-    if (assignment.state === 'assigned') assignedChildren.push(child)
+    if (child.assignment.state === 'assigned') assignedChildren.push(child)
     else pendingAssignments.push(child)
   }
 
   assignedChildren.sort(compareChildren)
   pendingAssignments.sort(compareChildren)
   const allChildren = [...assignedChildren, ...pendingAssignments]
-  const baseOwnership = markBaseOwnership(allChildren, moneyRead)
+  const confirmedChildren = allChildren.filter((child) => child.identity?.status === 'available')
+  const baseOwnership = markBaseOwnership(confirmedChildren, moneyRead)
   allChildren.forEach(finishChild)
 
   const envelopeIncomplete = ownerCoverageIncomplete(moneyRead) || baseOwnership.incomplete
@@ -460,8 +565,8 @@ export function buildCrewPersonas({ moneyRead = null, moneyAgents = [], discover
     status,
     personas,
     pendingAssignments,
-    productiveAgentCount: assignedChildren.length + pendingAssignments.length,
+    productiveAgentCount: confirmedChildren.length,
     activeCount: assignedChildren.filter((child) => child.active).length,
-    totals: sumAmounts(allChildren.flatMap((child) => child.workingTotals)),
+    totals: sumAmounts(confirmedChildren.flatMap((child) => child.workingTotals)),
   }
 }

@@ -1,0 +1,328 @@
+/* Secondary CAP-17 dialog content. The Foundation Dialog owns the overlay, panel geometry,
+ * focus containment, body isolation, radius, and reduced-motion contract. These selectors only
+ * arrange the existing developer/skill content inside that shared shell. */
+
+.secondary-dialog {
+  z-index: var(--pc-z-overlay);
+}
+
+.secondary-dialog .pc-dialog-panel {
+  z-index: var(--pc-z-dialog);
+  min-width: 0;
+  color: var(--pc-ink);
+}
+
+.secondary-dialog .pc-dialog-body {
+  min-width: 0;
+}
+
+.secondary-dialog .pc-dialog-actions {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.secondary-dialog .pc-dialog-actions > .btn {
+  min-height: 44px;
+}
+
+.secondary-dialog--wide .pc-dialog-panel {
+  width: min(100%, 520px);
+}
+
+.secondary-dialog--compact .pc-dialog-panel {
+  width: min(100%, 420px);
+}
+
+.secondary-dialog--drawer .pc-dialog-panel {
+  width: min(100%, 560px);
+}
+
+.secondary-dialog-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+  margin-bottom: var(--pc-space-3);
+  color: var(--pc-muted);
+  font-size: 0.75rem;
+}
+
+.secondary-dialog-close {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: var(--pc-space-2);
+  color: var(--pc-muted);
+}
+
+.secondary-dialog-close:hover {
+  color: var(--pc-ink);
+}
+
+.secondary-dialog-fieldset {
+  display: grid;
+  gap: var(--pc-space-2);
+  margin-top: var(--pc-space-5);
+}
+
+.secondary-dialog-fieldset:first-child {
+  margin-top: 0;
+}
+
+.secondary-dialog-fieldset > .section-title {
+  color: var(--pc-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: -0.01em;
+}
+
+.secondary-dialog-option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--pc-space-2);
+}
+
+.secondary-dialog-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2);
+}
+
+.secondary-dialog-scope-list {
+  min-width: 0;
+}
+
+.secondary-dialog-scope-list .perm-doc-row {
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+}
+
+.secondary-dialog-error {
+  margin-top: var(--pc-space-4);
+}
+
+.secondary-dialog-copy,
+.secondary-dialog-secret-note {
+  color: var(--pc-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.secondary-dialog-copy {
+  margin: var(--pc-space-4) 0 0;
+}
+
+.secondary-dialog-secret-note {
+  margin: 0 0 var(--pc-space-4);
+}
+
+.secondary-dialog-secret {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.secondary-dialog-secret-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2);
+  margin-top: var(--pc-space-3);
+}
+
+.secondary-dialog-secret-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pc-space-2);
+  margin-top: var(--pc-space-4);
+  color: var(--pc-muted);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.secondary-dialog-secret-ack input {
+  flex: none;
+  margin-top: 0.2rem;
+}
+
+.secondary-dialog-drawer-body {
+  display: grid;
+  gap: var(--pc-space-4);
+}
+
+.secondary-dialog-drawer-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pc-space-3);
+  width: 100%;
+  padding: var(--pc-space-3);
+  border: 1px solid var(--border);
+  color: inherit;
+  text-align: left;
+}
+
+.secondary-dialog-drawer-option.is-selected {
+  border-color: var(--border-accent);
+  background: var(--accent-soft);
+}
+
+.secondary-dialog-drawer-radio {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.secondary-dialog-drawer-option.is-selected .secondary-dialog-drawer-radio {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--bg-card);
+  background: var(--accent);
+}
+
+.secondary-dialog-drawer-option-main {
+  display: grid;
+  gap: var(--pc-space-1);
+  min-width: 0;
+}
+
+.secondary-dialog-drawer-option-title {
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.secondary-dialog-drawer-option-description {
+  color: var(--pc-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.secondary-dialog-drawer-option-meta,
+.secondary-dialog-drawer-hint {
+  color: var(--pc-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.secondary-dialog-drawer-custom {
+  display: grid;
+  gap: var(--pc-space-2);
+}
+
+.secondary-dialog-drawer-textarea {
+  width: 100%;
+  min-height: 10rem;
+  resize: vertical;
+}
+
+.secondary-dialog-skill-section {
+  margin-top: var(--pc-space-4);
+}
+
+.secondary-dialog-skill-section:first-child {
+  margin-top: 0;
+}
+
+.secondary-dialog-skill-label {
+  margin-bottom: var(--pc-space-2);
+  color: var(--pc-faint);
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.secondary-dialog-skill-value {
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.secondary-dialog-skill-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin-top: var(--pc-space-1);
+  color: var(--pc-muted);
+  font-size: 0.6875rem;
+}
+
+.secondary-dialog-skill-link {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.secondary-dialog-skill-link:hover {
+  text-decoration: underline;
+}
+
+.secondary-dialog-skill-step {
+  display: flex;
+  gap: var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: 0.78125rem;
+  line-height: 1.8;
+}
+
+.secondary-dialog-skill-step-number {
+  flex: none;
+  min-width: 1rem;
+  color: var(--pc-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.secondary-dialog-skill-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+  padding: var(--pc-space-1) 0;
+  color: var(--pc-muted);
+  font-size: 0.75rem;
+}
+
+.secondary-dialog-skill-row .mono {
+  color: var(--pc-ink);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.secondary-dialog-skill-status {
+  margin-top: var(--pc-space-4);
+}
+
+@media (max-width: 767px) {
+  .secondary-dialog .pc-dialog-actions {
+    align-items: stretch;
+  }
+
+  .secondary-dialog .pc-dialog-actions > .btn {
+    width: 100%;
+  }
+
+  .secondary-dialog-option-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .secondary-dialog-skill-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--pc-space-1);
+  }
+
+  .secondary-dialog-skill-row .mono {
+    text-align: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .secondary-dialog,
+  .secondary-dialog * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

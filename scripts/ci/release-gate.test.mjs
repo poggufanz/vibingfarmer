@@ -136,7 +136,14 @@ function parseYamlSubset(text) {
   }
 
   function assignValue(obj, key, rest, indent) {
-    if (rest === '|' || rest === '|-' || rest === '|+' || rest === '>' || rest === '>-' || rest === '>+') {
+    if (
+      rest === '|' ||
+      rest === '|-' ||
+      rest === '|+' ||
+      rest === '>' ||
+      rest === '>-' ||
+      rest === '>+'
+    ) {
       const style = rest[0]
       const lines = []
       while (pos < tokens.length && tokens[pos].indent > indent) {
@@ -191,7 +198,11 @@ function parseYamlSubset(text) {
       const continuationIndent = indent + 2
       pos++
       if (after === '') {
-        result.push(pos < tokens.length && tokens[pos].indent > indent ? parseBlock(tokens[pos].indent) : null)
+        result.push(
+          pos < tokens.length && tokens[pos].indent > indent
+            ? parseBlock(tokens[pos].indent)
+            : null,
+        )
         continue
       }
       const colonIdx = findTopLevelColon(after)
@@ -241,7 +252,7 @@ function assertUnfiltered(trigger, label, { allowBranches = false } = {}) {
     assert.equal(
       Object.prototype.hasOwnProperty.call(trigger, key),
       false,
-      `${label} trigger must not use narrowing key "${key}"`
+      `${label} trigger must not use narrowing key "${key}"`,
     )
   }
 }
@@ -285,7 +296,10 @@ test('evaluateReleaseGate: fails when any single required job is not successful'
         needs[job] = { result }
         const { ok, failures } = evaluateReleaseGate(needs)
         assert.equal(ok, false)
-        assert.equal(failures.some((f) => f.includes(job)), true)
+        assert.equal(
+          failures.some((f) => f.includes(job)),
+          true,
+        )
       })
     }
   }
@@ -296,7 +310,10 @@ test('evaluateReleaseGate: fails when a required job is entirely missing from ne
   delete needs.soroban
   const { ok, failures } = evaluateReleaseGate(needs)
   assert.equal(ok, false)
-  assert.equal(failures.some((f) => f.includes('soroban')), true)
+  assert.equal(
+    failures.some((f) => f.includes('soroban')),
+    true,
+  )
 })
 
 test('evaluateReleaseGate: reports every failing job, not just the first', () => {
@@ -329,7 +346,10 @@ test('evaluateReleaseGate: error handling — a required job entry missing `resu
   needs.playwright = {}
   const { ok, failures } = evaluateReleaseGate(needs)
   assert.equal(ok, false)
-  assert.equal(failures.some((f) => f.includes('playwright')), true)
+  assert.equal(
+    failures.some((f) => f.includes('playwright')),
+    true,
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -342,11 +362,11 @@ test('workflow: ordinary push/PR/merge-group triggers are present and the exact 
   assert.ok(Object.prototype.hasOwnProperty.call(workflow.on, 'push'), 'missing push trigger')
   assert.ok(
     Object.prototype.hasOwnProperty.call(workflow.on, 'pull_request'),
-    'missing pull_request trigger'
+    'missing pull_request trigger',
   )
   assert.ok(
     Object.prototype.hasOwnProperty.call(workflow.on, 'merge_group'),
-    'missing merge_group trigger'
+    'missing merge_group trigger',
   )
   assert.deepEqual(workflow.on.push.branches, ['main', 'dev'])
   assert.deepEqual(workflow.on.push.tags, ['v1.15.2-beta'])
@@ -358,8 +378,9 @@ test('workflow: the exact candidate tag push runs required identity verification
   const workflow = loadWorkflow()
   const claimEvidence = workflow.jobs['claim-evidence']
   const candidateStep = claimEvidence.steps.find(
-    (step) => step.name === 'Verify exact candidate tag and Cloudflare preview identity' &&
-      step.if === "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'"
+    (step) =>
+      step.name === 'Verify exact candidate tag and Cloudflare preview identity' &&
+      step.if === "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'",
   )
   assert.ok(candidateStep, 'exact candidate tag push must have an automatic verification step')
   assert.equal(candidateStep.env.CANDIDATE_VERIFICATION_MODE, 'required')
@@ -369,11 +390,16 @@ test('workflow: the exact candidate tag push runs required identity verification
   assert.ok(candidateStep.env.CLOUDFLARE_API_TOKEN)
 
   const dispatchStep = claimEvidence.steps.find(
-    (step) => step.name === 'Verify manually supplied candidate tag and Cloudflare preview identity'
+    (step) =>
+      step.name === 'Verify manually supplied candidate tag and Cloudflare preview identity',
   )
   assert.ok(dispatchStep, 'manual verification may remain as an operator convenience')
   assert.equal(dispatchStep.if, "github.event_name == 'workflow_dispatch'")
-  assert.notEqual(candidateStep.if, dispatchStep.if, 'workflow_dispatch cannot be the only candidate proof path')
+  assert.notEqual(
+    candidateStep.if,
+    dispatchStep.if,
+    'workflow_dispatch cannot be the only candidate proof path',
+  )
   assert.equal(workflow.on.workflow_dispatch.inputs.candidate_preview_url.required, false)
 })
 
@@ -382,11 +408,11 @@ test('workflow: exact candidate tag restores the remote annotated tag object bef
   const steps = workflow.jobs['claim-evidence'].steps
   const checkoutIdx = steps.findIndex((step) => step.uses === 'actions/checkout@v4')
   const restoreIdx = steps.findIndex(
-    (step) => step.name === 'Restore exact candidate annotated tag object'
+    (step) => step.name === 'Restore exact candidate annotated tag object',
   )
   const firstClaimIdx = steps.findIndex(
     (step) =>
-      typeof step.run === 'string' && step.run.includes('node scripts/ci/claim-evidence.mjs')
+      typeof step.run === 'string' && step.run.includes('node scripts/ci/claim-evidence.mjs'),
   )
 
   assert.ok(checkoutIdx !== -1, 'claim-evidence must check out the repository first')
@@ -395,23 +421,23 @@ test('workflow: exact candidate tag restores the remote annotated tag object bef
   assert.ok(checkoutIdx < restoreIdx, 'tag restoration must run after checkout')
   assert.ok(
     restoreIdx < firstClaimIdx,
-    'tag restoration must run before any claim-evidence CLI invocation'
+    'tag restoration must run before any claim-evidence CLI invocation',
   )
 
   const restoreStep = steps[restoreIdx]
   assert.equal(
     restoreStep.if,
-    "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'"
+    "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'",
   )
   assert.match(String(restoreStep.run), /git fetch\s+--force\s+--no-tags\s+origin/)
   assert.match(
     String(restoreStep.run),
-    /refs\/tags\/\$\{\{ github\.ref_name \}\}:refs\/tags\/\$\{\{ github\.ref_name \}\}/
+    /refs\/tags\/\$\{\{ github\.ref_name \}\}:refs\/tags\/\$\{\{ github\.ref_name \}\}/,
   )
   assert.match(String(restoreStep.run), /git cat-file -t/)
   assert.match(
     String(restoreStep.run),
-    /test "\$\(git rev-parse refs\/tags\/\$\{\{ github\.ref_name \}\}\^\{commit\}\)" = "\$\{\{ github\.sha \}\}"/
+    /test "\$\(git rev-parse refs\/tags\/\$\{\{ github\.ref_name \}\}\^\{commit\}\)" = "\$\{\{ github\.sha \}\}"/,
   )
 })
 
@@ -420,19 +446,19 @@ test('workflow: generic claim validation skips only the exact candidate tag push
   const steps = workflow.jobs['claim-evidence'].steps
   const genericStep = steps.find((step) => step.name === 'Validate claim evidence and freeze')
   const candidateStep = steps.find(
-    (step) => step.name === 'Verify exact candidate tag and Cloudflare preview identity'
+    (step) => step.name === 'Verify exact candidate tag and Cloudflare preview identity',
   )
 
   assert.ok(genericStep, 'claim-evidence must retain generic claim validation')
   assert.equal(
     genericStep.if,
     "github.event_name != 'push' || github.ref != 'refs/tags/v1.15.2-beta'",
-    'generic validation must skip only the exact candidate tag push'
+    'generic validation must skip only the exact candidate tag push',
   )
   assert.ok(candidateStep, 'dedicated exact-candidate verification must remain present')
   assert.equal(
     candidateStep.if,
-    "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'"
+    "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'",
   )
 })
 
@@ -441,7 +467,11 @@ test('workflow: pull_request/merge_group narrowed by `branches` would not prove 
   // merge_group must be rejected even though the same key is fine on push.
   assert.throws(() => assertUnfiltered({ branches: ['main'] }, 'pull_request'))
   assert.throws(() => assertUnfiltered({ branches: ['main'] }, 'merge_group'))
-  assert.doesNotThrow(() => assertUnfiltered({ branches: ['main', 'dev'] }, 'push', { allowBranches: true }))
+  assert.doesNotThrow(() =>
+    assertUnfiltered({ branches: ['main', 'dev'] }, 'push', {
+      allowBranches: true,
+    }),
+  )
 })
 
 test('workflow: every required job for the release gate exists and always reports (no job-level `if`)', () => {
@@ -451,7 +481,7 @@ test('workflow: every required job for the release gate exists and always report
     assert.equal(
       Object.prototype.hasOwnProperty.call(workflow.jobs[job], 'if'),
       false,
-      `jobs.${job} must not have a job-level "if" — it must always report a result for the gate`
+      `jobs.${job} must not have a job-level "if" — it must always report a result for the gate`,
     )
   }
 })
@@ -459,7 +489,11 @@ test('workflow: every required job for the release gate exists and always report
 test('workflow: no blocking check anywhere uses the continue-on-error key at all', () => {
   const workflow = loadWorkflow()
   const hits = findAllContinueOnErrorKeys(workflow.jobs)
-  assert.deepEqual(hits, [], 'no step or job in this workflow may use continue-on-error, in any form')
+  assert.deepEqual(
+    hits,
+    [],
+    'no step or job in this workflow may use continue-on-error, in any form',
+  )
 })
 
 test('workflow: release-gate needs every required job, including claim evidence, and runs with if: always()', () => {
@@ -490,7 +524,7 @@ test('workflow: claim-evidence runs at repository root with full history, Node 2
   assert.equal(setupNode.with?.['node-version'], 22)
 
   const testStep = job.steps.find(
-    (step) => typeof step.run === 'string' && step.run.includes('claim-evidence.test.mjs')
+    (step) => typeof step.run === 'string' && step.run.includes('claim-evidence.test.mjs'),
   )
   assert.ok(testStep, 'claim-evidence must run its validator and gate tests')
   assert.match(testStep.run, /public-claim-scan\.test\.mjs/)
@@ -498,7 +532,7 @@ test('workflow: claim-evidence runs at repository root with full history, Node 2
 
   assert.ok(
     job.steps.some((step) => step.run === 'node scripts/ci/public-claim-scan.mjs'),
-    'claim-evidence must run the public claim scanner'
+    'claim-evidence must run the public claim scanner',
   )
   const claimStep = job.steps.find((step) => step.run === 'node scripts/ci/claim-evidence.mjs')
   assert.ok(claimStep, 'claim-evidence must run the claim validator')
@@ -518,9 +552,15 @@ test('workflow: published releases invoke claim-evidence before release-gate and
   assert.ok(claimEvidence, 'claim-evidence must run for release events')
   assert.equal(Object.prototype.hasOwnProperty.call(claimEvidence, 'if'), false)
   assert.ok(workflow.jobs['release-gate'].needs.includes('claim-evidence'))
-  const claimStep = claimEvidence.steps.find((step) => step.run === 'node scripts/ci/claim-evidence.mjs')
+  const claimStep = claimEvidence.steps.find(
+    (step) => step.run === 'node scripts/ci/claim-evidence.mjs',
+  )
   assert.ok(claimStep, 'release events must execute the claim CLI')
-  assert.equal(claimStep.env?.GITHUB_EVENT_NAME, undefined, 'GitHub must provide the real release event name')
+  assert.equal(
+    claimStep.env?.GITHUB_EVENT_NAME,
+    undefined,
+    'GitHub must provide the real release event name',
+  )
   assert.equal(workflow.jobs.deploy.needs, 'release-gate')
   assert.match(String(workflow.jobs.deploy.if), /github\.event_name == .release./)
 })
@@ -557,7 +597,7 @@ test('workflow: production deploy targets a protected GitHub environment', () =>
   assert.ok(deploy.environment, 'jobs.deploy.environment must be set')
   assert.ok(
     String(deploy.environment).includes('production'),
-    'jobs.deploy.environment must resolve to "production" for the main branch'
+    'jobs.deploy.environment must resolve to "production" for the main branch',
   )
 })
 
@@ -565,47 +605,58 @@ test('workflow: deploy runs a non-secret readiness step before the traffic-shift
   const workflow = loadWorkflow()
   const deploy = workflow.jobs.deploy
   const steps = deploy.steps
-  const wranglerIdx = steps.findIndex((s) => s.uses && s.uses.startsWith('cloudflare/wrangler-action'))
+  const wranglerIdx = steps.findIndex(
+    (s) => s.uses && s.uses.startsWith('cloudflare/wrangler-action'),
+  )
   assert.ok(wranglerIdx > 0, 'deploy must have a wrangler-action step')
   const readinessIdx = steps.findIndex(
-    (s) => typeof s.run === 'string' && !s.env && /test -f|readiness/i.test(s.name ?? s.run)
+    (s) => typeof s.run === 'string' && !s.env && /test -f|readiness/i.test(s.name ?? s.run),
   )
-  assert.ok(readinessIdx !== -1 && readinessIdx < wranglerIdx, 'a non-secret readiness step must run before the wrangler deploy step')
+  assert.ok(
+    readinessIdx !== -1 && readinessIdx < wranglerIdx,
+    'a non-secret readiness step must run before the wrangler deploy step',
+  )
 })
 
 test('workflow: deploy migrates each D1 environment before its matching Pages publish', () => {
   const workflow = loadWorkflow()
   const deploy = workflow.jobs.deploy
   const steps = deploy.steps
-  const previewCondition = 'github.event_name == \'push\' && github.ref_type == \'branch\' && github.ref_name != \'main\''
-  const productionCondition = 'github.event_name == \'release\' || github.ref_name == \'main\''
+  const previewCondition =
+    "github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main'"
+  const productionCondition = "github.event_name == 'release' || github.ref_name == 'main'"
 
   // Keep the protected production approval boundary and the branch-to-environment mapping intact.
   assert.equal(
     deploy.environment,
-    "${{ (github.event_name == 'release' || github.ref_name == 'main') && 'production' || 'preview' }}"
+    "${{ (github.event_name == 'release' || github.ref_name == 'main') && 'production' || 'preview' }}",
   )
 
   const previewMigrationIdx = steps.findIndex((step) => step.run === 'npm run d1:migrate:preview')
-  const productionMigrationIdx = steps.findIndex((step) => step.run === 'npm run d1:migrate:production')
+  const productionMigrationIdx = steps.findIndex(
+    (step) => step.run === 'npm run d1:migrate:production',
+  )
   const clearPreviewConfigIdx = steps.findIndex(
-    (step) => step.run === 'node scripts/runtime-config.mjs clear-preview-config'
+    (step) => step.run === 'node scripts/runtime-config.mjs clear-preview-config',
   )
   const previewDeployIdx = steps.findIndex(
     (step) =>
       step.uses?.startsWith('cloudflare/wrangler-action') &&
       step.if === previewCondition &&
-      String(step.with?.command).startsWith('pages deploy ')
+      String(step.with?.command).startsWith('pages deploy '),
   )
   const productionDeployIdx = steps.findIndex(
     (step) =>
       step.uses?.startsWith('cloudflare/wrangler-action') &&
       step.if === productionCondition &&
-      String(step.with?.command).startsWith('pages deploy ')
+      String(step.with?.command).startsWith('pages deploy '),
   )
 
   assert.ok(previewMigrationIdx !== -1, 'preview deploy must run npm run d1:migrate:preview')
-  assert.ok(productionMigrationIdx !== -1, 'production deploy must run npm run d1:migrate:production')
+  assert.ok(
+    productionMigrationIdx !== -1,
+    'production deploy must run npm run d1:migrate:production',
+  )
   assert.equal(steps[previewMigrationIdx].if, previewCondition)
   assert.equal(steps[productionMigrationIdx].if, productionCondition)
   assert.ok(previewDeployIdx !== -1, 'preview deploy must publish Pages')
@@ -613,15 +664,15 @@ test('workflow: deploy migrates each D1 environment before its matching Pages pu
   assert.ok(clearPreviewConfigIdx !== -1, 'production deploy must clear preview config redirect')
   assert.ok(
     previewMigrationIdx < previewDeployIdx,
-    'preview D1 migrations must finish before preview Pages Functions are published'
+    'preview D1 migrations must finish before preview Pages Functions are published',
   )
   assert.ok(
     productionMigrationIdx < productionDeployIdx,
-    'production D1 migrations must finish before production Pages Functions are published'
+    'production D1 migrations must finish before production Pages Functions are published',
   )
   assert.ok(
     productionMigrationIdx < clearPreviewConfigIdx && clearPreviewConfigIdx < productionDeployIdx,
-    'preview config redirect must be cleared inside the production deployment boundary'
+    'preview config redirect must be cleared inside the production deployment boundary',
   )
 
   assert.equal(steps[previewDeployIdx].if, previewCondition)
@@ -637,9 +688,9 @@ test('workflow: deploy migrates each D1 environment before its matching Pages pu
     steps.some(
       (step) =>
         step.uses?.startsWith('cloudflare/wrangler-action') &&
-        step.with?.command === 'd1 migrations apply vf-gate --remote'
+        step.with?.command === 'd1 migrations apply vf-gate --remote',
     ),
-    false
+    false,
   )
 })
 
@@ -650,13 +701,38 @@ test('workflow: playwright upload-artifact path is a scalar naming both report d
   const workflow = loadWorkflow()
   const playwrightJob = workflow.jobs.playwright
   const uploadStep = playwrightJob.steps.find(
-    (s) => s.uses && s.uses.startsWith('actions/upload-artifact')
+    (s) => s.uses && s.uses.startsWith('actions/upload-artifact'),
   )
   assert.ok(uploadStep, 'playwright job must have an upload-artifact step')
   const pathValue = uploadStep.with.path
-  assert.equal(typeof pathValue, 'string', 'upload-artifact `path` input must be a scalar string, not a list')
-  assert.ok(pathValue.includes('frontend/playwright-report'), 'path must include the Playwright HTML report dir')
-  assert.ok(pathValue.includes('frontend/test-results'), 'path must include the Playwright test-results dir (screenshots/traces)')
+  assert.equal(
+    typeof pathValue,
+    'string',
+    'upload-artifact `path` input must be a scalar string, not a list',
+  )
+  assert.ok(
+    pathValue.includes('frontend/playwright-report'),
+    'path must include the Playwright HTML report dir',
+  )
+  assert.ok(
+    pathValue.includes('frontend/test-results'),
+    'path must include the Playwright test-results dir (screenshots/traces)',
+  )
+})
+
+test('workflow: CI Playwright keeps browser assertions while opting out of pixel comparisons', () => {
+  const workflow = loadWorkflow()
+  const playwrightJob = workflow.jobs.playwright
+  const visualStep = playwrightJob.steps.find(
+    (step) => typeof step.run === 'string' && step.run.includes('npm run test:visual'),
+  )
+
+  assert.ok(visualStep, 'playwright job must run the visual Playwright suite')
+  assert.equal(
+    visualStep.run.trim(),
+    'npm run test:visual -- --ignore-snapshots',
+    'CI must use Playwright’s official snapshot-ignore flag, preserving all non-pixel assertions',
+  )
 })
 
 // Final review, Fix 4: an uncached from-source `cargo install` of stellar-cli took ~15 min with no
@@ -670,21 +746,24 @@ test('workflow: soroban caches the stellar-cli install and actually asserts the 
   assert.ok(cacheStep, 'soroban must cache the cargo-installed stellar-cli binary')
   assert.ok(
     typeof cacheStep.with?.path === 'string' && cacheStep.with.path.includes('.cargo/bin'),
-    'the cache must cover ~/.cargo/bin, where cargo install places the stellar-cli binary'
+    'the cache must cover ~/.cargo/bin, where cargo install places the stellar-cli binary',
   )
   const installIdx = job.steps.findIndex(
-    (s) => typeof s.run === 'string' && s.run.includes('cargo install')
+    (s) => typeof s.run === 'string' && s.run.includes('cargo install'),
   )
   const cacheIdx = job.steps.indexOf(cacheStep)
-  assert.ok(cacheIdx !== -1 && cacheIdx < installIdx, 'the cache step must run before the install step')
+  assert.ok(
+    cacheIdx !== -1 && cacheIdx < installIdx,
+    'the cache step must run before the install step',
+  )
 
   const verifyStep = job.steps.find(
-    (s) => typeof s.run === 'string' && s.run.includes('rustc --version')
+    (s) => typeof s.run === 'string' && s.run.includes('rustc --version'),
   )
   assert.ok(verifyStep, 'soroban must have a toolchain-version verification step')
   assert.ok(
     !/rustc --version\s*&&/.test(verifyStep.run),
-    'the verification step must not be a bare print (the old `a && b && c` form asserted nothing)'
+    'the verification step must not be a bare print (the old `a && b && c` form asserted nothing)',
   )
   // Both pins are read back out of the job rather than repeated as literals here. Repeating them
   // made this test a second place to edit on every bump -- and it went red for the bump itself
@@ -692,7 +771,7 @@ test('workflow: soroban caches the stellar-cli install and actually asserts the 
   // it exists to catch. Derived, it still fails on exactly what it always guarded: a verify step
   // that greps a version the job doesn't actually install.
   const toolchainStep = job.steps.find(
-    (s) => typeof s.uses === 'string' && s.uses.startsWith('dtolnay/rust-toolchain@')
+    (s) => typeof s.uses === 'string' && s.uses.startsWith('dtolnay/rust-toolchain@'),
   )
   assert.ok(toolchainStep, 'soroban must install Rust via an exactly pinned dtolnay/rust-toolchain')
   const rustPin = toolchainStep.uses.split('@')[1]
@@ -715,12 +794,12 @@ test('workflow: soroban caches the stellar-cli install and actually asserts the 
     assert.ok(line, `the verification step must check \`${tool} --version\``)
     assert.ok(
       line.includes(pin),
-      `\`${tool} --version\` must be grepped for the version this job actually installs (${pin}), got: ${line}`
+      `\`${tool} --version\` must be grepped for the version this job actually installs (${pin}), got: ${line}`,
     )
   }
   assert.ok(
     typeof cacheStep.with?.key === 'string' && cacheStep.with.key.includes(cliPin),
-    'the cache key must carry the pinned stellar-cli version so a bump cannot restore a stale binary'
+    'the cache key must carry the pinned stellar-cli version so a bump cannot restore a stale binary',
   )
 })
 
@@ -729,14 +808,24 @@ test('workflow: release-gate verifies its own tooling (node --test) before or in
   const releaseGate = workflow.jobs['release-gate']
   const steps = releaseGate.steps
   const selfTestIdx = steps.findIndex(
-    (s) => typeof s.run === 'string' && s.run.includes('node --test') && s.run.includes('release-gate.test.mjs')
+    (s) =>
+      typeof s.run === 'string' &&
+      s.run.includes('node --test') &&
+      s.run.includes('release-gate.test.mjs'),
   )
   const evaluateIdx = steps.findIndex(
-    (s) => typeof s.run === 'string' && s.run.includes('release-gate.mjs') && !s.run.includes('--test')
+    (s) =>
+      typeof s.run === 'string' && s.run.includes('release-gate.mjs') && !s.run.includes('--test'),
   )
-  assert.ok(selfTestIdx !== -1, 'release-gate must run `node --test scripts/ci/release-gate.test.mjs`')
+  assert.ok(
+    selfTestIdx !== -1,
+    'release-gate must run `node --test scripts/ci/release-gate.test.mjs`',
+  )
   assert.ok(evaluateIdx !== -1, 'release-gate must still evaluate the gate itself')
-  assert.ok(selfTestIdx < evaluateIdx, 'the self-test must run before gate evaluation, so a broken workflow structure fails loudly')
+  assert.ok(
+    selfTestIdx < evaluateIdx,
+    'the self-test must run before gate evaluation, so a broken workflow structure fails loudly',
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -745,12 +834,18 @@ test('workflow: release-gate verifies its own tooling (node --test) before or in
 // ---------------------------------------------------------------------------
 
 function runCli(env) {
-  return spawnSync(process.execPath, [releaseGateScript], { env, encoding: 'utf8' })
+  return spawnSync(process.execPath, [releaseGateScript], {
+    env,
+    encoding: 'utf8',
+  })
 }
 
 test('CLI: exits 0 when all required jobs succeed (via NEEDS_CONTEXT)', () => {
   const needs = Object.fromEntries(REQUIRED_JOBS.map((job) => [job, { result: 'success' }]))
-  const result = runCli({ ...process.env, NEEDS_CONTEXT: JSON.stringify(needs) })
+  const result = runCli({
+    ...process.env,
+    NEEDS_CONTEXT: JSON.stringify(needs),
+  })
   assert.equal(result.status, 0)
   assert.match(result.stdout, /release-gate OK/)
 })
@@ -758,7 +853,10 @@ test('CLI: exits 0 when all required jobs succeed (via NEEDS_CONTEXT)', () => {
 test('CLI: exits non-zero when a required job did not succeed', () => {
   const needs = Object.fromEntries(REQUIRED_JOBS.map((job) => [job, { result: 'success' }]))
   needs.soroban = { result: 'failure' }
-  const result = runCli({ ...process.env, NEEDS_CONTEXT: JSON.stringify(needs) })
+  const result = runCli({
+    ...process.env,
+    NEEDS_CONTEXT: JSON.stringify(needs),
+  })
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /release-gate FAILED/)
 })
@@ -784,6 +882,9 @@ test('CLI: the entrypoint guard actually runs main() (regression guard for the f
   // the real script as a subprocess (rather than importing it) is what actually exercises this
   // guard the way CI does.
   const needs = Object.fromEntries(REQUIRED_JOBS.map((job) => [job, { result: 'success' }]))
-  const result = runCli({ ...process.env, NEEDS_CONTEXT: JSON.stringify(needs) })
+  const result = runCli({
+    ...process.env,
+    NEEDS_CONTEXT: JSON.stringify(needs),
+  })
   assert.notEqual(result.stdout.trim(), '', 'main() must actually run and print something')
 })

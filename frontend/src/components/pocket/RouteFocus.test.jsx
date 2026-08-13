@@ -142,6 +142,52 @@ describe('RouteFocus', () => {
     document.body.removeChild(input)
   })
 
+  it('retries a missing route target only a bounded number of frames and cancels on unmount', () => {
+    const originalRequestAnimationFrame = window.requestAnimationFrame
+    const originalCancelAnimationFrame = window.cancelAnimationFrame
+    const callbacks = new Map()
+    let nextFrameId = 0
+
+    window.requestAnimationFrame = vi.fn((callback) => {
+      const frameId = ++nextFrameId
+      callbacks.set(frameId, callback)
+      return frameId
+    })
+    window.cancelAnimationFrame = vi.fn((frameId) => {
+      callbacks.delete(frameId)
+    })
+
+    try {
+      const warmup = render(<RouteFocus pathname="/warmup" />)
+      warmup.unmount()
+      window.requestAnimationFrame.mockClear()
+
+      const view = render(<RouteFocus pathname="/agent" />)
+      expect(window.requestAnimationFrame).toHaveBeenCalledTimes(1)
+
+      // Drive every queued retry while no route landmark exists. A bounded implementation must
+      // stop scheduling after its finite retry budget instead of spinning forever.
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const frame = callbacks.values().next().value
+        if (!frame) break
+        const frameId = callbacks.keys().next().value
+        callbacks.delete(frameId)
+        frame()
+      }
+      expect(window.requestAnimationFrame.mock.calls.length).toBeLessThanOrEqual(4)
+
+      // A pending retry is cancelled when the route-focus component unmounts.
+      const pending = render(<RouteFocus pathname="/settings" />)
+      expect(window.requestAnimationFrame).toHaveBeenCalled()
+      pending.unmount()
+      expect(window.cancelAnimationFrame).toHaveBeenCalled()
+      view.unmount()
+    } finally {
+      window.requestAnimationFrame = originalRequestAnimationFrame
+      window.cancelAnimationFrame = originalCancelAnimationFrame
+    }
+  })
+
   it('has zero axe violations', async () => {
     const { container } = render(<Shell pathname="/home" />)
     expect(await axe(container)).toHaveNoViolations()

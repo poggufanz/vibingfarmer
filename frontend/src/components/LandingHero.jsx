@@ -67,7 +67,7 @@ const CAPITAL_PATH = [
 const landingEaseOut = [0.23, 1, 0.32, 1]
 const heroTransition = { duration: 0.5, ease: landingEaseOut }
 const revealTransition = { duration: 0.4, ease: landingEaseOut }
-const reducedRevealTransition = { duration: 0.2, ease: landingEaseOut }
+const reducedRevealTransition = { duration: 0 }
 
 const capitalPathVariants = {
   hidden: {},
@@ -81,7 +81,7 @@ function Reveal({ children, className = '', delay = 0, rise = false }) {
   return (
     <motion.div
       className={className}
-      initial={{ opacity: 0, transform }}
+      initial={reduceMotion ? false : { opacity: 0, transform }}
       whileInView={{ opacity: 1, transform: 'translateY(0px)' }}
       viewport={{ once: true, amount: 0.18 }}
       transition={{
@@ -112,7 +112,7 @@ function CapitalPath() {
     <motion.div
       className="vf-capital-path"
       variants={capitalPathVariants}
-      initial="hidden"
+      initial={reduceMotion ? false : 'hidden'}
       whileInView="visible"
       viewport={{ once: true, amount: 0.3 }}
     >
@@ -167,10 +167,10 @@ function Hero({ onStart, reduceMotion }) {
   }
 
   return (
-    <header className="vf-hero" data-xray>
+    <header className="vf-hero" data-landing-section="Hero">
       <motion.div
         className="vf-hero__copy"
-        initial="hidden"
+        initial={reduceMotion ? false : 'hidden'}
         animate="visible"
         variants={{
           hidden: {},
@@ -200,7 +200,7 @@ function Hero({ onStart, reduceMotion }) {
 
       <motion.div
         className="vf-hero__media"
-        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, transform: 'translateX(32px)' }}
+        initial={reduceMotion ? false : { opacity: 0, transform: 'translateX(32px)' }}
         animate={{ opacity: 1, transform: 'translateX(0px)' }}
         transition={reduceMotion ? reducedRevealTransition : { ...heroTransition, delay: 0.16 }}
       >
@@ -241,7 +241,7 @@ function Hero({ onStart, reduceMotion }) {
 
 function ProofStrip() {
   return (
-    <section className="vf-proof" aria-label="Product facts">
+    <section className="vf-proof" data-landing-section="ProofStrip" aria-label="Product facts">
       {PROOF.map((item) => (
         <div className="vf-proof__item" key={item.label}>
           <strong>{item.value}</strong>
@@ -254,7 +254,11 @@ function ProofStrip() {
 
 function ProblemSection() {
   return (
-    <section className="vf-section vf-problem" aria-labelledby="problem-title">
+    <section
+      className="vf-section vf-problem"
+      data-landing-section="ProblemSection"
+      aria-labelledby="problem-title"
+    >
       <Reveal className="vf-problem__statement" rise>
         <p className="vf-kicker">Why it exists</p>
         <h2 id="problem-title">Yield farming should not feel like clerical work.</h2>
@@ -280,7 +284,12 @@ function ProblemSection() {
 
 function FlowSection() {
   return (
-    <section className="vf-section vf-flow" id="how-it-works" aria-labelledby="flow-title">
+    <section
+      className="vf-section vf-flow"
+      data-landing-section="FlowSection"
+      id="how-it-works"
+      aria-labelledby="flow-title"
+    >
       <Reveal className="vf-flow__intro" rise>
         <h2 id="flow-title">From intent to working capital.</h2>
         <p>
@@ -307,7 +316,11 @@ function FlowSection() {
 
 function BoundsSection() {
   return (
-    <section className="vf-section vf-bounds" aria-labelledby="bounds-title">
+    <section
+      className="vf-section vf-bounds"
+      data-landing-section="BoundsSection"
+      aria-labelledby="bounds-title"
+    >
       <Reveal className="vf-bounds__header" rise>
         <h2 id="bounds-title">Autonomy, with a leash.</h2>
         <p>
@@ -336,7 +349,11 @@ function BoundsSection() {
 
 function IntelligenceSection() {
   return (
-    <section className="vf-section vf-intelligence" aria-labelledby="intelligence-title">
+    <section
+      className="vf-section vf-intelligence"
+      data-landing-section="IntelligenceSection"
+      aria-labelledby="intelligence-title"
+    >
       <Reveal className="vf-intelligence__copy" rise>
         <h2 id="intelligence-title">AI plans. Rules can say no.</h2>
         <p>
@@ -376,7 +393,11 @@ function IntelligenceSection() {
 
 function YieldSection() {
   return (
-    <section className="vf-section vf-yield" aria-labelledby="yield-title">
+    <section
+      className="vf-section vf-yield"
+      data-landing-section="YieldSection"
+      aria-labelledby="yield-title"
+    >
       <Reveal className="vf-yield__lead" rise>
         <p className="vf-kicker">Stellar testnet</p>
         <h2 id="yield-title">Real lending underneath.</h2>
@@ -419,7 +440,11 @@ function YieldSection() {
 
 function RelaySection() {
   return (
-    <section className="vf-section vf-relay" aria-labelledby="relay-title">
+    <section
+      className="vf-section vf-relay"
+      data-landing-section="RelaySection"
+      aria-labelledby="relay-title"
+    >
       <div className="vf-relay__number">
         <strong>Sponsored</strong>
         <span>network fee on sponsored calls</span>
@@ -441,7 +466,11 @@ function RelaySection() {
 
 function ObservabilitySection() {
   return (
-    <section className="vf-section vf-observe" aria-labelledby="observe-title">
+    <section
+      className="vf-section vf-observe"
+      data-landing-section="ObservabilitySection"
+      aria-labelledby="observe-title"
+    >
       <Reveal className="vf-observe__copy" rise>
         <h2 id="observe-title">Watch the swarm work.</h2>
         <p>
@@ -471,7 +500,11 @@ function ObservabilitySection() {
 
 function HonestySection() {
   return (
-    <section className="vf-section vf-honesty" aria-labelledby="honesty-title">
+    <section
+      className="vf-section vf-honesty"
+      data-landing-section="HonestySection"
+      aria-labelledby="honesty-title"
+    >
       <Reveal className="vf-honesty__intro" rise>
         <h2 id="honesty-title">Real where it counts. Clear where it is not.</h2>
         <p>
@@ -558,7 +591,11 @@ function EcosystemBand() {
   )
 
   return (
-    <div className="vf-marquee vf-marquee--logos" aria-hidden="true">
+    <div
+      className="vf-marquee vf-marquee--logos"
+      data-landing-section="EcosystemBand"
+      aria-hidden="true"
+    >
       <div className="vf-marquee__track">
         {sequence('a')}
         {sequence('b')}
@@ -569,7 +606,7 @@ function EcosystemBand() {
 
 function FinalSection({ onStart }) {
   return (
-    <section className="vf-final" aria-labelledby="final-title">
+    <section className="vf-final" data-landing-section="FinalSection" aria-labelledby="final-title">
       <Reveal className="vf-final__inner" rise>
         <p className="vf-final__tagline">Set once. Vibe forever.</p>
         <h2 id="final-title">Set your bounds. Let the system do the work.</h2>

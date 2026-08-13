@@ -13,11 +13,9 @@
  *
  * Not ported here (out of this task's surface, or already covered elsewhere):
  *   - .pc-app-shell, .pc-route-header/-intro: the outer app shell + route chrome belong to the
- *     app frame (Foundation Task 6), not this route's own content. (.pc-route/.pc-route-stack
- *     themselves are NOT Foundation-global -- pocket-crew.css never defines them, only
- *     strategy.css has ported them so far -- so, same as strategy.css, they ARE re-ported below:
- *     MyMoneyRoute.jsx renders both classes directly and a real-browser layout guard caught the
- *     unconstrained-width regression from assuming otherwise.)
+ *     app frame (Foundation Task 6), not this route's own content. Foundation owns the shared
+ *     .pc-route/.pc-route-stack geometry; this file only keeps My Money's mobile safe-area
+ *     adjustment below, so the route does not duplicate the shared declarations.
  *   - .pc-agent-mark(--hero), .pc-money(--loading/--empty/--error/--unknown), .pc-money-stale-flag,
  *     .pc-money-freshness, .pc-status-notice*, .pc-technical-details*, .pc-venue-truth*,
  *     .pc-visually-hidden, the shared :focus-visible rule: already ported into pocket-crew.css
@@ -55,26 +53,42 @@
  *     strategy.css). The extra selectors are inert on this route.
  */
 
-/* Route content wrapper (contract :265-274). Ported here for the same reason `.pc-dominant`/
- * `.pc-button` are below -- pocket-crew.css does not define `.pc-route`/`.pc-route-stack`; only
- * strategy.css has ported them so far, and this route must not depend on that file being loaded. */
-.pc-route {
-  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
-  margin-inline: auto;
-  padding: var(--pc-route-gutter);
-}
-
-.pc-route-stack {
-  display: grid;
-  gap: var(--pc-route-gap);
-}
-
 /* Surface hierarchy. Roles, not a reusable card grid -- pocket-crew.css does not define these
  * (only strategy.css has ported them so far), so this route needs its own copy. Only the ONE role
  * this route's hero actually uses (Rice/owned -- confirmed money) is ported; Harvest/workspace are
  * not used anywhere on this route (the state-aware primary action is a `.pc-button--primary`
  * inside the Rice hero, never a whole Harvest decision surface -- My Money's job is showing
  * confirmed money, not asking a question). */
+.pc-my-money-route {
+  font-size: var(--pc-type-body);
+  line-height: var(--pc-leading-body);
+}
+
+.pc-my-money-route > .pc-route-stack > h1 {
+  margin: 0;
+  font-size: var(--pc-type-page);
+  font-weight: 700;
+  line-height: var(--pc-leading-title);
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.pc-my-money-route .pc-dominant > h2,
+.pc-my-money-route .pc-money-section > header h2 {
+  margin: 0;
+  font-size: var(--pc-type-section);
+  font-weight: 700;
+  line-height: var(--pc-leading-title);
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.pc-my-money-route .pc-money-section > div {
+  display: grid;
+  gap: var(--pc-space-3);
+  min-width: 0;
+}
+
 .pc-dominant {
   position: relative;
   overflow: clip;
@@ -378,6 +392,282 @@
   text-decoration-thickness: 2px;
 }
 
+/* Base unwind overlay. This is a route-owned presentation surface: it deliberately keeps the
+ * confirmation story in Pocket Crew's workspace language while the dialog primitive continues to
+ * own focus, dismissal, and footer geometry. All state is expressed by classes/data attributes,
+ * so the route does not depend on the retired dashboard modal stylesheet or inline declarations. */
+.pc-base-withdraw-head,
+.pc-base-withdraw-body {
+  display: grid;
+  gap: var(--pc-space-4);
+}
+
+.pc-base-withdraw-eyebrow {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pc-base-withdraw-scroll {
+  min-width: 0;
+}
+
+.pc-base-withdraw-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--pc-space-3);
+  padding: var(--pc-space-5);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-dominant);
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+}
+
+.pc-base-withdraw-hero-label,
+.pc-base-withdraw-hero-unit {
+  color: var(--pc-owned-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pc-base-withdraw-hero-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-stage);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 720;
+  letter-spacing: -0.035em;
+  line-height: var(--pc-leading-tight);
+  text-align: right;
+}
+
+.pc-base-withdraw-lede,
+.pc-base-withdraw-footnote {
+  margin: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+}
+
+.pc-base-withdraw-callout,
+.pc-base-withdraw-error {
+  display: grid;
+  gap: var(--pc-space-2);
+  padding: var(--pc-space-4);
+  border: 1px solid var(--pc-line-strong);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+}
+
+.pc-base-withdraw-callout--ok {
+  border-color: var(--pc-harvest);
+}
+
+.pc-base-withdraw-error {
+  border-color: var(--pc-danger);
+  color: var(--pc-danger-on-light);
+}
+
+.pc-base-withdraw-receipt {
+  display: grid;
+  gap: var(--pc-space-1);
+  padding: var(--pc-space-4);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-workspace);
+}
+
+.pc-base-withdraw-receipt-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  gap: var(--pc-space-3);
+  min-width: 0;
+  padding-block: var(--pc-space-2);
+  border-bottom: 1px solid var(--pc-line);
+}
+
+.pc-base-withdraw-receipt-row:last-child {
+  border-bottom: 0;
+}
+
+.pc-base-withdraw-receipt-key {
+  min-width: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.pc-base-withdraw-receipt-value {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--pc-ink);
+  font-family: var(--pc-font-mono);
+  font-size: var(--pc-type-body-small);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.pc-base-withdraw-receipt-value--ok {
+  color: var(--pc-harvest-ink);
+  font-weight: 700;
+}
+
+.pc-base-withdraw-loading {
+  display: grid;
+  gap: var(--pc-space-3);
+  padding: var(--pc-space-4);
+  border: 1px solid var(--pc-line-strong);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-workspace);
+}
+
+.pc-base-withdraw-loading-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  min-width: 0;
+}
+
+.pc-base-withdraw-status-mark,
+.pc-base-withdraw-stage-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: var(--pc-space-2);
+  height: var(--pc-space-2);
+  border: 1px solid currentcolor;
+  border-radius: var(--pc-radius-round);
+  background: currentcolor;
+}
+
+.pc-base-withdraw-status-mark {
+  color: var(--pc-focus);
+}
+
+.pc-base-withdraw-loading-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-base-withdraw-loading-track {
+  height: var(--pc-space-1);
+  overflow: hidden;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-line);
+}
+
+.pc-base-withdraw-loading-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--pc-focus);
+}
+
+.pc-base-withdraw-loading-fill[data-progress='12'] {
+  width: 12%;
+}
+
+.pc-base-withdraw-loading-fill[data-progress='45'] {
+  width: 45%;
+}
+
+.pc-base-withdraw-loading-fill[data-progress='78'] {
+  width: 78%;
+}
+
+.pc-base-withdraw-loading-fill[data-progress='90'] {
+  width: 90%;
+}
+
+.pc-base-withdraw-loading-fill[data-progress='100'] {
+  width: 100%;
+}
+
+.pc-base-withdraw-stage-list {
+  display: grid;
+  gap: var(--pc-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pc-base-withdraw-stage {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--pc-space-2);
+  min-width: 0;
+  min-height: var(--pc-control-height);
+  padding: var(--pc-space-2) var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  color: var(--pc-muted);
+}
+
+.pc-base-withdraw-stage--running {
+  border-color: var(--pc-focus);
+  color: var(--pc-ink);
+}
+
+.pc-base-withdraw-stage--done {
+  color: var(--pc-ink);
+}
+
+.pc-base-withdraw-stage--failed {
+  border-color: var(--pc-danger);
+  color: var(--pc-danger-on-light);
+}
+
+.pc-base-withdraw-stage-label,
+.pc-base-withdraw-stage-hint {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-base-withdraw-stage-hint {
+  color: var(--pc-muted);
+  text-align: right;
+}
+
+.pc-base-withdraw-stage-hint--ok {
+  color: var(--pc-harvest-ink);
+}
+
+.pc-base-withdraw-stage-hint--err {
+  color: var(--pc-danger-on-light);
+}
+
+.pc-base-withdraw-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-base-withdraw-loading-fill,
+  .pc-base-withdraw-status-mark,
+  .pc-base-withdraw-stage-mark {
+    transition: none;
+  }
+}
+
 /* Tablet. Supporting context moves below the dominant surface (contract :800-831, kept whole). */
 @media (max-width: 1023px) {
   .pc-strategy-layout,
@@ -397,23 +687,9 @@
 /* Mobile. Asymmetry collapses to one column and all actions remain reachable (contract :834-914,
  * kept whole). */
 @media (max-width: 767px) {
-  /* MM14 fix round 1 (I-3, reviewer finding): missing from this file until now. This route's own
-   * unconditional `.pc-route { padding: var(--pc-route-gutter) }` (top of file, kept whole) resets
-   * the `padding` SHORTHAND, which zeroes out any `padding-bottom` a later-loaded stylesheet tried
-   * to contribute -- strategy.css carries this exact rule for itself, so whenever both files loaded
-   * on the same page (the visual harness, before its own lazy-load fix) my-money.css's copy, being
-   * a straight shorthand re-declaration, silently deleted Strategy's own 80px bottom gutter on every
-   * `.pc-route` on the page. That is the "~640px" harness conflict a prior task chased and never
-   * identified, and the arithmetic is 10 Strategy `.pc-route`s x 64px, not "80px x 8": the Strategy
-   * fixture renders TEN routes (counted, not assumed -- visual/main.jsx:100), and each loses 64px,
-   * not the full 80, because the shorthand reset returns that one side to the base 16px gutter
-   * (80 - 16 = 64). 10 x 64 = 640, exactly. Same correction visual/main.jsx:101-108 already carries;
-   * this was the last stale copy. That harness interaction is now fully avoided by the lazy-load in
-   * visual/main.jsx, but it was only ever a symptom: this rule is contract-mandated
-   * (contract:845-848) and My Money's OWN mobile surface was missing its safe-area bottom gutter
-   * regardless of any other stylesheet on the page. Measured live at 320 before this fix: My Money
-   * `.pc-route` padding-bottom 16px vs. Strategy's 80px. Verbatim port, not a scoped addition. */
-  .pc-route {
+  /* The shared `.pc-route` base belongs to Foundation. This route-specific safe-area addition
+   * stays on My Money's own wrapper so it cannot redeclare or alter another route's shared gutter. */
+  .pc-my-money-route {
     padding-bottom: calc(var(--pc-space-20) + env(safe-area-inset-bottom));
   }
 
@@ -445,7 +721,7 @@
   }
 
   .pc-money-actions .pc-button,
-  .pc-dialog-actions .pc-button {
+  .pc-money-dialog .pc-dialog-actions .pc-button {
     width: 100%;
   }
 

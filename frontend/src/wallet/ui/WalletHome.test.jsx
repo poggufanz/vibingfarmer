@@ -51,6 +51,15 @@ describe('WalletHome — shell wiring', () => {
     render(<WalletHome account={C_ACCOUNT} onNav={() => {}} />)
     expect(screen.getByTestId('wallet-account-chip').textContent).toContain('Passkey')
   })
+
+  it('keeps an unreadable Passkey balance unavailable and hides unsupported Send', () => {
+    render(
+      <WalletHome account={C_ACCOUNT} onNav={() => {}} portfolio={null} onReceive={() => {}} />
+    )
+    expect(screen.getByText(/unavailable/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^send$/i })).toBeNull()
+    expect(screen.getByText(/send is not available yet/i)).toBeTruthy()
+  })
 })
 
 describe('WalletHome — security/lock state', () => {

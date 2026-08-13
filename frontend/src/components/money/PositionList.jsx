@@ -19,6 +19,14 @@
 // `custodyBreakdown` is checked FIRST for exactly that reason.
 import { MoneyFigure, VenueTruth } from '../pocket/Primitives.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
+import { AgentMark } from '../pocket/AgentMark.jsx'
+import {
+  normalizeCoreAmount,
+  toBaseCustodyTruth,
+  toAgentIdentityView,
+  toFactView,
+  toFreshnessView,
+} from '../../core/coreRouteAdapters.js'
 
 // The one real Stellar execution destination this product ever has (strategy/venueTruth.js:19,
 // frontend/src/config.js:37 -- identical literal, verified against both). Declared locally rather
@@ -28,8 +36,46 @@ import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
 // surface convention StrategyReceipt.jsx already uses for its own local TOKEN_SYMBOLS constant.
 const STELLAR_VAULT_DESTINATION = 'Autofarm Vault to Blend Capital v2'
 
-function unitsToDisplay(units, decimals) {
-  return Number(BigInt(units)) / 10 ** decimals
+function coreAmount(amount) {
+  try {
+    return normalizeCoreAmount(amount)
+  } catch {
+    return null
+  }
+}
+
+function presentationAmount(amount, factView) {
+  const normalized = coreAmount(amount)
+  if (!normalized) return { state: 'unavailable', amount: null, freshness: null }
+  if (!factView?.freshness) return { state: 'current', amount: normalized, freshness: undefined }
+
+  const routeState = factView.freshness.state
+  const state =
+    routeState === 'stale'
+      ? 'stale'
+      : routeState === 'partial' || routeState === 'current' || routeState === 'confirmed'
+        ? 'current'
+        : 'unavailable'
+  if (state === 'unavailable') return { state, amount: null, freshness: factView.freshness }
+  try {
+    const fact = toFactView({
+      state,
+      value: normalized,
+      source: factView.freshness.source,
+      checkedAt: factView.freshness.checkedAt,
+      confirmedLedger: factView.freshness.confirmedLedger,
+      confirmedBlock: factView.freshness.confirmedBlock,
+    })
+    return {
+      state,
+      amount: fact.value,
+      // Partial discovery qualifies the evidence without making an independently-known leg
+      // stale. Keep the source's Partial label while the amount itself remains Current.
+      freshness: routeState === 'partial' ? factView.freshness : toFreshnessView(fact),
+    }
+  } catch {
+    return { state: 'unavailable', amount: null, freshness: factView.freshness }
+  }
 }
 
 function isKnownPositive(amount) {
@@ -53,9 +99,9 @@ function shortAddress(address) {
 // with a sibling's, and its own honesty coverage reason (readOwnerMoney.js's per-leg
 // `coverageReason`: 'stale'|'unavailable'|'dead-letter'|null) renders right next to it.
 const COVERAGE_REASON_COPY = {
-  stale: 'Confirmed evidence is a little older than usual — refreshing.',
-  unavailable: 'Could not reconfirm this round — last known amount shown, not zero.',
-  'dead-letter': 'Delivery report is stuck — needs attention.',
+  stale: 'Confirmed evidence is a little older than usual. Refreshing.',
+  unavailable: 'Could not reconfirm this round. Last known amount shown, not zero.',
+  'dead-letter': 'Delivery report is stuck. Needs attention.',
 }
 
 // One display leg -> { networkId | routeContext, label, amount, key }. `location` values are
@@ -138,7 +184,23 @@ function legDisplay(location, amount, keySuffix, identity = {}) {
   }
 }
 
-function positionRowFor(agent) {
+function positionRowFor(agent, unavailableOccurrence = 0) {
+  const identity = toAgentIdentityView({
+    phase: 'deployed',
+    address: agent?.address,
+    verified: Boolean(agent?.address),
+    source: 'owner-discovery',
+    state: 'confirmed',
+  })
+  if (!identity.identityAvailable) {
+    return {
+      key: `identity-unavailable-${unavailableOccurrence}`,
+      address: null,
+      identity,
+      unavailable: true,
+    }
+  }
+
   const legs = []
   if (agent.custodyBreakdown?.length) {
     for (const leg of agent.custodyBreakdown) {
@@ -165,7 +227,7 @@ function positionRowFor(agent) {
   // hosted on Stellar testnet").
   const stellarLeg = legs.find((l) => l.kind === 'stellar')
   const childLegs = legs.filter((l) => l.kind !== 'stellar')
-  return { address: agent.address, stellarLeg: stellarLeg ?? null, childLegs }
+  return { address: agent.address, identity, stellarLeg: stellarLeg ?? null, childLegs }
 }
 
 function unattributedRows(unattributed) {
@@ -176,9 +238,22 @@ function unattributedRows(unattributed) {
   }))
 }
 
-export function PositionList({ agents = [], unattributed = {}, collectionState = null }) {
-  const rows = agents.map(positionRowFor).filter(Boolean)
+export function PositionList({
+  agents = [],
+  unattributed = {},
+  collectionState = null,
+  factView = null,
+}) {
+  let unavailableOccurrence = 0
+  const rows = agents
+    .map((agent) => {
+      const row = positionRowFor(agent, unavailableOccurrence)
+      if (row?.unavailable) unavailableOccurrence += 1
+      return row
+    })
+    .filter(Boolean)
   const idleRows = unattributedRows(unattributed)
+  const baseTruth = toBaseCustodyTruth()
 
   // 2026-08-02 polish: "No confirmed positions yet" is an AUTHORITATIVE-empty claim (spec §11:
   // empty copy only after the read truly completed). A disconnected or unconfirmed wallet must
@@ -189,7 +264,7 @@ export function PositionList({ agents = [], unattributed = {}, collectionState =
       : collectionState === 'loading'
         ? 'Checking your positions…'
         : collectionState === 'unavailable'
-          ? 'Positions unavailable — nothing could be confirmed this round.'
+          ? 'Positions unavailable. Nothing could be confirmed this round.'
           : 'No confirmed positions yet.'
 
   return (
@@ -201,63 +276,86 @@ export function PositionList({ agents = [], unattributed = {}, collectionState =
         {rows.length === 0 && idleRows.length === 0 && <p>{emptyCopy}</p>}
         <ul className="pc-position-list">
           {rows.map((row) => (
-            <li key={row.address} className="pc-position-row">
-              <NetworkBadge networkId="stellar-testnet" />
-              <div>
-                {row.stellarLeg ? (
-                  <>
-                    <p>{row.stellarLeg.label}</p>
-                    <MoneyFigure
-                      state="current"
-                      value={unitsToDisplay(
-                        row.stellarLeg.amount.units,
-                        row.stellarLeg.amount.decimals
-                      )}
-                      currency={row.stellarLeg.amount.token}
-                    />
-                  </>
-                ) : (
-                  <p>Bridging via {shortAddress(row.address)}</p>
-                )}
-              </div>
-              <span>{shortAddress(row.address)}</span>
+            <li
+              key={row.unavailable ? row.key : row.address}
+              data-row-key={row.unavailable ? row.key : undefined}
+              className="pc-position-row"
+            >
+              {row.unavailable ? (
+                <div>
+                  <AgentMark identity={row.identity} state="idle" />
+                </div>
+              ) : (
+                <>
+                  <NetworkBadge networkId="stellar-testnet" />
+                  <div>
+                    <AgentMark identity={row.identity} state="confirmed" />
+                    {row.stellarLeg ? (
+                      <>
+                        <p>{row.stellarLeg.label}</p>
+                        {(() => {
+                          const display = presentationAmount(row.stellarLeg.amount, factView)
+                          return (
+                            <MoneyFigure
+                              state={display.state}
+                              amount={display.amount}
+                              freshness={display.freshness}
+                            />
+                          )
+                        })()}
+                      </>
+                    ) : (
+                      <p>Bridging via {shortAddress(row.address)}</p>
+                    )}
+                  </div>
+                  <span>{shortAddress(row.address)}</span>
 
-              {row.childLegs.length > 0 && (
-                <ul className="pc-position-row-children">
-                  {row.childLegs.map((leg) => (
-                    <li key={leg.key}>
-                      {leg.kind === 'base-settled' ? (
-                        <>
-                          <NetworkBadge networkId="base-sepolia" />
-                          <VenueTruth kind="base-proxy" />
-                        </>
-                      ) : (
-                        <NetworkRoute
-                          context={{
-                            hostNetworkId: 'stellar-testnet',
-                            sourceNetworkId: 'stellar-testnet',
-                            destinationNetworkId: 'base-sepolia',
-                            custodyNetworkId: 'stellar-testnet',
-                            transitState: 'unknown',
-                          }}
-                        />
-                      )}
-                      {leg.identityLabel && (
-                        <p className="pc-position-leg-identity">{leg.identityLabel}</p>
-                      )}
-                      <MoneyFigure
-                        state="current"
-                        value={unitsToDisplay(leg.amount.units, leg.amount.decimals)}
-                        currency={leg.amount.token}
-                      />
-                      {leg.coverageReason && (
-                        <p className="pc-money pc-money--unknown">
-                          {COVERAGE_REASON_COPY[leg.coverageReason] ?? leg.coverageReason}
-                        </p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                  {row.childLegs.length > 0 && (
+                    <ul className="pc-position-row-children">
+                      {row.childLegs.map((leg) => (
+                        <li key={leg.key}>
+                          {leg.kind === 'base-settled' ? (
+                            <>
+                              <NetworkBadge networkId="base-sepolia" />
+                              <VenueTruth
+                                kind={baseTruth.yield.state === 'none' ? 'base-proxy' : 'unknown'}
+                                venue={baseTruth.destination}
+                              />
+                            </>
+                          ) : (
+                            <NetworkRoute
+                              context={{
+                                hostNetworkId: 'stellar-testnet',
+                                sourceNetworkId: 'stellar-testnet',
+                                destinationNetworkId: 'base-sepolia',
+                                custodyNetworkId: 'stellar-testnet',
+                                transitState: 'unknown',
+                              }}
+                            />
+                          )}
+                          {leg.identityLabel && (
+                            <p className="pc-position-leg-identity">{leg.identityLabel}</p>
+                          )}
+                          {(() => {
+                            const display = presentationAmount(leg.amount, factView)
+                            return (
+                              <MoneyFigure
+                                state={display.state}
+                                amount={display.amount}
+                                freshness={display.freshness}
+                              />
+                            )
+                          })()}
+                          {leg.coverageReason && (
+                            <p className="pc-money pc-money--unknown">
+                              {COVERAGE_REASON_COPY[leg.coverageReason] ?? leg.coverageReason}
+                            </p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
               )}
             </li>
           ))}
@@ -268,13 +366,18 @@ export function PositionList({ agents = [], unattributed = {}, collectionState =
               <div>
                 <p>Unattributed Base balance ({shortAddress(row.kernelAddress)})</p>
                 {row.state === 'known' && row.amount ? (
-                  <MoneyFigure
-                    state="current"
-                    value={unitsToDisplay(row.amount.units, row.amount.decimals)}
-                    currency={row.amount.token}
-                  />
+                  (() => {
+                    const display = presentationAmount(row.amount, factView)
+                    return (
+                      <MoneyFigure
+                        state={display.state}
+                        amount={display.amount}
+                        freshness={display.freshness}
+                      />
+                    )
+                  })()
                 ) : (
-                  <p className="pc-money pc-money--unknown">Unavailable — needs confirming</p>
+                  <p className="pc-money pc-money--unknown">Unavailable. Needs confirming</p>
                 )}
               </div>
               <span />

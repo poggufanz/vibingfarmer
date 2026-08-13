@@ -50,6 +50,19 @@ describe('getNetworkMeta', () => {
     expect(getNetworkMeta(null).label).toBe('Unknown network')
     expect(getNetworkMeta(undefined).label).toBe('Unknown network')
   })
+
+  it('treats prototype property names as unknown networks', () => {
+    for (const networkId of ['__proto__', 'constructor', 'toString']) {
+      const meta = getNetworkMeta(networkId)
+      expect(meta.label, networkId).toBe('Unknown network')
+      expect(meta.markPath, networkId).toBeNull()
+    }
+  })
+
+  it('keeps the official self-hosted mark paths for both canonical networks', () => {
+    expect(getNetworkMeta(NETWORK_IDS.STELLAR_TESTNET).markPath).toBe('/brand/networks/stellar.svg')
+    expect(getNetworkMeta(NETWORK_IDS.BASE_SEPOLIA).markPath).toBe('/brand/networks/base.svg')
+  })
 })
 
 describe('NETWORK_CREDITS', () => {
@@ -159,6 +172,141 @@ describe('normalizeNetworkContext', () => {
     expect(normalizeNetworkContext('not-an-object').transitState).toBe('none')
     expect(normalizeNetworkContext(null).transitState).toBe('none')
   })
+
+  it('ignores inherited transit and custody claims so a prototype cannot forge Base arrival', () => {
+    const context = Object.create({
+      transitState: 'arrived',
+      custodyNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+    })
+    Object.assign(context, {
+      hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      destinationNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+      custodyNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+    })
+
+    expect(normalizeNetworkContext(context)).toEqual({
+      hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      destinationNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+      custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      transitState: 'none',
+    })
+  })
+
+  it('ignores inherited network fields rather than treating prototype data as context evidence', () => {
+    const context = Object.create({
+      hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      destinationNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+      custodyNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+      transitState: 'arrived',
+    })
+
+    expect(normalizeNetworkContext(context)).toEqual({
+      hostNetworkId: null,
+      sourceNetworkId: null,
+      destinationNetworkId: null,
+      custodyNetworkId: null,
+      transitState: 'none',
+    })
+  })
+
+  it('never invokes an own accessor and fails closed when transit is a throwing getter', () => {
+    const context = {
+      hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      destinationNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+      custodyNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+    }
+    Object.defineProperty(context, 'transitState', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        throw new Error('transit getter must not run')
+      },
+    })
+
+    expect(() => normalizeNetworkContext(context)).not.toThrow()
+    expect(normalizeNetworkContext(context)).toEqual({
+      hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      destinationNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+      custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      transitState: 'unknown',
+    })
+  })
+
+  it('fails closed for a revoked proxy instead of leaking the proxy error', () => {
+    const { proxy, revoke } = Proxy.revocable(
+      {
+        hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+        sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+        destinationNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+        custodyNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+        transitState: 'arrived',
+      },
+      {}
+    )
+    revoke()
+
+    expect(() => normalizeNetworkContext(proxy)).not.toThrow()
+    expect(normalizeNetworkContext(proxy)).toEqual({
+      hostNetworkId: null,
+      sourceNetworkId: null,
+      destinationNetworkId: null,
+      custodyNetworkId: null,
+      transitState: 'unknown',
+    })
+  })
+
+  it('fails closed when a proxy throws while exposing own descriptors', () => {
+    const context = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('own keys unavailable')
+        },
+      }
+    )
+
+    expect(() => normalizeNetworkContext(context)).not.toThrow()
+    expect(normalizeNetworkContext(context)).toEqual({
+      hostNetworkId: null,
+      sourceNetworkId: null,
+      destinationNetworkId: null,
+      custodyNetworkId: null,
+      transitState: 'unknown',
+    })
+  })
+
+  it('takes one own-descriptor snapshot and never performs repeated property reads', () => {
+    const trapCalls = []
+    const target = {
+      hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      destinationNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+      custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+      transitState: 'burning',
+    }
+    const context = new Proxy(target, {
+      ownKeys(value) {
+        trapCalls.push('ownKeys')
+        return Reflect.ownKeys(value)
+      },
+      getOwnPropertyDescriptor(value, key) {
+        trapCalls.push(key)
+        return Reflect.getOwnPropertyDescriptor(value, key)
+      },
+      get() {
+        throw new Error('context values must come from the descriptor snapshot')
+      },
+    })
+
+    expect(normalizeNetworkContext(context).transitState).toBe('burning')
+    expect(trapCalls.filter((call) => call === 'ownKeys')).toHaveLength(1)
+    expect(trapCalls.filter((call) => call === 'transitState')).toHaveLength(1)
+  })
 })
 
 describe('networkContextForAllocation', () => {
@@ -212,17 +360,151 @@ describe('networkContextForAllocation', () => {
   })
 
   it('an unrecognized chain string surfaces as an unknown network, not null', () => {
-    const ctx = networkContextForAllocation({ chain: 'polygon' })
+    const ctx = networkContextForAllocation({ chain: 'polygon', bridge: {} })
     expect(ctx.destinationNetworkId).toBe('polygon')
     expect(getNetworkMeta(ctx.destinationNetworkId).label).toBe('Unknown network')
+  })
+
+  it('does not resolve prototype property names as chain aliases', () => {
+    for (const chain of ['__proto__', 'constructor', 'toString']) {
+      const ctx = networkContextForAllocation({ chain, bridge: {} })
+      expect(ctx.destinationNetworkId, chain).toBe(chain)
+      expect(getNetworkMeta(ctx.destinationNetworkId).label, chain).toBe('Unknown network')
+    }
   })
 
   it('accepts the canonical network ids directly as chain/hostChain (not just the short aliases)', () => {
     const ctx = networkContextForAllocation({
       chain: NETWORK_IDS.BASE_SEPOLIA,
       hostChain: NETWORK_IDS.STELLAR_TESTNET,
+      bridge: { status: 'source' },
     })
     expect(ctx.destinationNetworkId).toBe('base-sepolia')
     expect(ctx.hostNetworkId).toBe('stellar-testnet')
+  })
+
+  it('fails closed for a known cross-network allocation with no own bridge evidence', () => {
+    expect(
+      networkContextForAllocation({
+        chain: NETWORK_IDS.BASE_SEPOLIA,
+        hostChain: NETWORK_IDS.STELLAR_TESTNET,
+      })
+    ).toEqual({
+      hostNetworkId: null,
+      sourceNetworkId: null,
+      destinationNetworkId: null,
+      custodyNetworkId: null,
+      transitState: 'unknown',
+    })
+  })
+
+  it('fails closed when an inherited bridge data value supplies apparent arrival', () => {
+    const allocation = Object.create({ bridge: { status: 'arrived' } })
+    allocation.chain = NETWORK_IDS.BASE_SEPOLIA
+    allocation.hostChain = NETWORK_IDS.STELLAR_TESTNET
+
+    expect(networkContextForAllocation(allocation)).toEqual({
+      hostNetworkId: null,
+      sourceNetworkId: null,
+      destinationNetworkId: null,
+      custodyNetworkId: null,
+      transitState: 'unknown',
+    })
+  })
+
+  it('does not invoke an inherited throwing bridge accessor and fails closed', () => {
+    let getterCalled = false
+    const prototype = {}
+    Object.defineProperty(prototype, 'bridge', {
+      configurable: true,
+      get() {
+        getterCalled = true
+        throw new Error('inherited bridge getter must not run')
+      },
+    })
+    const allocation = Object.create(prototype)
+    allocation.chain = NETWORK_IDS.BASE_SEPOLIA
+    allocation.hostChain = NETWORK_IDS.STELLAR_TESTNET
+
+    expect(() => networkContextForAllocation(allocation)).not.toThrow()
+    expect(getterCalled).toBe(false)
+    expect(networkContextForAllocation(allocation)).toEqual({
+      hostNetworkId: null,
+      sourceNetworkId: null,
+      destinationNetworkId: null,
+      custodyNetworkId: null,
+      transitState: 'unknown',
+    })
+  })
+
+  it('ignores an inherited bridge status and keeps custody on Stellar with unknown transit', () => {
+    const bridge = Object.create({ status: 'arrived' })
+    const ctx = networkContextForAllocation({
+      chain: 'base',
+      hostChain: 'stellar',
+      bridge,
+    })
+
+    expect(ctx.transitState).toBe('unknown')
+    expect(ctx.custodyNetworkId).toBe('stellar-testnet')
+  })
+
+  it('fails closed when an allocation bridge descriptor is an accessor', () => {
+    const allocation = {
+      chain: 'base',
+      hostChain: 'stellar',
+    }
+    Object.defineProperty(allocation, 'bridge', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        throw new Error('bridge getter must not run')
+      },
+    })
+
+    expect(() => networkContextForAllocation(allocation)).not.toThrow()
+    expect(networkContextForAllocation(allocation)).toEqual({
+      hostNetworkId: null,
+      sourceNetworkId: null,
+      destinationNetworkId: null,
+      custodyNetworkId: null,
+      transitState: 'unknown',
+    })
+  })
+
+  it.each(['chain', 'hostChain'])(
+    'fails closed when the allocation %s descriptor is an accessor',
+    (field) => {
+      const allocation = {
+        chain: 'base',
+        hostChain: 'stellar',
+      }
+      Object.defineProperty(allocation, field, {
+        configurable: true,
+        enumerable: true,
+        get() {
+          throw new Error(`${field} getter must not run`)
+        },
+      })
+
+      expect(() => networkContextForAllocation(allocation)).not.toThrow()
+      expect(networkContextForAllocation(allocation).transitState).toBe('unknown')
+      expect(networkContextForAllocation(allocation).custodyNetworkId).toBeNull()
+    }
+  )
+
+  it('fails closed when an allocation contains a revoked bridge proxy', () => {
+    const { proxy, revoke } = Proxy.revocable({ status: 'arrived' }, {})
+    revoke()
+
+    expect(
+      networkContextForAllocation({ chain: 'base', hostChain: 'stellar', bridge: proxy })
+    ).toEqual({
+      hostNetworkId: null,
+      sourceNetworkId: null,
+      destinationNetworkId: null,
+      custodyNetworkId: null,
+      transitState: 'unknown',
+    })
   })
 })

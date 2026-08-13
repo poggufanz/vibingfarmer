@@ -427,6 +427,9 @@ describe('decodeFundingRouterGrant — fail-closed branches', () => {
     expect(Array.isArray(result.args)).toBe(true)
     expect(result).not.toHaveProperty('budgets')
     expect(result).not.toHaveProperty('agents')
+    expect(result.args).toEqual(
+      expect.arrayContaining([expect.stringContaining(owner), expect.stringContaining('1000000')])
+    )
   })
 
   it('known router + wrong function name → schema-mismatch, not a fabricated grant summary', () => {

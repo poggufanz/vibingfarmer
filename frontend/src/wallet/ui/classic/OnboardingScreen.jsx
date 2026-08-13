@@ -12,7 +12,7 @@ export default function OnboardingScreen({ onChooseStandard, onChoosePasskey }) 
       <section className="pc-choice">
         <h2>Standard</h2>
         <p>
-          Unlock with a password you choose. You back up a 12-word recovery phrase yourself — if you
+          Unlock with a password you choose. You back up a 24-word recovery phrase yourself — if you
           lose both the password and the phrase, no one can recover your funds.
         </p>
         <button type="button" className="pc-button pc-button--secondary" onClick={onChooseStandard}>

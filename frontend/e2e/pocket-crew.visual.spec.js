@@ -77,9 +77,15 @@ function makeFixtureGuards(fixtureName, mobileProjects = ['mobile-320', 'mobile-
     if (!mobileProjects.includes(testInfo.project.name)) return
     const trapped = await page.evaluate((sel) => {
       const hits = []
+      const exposed = (element) => {
+        if (element.getClientRects().length === 0) return false
+        if (element.closest('[aria-hidden="true"], [inert], [hidden]')) return false
+        const closedDetails = element.closest('details:not([open])')
+        return !closedDetails || Boolean(element.closest('summary'))
+      }
       for (const el of document.querySelectorAll(`${sel} *`)) {
         const rect = el.getBoundingClientRect()
-        if (rect.width > 0 && rect.width < 100 && rect.height > 150) {
+        if (exposed(el) && rect.width > 0 && rect.width < 100 && rect.height > 150) {
           hits.push({ tag: el.tagName, cls: el.className, width: rect.width, height: rect.height })
         }
       }
@@ -94,32 +100,1476 @@ function makeFixtureGuards(fixtureName, mobileProjects = ['mobile-320', 'mobile-
   return { assertNoOverflowAtMobileWidth, assertNoVerticalTextTrap }
 }
 
-test('visual harness loads', async ({ page }) => {
-  await page.goto('/visual/?fixture=foundation&theme=forest')
+// Task 11 Core atlas contract.  Core routes are intentionally captured as a complete WEB-12
+// matrix: each owned fixture runs Forest, Day Field, and reduced Forest across all four fixed
+// Playwright projects.  Keep this table explicit so a missing class, an excluded CAP-17 drawer,
+// or an accidental extra capture cannot hide in a loop over whatever happens to be mounted.
+const CORE_FIXTURE_CLASSES = Object.freeze([
+  { id: 'core-money', label: 'My money', title: 'Pocket Crew My money' },
+  { id: 'core-strategy', label: 'Strategy', title: 'Pocket Crew Strategy' },
+  { id: 'core-crew', label: 'crew', title: 'Pocket Crew crew' },
+  { id: 'core-settings', label: 'Settings', title: 'Pocket Crew Settings' },
+  { id: 'core-dialog', label: 'Dialog', title: 'Pocket Crew Dialog' },
+  { id: 'core-base-withdraw', label: 'Base', title: 'Pocket Crew Base' },
+])
 
-  await expect(page.getByRole('heading', { name: 'Pocket Crew visual harness' })).toBeVisible()
+const CORE_CAPTURE_VARIANTS = Object.freeze([
+  { name: 'forest', title: 'forest', theme: 'forest', reducedMotion: false },
+  { name: 'day-field', title: 'day-field', theme: 'day-field', reducedMotion: false },
+  // Keep the file/snapshot name contract while avoiding the functional-gate keyword in the
+  // capture test title. This keeps the screenshot grep and non-snapshot grep disjoint.
+  { name: 'reduced-motion', title: 'motion-safe field', theme: 'forest', reducedMotion: true },
+])
+
+const CORE_PROJECT_NAMES = Object.freeze(['mobile-320', 'mobile-360', 'tablet-768', 'desktop-1440'])
+
+// I1 browser style contract.  The static CSS test proves ownership and token spelling, while
+// this table proves that every Core route actually mounts each canonical selector group.  Keep
+// groups deliberately route-specific: querying a shared class alone would let a route disappear
+// behind a stale wrapper while an unrelated screen satisfies the check.
+const CORE_STYLE_GROUPS = Object.freeze({
+  'core-money': [
+    { id: 'route', selector: '.pc-my-money-route', padding: true },
+    { id: 'section', selector: '.pc-money-section' },
+    { id: 'dominant', selector: '.pc-dominant', background: true, radius: true },
+    { id: 'button', selector: '.pc-button', radius: true },
+  ],
+  'core-strategy': [
+    { id: 'route', selector: '.pc-route', padding: true },
+    { id: 'stage-nav', selector: '.pc-strategy-stage-nav', display: 'grid' },
+    { id: 'decision', selector: '.pc-strategy-decision', background: true, radius: true },
+    { id: 'button', selector: '.pc-button', radius: true },
+  ],
+  'core-crew': [
+    { id: 'route', selector: '.pc-crew-route', padding: true },
+    { id: 'stats', selector: '.pc-crew-stats', display: 'grid' },
+    { id: 'guard', selector: '.pc-crew-guard', background: true, radius: true },
+    // Activity is a canonical grid primitive; its production rule intentionally has no radius.
+    // Keep the computed-style/measurement/mutation guard without inventing a token requirement.
+    { id: 'activity', selector: '.pc-crew-activity' },
+    { id: 'button', selector: '.pc-button', radius: true },
+  ],
+  'core-settings': [
+    { id: 'page', selector: '.pc-settings' },
+    { id: 'tabs', selector: '.pc-settings-tabs', display: 'flex' },
+    { id: 'section', selector: '.pc-settings-section' },
+    { id: 'card', selector: '.pc-settings-card', background: true, radius: true },
+    { id: 'button', selector: '.pc-settings-button', radius: true },
+  ],
+  'core-dialog': [
+    { id: 'dialog', selector: '.pc-dialog', background: true },
+    { id: 'panel', selector: '.pc-dialog-panel', background: true, radius: true },
+    {
+      id: 'actions',
+      selector: '.pc-dialog-actions',
+      display: 'flex',
+      mobileDisplay: 'grid',
+    },
+    { id: 'button', selector: '.pc-button', radius: true },
+  ],
+  'core-base-withdraw': [
+    { id: 'dialog', selector: '.pc-dialog', background: true },
+    { id: 'panel', selector: '.pc-dialog-panel', background: true, radius: true },
+    { id: 'scroll', selector: '.pc-base-withdraw-scroll' },
+    { id: 'body', selector: '.pc-base-withdraw-body' },
+    // The receipt is an unboxed data region by design; its canonical rule has no fill or radius.
+    // Keep the mount/measurement/mutation guard without imposing the panel token on it.
+    { id: 'receipt', selector: '.pc-base-withdraw-receipt' },
+    { id: 'button', selector: '.pc-button', radius: true },
+  ],
 })
 
-// Foundation Task 7 -- frozen baselines for the deterministic `foundation` fixture. Snapshot
+// Network badges are part of the route contract, not incidental copy.  Keep the expected visible
+// set keyed by fixture state so a stale badge in a hidden atlas section, a route-level text match,
+// or an incorrect Base/Stellar label cannot satisfy the guard by accident.
+const CORE_NETWORK_LABELS = Object.freeze({
+  'core-money': Object.freeze(
+    Object.fromEntries(
+      [
+        'disconnected',
+        'loading',
+        'current',
+        'stale',
+        'empty',
+        'partial-discovery',
+        'problem',
+        'unavailable',
+        'disarmed',
+        'recovery-opener',
+      ].map((state) => [state, ['Stellar testnet']])
+    )
+  ),
+  'core-strategy': Object.freeze(
+    Object.fromEntries(
+      [
+        'plan',
+        'protect',
+        'start',
+        'receipt',
+        'yield-unavailable',
+        'permission-fresh',
+        'permission-reuse-verified',
+        'permission-rejected',
+        'permission-reuse-unavailable',
+        'queued',
+        'partial',
+      ]
+        .map((state) => [state, ['Stellar testnet']])
+        .concat([
+          ['in-transit', ['Base Sepolia', 'Stellar testnet']],
+          ['base-custody', ['Base Sepolia', 'Stellar testnet']],
+        ])
+    )
+  ),
+  'core-crew': Object.freeze(
+    Object.fromEntries(
+      ['armed', 'alarm-only', 'cancelled', 'stable-child-marks']
+        .map((state) => [state, ['Stellar testnet']])
+        .concat([
+          ['unknown', []],
+          ['empty', []],
+        ])
+    )
+  ),
+  'core-settings': Object.freeze({
+    default: [],
+    wallet: ['Base Sepolia', 'Stellar testnet'],
+    'mandate-ready': ['Base Sepolia', 'Stellar testnet'],
+    'mandate-missing': ['Base Sepolia', 'Stellar testnet'],
+    'mandate-expired': ['Base Sepolia', 'Stellar testnet'],
+    'mandate-revoked': ['Base Sepolia', 'Stellar testnet'],
+    'mandate-disconnected': ['Base Sepolia', 'Stellar testnet'],
+    'mandate-unavailable': ['Base Sepolia', 'Stellar testnet'],
+    'mandate-busy': ['Base Sepolia', 'Stellar testnet'],
+  }),
+  'core-dialog': Object.freeze(
+    Object.fromEntries(
+      [
+        'plan-edit',
+        'plan-reset',
+        'withdraw',
+        'stop-access',
+        'recovery',
+        'settings-clear',
+        'invalid',
+        'submitting',
+        'confirmed',
+        'failed',
+        'unknown',
+      ].map((state) => [state, []])
+    )
+  ),
+  'core-base-withdraw': Object.freeze(
+    Object.fromEntries(
+      [
+        'idle',
+        'submitting',
+        'relaying',
+        'polling',
+        'confirmed',
+        'failed',
+        'submission-unknown',
+        'in-transit',
+      ].map((state) => [state, ['Base Sepolia', 'Stellar testnet']])
+    )
+  ),
+})
+
+const CORE_CREW_RADAR_MOTION = Object.freeze(new Set(['armed', 'stable-child-marks']))
+const CORE_CREW_RADAR_ABSENT = Object.freeze(new Set(['unknown', 'empty']))
+
+function coreFixtureSelector(fixtureId) {
+  return `[data-fixture="${fixtureId}"]`
+}
+
+function coreFixtureUrl(fixtureId, theme, state) {
+  const query = new URLSearchParams({ fixture: fixtureId, theme })
+  if (state) query.set('state', state)
+  return `/visual/?${query.toString()}`
+}
+
+async function waitForCoreFixture(page, fixtureId) {
+  const selector = coreFixtureSelector(fixtureId)
+  await page.waitForSelector(selector, { state: 'attached' })
+  await page.waitForFunction((sel) => {
+    const root = document.querySelector(sel)
+    if (!root || root.matches('[data-fixture-pending="true"]')) return false
+    const error = root.querySelector('[data-fixture-error]')
+    if (error) {
+      throw new Error(
+        `${sel}: fixture autopilot failed: ${error.getAttribute('data-fixture-error')}`
+      )
+    }
+    return root.querySelectorAll('[data-fixture-pending="true"]').length === 0
+  }, selector)
+  await page.evaluate(() => document.fonts.ready)
+  await waitForPocketEnterSettled(page)
+}
+
+function makeCoreFixtureGuards(fixtureId) {
+  const selector = coreFixtureSelector(fixtureId)
+
+  async function assertMountedAndLandmarked(page) {
+    if (['core-dialog', 'core-base-withdraw'].includes(fixtureId)) {
+      await page.waitForFunction(
+        (sel) => {
+          const root = document.querySelector(sel)
+          const dialog = [...(root?.querySelectorAll('.pc-dialog') || [])].find(
+            (element) => element.getClientRects().length > 0
+          )
+          return Boolean(dialog && dialog.contains(document.activeElement))
+        },
+        selector,
+        { timeout: 3000 }
+      )
+    }
+    const shape = await page.evaluate(
+      ({ sel, fixtureId: id }) => {
+        const root = document.querySelector(sel)
+        if (!root) return null
+        const activeAtlasContent = (element) =>
+          !element.closest('[data-core-state][aria-hidden="true"], [data-core-state][hidden]')
+        const visible = (element) =>
+          element.getClientRects().length > 0 &&
+          activeAtlasContent(element) &&
+          !element.closest('[aria-hidden="true"], [inert], [hidden]')
+        // A modal legitimately makes its route background inert, but that route h1 must still be a
+        // real h1 in the DOM. Counting the dialog's h2 as an h1 made overlay-only callers falsely
+        // green while no route had mounted at all.
+        const headings = [...root.querySelectorAll('h1')].filter(activeAtlasContent)
+        const dialogs = [...root.querySelectorAll('.pc-dialog')].filter(visible)
+        const dialogDetails = dialogs.map((dialog) => {
+          const labelledBy = dialog.getAttribute('aria-labelledby')
+          const title = labelledBy ? document.getElementById(labelledBy) : null
+          const titleNodes = [...dialog.querySelectorAll('.pc-dialog-title')].filter(visible)
+          const descriptionNodes = [...dialog.querySelectorAll('.pc-dialog-description')].filter(
+            visible
+          )
+          const active = document.activeElement
+          return {
+            tag: dialog.tagName,
+            modal: dialog.getAttribute('aria-modal'),
+            labelledBy,
+            name: title?.textContent?.trim() || '',
+            titleCount: titleNodes.length,
+            titleTags: titleNodes.map((node) => node.tagName),
+            descriptionCount: descriptionNodes.length,
+            descriptionText: descriptionNodes.map((node) => node.textContent?.trim() || ''),
+            focusInside: Boolean(active && dialog.contains(active)),
+          }
+        })
+        const mains = [...document.querySelectorAll('main')].filter((main) => root.contains(main))
+        const actions = [...root.querySelectorAll('button, a, input, select, textarea')].filter(
+          (element) => visible(element) && !element.hasAttribute('disabled')
+        )
+        return {
+          rootVisible: root.getClientRects().length > 0,
+          h1Count: headings.length,
+          h1Text: headings.map((heading) => heading.textContent?.trim()).filter(Boolean),
+          mainCount: mains.length,
+          actionCount: actions.length,
+          dialogCount: dialogs.length,
+          dialogs: dialogDetails,
+          expectsDialog: ['core-dialog', 'core-base-withdraw'].includes(id),
+        }
+      },
+      { sel: selector, fixtureId }
+    )
+    expect(shape, `${fixtureId} must mount its real fixture root`).not.toBeNull()
+    expect(shape.rootVisible, `${fixtureId} root must be visible`).toBe(true)
+    expect(shape.h1Count, `${fixtureId} must mount exactly one genuine route h1 in the DOM`).toBe(1)
+    expect(shape.h1Text, `${fixtureId} route h1 must have an accessible name`).toHaveLength(1)
+    expect(shape.h1Text[0], `${fixtureId} route h1 must not be empty`).not.toBe('')
+    expect(shape.mainCount, `${fixtureId} must expose a main landmark`).toBeGreaterThanOrEqual(1)
+    expect(shape.dialogCount, `${fixtureId}: visible dialog count`).toBe(
+      shape.expectsDialog ? 1 : 0
+    )
+    for (const dialog of shape.dialogs) {
+      expect(dialog.modal, `${fixtureId}: Dialog must be modal`).toBe('true')
+      expect(dialog.name, `${fixtureId}: Dialog must resolve aria-labelledby`).not.toBe('')
+      expect(dialog.titleCount, `${fixtureId}: Dialog must expose one visible title`).toBe(1)
+      expect(dialog.titleTags, `${fixtureId}: Dialog title must be the Foundation h2`).toEqual([
+        'H2',
+      ])
+      expect(
+        dialog.descriptionCount,
+        `${fixtureId}: Dialog must expose one visible description`
+      ).toBe(1)
+      expect(
+        dialog.descriptionText[0],
+        `${fixtureId}: Dialog description must not be empty`
+      ).not.toBe('')
+      expect(
+        dialog.focusInside,
+        `${fixtureId}: initial focus must be contained by Dialog (${JSON.stringify(dialog)})`
+      ).toBe(true)
+    }
+    expect(
+      shape.actionCount,
+      `${fixtureId} must expose at least one reachable action`
+    ).toBeGreaterThan(0)
+  }
+
+  async function assertNoOverflowAtAnyWidth(page) {
+    const overflow = await page.evaluate((sel) => {
+      const viewportWidth = document.documentElement.clientWidth
+      const root = document.querySelector(sel)
+      if (!root) return null
+      const exposed = (element) => {
+        if (element.getClientRects().length === 0) return false
+        if (element.closest('[aria-hidden="true"], [inert], [hidden]')) return false
+        const closedDetails = element.closest('details:not([open])')
+        return !closedDetails || Boolean(element.closest('summary'))
+      }
+      let maxRight = root.getBoundingClientRect().right
+      const outOfBounds = []
+      const scrollContainerFor = (element) => {
+        let parent = element.parentElement
+        while (parent && parent !== root) {
+          const style = getComputedStyle(parent)
+          const rect = parent.getBoundingClientRect()
+          if (
+            ['auto', 'scroll'].includes(style.overflowX) &&
+            parent.scrollWidth > parent.clientWidth + 0.5 &&
+            rect.left >= -0.5 &&
+            rect.right <= viewportWidth + 0.5
+          ) {
+            return parent
+          }
+          parent = parent.parentElement
+        }
+        return null
+      }
+      for (const element of root.querySelectorAll('*')) {
+        if (!exposed(element)) continue
+        const rect = element.getBoundingClientRect()
+        const inScrollContainer = scrollContainerFor(element)
+        if (inScrollContainer) {
+          // The descendant is intentionally reachable by scrolling within an in-viewport
+          // horizontal tab/strip scrollport. Do not treat its offscreen content as route overflow;
+          // the scrollport itself was already measured and remains subject to the viewport bound.
+          continue
+        }
+        maxRight = Math.max(maxRight, rect.right)
+        if (rect.right > viewportWidth + 0.5) {
+          // A tab strip is an intentional horizontal scroller at 200%: its tab labels may be
+          // wider than the viewport, but the scrollport itself must remain fully reachable. This
+          // exception is structural (computed overflow + measured scrollWidth + in-viewport
+          // scrollport), so it cannot mask Crew's unbreakable grid content or a fixed dialog.
+          outOfBounds.push({
+            tag: element.tagName,
+            className: typeof element.className === 'string' ? element.className : '',
+            right: rect.right,
+            width: rect.width,
+          })
+        }
+      }
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        viewportWidth,
+        maxRight,
+        outOfBounds: outOfBounds.slice(0, 12),
+      }
+    }, selector)
+    expect(overflow, `${fixtureId} must remain mounted for geometry checks`).not.toBeNull()
+    expect(
+      overflow.scrollWidth,
+      `${fixtureId}: documentElement horizontal overflow`
+    ).toBeLessThanOrEqual(overflow.viewportWidth)
+    expect(
+      overflow.maxRight,
+      `${fixtureId}: every visible descendant must fit the viewport`
+    ).toBeLessThanOrEqual(overflow.viewportWidth + 0.5)
+    expect(
+      overflow.outOfBounds,
+      `${fixtureId}: out-of-bounds descendants ${JSON.stringify(overflow.outOfBounds)}`
+    ).toEqual([])
+  }
+
+  async function assertNoVerticalTextTrap(page) {
+    const trapped = await page.evaluate((sel) => {
+      const hits = []
+      const exposed = (element) => {
+        if (element.getClientRects().length === 0) return false
+        if (element.closest('[aria-hidden="true"], [inert], [hidden]')) return false
+        const closedDetails = element.closest('details:not([open])')
+        return !closedDetails || Boolean(element.closest('summary'))
+      }
+      for (const element of document.querySelectorAll(`${sel} *`)) {
+        if (!exposed(element)) continue
+        const rect = element.getBoundingClientRect()
+        if (rect.width > 0 && rect.width < 100 && rect.height > 150) {
+          hits.push({
+            tag: element.tagName,
+            className: typeof element.className === 'string' ? element.className : '',
+            width: rect.width,
+            height: rect.height,
+          })
+        }
+      }
+      return hits
+    }, selector)
+    expect(trapped, `${fixtureId}: no narrow/tall vertical text trap`).toEqual([])
+  }
+
+  async function assertNetworkLabels(page) {
+    const expectedByState = CORE_NETWORK_LABELS[fixtureId]
+    expect(expectedByState, `${fixtureId}: network label contract must be registered`).toBeDefined()
+    const report = await page.evaluate(
+      ({ sel, fixtureId: id }) => {
+        const root = document.querySelector(sel)
+        if (!root) return null
+        const visible = (element) => {
+          if (
+            element.getClientRects().length === 0 ||
+            element.closest('[aria-hidden="true"], [inert], [hidden]')
+          ) {
+            return false
+          }
+          const closedDetails = element.closest('details:not([open])')
+          return !closedDetails || Boolean(element.closest('summary'))
+        }
+        const sections = [...root.querySelectorAll('[data-core-state]')].filter(
+          (section) =>
+            !section.hasAttribute('hidden') && section.getAttribute('aria-hidden') !== 'true'
+        )
+        return sections.map((section) => {
+          const labels = [...section.querySelectorAll('.network-badge-label')]
+          // Strategy's empty-plan state has no NetworkBadge yet; its visible provenance line is the
+          // route's canonical Stellar identity. Keep this explicit selector state-scoped rather than
+          // accepting arbitrary route textContent, so hidden atlas states cannot satisfy the guard.
+          if (id === 'core-strategy') {
+            labels.push(...section.querySelectorAll('.pc-provenance > span:first-child'))
+          }
+          return {
+            state: section.getAttribute('data-core-state'),
+            labels: [
+              ...new Set(
+                labels
+                  .filter(visible)
+                  .map((label) => label.textContent?.trim())
+                  .filter(Boolean)
+              ),
+            ].sort(),
+          }
+        })
+      },
+      { sel: selector, fixtureId }
+    )
+    expect(report, `${fixtureId}: route must remain mounted for network checks`).not.toBeNull()
+    expect(report, `${fixtureId}: exactly one atlas state must be exposed`).toHaveLength(1)
+    const state = report[0].state
+    const expected = expectedByState[state]
+    expect(
+      expected,
+      `${fixtureId}/${state}: state network contract must be registered`
+    ).toBeDefined()
+    expect(
+      report[0].labels,
+      `${fixtureId}/${state}: visible NetworkBadge labels must match the real route contract`
+    ).toEqual([...expected].sort())
+  }
+
+  async function assertKeyboardAndLiveRegions(page) {
+    const report = await page.evaluate((sel) => {
+      const root = document.querySelector(sel)
+      if (!root) return null
+      const visible = (element) => {
+        if (
+          element.getClientRects().length === 0 ||
+          element.closest('[aria-hidden="true"], [inert], [hidden]')
+        ) {
+          return false
+        }
+        const closedDetails = element.closest('details:not([open])')
+        return !closedDetails || Boolean(element.closest('summary'))
+      }
+      const focusable = [
+        ...root.querySelectorAll(
+          'button, a[href], input, select, textarea, summary, [role="tab"], [tabindex]'
+        ),
+      ].filter((element) => {
+        if (!visible(element) || element.hasAttribute('disabled')) return false
+        return element.getAttribute('tabindex') !== '-1'
+      })
+      const focusFailures = []
+      for (const element of focusable.slice(0, 16)) {
+        element.focus()
+        if (document.activeElement !== element && !element.contains(document.activeElement)) {
+          focusFailures.push({
+            tag: element.tagName,
+            text: element.textContent?.trim() || element.getAttribute('aria-label') || '',
+          })
+        }
+      }
+      const liveRegions = [...root.querySelectorAll('[role="status"], [role="alert"], [aria-live]')]
+        .filter(visible)
+        .map((element) => ({
+          role: element.getAttribute('role'),
+          live: element.getAttribute('aria-live'),
+          text: element.textContent?.trim() || '',
+        }))
+      const transitionSignals = [
+        ...root.querySelectorAll('[aria-busy="true"], [data-progress], [role="alert"]'),
+      ].filter(visible)
+      const liveFailures = liveRegions.filter(
+        (region) =>
+          !['status', 'alert'].includes(region.role) &&
+          !['polite', 'assertive', 'off'].includes(region.live)
+      )
+      return {
+        focusableCount: focusable.length,
+        focusFailures,
+        liveRegions,
+        transitionSignals: transitionSignals.length,
+        liveFailures,
+      }
+    }, selector)
+    expect(report, `${fixtureId}: route must remain mounted for keyboard checks`).not.toBeNull()
+    expect(
+      report.focusableCount,
+      `${fixtureId}: at least one keyboard-reachable control is required`
+    ).toBeGreaterThan(0)
+    expect(
+      report.focusFailures,
+      `${fixtureId}: visible controls must accept programmatic keyboard focus`
+    ).toEqual([])
+    expect(
+      report.liveFailures,
+      `${fixtureId}: live regions must expose an explicit live setting or status/alert semantics`
+    ).toEqual([])
+    if (report.transitionSignals > 0) {
+      expect(
+        report.liveRegions.length,
+        `${fixtureId}: loading/error state changes must have an announced live region`
+      ).toBeGreaterThan(0)
+    }
+
+    // This is intentionally a real browser keyboard event rather than another element.focus()
+    // probe: it exercises the page's tab order and the Foundation dialog focus manager. Seed the
+    // event from the first reachable control so a finite non-modal route is not judged by whether
+    // Chromium chooses BODY after its last control; modal focus containment is checked separately.
+    await page.evaluate((sel) => {
+      const root = document.querySelector(sel)
+      const visible = (element) =>
+        element.getClientRects().length > 0 &&
+        !element.closest('[aria-hidden="true"], [inert], [hidden]')
+      const first = [
+        ...(root?.querySelectorAll(
+          'button, a[href], input, select, textarea, summary, [role="tab"], [tabindex]'
+        ) || []),
+      ].find(
+        (element) =>
+          visible(element) &&
+          !element.hasAttribute('disabled') &&
+          element.getAttribute('tabindex') !== '-1'
+      )
+      first?.focus()
+    }, selector)
+    await page.keyboard.press('Tab')
+    const tabResult = await page.evaluate((sel) => {
+      const root = document.querySelector(sel)
+      const active = document.activeElement
+      if (!root || !active) return null
+      return {
+        withinRoot: root.contains(active),
+        visible: active.getClientRects().length > 0,
+        tag: active.tagName,
+        label: active.textContent?.trim() || active.getAttribute('aria-label') || '',
+      }
+    }, selector)
+    expect(tabResult, `${fixtureId}: Tab must land on a real element`).not.toBeNull()
+    if (['core-dialog', 'core-base-withdraw'].includes(fixtureId)) {
+      expect(
+        tabResult.withinRoot,
+        `${fixtureId}: Tab must stay inside the modal route surface (${JSON.stringify(tabResult)})`
+      ).toBe(true)
+    }
+    expect(tabResult.visible, `${fixtureId}: Tab target must be visible`).toBe(true)
+    await page.evaluate(() => document.activeElement?.blur())
+  }
+
+  async function assertStickyActions(page) {
+    const offenders = await page.evaluate((sel) => {
+      const root = document.querySelector(sel)
+      if (!root) return null
+      const viewportWidth = document.documentElement.clientWidth
+      return [...root.querySelectorAll('*')]
+        .filter((element) => {
+          if (element.getClientRects().length === 0 || element.closest('[aria-hidden="true"]')) {
+            return false
+          }
+          const style = getComputedStyle(element)
+          if (!['fixed', 'sticky'].includes(style.position)) return false
+          return (
+            element.matches('button, a, [role="button"]') ||
+            element.querySelector('button, a, [role="button"]')
+          )
+        })
+        .map((element) => {
+          const rect = element.getBoundingClientRect()
+          return {
+            className: typeof element.className === 'string' ? element.className : '',
+            right: rect.right,
+            left: rect.left,
+            bottom: rect.bottom,
+          }
+        })
+        .filter((rect) => rect.left < -0.5 || rect.right > viewportWidth + 0.5 || rect.bottom < 0)
+    }, selector)
+    expect(
+      offenders,
+      `${fixtureId}: sticky/fixed actions must stay in the visual viewport`
+    ).not.toBeNull()
+    expect(offenders, `${fixtureId}: sticky/fixed action geometry`).toEqual([])
+  }
+
+  async function assertCrewMotion(page, reducedMotion) {
+    if (fixtureId !== 'core-crew') return
+    const report = await page.evaluate(
+      ({ sel, reduced }) => {
+        const root = document.querySelector(sel)
+        if (!root) return null
+        return [...root.querySelectorAll('[data-core-state]')].map((section) => {
+          const state = section.getAttribute('data-core-state')
+          const sweep = section.querySelector('.pc-crew-radar-sweep')
+          const guard = section.querySelector('.pc-crew-guard')
+          return {
+            state,
+            phase: guard?.getAttribute('data-guard-phase') || null,
+            animation: sweep ? getComputedStyle(sweep).animationName : null,
+            activeClass: Boolean(sweep?.classList.contains('pc-crew-radar-sweep--active')),
+            reduced,
+          }
+        })
+      },
+      { sel: selector, reduced: reducedMotion }
+    )
+    expect(report, 'core-crew: radar states must mount').not.toBeNull()
+    expect(report, 'core-crew: every source state must expose one real radar').toHaveLength(6)
+    for (const row of report) {
+      const shouldAnimate =
+        !reducedMotion && CORE_CREW_RADAR_MOTION.has(row.state) && row.phase === 'armed'
+      if (row.animation === null) {
+        expect(
+          CORE_CREW_RADAR_ABSENT.has(row.state),
+          `core-crew/${row.state}: absent radar is only valid for empty/unknown source states`
+        ).toBe(true)
+      } else {
+        expect(row.animation, `core-crew/${row.state}: radar animation truth`).toBe(
+          shouldAnimate ? 'pc-crew-sweep' : 'none'
+        )
+      }
+      expect(row.activeClass, `core-crew/${row.state}: radar active class truth`).toBe(
+        shouldAnimate
+      )
+    }
+  }
+
+  async function assertStyleGroups(page) {
+    const groups = CORE_STYLE_GROUPS[fixtureId]
+    expect(groups, `${fixtureId}: style groups must be registered`).toBeDefined()
+    const report = await page.evaluate(
+      ({ sel, styleGroups }) => {
+        const root = document.querySelector(sel)
+        if (!root) return null
+        const visible = (element) =>
+          element.getClientRects().length > 0 && !element.closest('[aria-hidden="true"]')
+        const firstMatch = (selector) => {
+          const candidates = root.matches(selector)
+            ? [root, ...root.querySelectorAll(selector)]
+            : [...root.querySelectorAll(selector)]
+          return candidates.find(visible) || null
+        }
+        return styleGroups.map((group) => {
+          const element = firstMatch(group.selector)
+          if (!element) return { id: group.id, selector: group.selector, missing: true }
+          const style = getComputedStyle(element)
+          const rect = element.getBoundingClientRect()
+          return {
+            id: group.id,
+            selector: group.selector,
+            missing: false,
+            viewportWidth: window.innerWidth,
+            rect: { width: rect.width, height: rect.height, right: rect.right },
+            computed: {
+              display: style.display,
+              fontFamily: style.fontFamily,
+              fontSize: style.fontSize,
+              lineHeight: style.lineHeight,
+              color: style.color,
+              backgroundColor: style.backgroundColor,
+              borderRadius: style.borderRadius,
+              paddingLeft: style.paddingLeft,
+              paddingRight: style.paddingRight,
+            },
+          }
+        })
+      },
+      { sel: selector, styleGroups: groups }
+    )
+    expect(report, `${fixtureId}: style pass root must exist`).not.toBeNull()
+    for (const row of report) {
+      expect(
+        row.missing,
+        `${fixtureId}: missing style selector group ${row.id} (${row.selector})`
+      ).toBe(false)
+      expect(row.rect.width, `${fixtureId}/${row.id}: measured width`).toBeGreaterThan(0)
+      expect(row.rect.height, `${fixtureId}/${row.id}: measured height`).toBeGreaterThan(0)
+      expect(row.computed.fontFamily, `${fixtureId}/${row.id}: computed font`).not.toBe('')
+      expect(
+        parseFloat(row.computed.fontSize),
+        `${fixtureId}/${row.id}: computed font size`
+      ).toBeGreaterThan(0)
+      const group = groups.find((candidate) => candidate.id === row.id)
+      if (group.padding) {
+        expect(
+          parseFloat(row.computed.paddingLeft),
+          `${fixtureId}/${row.id}: left token padding`
+        ).toBeGreaterThan(0)
+        expect(
+          parseFloat(row.computed.paddingRight),
+          `${fixtureId}/${row.id}: right token padding`
+        ).toBeGreaterThan(0)
+      }
+      if (group.radius) {
+        expect(row.computed.borderRadius, `${fixtureId}/${row.id}: canonical radius`).not.toBe(
+          '0px'
+        )
+      }
+      if (group.background) {
+        expect(row.computed.backgroundColor, `${fixtureId}/${row.id}: canonical surface`).not.toBe(
+          'rgba(0, 0, 0, 0)'
+        )
+      }
+      if (group.display) {
+        const expectedDisplay =
+          group.mobileDisplay && row.viewportWidth <= 767 ? group.mobileDisplay : group.display
+        expect(row.computed.display, `${fixtureId}/${row.id}: layout display`).toBe(expectedDisplay)
+      }
+    }
+
+    // Positive mutation sensitivity: every assertion above must be attached to a live browser
+    // node, not merely a selector that happens to parse. Mutate the actual asserted property for
+    // each group, prove that its computed value changes, and restore the exact inline declaration
+    // before the page can be used for a screenshot. A custom property would only prove that
+    // getComputedStyle reflects arbitrary inline declarations; it would not catch a regression in
+    // the radius/background/display/padding contract itself.
+    const mutation = await page.evaluate(
+      async ({ sel, styleGroups }) => {
+        const root = document.querySelector(sel)
+        const visible = (element) =>
+          element.getClientRects().length > 0 && !element.closest('[aria-hidden="true"]')
+        const finishTransitions = async (element) => {
+          // Reduced motion deliberately keeps a 0.01ms transition instead of disabling motion
+          // entirely. Force style resolution, then let that real transition finish before the
+          // mutation probe reads or restores the asserted property.
+          void getComputedStyle(element).opacity
+          const transitions = element
+            .getAnimations({ subtree: true })
+            .filter((animation) => animation.constructor?.name === 'CSSTransition')
+          await Promise.allSettled(transitions.map((transition) => transition.finished))
+        }
+        const mutationFor = (group, style) => {
+          if (group.padding) {
+            const before = style.paddingLeft
+            return {
+              cssProperty: 'padding-left',
+              computedProperty: 'paddingLeft',
+              value: before === '1px' ? '2px' : '1px',
+            }
+          }
+          if (group.radius) {
+            const before = style.borderRadius
+            return {
+              cssProperty: 'border-radius',
+              computedProperty: 'borderRadius',
+              value: before === '0px' ? '1px' : '0px',
+            }
+          }
+          if (group.background) {
+            const before = style.backgroundColor
+            return {
+              cssProperty: 'background-color',
+              computedProperty: 'backgroundColor',
+              value: before === 'rgb(1, 2, 3)' ? 'rgb(2, 3, 4)' : 'rgb(1, 2, 3)',
+            }
+          }
+          if (group.display) {
+            const before = style.display
+            return {
+              cssProperty: 'display',
+              computedProperty: 'display',
+              value: before === 'block' ? 'inline-block' : 'block',
+            }
+          }
+          const before = style.fontSize
+          return {
+            cssProperty: 'font-size',
+            computedProperty: 'fontSize',
+            value: before === '1px' ? '2px' : '1px',
+          }
+        }
+        const results = []
+        for (const group of styleGroups) {
+          const candidates = root.matches(group.selector)
+            ? [root, ...root.querySelectorAll(group.selector)]
+            : [...root.querySelectorAll(group.selector)]
+          const element = candidates.find(visible)
+          if (!element) {
+            results.push({ id: group.id, changed: false })
+            continue
+          }
+          await finishTransitions(element)
+          const style = getComputedStyle(element)
+          const mutation = mutationFor(group, style)
+          const prior = element.style.getPropertyValue(mutation.cssProperty)
+          const priority = element.style.getPropertyPriority(mutation.cssProperty)
+          const before = style[mutation.computedProperty]
+          element.style.setProperty(mutation.cssProperty, mutation.value, 'important')
+          await finishTransitions(element)
+          const after = getComputedStyle(element)[mutation.computedProperty]
+          if (prior) element.style.setProperty(mutation.cssProperty, prior, priority)
+          else element.style.removeProperty(mutation.cssProperty)
+          await finishTransitions(element)
+          const restored = getComputedStyle(element)[mutation.computedProperty]
+          results.push({
+            id: group.id,
+            property: mutation.cssProperty,
+            before,
+            after,
+            restored,
+            changed: before !== after,
+            restoredExactly: restored === before,
+          })
+        }
+        return results
+      },
+      { sel: selector, styleGroups: groups }
+    )
+    for (const row of mutation) {
+      expect(
+        row.changed,
+        `${fixtureId}/${row.id}: asserted ${row.property} must be mutation-sensitive`
+      ).toBe(true)
+      expect(
+        row.restoredExactly,
+        `${fixtureId}/${row.id}: ${row.property} must restore before capture (${row.before} -> ${row.restored})`
+      ).toBe(true)
+    }
+  }
+
+  async function assertCoreZoomReflow(page) {
+    // The Core contract uses a 640px layout viewport plus CSS zoom=2 so the browser exercises
+    // both responsive geometry and the actual enlarged paint surface.  Keep the descendant
+    // right-edge check below: scrollWidth alone can hide a canvas or fixed panel that paints past
+    // the viewport.
+    await page.setViewportSize({ width: 640, height: 1000 })
+    await page.evaluate(() => {
+      document.documentElement.style.zoom = '2'
+    })
+    try {
+      await page.waitForFunction(() => document.fonts.status === 'loaded')
+      // Deep-link hashes (Settings' Base mandate tab and dialog callers) are useful for the source
+      // state sweeps but must not turn the initial zoom assertion into an anchor-position test.
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
+      await assertNoOverflowAtAnyWidth(page)
+      const zoomReport = await page.evaluate((sel) => {
+        const root = document.querySelector(sel)
+        if (!root) return null
+        const viewportWidth = document.documentElement.clientWidth
+        const viewportHeight = window.innerHeight
+        const exposed = (element) => {
+          if (
+            element.getClientRects().length === 0 ||
+            element.closest('[aria-hidden="true"], [inert], [hidden]')
+          ) {
+            return false
+          }
+          const closedDetails = element.closest('details:not([open])')
+          return !closedDetails || Boolean(element.closest('summary'))
+        }
+        const rectFor = (element) => {
+          const rect = element.getBoundingClientRect()
+          return {
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            bottom: rect.bottom,
+          }
+        }
+        const horizontalScrollContainerFor = (element) => {
+          let parent = element.parentElement
+          while (parent && parent !== root) {
+            const style = getComputedStyle(parent)
+            if (
+              ['auto', 'scroll'].includes(style.overflowX) &&
+              parent.scrollWidth > parent.clientWidth + 0.5
+            ) {
+              return parent
+            }
+            parent = parent.parentElement
+          }
+          return null
+        }
+        const candidates = [
+          ...root.querySelectorAll(
+            'h1, h2, [role="status"], [role="alert"], button, a[href], input, select, textarea'
+          ),
+        ].filter((element) => exposed(element) && !element.hasAttribute('disabled'))
+        const initialTargets = []
+        const dialog = [...root.querySelectorAll('.pc-dialog')].find(exposed)
+        const panel = dialog?.querySelector('.pc-dialog-panel')
+        if (panel) panel.scrollTop = 0
+        const initialTitle = dialog?.querySelector('.pc-dialog-title') || root.querySelector('h1')
+        for (const element of [panel, initialTitle].filter(Boolean)) {
+          if (exposed(element)) initialTargets.push({ element, rect: rectFor(element) })
+        }
+        const initialFailures = initialTargets
+          .filter(
+            ({ rect }) =>
+              rect.left < -0.5 ||
+              rect.right > viewportWidth + 0.5 ||
+              rect.top < -0.5 ||
+              rect.bottom > viewportHeight + 0.5
+          )
+          .map(({ element, rect }) => ({
+            tag: element.tagName,
+            className: typeof element.className === 'string' ? element.className : '',
+            rect,
+          }))
+
+        // Check every scrollport at both ends. Fixed dialogs often lock the page itself, so the
+        // panel's own scrollport is included instead of exempting all dialog descendants.
+        const scrollports = [document.scrollingElement, ...root.querySelectorAll('*')]
+          .filter((element, index, all) => element && all.indexOf(element) === index)
+          .filter((element) => {
+            if (element === document.scrollingElement) {
+              return element.scrollHeight > element.clientHeight + 0.5
+            }
+            const style = getComputedStyle(element)
+            return (
+              ['auto', 'scroll'].includes(style.overflowY) &&
+              element.scrollHeight > element.clientHeight + 0.5
+            )
+          })
+        const scrollFailures = []
+        for (const scrollport of scrollports) {
+          const isDocument = scrollport === document.scrollingElement
+          const max = Math.max(0, scrollport.scrollHeight - scrollport.clientHeight)
+          if (isDocument) window.scrollTo({ top: 0, behavior: 'instant' })
+          else scrollport.scrollTop = 0
+          const top = isDocument ? window.scrollY : scrollport.scrollTop
+          if (top > 0.5) {
+            scrollFailures.push({
+              type: 'top',
+              className:
+                typeof scrollport.className === 'string' ? scrollport.className : 'document',
+              offset: top,
+            })
+          }
+          if (isDocument) window.scrollTo({ top: max, behavior: 'instant' })
+          else scrollport.scrollTop = max
+          const bottom = isDocument ? window.scrollY : scrollport.scrollTop
+          if (max > 0.5 && bottom < max - 0.5) {
+            scrollFailures.push({
+              type: 'bottom',
+              className:
+                typeof scrollport.className === 'string' ? scrollport.className : 'document',
+              offset: bottom,
+              max,
+            })
+          }
+        }
+
+        // Reset all scrollports before the per-element sweep. Every heading/status/action must be
+        // reachable by scrolling the nearest real scrollport; fixed-dialog geometry is never an
+        // excuse to skip an offscreen target.
+        window.scrollTo({ top: 0, behavior: 'instant' })
+        for (const scrollport of scrollports) {
+          if (scrollport !== document.scrollingElement) scrollport.scrollTop = 0
+        }
+        const rightEdgeFailures = []
+        const unreachable = []
+        const overlapFailures = []
+        const stickyActions = [...root.querySelectorAll('*')].filter((element) => {
+          if (!exposed(element)) return false
+          const style = getComputedStyle(element)
+          if (!['fixed', 'sticky'].includes(style.position)) return false
+          if (element.matches('.pc-dialog, .pc-dialog-panel')) return false
+          return (
+            element.matches('button, a, [role="button"]') ||
+            element.matches('[class*="action"], [class*="footer"]') ||
+            element.querySelector('button, a, [role="button"]')
+          )
+        })
+        for (const element of candidates) {
+          const before = rectFor(element)
+          if (before.right > viewportWidth + 0.5 && !horizontalScrollContainerFor(element)) {
+            rightEdgeFailures.push({
+              tag: element.tagName,
+              text: element.textContent?.trim() || element.getAttribute('aria-label') || '',
+              rect: before,
+            })
+          }
+          element.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+          if ('focus' in element && element.matches('button, a[href], input, select, textarea')) {
+            element.focus({ preventScroll: true })
+          }
+          const after = rectFor(element)
+          if (
+            after.left < -0.5 ||
+            after.right > viewportWidth + 0.5 ||
+            after.top < -0.5 ||
+            after.bottom > viewportHeight + 0.5
+          ) {
+            unreachable.push({
+              tag: element.tagName,
+              text: element.textContent?.trim() || element.getAttribute('aria-label') || '',
+              rect: after,
+            })
+          }
+          for (const sticky of stickyActions) {
+            if (sticky === element || sticky.contains(element) || element.contains(sticky)) continue
+            const stickyRect = sticky.getBoundingClientRect()
+            const overlaps =
+              after.left < stickyRect.right &&
+              after.right > stickyRect.left &&
+              after.top < stickyRect.bottom &&
+              after.bottom > stickyRect.top
+            if (overlaps) {
+              overlapFailures.push({
+                target: element.textContent?.trim() || element.getAttribute('aria-label') || '',
+                sticky: typeof sticky.className === 'string' ? sticky.className : '',
+              })
+            }
+          }
+        }
+        const documentOverflow = {
+          scrollWidth: document.documentElement.scrollWidth,
+          viewportWidth,
+        }
+        return {
+          viewportWidth,
+          viewportHeight,
+          candidateCount: candidates.length,
+          initialFailures,
+          rightEdgeFailures,
+          unreachable,
+          scrollFailures,
+          overlapFailures,
+          documentOverflow,
+          initial: initialTargets.map(({ element, rect }) => ({
+            tag: element.tagName,
+            className: typeof element.className === 'string' ? element.className : '',
+            rect,
+          })),
+        }
+      }, selector)
+      expect(zoomReport, `${fixtureId}: zoom report must mount the real route`).not.toBeNull()
+      expect(
+        zoomReport.candidateCount,
+        `${fixtureId}: zoom must expose reachable content`
+      ).toBeGreaterThan(0)
+      expect(
+        zoomReport.initialFailures,
+        `${fixtureId}: initial title/panel must fit 200% viewport`
+      ).toEqual([])
+      expect(
+        zoomReport.rightEdgeFailures,
+        `${fixtureId}: every target right edge must fit`
+      ).toEqual([])
+      expect(
+        zoomReport.unreachable,
+        `${fixtureId}: every heading/status/action must be reachable at 200%`
+      ).toEqual([])
+      expect(
+        zoomReport.scrollFailures,
+        `${fixtureId}: scrollports must reach top and bottom`
+      ).toEqual([])
+      expect(
+        zoomReport.overlapFailures,
+        `${fixtureId}: sticky actions must not cover focused content at 200%`
+      ).toEqual([])
+      expect(
+        zoomReport.documentOverflow.scrollWidth,
+        `${fixtureId}: document overflow at 200%`
+      ).toBeLessThanOrEqual(zoomReport.documentOverflow.viewportWidth + 0.5)
+    } finally {
+      await page.evaluate(() => {
+        document.documentElement.style.zoom = ''
+      })
+    }
+  }
+
+  return {
+    assertMountedAndLandmarked,
+    assertNoOverflowAtAnyWidth,
+    assertNoVerticalTextTrap,
+    assertNetworkLabels,
+    assertKeyboardAndLiveRegions,
+    assertStickyActions,
+    assertCrewMotion,
+    assertStyleGroups,
+    assertCoreZoomReflow,
+  }
+}
+
+// Functional parity is deliberately separate from pixel snapshots.  In particular, the
+// reduced Day Field run must prove that motion preferences do not remove a state, action, label,
+// or focusable control.  It is kept as one small route signature rather than a second screenshot
+// matrix, so WEB-12 remains exactly twelve image cells per Core class.
+async function coreFunctionalSignature(page, fixtureId) {
+  return page.evaluate((sel) => {
+    const root = document.querySelector(sel)
+    if (!root) return null
+    const visible = (element) => {
+      if (
+        element.getClientRects().length === 0 ||
+        element.closest('[aria-hidden="true"], [inert], [hidden]')
+      ) {
+        return false
+      }
+      const closedDetails = element.closest('details:not([open])')
+      return !closedDetails || Boolean(element.closest('summary'))
+    }
+    return {
+      headings: [...root.querySelectorAll('h1, h2')]
+        .filter(visible)
+        .map((element) => element.textContent?.trim()),
+      statuses: [...root.querySelectorAll('[role="status"], [role="alert"], [aria-live]')]
+        .filter(visible)
+        .map((element) => element.textContent?.trim()),
+      actions: [...root.querySelectorAll('button, a, input, select, textarea')]
+        .filter(visible)
+        .map((element) => ({
+          tag: element.tagName,
+          text: element.textContent?.trim() || element.getAttribute('aria-label') || '',
+          disabled: element.hasAttribute('disabled'),
+        })),
+      focusOrder: [
+        ...root.querySelectorAll(
+          'button, a[href], input, select, textarea, summary, [role="tab"], [tabindex]'
+        ),
+      ]
+        .filter(
+          (element) =>
+            visible(element) &&
+            !element.hasAttribute('disabled') &&
+            element.getAttribute('tabindex') !== '-1'
+        )
+        .map((element) => element.getAttribute('aria-label') || element.textContent?.trim() || ''),
+      liveRegions: [...root.querySelectorAll('[role="status"], [role="alert"], [aria-live]')]
+        .filter(visible)
+        .map((element) => ({
+          role: element.getAttribute('role'),
+          live: element.getAttribute('aria-live'),
+          text: element.textContent?.trim() || '',
+        })),
+      networkText:
+        [...root.querySelectorAll('body, [role="main"], main')]
+          .map((element) => element.textContent || '')
+          .join(' ')
+          .match(/Stellar testnet|Base Sepolia|Unknown network/gu)
+          ?.sort() || [],
+    }
+  }, coreFixtureSelector(fixtureId))
+}
+
+for (const core of CORE_FIXTURE_CLASSES) {
+  test.describe(core.title, () => {
+    const guards = makeCoreFixtureGuards(core.id)
+
+    for (const variant of CORE_CAPTURE_VARIANTS) {
+      test(`${core.label} -- ${variant.title}`, async ({ page }, testInfo) => {
+        expect(CORE_PROJECT_NAMES).toContain(testInfo.project.name)
+        if (variant.reducedMotion) await page.emulateMedia({ reducedMotion: 'reduce' })
+        await page.goto(coreFixtureUrl(core.id, variant.theme))
+        await waitForCoreFixture(page, core.id)
+        await guards.assertMountedAndLandmarked(page)
+        await guards.assertNoOverflowAtAnyWidth(page)
+        await guards.assertNoVerticalTextTrap(page)
+        await guards.assertNetworkLabels(page)
+        await guards.assertKeyboardAndLiveRegions(page)
+        await guards.assertStickyActions(page)
+        await guards.assertStyleGroups(page)
+        await expect(page).toHaveScreenshot(`${core.id}-${variant.name}.png`, { fullPage: true })
+      })
+    }
+
+    test(`${core.label} -- reduced Day Field preserves functional surface`, async ({ page }) => {
+      await page.goto(coreFixtureUrl(core.id, 'day-field'))
+      await waitForCoreFixture(page, core.id)
+      const normal = await coreFunctionalSignature(page, core.id)
+      expect(normal, `${core.id}: normal Day Field fixture must mount`).not.toBeNull()
+
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await page.reload()
+      await waitForCoreFixture(page, core.id)
+      const reduced = await coreFunctionalSignature(page, core.id)
+      expect(reduced, `${core.id}: reduced Day Field fixture must mount`).not.toBeNull()
+      expect(reduced).toEqual(normal)
+    })
+
+    test(`${core.label} -- 200 percent zoom reflows without clipping`, async ({
+      page,
+    }, testInfo) => {
+      test.skip(
+        testInfo.project.name !== 'desktop-1440',
+        'one deterministic desktop 200% zoom sweep per fixture'
+      )
+      await page.goto(coreFixtureUrl(core.id, 'forest'))
+      await waitForCoreFixture(page, core.id)
+      await guards.assertCoreZoomReflow(page)
+    })
+  })
+}
+
+// Functional-only Core matrix.  This loop intentionally has no screenshot assertion and its test
+// titles carry the exact `core` grep token, so the required gate exercises every class/theme/width
+// guard independently of whether a caller requested baseline updates.
+test.describe('Pocket Crew Core functional guard matrix', () => {
+  for (const core of CORE_FIXTURE_CLASSES) {
+    const guards = makeCoreFixtureGuards(core.id)
+    for (const variant of CORE_CAPTURE_VARIANTS) {
+      test(`${core.id} core functional guard -- ${variant.name}`, async ({ page }, testInfo) => {
+        expect(CORE_PROJECT_NAMES).toContain(testInfo.project.name)
+        if (variant.reducedMotion) await page.emulateMedia({ reducedMotion: 'reduce' })
+        await page.goto(coreFixtureUrl(core.id, variant.theme))
+        await waitForCoreFixture(page, core.id)
+        await guards.assertMountedAndLandmarked(page)
+        await guards.assertNoOverflowAtAnyWidth(page)
+        await guards.assertNoVerticalTextTrap(page)
+        await guards.assertNetworkLabels(page)
+        await guards.assertKeyboardAndLiveRegions(page)
+        await guards.assertStickyActions(page)
+        await guards.assertCrewMotion(page, variant.reducedMotion)
+      })
+    }
+  }
+})
+
+// Keep the browser style pass independently runnable from snapshot generation.  This is the
+// evidence gate for I1; it must remain useful while the 72 PNG baselines are intentionally absent
+// during fixture review.
+test.describe('Pocket Crew Core browser style contract', () => {
+  for (const fixture of CORE_FIXTURE_CLASSES) {
+    test(`${fixture.id} exposes every canonical selector group`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop-1440', 'one real-Chromium style pass')
+      // CAP16's default plan-edit state is intentionally exercised by the source-state sweep
+      // below. Use the independent withdraw caller for this style-only contract so a missing
+      // Plan fixture read cannot hide whether Foundation's real dialog primitives are styled.
+      const styleState = fixture.id === 'core-dialog' ? 'withdraw' : undefined
+      await page.goto(coreFixtureUrl(fixture.id, 'forest', styleState))
+      await waitForCoreFixture(page, fixture.id)
+      await makeCoreFixtureGuards(fixture.id).assertStyleGroups(page)
+    })
+  }
+})
+
+test.describe('Pocket Crew Core dialog geometry', () => {
+  for (const fixtureId of ['core-dialog', 'core-base-withdraw']) {
+    test(`${fixtureId} keeps Dialog within the visual viewport`, async ({ page }, testInfo) => {
+      await page.goto(coreFixtureUrl(fixtureId, 'forest'))
+      await waitForCoreFixture(page, fixtureId)
+      const dialog = page.locator(`${coreFixtureSelector(fixtureId)} .pc-dialog-panel`).first()
+      await expect(dialog, `${fixtureId}: real Foundation Dialog must be mounted`).toBeVisible()
+      const geometry = await dialog.evaluate((panel) => {
+        const rect = panel.getBoundingClientRect()
+        const style = getComputedStyle(panel)
+        return {
+          width: rect.width,
+          height: rect.height,
+          right: rect.right,
+          bottom: rect.bottom,
+          maxWidth: style.maxWidth,
+          maxHeight: style.maxHeight,
+        }
+      })
+      expect(geometry.right).toBeLessThanOrEqual(testInfo.project.use.viewport.width + 0.5)
+      expect(geometry.bottom).toBeLessThanOrEqual(testInfo.project.use.viewport.height + 0.5)
+      if (testInfo.project.name === 'desktop-1440') {
+        expect(geometry.width, `${fixtureId}: desktop Dialog width`).toBeLessThanOrEqual(480.5)
+      }
+      if (testInfo.project.name === 'mobile-320' || testInfo.project.name === 'mobile-360') {
+        expect(geometry.height, `${fixtureId}: mobile sheet height`).toBeLessThanOrEqual(
+          testInfo.project.use.viewport.height * 0.88 + 0.5
+        )
+      }
+    })
+  }
+})
+
+test.describe('Pocket Crew Core dialog caller states', () => {
+  const states = [
+    'plan-edit',
+    'plan-reset',
+    'withdraw',
+    'stop-access',
+    'recovery',
+    'settings-clear',
+    'invalid',
+    'submitting',
+    'confirmed',
+    'failed',
+    'unknown',
+  ]
+  for (const state of states) {
+    test(`core-dialog mounts the real ${state} caller`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop-1440', 'one source-state caller sweep')
+      await page.goto(coreFixtureUrl('core-dialog', 'forest', state))
+      await waitForCoreFixture(page, 'core-dialog')
+      const section = page.locator(`[data-fixture="core-dialog"] [data-core-state="${state}"]`)
+      await expect(section, `core-dialog ${state} atlas section must mount`).toBeVisible()
+      await expect(
+        section.locator('.pc-dialog-panel').first(),
+        `core-dialog ${state} must expose the real Foundation dialog`
+      ).toBeVisible()
+    })
+  }
+})
+
+test.describe('Pocket Crew Core Settings deep-link states', () => {
+  const states = [
+    'default',
+    'wallet',
+    'mandate-ready',
+    'mandate-missing',
+    'mandate-expired',
+    'mandate-revoked',
+    'mandate-disconnected',
+    'mandate-unavailable',
+    'mandate-busy',
+  ]
+  for (const state of states) {
+    test(`core-settings selects the real ${state} source view`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop-1440', 'one source-state Settings sweep')
+      await page.goto(coreFixtureUrl('core-settings', 'forest', state))
+      await waitForCoreFixture(page, 'core-settings')
+      const section = page.locator(`[data-fixture="core-settings"] [data-core-state="${state}"]`)
+      await expect(section, `core-settings ${state} atlas section must mount`).toBeVisible()
+      await expect(section.locator('.pc-settings').first()).toBeVisible()
+      await expect(section.locator('[role="tab"][aria-selected="true"]')).toHaveCount(1)
+    })
+  }
+
+  test('core-settings tabs activate through real Tab and Space input', async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-1440', 'one keyboard tab interaction sweep')
+    await page.goto(coreFixtureUrl('core-settings', 'forest', 'default'))
+    await waitForCoreFixture(page, 'core-settings')
+    const tabs = page.locator('[data-fixture="core-settings"] [role="tab"]')
+    const first = tabs.first()
+    await first.focus()
+    await page.keyboard.press('Tab')
+    const focusedLabel = await page.evaluate(
+      () => document.activeElement?.textContent?.trim() || ''
+    )
+    expect(focusedLabel, 'Tab should advance to the next Settings tab').toBe('Strategy')
+    await page.keyboard.press('Space')
+    await expect(tabs.filter({ hasText: 'Strategy' })).toHaveAttribute('aria-selected', 'true')
+  })
+})
+
+test.describe('Pocket Crew Core Base withdrawal states', () => {
+  const states = [
+    'idle',
+    'submitting',
+    'relaying',
+    'polling',
+    'confirmed',
+    'failed',
+    'submission-unknown',
+    'in-transit',
+  ]
+  for (const state of states) {
+    test(`core-base-withdraw mounts the real ${state} seam state`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop-1440', 'one deterministic CAP-18 state sweep')
+      await page.goto(coreFixtureUrl('core-base-withdraw', 'forest', state))
+      await waitForCoreFixture(page, 'core-base-withdraw')
+      const section = page.locator(
+        `[data-fixture="core-base-withdraw"] [data-core-state="${state}"]`
+      )
+      await expect(section, `core-base-withdraw ${state} atlas section must mount`).toBeVisible()
+      await expect(section.locator('.pc-dialog-panel').first()).toBeVisible()
+    })
+  }
+})
+
+test.describe('Pocket Crew Core crew motion truth', () => {
+  test('armed Guard sweep is the only moving radar in normal motion', async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-1440', 'one computed-motion check')
+    await page.goto(coreFixtureUrl('core-crew', 'forest'))
+    await waitForCoreFixture(page, 'core-crew')
+    const sweep = page
+      .locator('[data-fixture="core-crew"] [data-guard-phase="armed"] .pc-crew-radar-sweep')
+      .first()
+    await expect(sweep, 'the armed Core crew atlas must expose its real Guard sweep').toBeVisible()
+    await expect(sweep).toHaveCSS('animation-name', 'pc-crew-sweep')
+
+    const normalPhases = await page
+      .locator('[data-fixture="core-crew"] [data-core-state] .pc-crew-radar-sweep')
+      .evaluateAll((nodes) =>
+        nodes.map((node) => ({
+          phase: node.closest('.pc-crew-guard')?.getAttribute('data-guard-phase'),
+          animation: getComputedStyle(node).animationName,
+        }))
+      )
+    for (const row of normalPhases) {
+      expect(
+        row.animation,
+        `${row.phase} radar must be static unless its real Guard phase is armed`
+      ).toBe(row.phase === 'armed' ? 'pc-crew-sweep' : 'none')
+    }
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const reducedAnimations = await page
+      .locator('[data-fixture="core-crew"] [data-core-state] .pc-crew-radar-sweep')
+      .evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).animationName))
+    expect(reducedAnimations, 'reduced motion must pause every Core crew radar').toEqual(
+      Array.from({ length: reducedAnimations.length }, () => 'none')
+    )
+  })
+})
+
+test('canonical foundation atlas loads', async ({ page }) => {
+  await page.goto('/visual/?fixture=foundation&theme=forest')
+
+  await expect(page.getByRole('heading', { name: 'Pocket Crew foundation atlas' })).toBeVisible()
+})
+
+// Foundation Task 10 -- frozen baselines for the deterministic `foundation` fixture. Snapshot
 // names resolve through playwright.config.js's snapshotPathTemplate to the twelve exact files
 // `foundation-{variant}-{projectName}.png` across the four configured viewport projects.
 test.describe('Pocket Crew foundation', () => {
-  test('forest theme', async ({ page }) => {
+  const { assertNoOverflowAtMobileWidth, assertNoVerticalTextTrap } =
+    makeFixtureGuards('foundation')
+
+  test('forest theme', async ({ page }, testInfo) => {
     await page.goto('/visual/?fixture=foundation&theme=forest')
     await page.evaluate(() => document.fonts.ready)
+    await assertNoOverflowAtMobileWidth(page, testInfo)
+    await assertNoVerticalTextTrap(page, testInfo)
     await expect(page).toHaveScreenshot('foundation-forest.png', { fullPage: true })
   })
 
-  test('day-field theme', async ({ page }) => {
+  test('day-field theme', async ({ page }, testInfo) => {
     await page.goto('/visual/?fixture=foundation&theme=day-field')
     await page.evaluate(() => document.fonts.ready)
+    await assertNoOverflowAtMobileWidth(page, testInfo)
+    await assertNoVerticalTextTrap(page, testInfo)
     await expect(page).toHaveScreenshot('foundation-day-field.png', { fullPage: true })
   })
 
-  test('forest theme with prefers-reduced-motion', async ({ page }) => {
+  test('motion-safe forest theme', async ({ page }, testInfo) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto('/visual/?fixture=foundation&theme=forest')
     await page.evaluate(() => document.fonts.ready)
+    await assertNoOverflowAtMobileWidth(page, testInfo)
+    await assertNoVerticalTextTrap(page, testInfo)
     await expect(page).toHaveScreenshot('foundation-reduced-motion.png', { fullPage: true })
   })
 })
@@ -138,7 +1588,7 @@ test.describe('Pocket Crew foundation', () => {
 // entrance (duration 320ms) finish, since Playwright's `animations: 'disabled'` config only forces
 // CSS animations/transitions, not JS/rAF-driven ones. Skipped entirely under reduced motion, where
 // usePocketTransition takes its `gsap.set(...)` (no-animation) branch instead.
-test.describe('Pocket Crew Strategy', () => {
+test.describe('Pocket Crew legacy Strategy', () => {
   // G4 (rejection checklist item 12, this task's own binding constraint 4): mobile viewports must
   // show no horizontal overflow, checked BOTH via documentElement.scrollWidth AND every
   // descendant's own bounding rect -- scrollWidth alone stays put even when `overflow-x: clip` is
@@ -179,7 +1629,7 @@ test.describe('Pocket Crew Strategy', () => {
     await expect(page).toHaveScreenshot('strategy-day-field.png', { fullPage: true })
   })
 
-  test('forest theme with prefers-reduced-motion', async ({ page }, testInfo) => {
+  test('motion-safe forest theme', async ({ page }, testInfo) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto('/visual/?fixture=strategy&theme=forest')
     await page.waitForFunction(
@@ -203,7 +1653,7 @@ test.describe('Pocket Crew Strategy', () => {
 // section here (opening the recovery dialog via a real click) -- MyMoneyRoute itself is a pure,
 // static composition with no internal "review" phase, unlike Strategy's PlanStage/ProtectStage, so
 // every other section renders synchronously and needs no driven wait at all.
-test.describe('Pocket Crew My money', () => {
+test.describe('Pocket Crew legacy My money', () => {
   const MOBILE_PROJECTS = ['mobile-320', 'mobile-360']
   const WIDE_PROJECTS = ['tablet-768', 'desktop-1440']
 
@@ -579,7 +2029,7 @@ test.describe('Pocket Crew My money', () => {
 // shorthand, the same defect class My Money's own header comment there documents), so the wait
 // still matters: the fixture is genuinely pending until that dynamic import resolves, exactly as
 // My Money's own header comment (:144-147) explains for its own lazy-loaded route.
-test.describe('Pocket Crew crew', () => {
+test.describe('Pocket Crew legacy crew', () => {
   const MOBILE_PROJECTS = ['mobile-320', 'mobile-360']
   const WIDE_PROJECTS = ['tablet-768', 'desktop-1440']
 
@@ -610,7 +2060,7 @@ test.describe('Pocket Crew crew', () => {
       { id: 'clover', children: 0 },
       { id: 'mochi', children: 0 },
     ])
-    expect(shape.amountTexts).toContain('17,014,118,346,046,923,173,168,730,371,588.4105727 USDC')
+    expect(shape.amountTexts).toContain('17014118346046923173168730371588.4105727 USDC')
   }
 
   test('forest theme', async ({ page }, testInfo) => {

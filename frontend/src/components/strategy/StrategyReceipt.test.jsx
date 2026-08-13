@@ -49,12 +49,24 @@ function alloc(over) {
       transit: false,
     },
     executionStatus: 'succeeded',
-    custody: { location: 'stellar-vault', confirmed: true, checkedAt: NOW },
+    custody: { location: 'stellar-vault', confirmed: true, checkedAt: NOW, source: 'receipt' },
     txHash: REAL_TX_HASH,
     error: null,
     evidence: {},
     ...over,
   }
+}
+
+function receiptProvenAlloc(over) {
+  return alloc({
+    custody: {
+      location: 'stellar-vault',
+      confirmed: true,
+      source: 'receipt',
+      amount: { token: TOKEN_ADDR, units: '1000000000', decimals: 7 },
+    },
+    ...over,
+  })
 }
 
 function receipt(allocations, over = {}) {
@@ -176,6 +188,318 @@ describe('reconcileAllocations (bigint, per-token, mutation-provable)', () => {
   })
 })
 
+describe('Task 4 -- source-backed receipt states', () => {
+  it('shows Confirmed only for a receipt-proven allocation and keeps its allocation/run identity', () => {
+    const allocation = alloc({
+      allocationId: 'run-1:deposit:confirmed',
+      custody: {
+        location: 'stellar-vault',
+        confirmed: true,
+        source: 'receipt',
+        amount: { token: TOKEN_ADDR, units: '1000000000', decimals: 7 },
+      },
+    })
+    render(
+      <StrategyReceipt
+        receipt={receipt([allocation])}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(screen.getByText('Confirmed')).toBeTruthy()
+    fireEvent.click(screen.getByText('Technical details'))
+    expect(screen.getByText('run-1:deposit:confirmed')).toBeTruthy()
+    expect(screen.getByText('run-1')).toBeTruthy()
+  })
+
+  it('keeps partial success explicit and offers a safe next action', () => {
+    const allocations = [
+      alloc({ allocationId: 'run-1:deposit:ok' }),
+      alloc({
+        allocationId: 'run-1:deposit:held',
+        executionStatus: 'failed',
+        custody: { location: 'agent', confirmed: true, source: 'receipt' },
+      }),
+    ]
+    render(
+      <StrategyReceipt
+        receipt={receipt(allocations)}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(screen.getByText('Some agents did not complete')).toBeTruthy()
+    expect(screen.getByText(/Next safe action:/)).toBeTruthy()
+    expect(screen.getByText(/Held:/)).toBeTruthy()
+  })
+
+  it('keeps in-transit money moving and does not report it as deposited', () => {
+    const allocation = alloc({
+      allocationId: 'run-1:bridge:transit',
+      executionStatus: 'pending',
+      custody: { location: 'in-transit', confirmed: false, source: 'receipt' },
+    })
+    render(
+      <StrategyReceipt
+        receipt={receipt([allocation])}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(screen.getByText('Still in transit')).toBeTruthy()
+    expect(screen.getByText(/In transit:/)).toBeTruthy()
+    expect(screen.getByText(/Next safe action:/)).toBeTruthy()
+    expect(screen.queryByText('Confirmed')).toBeNull()
+  })
+
+  it('distinguishes held funds from money that did not move', () => {
+    const allocations = [
+      alloc({
+        allocationId: 'run-1:deposit:held',
+        executionStatus: 'failed',
+        custody: { location: 'agent', confirmed: true, source: 'receipt' },
+      }),
+      alloc({
+        allocationId: 'run-1:deposit:owner',
+        executionStatus: 'failed',
+        custody: { location: 'owner', confirmed: true, source: 'receipt' },
+      }),
+    ]
+    render(
+      <StrategyReceipt
+        receipt={receipt(allocations)}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(screen.getByText(/Held:/)).toBeTruthy()
+    expect(screen.getByText(/Money did not move:/)).toBeTruthy()
+  })
+
+  it('keeps unknown reconciliation unavailable instead of turning it into zero or success', () => {
+    const allocation = alloc({
+      allocationId: 'run-1:deposit:unknown',
+      executionStatus: 'unknown',
+      custody: { location: 'unknown', confirmed: false, source: 'receipt' },
+      txHash: null,
+    })
+    render(
+      <StrategyReceipt
+        receipt={receipt([allocation])}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(screen.getByText('Receipt unavailable')).toBeTruthy()
+    expect(screen.getByText(/Next safe action:/)).toBeTruthy()
+    expect(screen.queryByText('Every agent completed')).toBeNull()
+    expect(screen.queryByText(/0 USDC/)).toBeNull()
+    expect(screen.getByText('Unavailable')).toBeTruthy()
+  })
+
+  it('does not claim confirmed state when the caller run identity conflicts with the receipt', () => {
+    const allocation = alloc({
+      allocationId: 'run-1:deposit:0',
+      custody: { location: 'stellar-vault', confirmed: true, source: 'receipt' },
+    })
+    render(
+      <StrategyReceipt
+        receipt={receipt([allocation])}
+        runId="run-2"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(screen.queryByText('Confirmed')).toBeNull()
+    expect(screen.getByText('Receipt unavailable')).toBeTruthy()
+  })
+
+  it('fails closed when the caller omits the run identity', () => {
+    render(
+      <StrategyReceipt
+        receipt={receipt([receiptProvenAlloc({ allocationId: 'run-1:deposit:missing-run' })])}
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(screen.getByText('Receipt unavailable')).toBeTruthy()
+    expect(screen.queryByText('Every agent completed')).toBeNull()
+    expect(screen.queryByText('Confirmed')).toBeNull()
+  })
+
+  it('fails closed when the receipt omits its run identity', () => {
+    render(
+      <StrategyReceipt
+        receipt={receipt([receiptProvenAlloc()], { runId: '' })}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(screen.getByText('Receipt unavailable')).toBeTruthy()
+    expect(screen.queryByText('Every agent completed')).toBeNull()
+    expect(screen.queryByText('Confirmed')).toBeNull()
+  })
+
+  it('does not claim every agent completed when succeeded outcomes lack receipt custody proof', () => {
+    const unproven = alloc({
+      allocationId: 'run-1:deposit:unproven',
+      custody: { location: 'stellar-vault', confirmed: true, checkedAt: NOW },
+    })
+    render(
+      <StrategyReceipt
+        receipt={receipt([unproven])}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(screen.getByText('Receipt unavailable')).toBeTruthy()
+    expect(screen.queryByText('Every agent completed')).toBeNull()
+    expect(screen.queryByText('Deposited')).toBeNull()
+  })
+
+  it.each([
+    ['intermediary agent', { location: 'agent' }],
+    ['unknown', { location: 'unknown' }],
+    ['missing', {}],
+  ])(
+    'fails closed when a succeeded Stellar allocation has %s instead of terminal vault custody',
+    (_label, locationFields) => {
+      const allocation = alloc({
+        allocationId: 'run-1:deposit:wrong-location',
+        custody: { ...locationFields, confirmed: true, source: 'receipt' },
+      })
+      render(
+        <StrategyReceipt
+          receipt={receipt([allocation])}
+          runId="run-1"
+          onViewMoney={() => {}}
+          onMakeAnotherDeposit={() => {}}
+        />
+      )
+      expect(screen.getByText('Receipt unavailable')).toBeTruthy()
+      expect(screen.queryByText('Every agent completed')).toBeNull()
+      expect(screen.queryByText('Deposited')).toBeNull()
+      expect(screen.queryByText('Confirmed')).toBeNull()
+      cleanup()
+    }
+  )
+
+  it('keeps a nominal total unavailable when one token group contains unknown reconciliation', () => {
+    const allocations = [
+      receiptProvenAlloc({
+        allocationId: 'run-1:deposit:known',
+        amount: { token: TOKEN_ADDR, units: '1000000000', decimals: 7 },
+      }),
+      alloc({
+        allocationId: 'run-1:bridge:unknown',
+        amount: { token: BRIDGE_TOKEN_ADDR, units: '500000', decimals: 6 },
+        executionStatus: 'unknown',
+        custody: { location: 'unknown', confirmed: false, source: 'receipt' },
+        txHash: null,
+      }),
+    ]
+    render(
+      <StrategyReceipt
+        receipt={receipt(allocations)}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(
+      screen.getByText(/Nominal total \(assumes each token above is worth 1 USDC\): Unavailable/)
+    ).toBeTruthy()
+    expect(screen.queryByText(/Nominal total.*0\.5/)).toBeNull()
+  })
+
+  it('rejects the positional permission agent vector as an unbound identity', () => {
+    render(
+      <StrategyReceipt
+        receipt={receipt([receiptProvenAlloc()])}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByText('Technical details'))
+    expect(screen.queryByText(AGENT_1)).toBeNull()
+  })
+
+  it('renders a real buildDispatchReceipt fixture as confirmed only when its durable receipt proves custody', () => {
+    const allocationId = 'run-real-receipt:deposit:0'
+    const exactAmount = { token: TOKEN_ADDR, units: '1000000000', decimals: 7 }
+    let durable = createAllocationReceipt({
+      networkId: 'stellar-testnet',
+      executionId: `run-real-receipt:exec:${allocationId}`,
+      allocationId,
+      owner: 'GOWNER',
+      runId: 'run-real-receipt',
+      worker: 'GWORKER',
+      agent: AGENT_1,
+      intent: { allocation: exactAmount },
+      amount: exactAmount,
+    })
+    durable = appendPhase(durable, {
+      attemptId: 'pull-confirmed',
+      phase: 'pull',
+      status: 'confirmed',
+      evidence: { txHash: 'pull-hash' },
+      observedAt: NOW,
+    })
+    durable = confirmCustody(durable, {
+      location: 'stellar-vault',
+      txSuccess: true,
+      matchingEvent: true,
+      amount: exactAmount,
+    })
+    durable = appendPhase(durable, {
+      attemptId: 'deposit-confirmed',
+      phase: 'stellar_deposit',
+      status: 'confirmed',
+      evidence: { txHash: REAL_TX_HASH },
+      observedAt: NOW + 1,
+    })
+
+    const projected = buildDispatchReceipt({
+      plan: {
+        runId: 'run-real-receipt',
+        planFingerprint: 'real-receipt-fingerprint',
+        agents: [{ allocationId, kind: 'deposit', allocation: exactAmount }],
+      },
+      permission: {
+        mode: 'fresh',
+        txHash: REAL_GRANT_HASH,
+        grantReceiptFingerprint: 'real-receipt-grant',
+        expiryLedger: 9001,
+        agentAddresses: [AGENT_1],
+      },
+      branches: {
+        stellar: {
+          results: [{ allocationId, success: true, receipt: durable, depositTxHash: REAL_TX_HASH }],
+        },
+      },
+    })
+
+    render(
+      <StrategyReceipt
+        receipt={projected}
+        runId="run-real-receipt"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    expect(screen.getByText('Every agent completed')).toBeTruthy()
+    expect(screen.getByText('Confirmed')).toBeTruthy()
+  })
+})
+
 describe('StrategyReceipt -- exact amounts and nominal total (Step 3)', () => {
   it('displays the exact per-token deposited amount, never rounding into a blended figure when only one token exists', () => {
     render(
@@ -210,6 +534,35 @@ describe('StrategyReceipt -- exact amounts and nominal total (Step 3)', () => {
     expect(screen.getByText('0.5 Circle USDC')).toBeTruthy()
     expect(
       screen.getByText(/Nominal total \(assumes each token above is worth 1 USDC\)/)
+    ).toBeTruthy()
+  })
+
+  it('sums mixed-decimal nominal groups with exact bigint scaling and renders the canonical total', () => {
+    const hugeUnits = '9007199254740993'
+    const allocations = [
+      alloc({
+        allocationId: 'stellar-huge',
+        amount: { token: TOKEN_ADDR, units: hugeUnits, decimals: 7 },
+      }),
+      alloc({
+        allocationId: 'circle-huge',
+        amount: { token: BRIDGE_TOKEN_ADDR, units: hugeUnits, decimals: 6 },
+      }),
+    ]
+
+    render(
+      <StrategyReceipt
+        receipt={receipt(allocations)}
+        runId="run-1"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+
+    expect(
+      screen.getByText(
+        'Nominal total (assumes each token above is worth 1 USDC): 9907919180.2150923 USDC'
+      )
     ).toBeTruthy()
   })
 })
@@ -310,7 +663,8 @@ describe('StrategyReceipt -- reconciliation summary reflects real state', () => 
   it('shows "Every agent completed" only when nothing failed and nothing is pending', async () => {
     render(
       <StrategyReceipt
-        receipt={receipt([alloc()])}
+        receipt={receipt([receiptProvenAlloc()])}
+        runId="run-1"
         onViewMoney={() => {}}
         onMakeAnotherDeposit={() => {}}
       />
@@ -320,12 +674,13 @@ describe('StrategyReceipt -- reconciliation summary reflects real state', () => 
 
   it('shows the partial-failure notice and NEVER "Every agent completed" when one allocation failed', () => {
     const allocations = [
-      alloc({ allocationId: 'a' }),
+      receiptProvenAlloc({ allocationId: 'a' }),
       alloc({ allocationId: 'b', executionStatus: 'failed', custody: { location: 'unknown' } }),
     ]
     render(
       <StrategyReceipt
         receipt={receipt(allocations)}
+        runId="run-1"
         onViewMoney={() => {}}
         onMakeAnotherDeposit={() => {}}
       />
@@ -339,6 +694,7 @@ describe('StrategyReceipt -- reconciliation summary reflects real state', () => 
     render(
       <StrategyReceipt
         receipt={receipt(allocations)}
+        runId="run-1"
         onViewMoney={() => {}}
         onMakeAnotherDeposit={() => {}}
       />
@@ -362,11 +718,12 @@ describe('StrategyReceipt -- optional attestation is separate and counts its own
 
   it('shows its own distinct confirmation, never folded into the deposit summary, when attestation evidence exists', () => {
     const allocations = [
-      alloc({ allocationId: 'a', evidence: { attestation: { status: 'complete' } } }),
+      receiptProvenAlloc({ allocationId: 'a', evidence: { attestation: { status: 'complete' } } }),
     ]
     render(
       <StrategyReceipt
         receipt={receipt(allocations)}
+        runId="run-1"
         onViewMoney={() => {}}
         onMakeAnotherDeposit={() => {}}
       />
@@ -589,10 +946,11 @@ describe('StrategyReceipt -- actions are exactly "View my money" (primary) and "
     expect(onMakeAnotherDeposit).toHaveBeenCalledTimes(1)
   })
 
-  it('exposes runId to the receipt (for My Money navigation), falling back to receipt.runId when no override is given', () => {
+  it('exposes the exact matching runId to the receipt (for My Money navigation)', () => {
     render(
       <StrategyReceipt
         receipt={receipt([alloc()])}
+        runId="run-1"
         onViewMoney={() => {}}
         onMakeAnotherDeposit={() => {}}
       />
@@ -605,17 +963,18 @@ describe('StrategyReceipt -- actions are exactly "View my money" (primary) and "
     // element's, so a regex spanning both sides of the split no longer matches any single node.
     // Matching the .pc-technical value directly, then checking its <p> ancestor's full text, proves
     // both halves render without depending on which element getByText happens to walk.
-    const runValue = screen.getByText('run-1')
+    const runValue = screen.getAllByText('run-1')[0]
     expect(runValue.classList.contains('pc-technical')).toBe(true)
     expect(runValue.closest('p').textContent).toBe('Run: run-1')
   })
 })
 
-describe('StrategyReceipt -- grant/agent/branch explorer links stay inside Technical details', () => {
-  it('the grant transaction and agent address links are collapsed inside Technical details, not the friendly summary', () => {
+describe('StrategyReceipt -- grant and branch explorer links stay inside Technical details', () => {
+  it('the grant transaction link stays collapsed inside Technical details, without an unbound agent vector', () => {
     render(
       <StrategyReceipt
         receipt={receipt([alloc()])}
+        runId="run-1"
         onViewMoney={() => {}}
         onMakeAnotherDeposit={() => {}}
       />
@@ -630,8 +989,7 @@ describe('StrategyReceipt -- grant/agent/branch explorer links stay inside Techn
     fireEvent.click(document.querySelector('.pc-technical-details summary'))
     const grantLink = screen.getByRole('link', { name: REAL_GRANT_HASH })
     expect(grantLink.getAttribute('href')).toContain('stellar.expert')
-    const agentLink = screen.getByRole('link', { name: AGENT_1 })
-    expect(agentLink.getAttribute('href')).toContain('stellar.expert')
+    expect(screen.queryByRole('link', { name: AGENT_1 })).toBeNull()
   })
 
   it('a Base-side mint transaction links to Basescan, not stellar.expert', () => {

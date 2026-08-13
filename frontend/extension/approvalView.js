@@ -16,8 +16,8 @@
 //      coerce a missing/unparseable value into zero or an empty string -- render it as "unknown"
 //      instead. FundingGrantSummaryV1's fail-closed schema-mismatch degrade (VFW3) is preserved
 //      exactly: an unrecognized grant shape falls back to raw facts, never a guessed label.
-import { SOROBAN_DECIMALS } from '../src/stellar/config.js'
-import { toDisplay } from '../src/stellar/format.js'
+import { NETWORK_PASSPHRASE } from '../src/stellar/config.js'
+import { formatTokenUnits } from '../src/design/pocket-crew-foundation.js'
 import { shortAddr } from './txSummary.js'
 
 // ---------------------------------------------------------------------------------------------
@@ -86,7 +86,7 @@ export function submissionStatusText(state, { origin, detail } = {}) {
     case SUBMISSION_STATE.SIGNED_RETURNED:
       return `Signed and returned to ${origin || 'the site'}`
     case SUBMISSION_STATE.SUBMITTED:
-      return 'Submitted'
+      return 'Submitted: awaiting confirmation'
     case SUBMISSION_STATE.CONFIRMED:
       return 'Confirmed'
     case SUBMISSION_STATE.NOT_SUBMITTED:
@@ -117,8 +117,7 @@ const GRANT_TRUTHS = [
 ]
 const GRANT_MIXED_TOKEN_TRUTH =
   'This grant covers more than one token: each token’s allowance budget and each agent’s cap ceiling are shown separately below. Later execution may use less than either ceiling; the two numbers are never the same thing and are never added together.'
-const GRANT_BRIDGE_TRUTH =
-  'Base-side proxy: the bridge route is Stellar testnet to Circle CCTP to Base Sepolia. Base-side pools are custody proxies holding real Circle USDC; there is no live protocol yield there.'
+const GRANT_BRIDGE_TRUTH = 'Base Sepolia proxy. Custody only. No protocol yield.'
 
 // ---------------------------------------------------------------------------------------------
 // Row values are built as arrays of PARTS, never a bare string -- rejection-checklist item 5
@@ -141,6 +140,10 @@ function toParts(value) {
   return Array.isArray(value) ? value : [plain(String(value))]
 }
 
+function displayValue(value) {
+  return value == null || value === '' ? 'Unknown' : String(value)
+}
+
 /** Flattens a row value (parts array or plain string) to plain text for assertions/tests that
  *  only care about the wording, not which segments are mono. Exported so tests never need to
  *  re-implement this. */
@@ -150,37 +153,56 @@ export function partsToText(value) {
     .join('')
 }
 
-// Honest amount rendering: toDisplay(units) (fixed /1e7) is only truthful for the pinned 7dp
-// token. A v2 grant may carry any token address, and grantDecoder.js sets decimals:null (never a
-// fabricated 7) for anything else; this must render the raw integer, never divide by an assumed
-// scale (see grantDecoder.js's tokenAmount doc). Only the token address itself is an `addr()`
-// segment -- the number and the "(not a deposit amount)" annotation are plain.
-function amountParts({ units, token, decimals }, suffix) {
+// Honest amount rendering: formatTokenUnits(units, decimals) is only used when the decoder has
+// supplied a real decimal precision. A v2 grant may carry any token address, and grantDecoder.js
+// sets decimals:null (never a fabricated 7) for anything else; this must render the raw integer,
+// never divide by an assumed scale (see grantDecoder.js's tokenAmount doc). Only the token address
+// itself is an `addr()` segment -- the number and the "(not a deposit amount)" annotation are plain.
+function amountParts({ units, token, decimals } = {}, suffix) {
   const tail = suffix ? ` (${suffix})` : ''
-  if (decimals === SOROBAN_DECIMALS) {
-    return [plain(`${toDisplay(units)} `), addr(shortAddr(token)), plain(tail)]
+  const tokenLabel = token ? shortAddr(token) : 'Unknown'
+  if (units == null || units === '') {
+    return [plain('Unknown amount'), plain(tail)]
+  }
+  if (Number.isInteger(decimals) && decimals >= 0 && decimals <= 38) {
+    try {
+      return [plain(`${formatTokenUnits(units, decimals)} `), addr(tokenLabel), plain(tail)]
+    } catch {
+      // Keep the exact raw units when the supplied value cannot be represented by the
+      // display helper; a friendly decimal must never be guessed from malformed input.
+    }
   }
   const unknownTail = suffix ? ` (token decimals unknown; ${suffix})` : ' (token decimals unknown)'
-  return [plain(`${units} raw units `), addr(shortAddr(token)), plain(unknownTail)]
+  return [plain(`${String(units)} raw units `), addr(tokenLabel), plain(unknownTail)]
 }
 
 // shortAddr('') / shortAddr(null) returns '' -- a blank cell reads as "nothing to see here", the
 // exact coerced-empty-string failure this task is written against. A target address can
 // genuinely be absent (grantDecoder.js's classifyDestination sets `targetAddress: target ?? null`
-// for its 'unknown' classification) -- render that as the word "unknown", never a blank.
+// for its 'unknown' classification) -- render that as the word "Unknown", never a blank.
 function safeShortAddr(address) {
-  return address ? shortAddr(address) : 'unknown'
+  return address ? shortAddr(address) : 'Unknown'
 }
 
 function periodText(seconds) {
-  if (seconds == null || !Number.isFinite(seconds)) return 'unknown'
+  if (seconds == null || !Number.isFinite(seconds)) return 'Unknown'
   if (seconds > 0 && seconds % 86400 === 0) return `every ${seconds / 86400}d`
   if (seconds > 0 && seconds % 3600 === 0) return `every ${seconds / 3600}h`
   return `every ${seconds}s`
 }
 
 function accountTypeLabel(kind) {
-  return kind === 'classic' ? 'Standard' : kind === 'passkey' ? 'Passkey' : 'unknown'
+  return kind === 'classic' || kind === 'G'
+    ? 'Standard'
+    : kind === 'passkey' || kind === 'C'
+      ? 'Passkey'
+      : 'Unknown'
+}
+
+function normalizedAccountKind(kind) {
+  if (kind === 'classic' || kind === 'G') return 'classic'
+  if (kind === 'passkey' || kind === 'C') return 'passkey'
+  return null
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -205,7 +227,7 @@ function accountSection(kind, address) {
 }
 
 function networkSection() {
-  return { kind: 'network', label: STELLAR_TESTNET_LABEL }
+  return { kind: 'network', label: STELLAR_TESTNET_LABEL, passphrase: NETWORK_PASSPHRASE }
 }
 
 function stateSection({ submissionState, note, needsPassword, origin, detail }) {
@@ -254,9 +276,10 @@ function buildConsequence(summary) {
   }
 
   if (grant?.kind === 'funding-router-grant') {
+    const budgets = Array.isArray(grant.budgets) ? grant.budgets : []
     const statements = [GRANT_TRUTHS[0]]
-    if (grant.budgets.length > 1) statements.push(GRANT_MIXED_TOKEN_TRUTH)
-    const ceilingRows = grant.budgets.map((b, i) => [
+    if (budgets.length > 1) statements.push(GRANT_MIXED_TOKEN_TRUTH)
+    const ceilingRows = budgets.map((b, i) => [
       i === 0 ? 'Allowance budget (ceiling)' : '',
       amountParts(b, 'not a deposit amount'),
     ])
@@ -298,17 +321,28 @@ function buildConsequence(summary) {
 // (the token, and an unlabeled destination's raw address) render mono; "deposit"/"bridge", the
 // period, and a known venue's route label stay plain body copy.
 function agentRowParts(a) {
+  const agent = a ?? {}
   const parts = [
-    plain(`${a.kind} · cap `),
-    ...amountParts(a.capPerPeriod),
-    plain(` · ${periodText(a.periodDurationSeconds)} · `),
+    plain(`${displayValue(agent.kind)} · cap `),
+    ...amountParts(agent.capPerPeriod),
+    plain(` · ${periodText(agent.periodDurationSeconds)} · `),
   ]
-  if (a.destination.routeLabel) {
-    parts.push(plain(a.destination.routeLabel))
+  const destination = agent.destination ?? {}
+  if (destination.routeLabel && destination.classification !== 'unknown') {
+    parts.push(plain(destination.routeLabel))
   } else {
-    parts.push(plain('unlabeled destination '), addr(safeShortAddr(a.destination.targetAddress)))
+    parts.push(
+      plain('Unknown destination; raw target '),
+      addr(destination.targetAddress || 'Unknown')
+    )
   }
-  if (a.expiryTimestamp != null) parts.push(plain(` · agent expires ${a.expiryTimestamp}`))
+  if (agent.expiryTimestamp != null) {
+    parts.push(
+      plain(
+        ` · agent expires ${Number.isFinite(agent.expiryTimestamp) ? agent.expiryTimestamp : 'Unknown'}`
+      )
+    )
+  }
   return parts
 }
 
@@ -343,23 +377,35 @@ function buildDecodedRows(summary) {
     rows.push(['What this means', [plain(GRANT_TRUTHS[1])]])
     rows.push(['', [plain(GRANT_TRUTHS[2])]]) // the one Stellar venue truth block
     rows.push(['', [plain(GRANT_TRUTHS[3])]])
-    rows.push(['Grant allowance expires', [plain(`ledger ${grant.expiryLedger}`)]])
-    for (const a of grant.agents) {
-      rows.push([`Agent #${a.index}`, agentRowParts(a)])
-      if (a.kind === 'bridge') {
+    rows.push([
+      'Grant allowance expires',
+      [plain(Number.isFinite(grant.expiryLedger) ? `ledger ${grant.expiryLedger}` : 'Unknown')],
+    ])
+    const agents = Array.isArray(grant.agents) ? grant.agents : []
+    for (const a of agents) {
+      rows.push([`Agent #${displayValue(a?.index)}`, agentRowParts(a)])
+      if (a?.kind === 'bridge') {
         // Nested child of THIS agent's row, not a top-of-list bullet -- see the module doc. Plain
         // prose (never mono): this is an explanatory sentence, not a technical value.
         rows.push(['', [plain(GRANT_BRIDGE_TRUTH)], { nested: true }])
+      }
+      if (!a?.destination || a.destination.classification === 'unknown') {
+        rows.push([
+          '',
+          [plain('Raw destination proof: '), addr(a?.destination?.targetAddress || 'Unknown')],
+          { nested: true },
+        ])
       }
     }
     return rows
   }
 
-  if (grant?.kind === 'schema-mismatch') rows.push(['Warning', [plain(grant.warning)]])
+  if (grant?.kind === 'schema-mismatch')
+    rows.push(['Warning', [plain(displayValue(grant.warning))]])
   // Raw, undecoded args (the fail-closed fallback for an unrecognized call): genuinely raw
   // technical data dumped for the user to verify themselves, not friendly copy -- kept mono.
   for (const [i, a] of (summary?.args ?? []).entries()) {
-    rows.push([i === 0 ? 'Args' : '', [addr(a)]])
+    rows.push([i === 0 ? 'Args' : '', [addr(displayValue(a))]])
   }
   return rows
 }
@@ -438,9 +484,10 @@ export function buildApprovalView(req, ctx = {}) {
   }
 
   // sign
-  const needsPassword = kind === 'classic' && !unlocked
+  const displayKind = normalizedAccountKind(kind)
+  const needsPassword = displayKind === 'classic' && !unlocked
   const note =
-    kind === 'classic'
+    displayKind === 'classic'
       ? 'Approving asks for your wallet password.'
       : 'Approving opens the passkey (Face ID) prompt.'
   const raw =
@@ -535,7 +582,17 @@ function renderAccount(section) {
 }
 
 function renderNetwork(section) {
-  return h('span', { className: 'pc-network-badge', text: section.label })
+  return h('div', { className: 'pc-wallet-network' }, [
+    h('span', { className: 'pc-network-badge', text: section.label }),
+    h('span', {
+      className: 'pc-technical',
+      attrs: {
+        'data-testid': 'network-passphrase',
+        'aria-label': 'Signing network passphrase',
+      },
+      text: section.passphrase || 'Unknown',
+    }),
+  ])
 }
 
 function renderConsequence(section) {
@@ -605,8 +662,10 @@ function renderDecoded(section) {
 }
 
 function renderTechnical(section) {
-  const wrap = h('div', { attrs: { id: 'raw-wrap' } })
-  if (!section.raw) wrap.style.display = 'none'
+  const wrap = h('div', {
+    className: section.raw ? 'pc-technical-wrap' : 'pc-technical-wrap pc-technical-wrap--hidden',
+    attrs: { id: 'raw-wrap' },
+  })
   // id targeted by approve.js's wireAcknowledgmentGate (I1) -- Confirm on a schema-mismatch stays
   // disabled until this disclosure is opened.
   const details = h('details', { attrs: { id: 'raw-details' } })

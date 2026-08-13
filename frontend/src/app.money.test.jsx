@@ -19,6 +19,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { parseFragment } from 'parse5'
 import { describe, it, expect, vi } from 'vitest'
 import {
   loadMoneyCache,
@@ -29,6 +32,7 @@ import {
   fetchMyMoneySnapshot,
   guardedMoneyFetch,
   moneyFetchArgs,
+  startPresentationClock,
   replaceMoneyFetchAbortController,
   toKeeperHeartbeatEvents,
   hasLiveScopeForVault,
@@ -37,6 +41,10 @@ import { buildMyMoneyModel } from './money/myMoneyModel.js'
 import { nextReconciliationToken } from './money/freshness.js'
 import { classifyKeeperAutomation } from './money/automationEvidence.js'
 import { readOwnerMoney } from './money/readOwnerMoney.js'
+import { MyMoneyRoute } from './components/money/MyMoneyRoute.jsx'
+import { WithdrawDialog } from './components/money/WithdrawDialog.jsx'
+import { StopAccessDialog } from './components/money/StopAccessDialog.jsx'
+import { RecoveryPanel } from './components/money/RecoveryPanel.jsx'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -745,6 +753,61 @@ describe('/home & /agent route source: MyMoneyRoute moved to /home, /agent is no
   })
 })
 
+// Task 5 fix round 2: expiry labels are presentation-only time, never the stale source read clock.
+// The heavy App component is not rendered here; its source seam and the small clock helper are
+// tested directly so this cannot silently drop explicit nowMs wiring or leak a live interval.
+describe('My Money presentation clock wiring', () => {
+  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+
+  it('passes the explicit UI presentation clock into the real /home MyMoneyRoute', () => {
+    const start = src.indexOf('path="/home"')
+    const end = src.indexOf('<Route', start + 1)
+    const homeRoute = src.slice(start, end)
+    expect(homeRoute).toMatch(/<MyMoneyRoute[\s\S]*nowMs=\{presentationNowMs\}/)
+    expect(src).toMatch(
+      /useE\(\(\) => startPresentationClock\(\{ setNow: setPresentationNowMs \}\), \[\]\)/
+    )
+  })
+
+  it('advances only from finite injected time and stops scheduling after cleanup', () => {
+    let tick
+    const schedule = vi.fn((callback, intervalMs) => {
+      tick = callback
+      expect(intervalMs).toBe(1000)
+      return 'presentation-clock'
+    })
+    const cancel = vi.fn()
+    const setNow = vi.fn()
+    const readNow = vi.fn(() => 1_725_000_000_000)
+    const stop = startPresentationClock({ setNow, readNow, schedule, cancel })
+
+    tick()
+    expect(setNow).toHaveBeenCalledWith(1_725_000_000_000)
+    stop()
+    tick()
+    expect(setNow).toHaveBeenCalledTimes(1)
+    expect(cancel).toHaveBeenCalledWith('presentation-clock')
+  })
+
+  it('rejects an invalid presentation clock reading instead of exposing a non-finite prop', () => {
+    let tick
+    const schedule = vi.fn((callback) => {
+      tick = callback
+      return 'invalid-clock'
+    })
+    const setNow = vi.fn()
+    const stop = startPresentationClock({
+      setNow,
+      readNow: () => Number.NaN,
+      schedule,
+      cancel: vi.fn(),
+    })
+    tick()
+    stop()
+    expect(setNow).not.toHaveBeenCalled()
+  })
+})
+
 // ---------------------------------------------------------------------------------------------
 // Task 10, carried finding C2: onViewMoney ("Back to my money") and onViewCrew ("Watch the crew")
 // used to both navigate('/agent') -- the same screen -- once /agent became the crew route. Proven
@@ -860,5 +923,202 @@ describe('hasLiveScopeForVault', () => {
 
   it('a blank vaultAddress never matches anything (fail closed, not a wildcard)', () => {
     expect(hasLiveScopeForVault([{ agent: 'CA_ONE', vault: V, revoked: false }], '')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Task 5 route/dialog reachability: the real My Money route and the three real action/recovery
+// surfaces are composed as siblings in app.jsx.  app.jsx itself is intentionally too heavy for a
+// browser render in this node suite, so this mounts the actual production components as a React
+// fragment (not a fabricated wrapper), then parses the resulting DOM tree and checks the exact
+// sibling relationship.  The source assertion pins the same composition seam that the fragment
+// exercises, while the stylesheet assertions pin the route-owned geometry required at 320px.
+// ---------------------------------------------------------------------------------------------
+describe('hoisted money-dialog siblings and direct geometry', () => {
+  const appSource = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const moneyCss = fs.readFileSync(path.resolve(here, './components/money/my-money.css'), 'utf8')
+
+  function hasClass(node, className) {
+    return (
+      node.nodeName !== '#text' &&
+      node.attrs?.some(
+        (attribute) =>
+          attribute.name === 'class' && attribute.value.split(/\s+/).includes(className)
+      )
+    )
+  }
+
+  function descendants(node, predicate, found = []) {
+    if (predicate(node)) found.push(node)
+    for (const child of node.childNodes ?? []) descendants(child, predicate, found)
+    return found
+  }
+
+  function renderActualMoneyFragment() {
+    const model = buildMyMoneyModel({ owner: null })
+    const fragment = React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(MyMoneyRoute, { model, agents: [], discovery: null, account: null }),
+      React.createElement(WithdrawDialog, { open: true, onClose: () => {}, agents: [] }),
+      React.createElement(StopAccessDialog, { open: true, onClose: () => {}, agent: null }),
+      React.createElement(RecoveryPanel, { open: true, onClose: () => {}, location: 'unknown' })
+    )
+    return parseFragment(renderToStaticMarkup(fragment))
+  }
+
+  it('renders the actual route plus all three actual dialogs as direct fragment siblings', () => {
+    const root = renderActualMoneyFragment()
+    const elementChildren = (root.childNodes ?? []).filter((node) => node.nodeName !== '#text')
+    const route = elementChildren.find((node) => hasClass(node, 'pc-my-money-route'))
+    const dialogs = elementChildren.filter((node) => hasClass(node, 'pc-money-dialog'))
+
+    expect(route).toBeDefined()
+    expect(dialogs).toHaveLength(3)
+    expect(dialogs.every((dialog) => !route.childNodes?.includes(dialog))).toBe(true)
+    expect(
+      dialogs.every(
+        (dialog) => descendants(dialog, (node) => hasClass(node, 'pc-dialog-panel')).length === 1
+      )
+    ).toBe(true)
+    expect(
+      dialogs.every(
+        (dialog) => descendants(dialog, (node) => hasClass(node, 'pc-dialog-actions')).length === 1
+      )
+    ).toBe(true)
+  })
+
+  it('keeps the app composition hoisted after Routes and the direct money-dialog geometry', () => {
+    const routesEnd = appSource.indexOf('</Routes>')
+    const hoisted = appSource.slice(routesEnd)
+    expect(routesEnd).toBeGreaterThan(-1)
+    expect(hoisted).toMatch(/<WithdrawDialog[\s\S]*<StopAccessDialog[\s\S]*<RecoveryPanel/)
+    expect(hoisted).not.toMatch(/pc-my-money-route[\s\S]*<WithdrawDialog/)
+    expect(moneyCss).toMatch(
+      /\.pc-dialog\.pc-money-dialog\s*\{[\s\S]*?z-index:\s*var\(--pc-z-dialog\)/
+    )
+    expect(moneyCss).toMatch(
+      /\.pc-money-dialog\s+\.pc-dialog-panel\s*\{[\s\S]*?width:\s*min\(100%,\s*480px\)/
+    )
+    expect(moneyCss).toMatch(
+      /\.pc-money-dialog\s+\.pc-dialog-panel\s*\{[\s\S]*?max-height:\s*min\(760px,/
+    )
+    expect(moneyCss).toMatch(/max-height:\s*88dvh/)
+    expect(moneyCss).toMatch(/env\(safe-area-inset-bottom\)/)
+  })
+})
+
+// Core Task 6 integration handoff: the app keeps the three money surfaces hoisted, but each
+// caller-owned open flag must still produce one semantic overlay at a time. The Foundation Dialog
+// owns focus, Escape, backdrop, inertness, and body scroll locking; this SSR handoff test freezes
+// the route-owned seam without reimplementing any of those mechanics in app.jsx.
+describe('Task 6 money overlay handoff — one semantic overlay per open state', () => {
+  const appSource = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const componentSources = [
+    fs.readFileSync(path.resolve(here, './components/money/WithdrawDialog.jsx'), 'utf8'),
+    fs.readFileSync(path.resolve(here, './components/money/StopAccessDialog.jsx'), 'utf8'),
+    fs.readFileSync(path.resolve(here, './components/money/RecoveryPanel.jsx'), 'utf8'),
+  ]
+
+  function hasClass(node, className) {
+    return (
+      node.nodeName !== '#text' &&
+      node.attrs?.some(
+        (attribute) =>
+          attribute.name === 'class' && attribute.value.split(/\s+/).includes(className)
+      )
+    )
+  }
+
+  function descendants(node, predicate, found = []) {
+    if (predicate(node)) found.push(node)
+    for (const child of node.childNodes ?? []) descendants(child, predicate, found)
+    return found
+  }
+
+  function attr(node, name) {
+    return node.attrs?.find((attribute) => attribute.name === name)?.value
+  }
+
+  function renderOverlay(kind) {
+    const active = {
+      withdraw: React.createElement(WithdrawDialog, {
+        open: true,
+        onClose: () => {},
+        agents: [
+          {
+            address: 'CAGENT1',
+            amount: amount('100000000'),
+            custody: { location: 'stellar-vault' },
+            custodyBreakdown: [{ location: 'stellar-vault', amount: amount('100000000') }],
+          },
+        ],
+        discovery: { status: 'complete', agents: [{ address: 'CAGENT1', scopeReadStatus: 'ok' }] },
+        account: { kind: 'G', address: 'GOWNER' },
+        onConfirmFull: () => {},
+      }),
+      stop: React.createElement(StopAccessDialog, {
+        open: true,
+        onClose: () => {},
+        agent: { address: 'CAGENT1', custody: { location: 'stellar-vault' }, custodyBreakdown: [] },
+        shareRead: { state: 'known', amount: amount('0') },
+        idleBalanceRead: { state: 'known', amount: amount('0') },
+        account: { kind: 'G', address: 'GOWNER' },
+        onConfirmRevoke: () => {},
+      }),
+      recovery: React.createElement(RecoveryPanel, {
+        open: true,
+        onClose: () => {},
+        location: 'unknown',
+        submission: { outcome: 'unknown', hash: '11'.repeat(32) },
+        onCheckStatus: () => {},
+      }),
+    }
+    const fragment = React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(MyMoneyRoute, {
+        model: buildMyMoneyModel({ owner: null }),
+        agents: [],
+        discovery: null,
+        account: null,
+      }),
+      active[kind]
+    )
+    const root = parseFragment(renderToStaticMarkup(fragment))
+    return (root.childNodes ?? []).filter(
+      (node) => node.nodeName !== '#text' && hasClass(node, 'pc-money-dialog')
+    )[0]
+  }
+
+  it.each(['withdraw', 'stop', 'recovery'])(
+    'keeps %s as one semantic dialog with ordered actions',
+    (kind) => {
+      const dialog = renderOverlay(kind)
+      expect(dialog).toBeDefined()
+      expect(attr(dialog, 'role')).toBe('dialog')
+      expect(attr(dialog, 'aria-modal')).toBe('true')
+      expect(attr(dialog, 'aria-labelledby')).toBeTruthy()
+      expect(attr(dialog, 'aria-describedby')).toBeTruthy()
+      const panels = descendants(dialog, (node) => hasClass(node, 'pc-dialog-panel'))
+      expect(panels).toHaveLength(1)
+      const actions = descendants(dialog, (node) => hasClass(node, 'pc-dialog-actions'))
+      expect(actions).toHaveLength(1)
+      const buttons = descendants(actions[0], (node) => node.nodeName === 'button')
+      expect(buttons.length).toBeGreaterThan(0)
+      expect(buttons[0].childNodes?.map((node) => node.value || '').join('')).toMatch(
+        /cancel|close/i
+      )
+    }
+  )
+
+  it('does not add a second money overlay or local backdrop/lock implementation', () => {
+    // MemoryModal is an unrelated, pre-existing agent-memory surface. Task 6 does not add a
+    // second money path beside the three hoisted components below.
+    expect(appSource).toMatch(/<WithdrawDialog[\s\S]*<StopAccessDialog[\s\S]*<RecoveryPanel/)
+    expect(componentSources.every((source) => !source.includes('modal-backdrop'))).toBe(true)
+    expect(
+      componentSources.every((source) => !source.match(/document\.body\.style\.overflow/))
+    ).toBe(true)
   })
 })

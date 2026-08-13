@@ -49,6 +49,14 @@ describe('HonestyLabels', () => {
       /chrome\.storage\.session/
     )
   })
+
+  it('shows only the model-appropriate recovery warning', () => {
+    const { rerender } = render(<HonestyLabels scope="session-key" />)
+    expect(screen.getByText(/chrome\.storage\.session/i)).toBeTruthy()
+    rerender(<HonestyLabels scope="recovery" />)
+    expect(screen.getByText(/VF-custodied recovery/i)).toBeTruthy()
+    expect(screen.queryByText(/chrome\.storage\.session/i)).toBeNull()
+  })
 })
 
 describe('HonestyLabels — rejection-checklist item 5 (source-parse, mutation-provable)', () => {
@@ -62,5 +70,10 @@ describe('HonestyLabels — rejection-checklist item 5 (source-parse, mutation-p
   it('never sets a mono/monospace font-family anywhere in this file', () => {
     expect(SOURCE).not.toMatch(/font-?family/i)
     expect(SOURCE).not.toMatch(/mono/i)
+  })
+
+  it('uses the external honesty-label class rather than inline styles', () => {
+    expect(SOURCE).toMatch(/pc-honesty-label/)
+    expect(SOURCE).not.toMatch(/style\s*=\s*\{/i)
   })
 })

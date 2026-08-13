@@ -44,6 +44,10 @@ const CHROMIUM_CANDIDATES = [
   '/snap/bin/chromium',
 ]
 
+const shellSource = fs.readFileSync(path.resolve(here, '../src/app.jsx'), 'utf8')
+const shellStyle = fs.readFileSync(path.resolve(here, '../style.css'), 'utf8')
+const pocketShellStyle = fs.readFileSync(path.resolve(here, 'design/pocket-crew.css'), 'utf8')
+
 async function launchRealChromium() {
   const { chromium } = await import('playwright-core')
   let lastErr
@@ -77,6 +81,33 @@ function contrastFromRgb(rgbA, rgbB) {
 }
 
 describe('Sidebar', () => {
+  it('exposes the six Pocket Crew labels without changing their routes', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Sidebar extended onToggle={() => {}} />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByRole('button', { name: /my money/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /put it to work/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /the crew/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /history/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /developers/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /settings/i })).toBeTruthy()
+  })
+
+  it('marks the shared navigation landmark for the Pocket Crew shell', () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Sidebar extended onToggle={() => {}} />
+      </MemoryRouter>
+    )
+
+    const navigation = screen.getByRole('navigation', { name: 'Primary navigation' })
+    expect(navigation).toBe(container.querySelector('[data-pocket-primary-nav]'))
+    expect(navigation.hasAttribute('data-pocket-sidebar')).toBe(true)
+  })
+
   it('keeps collapse state and current-page semantics available to assistive technology', () => {
     const onToggle = vi.fn()
     const { rerender } = render(
@@ -212,6 +243,11 @@ describe('Sidebar', () => {
 describe('TopBar', () => {
   const baseProps = { onReset: () => {} }
 
+  it('marks the shared header landmark for the Pocket Crew shell', () => {
+    render(<TopBar {...baseProps} />)
+    expect(screen.getByRole('banner').hasAttribute('data-pocket-topbar')).toBe(true)
+  })
+
   it('renders a NetworkBadge with the visible "Stellar testnet" label', () => {
     render(<TopBar {...baseProps} />)
     expect(screen.getByText('Stellar testnet')).toBeTruthy()
@@ -321,4 +357,91 @@ describe('TopBar', () => {
     },
     20000
   )
+})
+
+describe('Pocket Crew shared shell geometry contract', () => {
+  it('keeps the documented desktop/tablet/mobile tokens and breakpoint boundaries', () => {
+    expect(pocketShellStyle).toMatch(/--pc-sidebar-width:\s*248px/)
+    expect(pocketShellStyle).toMatch(/--pc-sidebar-compact-width:\s*80px/)
+    expect(pocketShellStyle).toMatch(/--pc-topbar-height:\s*64px/)
+    expect(pocketShellStyle).toMatch(/--pc-shell-max:\s*1240px/)
+    expect(pocketShellStyle).toMatch(/--pc-route-gutter:\s*clamp\(20px,\s*4vw,\s*48px\)/)
+    expect(pocketShellStyle).toMatch(/@media\s*\(min-width:\s*1024px\)/)
+    expect(pocketShellStyle).toMatch(
+      /@media\s*\(min-width:\s*768px\)\s*and\s*\(max-width:\s*1023px\)/
+    )
+    expect(pocketShellStyle).toMatch(/@media\s*\(max-width:\s*767px\)/)
+
+    const shellRules = `${shellStyle}\n${pocketShellStyle}`
+    expect(shellRules).not.toMatch(/\.sidebar[^{]*\{[^}]*width:\s*(?:58|180|52|160)px/u)
+    expect(shellRules).not.toMatch(
+      /\.app\.sb-extended \.sidebar[^{]*\{[^}]*width:\s*(?:180|160)px/u
+    )
+    expect(shellRules).not.toMatch(/@media\s*\(max-width:\s*860px\)/u)
+  })
+
+  it('uses the 44px touch target for shared shell controls', () => {
+    expect(pocketShellStyle).toMatch(/--pc-touch-target:\s*44px/)
+    expect(pocketShellStyle).toMatch(/\.sb-item[^{]*\{[^}]*min-height:\s*var\(--pc-touch-target\)/s)
+    expect(pocketShellStyle).toMatch(
+      /\[data-pocket-topbar\] \.icon-btn[^{]*\{[^}]*min-width:\s*var\(--pc-touch-target\)/s
+    )
+  })
+
+  it('keeps named navigation/header/main landmarks and the shared main id at the app boundary', () => {
+    expect(shellSource).toMatch(/<Sidebar[\s\S]*?\/>/s)
+    expect(shellSource).toMatch(
+      /<main\s+id="main-content"[\s\S]*?data-pocket-main[\s\S]*?data-route-heading/s
+    )
+    expect(shellSource).toMatch(/<main\s+id="main-content"/)
+    expect(shellSource).toMatch(/data-pocket-shell/)
+  })
+
+  it('keeps the skip link target and visible layer geometry tokenized', () => {
+    render(
+      <div>
+        <a href="#main-content" className="pc-skip-link">
+          Skip to content
+        </a>
+        <main id="main-content" />
+      </div>
+    )
+    expect(screen.getByRole('link', { name: 'Skip to content' }).getAttribute('href')).toBe(
+      '#main-content'
+    )
+    const skipRule = pocketShellStyle.match(/\.pc-skip-link:focus\s*\{([\s\S]*?)\}/s)?.[1] || ''
+    expect(skipRule).toMatch(/top:\s*var\(--pc-space-3\)/)
+    expect(skipRule).toMatch(/left:\s*var\(--pc-space-3\)/)
+    expect(skipRule).toMatch(/padding:\s*var\(--pc-space-2\)\s+var\(--pc-space-4\)/)
+    expect(skipRule).toMatch(/border-radius:\s*var\(--pc-radius-control\)/)
+    expect(skipRule).toMatch(/transition:\s*[^;]*var\(--pc-duration-fast\)/)
+    expect(skipRule).toMatch(/z-index:\s*var\(--pc-z-skip-link\)/)
+  })
+
+  it('collapses both mobile shell states to one column instead of keeping the compact rail width', async () => {
+    const browser = await launchRealChromium()
+    try {
+      const page = await browser.newPage()
+      await page.setViewportSize({ width: 390, height: 844 })
+      await page.setContent(
+        `<!doctype html><html><head><meta charset="utf-8"><style>${LEGACY_STYLESHEET}</style></head>` +
+          '<body>' +
+          '<div class="app sb-minimized" data-pocket-shell id="collapsed"><nav data-pocket-sidebar></nav><main data-pocket-main></main></div>' +
+          '<div class="app sb-extended" data-pocket-shell id="expanded"><nav data-pocket-sidebar></nav><main data-pocket-main></main></div>' +
+          '</body></html>'
+      )
+
+      const columns = await page.evaluate(() => {
+        const collapsed = getComputedStyle(document.querySelector('#collapsed')).gridTemplateColumns
+        const expanded = getComputedStyle(document.querySelector('#expanded')).gridTemplateColumns
+        return { collapsed, expanded }
+      })
+
+      expect(columns.collapsed).toBe(columns.expanded)
+      expect(columns.collapsed.split(/\s+/)).toHaveLength(1)
+      expect(columns.collapsed).not.toMatch(/^80px\b/)
+    } finally {
+      await browser.close()
+    }
+  }, 20000)
 })

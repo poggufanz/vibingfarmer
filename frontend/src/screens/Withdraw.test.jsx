@@ -12,14 +12,15 @@
 // - @testing-library/react v16 does not auto-clean between tests; without
 //   afterEach(cleanup) the second test onward sees leftover DOM from the
 //   previous render and getByText/getByRole match multiple elements.
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import _Withdraw from './Withdraw.jsx'
+import { BASE_CROSS_CHAIN_AVAILABLE } from '../base/config.js'
 
-vi.mock('../base/deploymentFacts.js', async () => {
-  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('../base/hardenedDeployment.fixture.js')
-  return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
-})
+const here = path.dirname(fileURLToPath(import.meta.url))
 
 const signAndSubmitUnwind = vi.fn()
 const reserveUnwind = vi.fn()
@@ -48,6 +49,7 @@ const baseProps = {
       poolName: 'Aave v3 USDC',
       shares: 100n,
       assets: 2_000_000n,
+      decimals: 6,
       minAssets: 1_990_000n,
     },
     {
@@ -55,11 +57,15 @@ const baseProps = {
       poolName: 'Moonwell USDC',
       shares: 200n,
       assets: 3_000_000n,
+      decimals: 6,
       minAssets: 2_985_000n,
     },
   ],
   idleUsdc: 500_000n,
   stellarRecipient: 'GCXMZCDVYTAANBRASUGWS5GDKRGSQWNM5XHVB4JI7PXECZYKBG5OTTRK',
+  // The production default remains fail-closed. Tests that exercise the available Base surface
+  // explicitly opt into the deterministic fixture seam rather than replacing deployment truth.
+  baseCrossChainAvailable: true,
   onClose: vi.fn(),
   onDone: vi.fn(),
 }
@@ -98,6 +104,60 @@ afterEach(() => {
 })
 
 describe('Withdraw (Base full exit)', () => {
+  it('defaults to the imported fail-closed deployment gate when no fixture override is provided', () => {
+    expect(BASE_CROSS_CHAIN_AVAILABLE).toBe(false)
+    render(<_Withdraw {...baseProps} baseCrossChainAvailable={undefined} />)
+
+    const button = screen.getByRole('button', { name: 'Base unavailable' })
+    expect(button.disabled).toBe(true)
+    expect(screen.getByTestId('base-unavailable-notice')).toBeTruthy()
+
+    fireEvent.click(button)
+    expect(reserveUnwind).not.toHaveBeenCalled()
+    expect(signAndSubmitUnwind).not.toHaveBeenCalled()
+    expect(postUnwindAttach).not.toHaveBeenCalled()
+    expect(pollUnwindStatus).not.toHaveBeenCalled()
+  })
+
+  it('uses an explicit false injection for unavailable labeling and an inert CTA', () => {
+    const adapters = {
+      reserveUnwind: vi.fn(),
+      signAndSubmitUnwind: vi.fn(),
+      postUnwindAttach: vi.fn(),
+      pollUnwindStatus: vi.fn(),
+    }
+    render(<_Withdraw {...baseProps} baseCrossChainAvailable={false} withdrawAdapters={adapters} />)
+
+    const button = screen.getByRole('button', { name: 'Base unavailable' })
+    expect(button.disabled).toBe(true)
+    expect(screen.getByTestId('base-unavailable-notice')).toBeTruthy()
+    fireEvent.click(button)
+    expect(adapters.reserveUnwind).not.toHaveBeenCalled()
+    expect(adapters.signAndSubmitUnwind).not.toHaveBeenCalled()
+  })
+
+  it('uses an explicit true injection to start through deterministic adapters without signing or network clients', async () => {
+    const adapters = {
+      reserveUnwind: vi.fn(() => new Promise(() => {})),
+      signAndSubmitUnwind: vi.fn(),
+      postUnwindAttach: vi.fn(),
+      pollUnwindStatus: vi.fn(),
+    }
+    render(<_Withdraw {...baseProps} baseCrossChainAvailable withdrawAdapters={adapters} />)
+
+    const button = screen.getByRole('button', { name: 'Withdraw all' })
+    expect(button.disabled).toBe(false)
+    fireEvent.click(button)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Preparing...' })).toBeTruthy())
+    expect(adapters.reserveUnwind).toHaveBeenCalledWith({
+      kernelAddress: baseProps.ownerKernelAccount.address,
+      recipientHint: baseProps.stellarRecipient,
+    })
+    expect(adapters.signAndSubmitUnwind).not.toHaveBeenCalled()
+    expect(reserveUnwind).not.toHaveBeenCalled()
+    expect(signAndSubmitUnwind).not.toHaveBeenCalled()
+  })
+
   it('shows the total across every position PLUS idle USDC, not the slippage floor', () => {
     render(<_Withdraw {...baseProps} />)
     // 2.00 + 3.00 + 0.50 = 5.50, never 5.4775 (the floors) and never one pool alone.
@@ -241,6 +301,11 @@ describe('Withdraw (Base full exit)', () => {
     const partial = screen.getByTestId('base-withdraw-partial')
     expect(partial.textContent).toMatch(/1 pool/i)
     expect(partial.textContent).toMatch(/still on Base/i)
+    const route = screen.getByLabelText('Network route facts')
+    expect(route.textContent).toMatch(/Custody: Unknown network/)
+    expect(route.textContent).toMatch(/Transit: unknown/)
+    expect(route.textContent).not.toMatch(/Transit: arrived/)
+    expect(route.textContent).not.toMatch(/Arrived on Stellar testnet/)
   })
 
   it('disables the button when there is nothing at all to withdraw', () => {
@@ -421,6 +486,26 @@ describe('Withdraw (Base full exit)', () => {
     expect(pollUnwindStatus).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps a verified burn in transit while attach is pending', async () => {
+    let resolveAttach
+    postUnwindAttach.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAttach = resolve
+        })
+    )
+    render(<_Withdraw {...baseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() => expect(postUnwindAttach).toHaveBeenCalled())
+
+    const route = screen.getByLabelText('Network route facts')
+    expect(route.textContent).toMatch(/Custody: Unknown network/)
+    expect(route.textContent).toMatch(/Transit: burning/)
+    expect(route.textContent).not.toMatch(/Transit: none/)
+    expect(route.textContent).not.toMatch(/Settled on Base Sepolia/)
+    resolveAttach?.({ jobId: JOB_ID, status: 'relay_pending', unwindTxHash: UNWIND_TX_HASH })
+  })
+
   it('a status timeout retries status only and never re-attaches or re-signs', async () => {
     pollUnwindStatus.mockRejectedValueOnce(new Error('status timeout')).mockResolvedValueOnce({
       jobId: JOB_ID,
@@ -438,6 +523,20 @@ describe('Withdraw (Base full exit)', () => {
     expect(signAndSubmitUnwind).toHaveBeenCalledTimes(1)
     expect(postUnwindAttach).toHaveBeenCalledTimes(1)
     expect(pollUnwindStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a verified burn unknown when status polling errors and exposes retry', async () => {
+    pollUnwindStatus.mockRejectedValueOnce(new Error('status timeout'))
+    render(<_Withdraw {...baseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry status' })).toBeTruthy())
+
+    const route = screen.getByLabelText('Network route facts')
+    expect(route.textContent).toMatch(/Custody: Unknown network/)
+    expect(route.textContent).toMatch(/Transit: unknown/)
+    expect(route.textContent).not.toMatch(/Transit: none/)
+    expect(route.textContent).not.toMatch(/Settled on Base Sepolia/)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry status' }))
   })
 
   it.each(['blocked', 'uncertain', 'expired'])(
@@ -459,5 +558,319 @@ describe('Withdraw (Base full exit)', () => {
   it('contains no em-dash or en-dash in any rendered text', () => {
     const { container } = render(<_Withdraw {...baseProps} />)
     expect(container.textContent).not.toMatch(/[—–]/)
+  })
+})
+
+describe('Withdraw injected adapter boundary', () => {
+  const evidence = {
+    userOpHash: USER_OP_HASH,
+    unwindTxHash: UNWIND_TX_HASH,
+    burned: 5_500_000n,
+    exited: 2,
+    skipped: 0,
+    evidenceStatus: 'verified',
+  }
+
+  const deferred = () => {
+    let resolve
+    const promise = new Promise((answer) => {
+      resolve = answer
+    })
+    return { promise, resolve }
+  }
+
+  it('drives each real unwind stage through injected adapters without calling defaults', async () => {
+    const reserveGate = deferred()
+    const signGate = deferred()
+    const attachGate = deferred()
+    const pollGate = deferred()
+    const order = []
+    const adapters = {
+      reserveUnwind: vi.fn(async () => {
+        order.push('reserve')
+        return reserveGate.promise
+      }),
+      signAndSubmitUnwind: vi.fn(async ({ onSubmitted }) => {
+        order.push('sign')
+        await signGate.promise
+        await onSubmitted(USER_OP_HASH)
+        return evidence
+      }),
+      postUnwindAttach: vi.fn(async () => {
+        order.push('attach')
+        await attachGate.promise
+        return { jobId: JOB_ID, status: 'relay_pending', unwindTxHash: UNWIND_TX_HASH }
+      }),
+      pollUnwindStatus: vi.fn(async () => {
+        order.push('poll')
+        await pollGate.promise
+        return {
+          jobId: JOB_ID,
+          status: 'done',
+          unwindTxHash: UNWIND_TX_HASH,
+          mintTxHash: MINT_TX_HASH,
+        }
+      }),
+    }
+
+    render(<_Withdraw {...baseProps} withdrawAdapters={adapters} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /preparing/i })).toBeTruthy())
+    expect(order).toEqual(['reserve'])
+
+    reserveGate.resolve({ jobId: JOB_ID, status: 'awaiting_burn' })
+    await waitFor(() => expect(screen.getByRole('button', { name: /signing/i })).toBeTruthy())
+    expect(order).toEqual(['reserve', 'sign'])
+
+    signGate.resolve()
+    await waitFor(() => expect(screen.getByRole('button', { name: /relaying/i })).toBeTruthy())
+    expect(order).toEqual(['reserve', 'sign', 'attach'])
+
+    attachGate.resolve()
+    await waitFor(() => expect(screen.getByRole('button', { name: /bridging/i })).toBeTruthy())
+    expect(order).toEqual(['reserve', 'sign', 'attach', 'poll'])
+
+    pollGate.resolve()
+    await waitFor(() => expect(baseProps.onDone).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: 'Done' })).toBeTruthy()
+    expect(reserveUnwind).not.toHaveBeenCalled()
+    expect(signAndSubmitUnwind).not.toHaveBeenCalled()
+    expect(postUnwindAttach).not.toHaveBeenCalled()
+    expect(pollUnwindStatus).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['failed', Object.assign(new Error('injected failure'), { code: 'relayer_unavailable' })],
+    [
+      'submission unknown',
+      Object.assign(new Error('injected submission is unknown'), { code: 'submission_unknown' }),
+    ],
+  ])('renders injected %s without falling back to the imported clients', async (_label, error) => {
+    const adapters = {
+      reserveUnwind: vi.fn().mockResolvedValue({ jobId: JOB_ID, status: 'awaiting_burn' }),
+      signAndSubmitUnwind: vi.fn().mockRejectedValue(error),
+      postUnwindAttach: vi.fn(),
+      pollUnwindStatus: vi.fn(),
+    }
+
+    render(<_Withdraw {...baseProps} withdrawAdapters={adapters} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() =>
+      expect(
+        error.code === 'submission_unknown'
+          ? screen.getByTestId('base-withdraw-reconcile')
+          : screen.getByRole('alert')
+      ).toBeTruthy()
+    )
+
+    expect(adapters.reserveUnwind).toHaveBeenCalledTimes(1)
+    expect(adapters.signAndSubmitUnwind).toHaveBeenCalledTimes(1)
+    expect(adapters.postUnwindAttach).not.toHaveBeenCalled()
+    expect(adapters.pollUnwindStatus).not.toHaveBeenCalled()
+    expect(reserveUnwind).not.toHaveBeenCalled()
+    expect(signAndSubmitUnwind).not.toHaveBeenCalled()
+    expect(postUnwindAttach).not.toHaveBeenCalled()
+    expect(pollUnwindStatus).not.toHaveBeenCalled()
+
+    if (error.code === 'submission_unknown') {
+      expect(screen.getByTestId('base-withdraw-reconcile').textContent).toMatch(
+        /may have been submitted/i
+      )
+      expect(screen.queryByRole('button', { name: /retry withdraw/i })).toBeNull()
+    }
+  })
+
+  it('keeps an injected relayer-running result pending without claiming completion', async () => {
+    const adapters = {
+      reserveUnwind: vi.fn().mockResolvedValue({ jobId: JOB_ID, status: 'awaiting_burn' }),
+      signAndSubmitUnwind: vi.fn(async ({ onSubmitted }) => {
+        await onSubmitted(USER_OP_HASH)
+        return evidence
+      }),
+      postUnwindAttach: vi.fn().mockResolvedValue({
+        jobId: JOB_ID,
+        status: 'relay_pending',
+        unwindTxHash: UNWIND_TX_HASH,
+      }),
+      pollUnwindStatus: vi.fn().mockResolvedValue({
+        jobId: JOB_ID,
+        status: 'relay_running',
+        unwindTxHash: UNWIND_TX_HASH,
+      }),
+    }
+
+    render(<_Withdraw {...baseProps} withdrawAdapters={adapters} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() =>
+      expect(screen.getByText(/still settling\. the relayer is finishing/i)).toBeTruthy()
+    )
+
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+    expect(baseProps.onDone).not.toHaveBeenCalled()
+    expect(adapters.reserveUnwind).toHaveBeenCalledTimes(1)
+    expect(adapters.signAndSubmitUnwind).toHaveBeenCalledTimes(1)
+    expect(adapters.postUnwindAttach).toHaveBeenCalledTimes(1)
+    expect(adapters.pollUnwindStatus).toHaveBeenCalledTimes(1)
+    expect(reserveUnwind).not.toHaveBeenCalled()
+    expect(signAndSubmitUnwind).not.toHaveBeenCalled()
+    expect(postUnwindAttach).not.toHaveBeenCalled()
+    expect(pollUnwindStatus).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the injected adapter contract is incomplete', () => {
+    render(<_Withdraw {...baseProps} withdrawAdapters={{ reserveUnwind: vi.fn() }} />)
+
+    const button = screen.getByRole('button', { name: 'Unavailable' })
+    expect(button.disabled).toBe(true)
+    expect(reserveUnwind).not.toHaveBeenCalled()
+    expect(signAndSubmitUnwind).not.toHaveBeenCalled()
+    expect(postUnwindAttach).not.toHaveBeenCalled()
+    expect(pollUnwindStatus).not.toHaveBeenCalled()
+  })
+})
+
+describe('Withdraw (Base full exit) — Task 6 evidence and handoff contract', () => {
+  it('keeps the exact custody disclosure adjacent before any request starts', () => {
+    const { container } = render(<_Withdraw {...baseProps} />)
+    expect(screen.getByText('Base Sepolia proxy. Custody only. No protocol yield.')).toBeTruthy()
+    expect(screen.getByText(/Destination: Stellar testnet/i)).toBeTruthy()
+    expect(container.textContent).toMatch(/One passkey signature starts the unwind request/i)
+    expect(container.textContent).not.toMatch(/money moved/i)
+  })
+
+  it('fails closed when a Base position supplies malformed precision metadata', () => {
+    render(
+      <_Withdraw
+        {...baseProps}
+        positions={[{ ...baseProps.positions[0], decimals: 7 }]}
+        idleUsdc={0n}
+      />
+    )
+    expect(screen.getByTestId('base-withdraw-total').textContent).toBe('Unavailable')
+    expect(screen.getByRole('button', { name: 'Unavailable' }).disabled).toBe(true)
+  })
+
+  it('fails closed when a Base position explicitly supplies an undefined token', () => {
+    render(
+      <_Withdraw
+        {...baseProps}
+        positions={[{ ...baseProps.positions[0], token: undefined }]}
+        idleUsdc={0n}
+      />
+    )
+    expect(screen.getByTestId('base-withdraw-total').textContent).toBe('Unavailable')
+    expect(screen.getByRole('button', { name: 'Unavailable' }).disabled).toBe(true)
+  })
+
+  it.each([
+    ['a missing pool identity', [{ assets: 1_000_000n, decimals: 6 }]],
+    [
+      'duplicate pool identities',
+      [{ ...baseProps.positions[0] }, { ...baseProps.positions[0], assets: 3_000_000n }],
+    ],
+  ])('fails closed for %s in the Base position set', (_label, positions) => {
+    render(<_Withdraw {...baseProps} positions={positions} idleUsdc={0n} />)
+    expect(screen.getByTestId('base-withdraw-total').textContent).toBe('Unavailable')
+    expect(screen.getByRole('button', { name: 'Unavailable' }).disabled).toBe(true)
+  })
+
+  it('keeps a done projection in reconciliation when receipt evidence is incomplete', async () => {
+    pollUnwindStatus.mockResolvedValue({
+      jobId: JOB_ID,
+      status: 'done',
+      unwindTxHash: UNWIND_TX_HASH,
+      // Missing mintTxHash means the bridge receipt is not yet reconciled.
+    })
+    render(<_Withdraw {...baseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() => expect(screen.getByTestId('base-withdraw-reconcile')).toBeTruthy())
+    expect(baseProps.onDone).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+  })
+
+  it('uses settled copy only after receipt and mint reconciliation prove completion', async () => {
+    render(<_Withdraw {...baseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() =>
+      expect(screen.getByText(/receipt and reconciliation confirm/i)).toBeTruthy()
+    )
+    expect(screen.getByText(/arrived in your stellar wallet/i)).toBeTruthy()
+    expect(screen.queryByText(/in flight to stellar/i)).toBeNull()
+    const route = screen.getByLabelText('Network route facts')
+    expect(route.textContent).toMatch(/Custody: Stellar testnet/)
+    expect(route.textContent).toMatch(/Transit: arrived/)
+    expect(screen.getByText('Status detail: Arrived on Stellar testnet')).toBeTruthy()
+  })
+
+  it('keeps an exact high-precision Base total without Number coercion', () => {
+    render(
+      <_Withdraw
+        {...baseProps}
+        positions={[{ ...baseProps.positions[0], assets: '9007199254740993', decimals: 6 }]}
+        idleUsdc={0n}
+      />
+    )
+    expect(screen.getByTestId('base-withdraw-total').textContent).toContain('9007199254.740993')
+  })
+
+  it('does not commit an old attempt after the connected kernel account changes', async () => {
+    let resolveSign
+    signAndSubmitUnwind.mockImplementation(async ({ onSubmitted }) => {
+      await onSubmitted(USER_OP_HASH)
+      return new Promise((resolve) => {
+        resolveSign = resolve
+      })
+    })
+    const { rerender } = render(<_Withdraw {...baseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() => expect(signAndSubmitUnwind).toHaveBeenCalled())
+
+    rerender(
+      <_Withdraw
+        {...baseProps}
+        ownerKernelAccount={{ address: '0x0000000000000000000000000000000000000bb2' }}
+      />
+    )
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Withdraw all' })).toBeTruthy())
+
+    resolveSign?.({
+      userOpHash: USER_OP_HASH,
+      unwindTxHash: UNWIND_TX_HASH,
+      burned: 5_500_000n,
+      exited: 2,
+      skipped: 0,
+      evidenceStatus: 'verified',
+    })
+    await Promise.resolve()
+    expect(baseProps.onDone).not.toHaveBeenCalled()
+    expect(postUnwindAttach).not.toHaveBeenCalled()
+  })
+
+  it('keeps the lazy handoff visibly submitting and action-locked while reserving', async () => {
+    let resolveReservation
+    reserveUnwind.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveReservation = resolve
+        })
+    )
+    render(<_Withdraw {...baseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /preparing/i })).toBeTruthy())
+    expect(screen.getByRole('button', { name: /preparing/i }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Cancel' }).disabled).toBe(true)
+    resolveReservation?.({ jobId: JOB_ID, status: 'awaiting_burn' })
+  })
+
+  it('keeps the lazy Base overlay on route-owned Pocket Crew classes with no legacy or inline styling', () => {
+    const source = fs.readFileSync(path.resolve(here, './Withdraw.jsx'), 'utf8')
+    const css = fs.readFileSync(path.resolve(here, '../components/money/my-money.css'), 'utf8')
+    const activeCss = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(source).not.toMatch(/\b(?:wd-|modal-|grant-receipt|think-spin)/)
+    expect(source).not.toMatch(/\bstyle\s*=/)
+    expect(css).toMatch(/\.pc-base-withdraw-hero\s*\{/)
+    expect(css).toMatch(/\.pc-base-withdraw-loading-fill\[data-progress=/)
+    expect(css).toMatch(/\.pc-base-withdraw-stage\s*\{/)
+    expect(activeCss).not.toMatch(/\.wd-|\.modal-|\.grant-receipt|\.think-spin/)
   })
 })

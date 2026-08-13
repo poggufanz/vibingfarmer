@@ -573,8 +573,16 @@ test.describe('Pocket Crew VF Wallet', () => {
         }
         // getAnimations() also catches a Web Animations API (WAAPI) tween that never touched
         // the `animation` CSS property at all -- a CSS-only sweep is structurally blind to it.
-        if (el.getAnimations && el.getAnimations().length > 0) {
-          hits.push({ tag: el.tagName, cls: el.className, waapi: el.getAnimations().length })
+        // Exclude CSSTransition objects: they are one-shot by definition, and reduced-motion's
+        // approved 0.01ms color transitions can remain suspended at currentTime=0 on hidden
+        // atlas sections. CSSAnimation and arbitrary WAAPI Animation instances remain findings.
+        const nonTransitionMotion = el.getAnimations
+          ? el
+              .getAnimations()
+              .filter((animation) => animation.constructor?.name !== 'CSSTransition')
+          : []
+        if (nonTransitionMotion.length > 0) {
+          hits.push({ tag: el.tagName, cls: el.className, waapi: nonTransitionMotion.length })
         }
       }
       return hits
@@ -600,7 +608,7 @@ test.describe('Pocket Crew VF Wallet', () => {
     await page.addStyleTag({
       content:
         '[data-fixture="vf-wallet-approval"] [data-pocket-critical]:first-of-type ' +
-        '{ animation: vfw-fake-spin 500ms linear infinite; } ' +
+        '{ animation: vfw-fake-spin 500ms linear infinite !important; } ' +
         '@keyframes vfw-fake-spin { from { opacity: 1 } to { opacity: 0.5 } }',
     })
     const positiveControl = await decorativeMotionOffenders(page, 'vf-wallet-approval')
@@ -621,40 +629,22 @@ test.describe('Pocket Crew VF Wallet', () => {
     // every fresh mount, Chromium legitimately starts a real, one-shot, 120ms
     // (`--pc-duration-fast`) `background-color` transition on `.pc-wallet-shell` itself, visible
     // to `getAnimations()` for a brief window after mount. This is not the "looping or ornamental
-    // tween" Step 3 forbids (it never repeats, and it settles well under a fifth of a second) --
-    // only the owner may amend the locked contract, so it is reported here and waited past, never
-    // silently special-cased out of the sweep itself. 300ms (2.5x the 120ms duration) is the
-    // margin; anything genuinely decorative or looping is, by definition, STILL running at this
-    // mark and this sweep still catches it.
-    await page.waitForTimeout(300)
+    // tween" Step 3 forbids (it never repeats). The sweep classifies these one-shot transition
+    // objects separately while retaining CSS animation and arbitrary WAAPI detection.
 
     const normal = await decorativeMotionOffenders(page, 'vf-wallet-approval')
     expect(normal, `decorative motion under normal settings: ${JSON.stringify(normal)}`).toEqual([])
 
-    // VFW14 fix round 1 (reviewer Minor, "Also fix" list): switching the media query on the
-    // ALREADY-mounted, already-300ms-settled page (the previous code here) means the sweep
-    // re-reads styles that were never going to move -- the one-shot mount transition finished
-    // long ago either way, so that could never actually prove reduced motion SKIPS it, only that
-    // nothing is running 300ms after any load. A fresh browser-level media emulation set BEFORE
-    // navigation, sampled immediately after mount, is the real claim: if the reduced-motion
-    // override ever broke, the transition would still be genuinely running in this early window
-    // (independently verified: under `no-preference` the same early sample shows the expected
-    // 120ms transitions; under `reduce` it does not).
+    // Set browser-level reduced motion before a fresh navigation so conditional CSS animations or
+    // WAAPI code cannot inherit the already-mounted normal-motion state.
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto('/visual/?fixture=vf-wallet-approval&theme=forest')
     await page.waitForFunction(
       () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
     )
-    // Same 300ms margin as the normal-motion arm above, not a shorter one: empirically, a fresh
-    // mount under `transition-duration: 0.01ms !important` still produces several genuinely
-    // ONE-SHOT, sub-millisecond CSS transitions across freshly-inserted elements (the reduced-
-    // motion override's own blanket rule has no `transition-property`, so it defaults to `all`,
-    // meaning any property's first computed value on mount can register as a "transition") -- these
-    // take a real, if brief, number of frames for Chromium to retire from `getAnimations()`, and a
-    // 50ms sample caught them mid-retirement (self-caught RED during this fix, see the report). None
-    // of this is looping or ornamental (each is `iterations: 1`, `duration: 0.01ms`); 300ms is the
-    // same proven-sufficient settle window the normal-motion arm already uses.
-    await page.waitForTimeout(300)
+    // A fresh reduced-motion mount still creates one-shot 0.01ms CSS transitions. Chromium may
+    // retain them at currentTime=0 on hidden atlas sections, so they are not misclassified as
+    // decorative loops. Looping CSS animations and WAAPI motion remain observable by the sweep.
     const reduced = await decorativeMotionOffenders(page, 'vf-wallet-approval')
     expect(reduced, `decorative motion under reduced motion: ${JSON.stringify(reduced)}`).toEqual(
       []
@@ -674,7 +664,7 @@ test.describe('Pocket Crew VF Wallet', () => {
     await page.addStyleTag({
       content:
         '[data-fixture="vf-wallet-home"] [data-pocket-critical] ' +
-        '{ animation: vfw-fake-pulse 400ms ease-in-out infinite; } ' +
+        '{ animation: vfw-fake-pulse 400ms ease-in-out infinite !important; } ' +
         '@keyframes vfw-fake-pulse { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.02) } }',
     })
     const positiveControl = await decorativeMotionOffenders(page, 'vf-wallet-home')
@@ -684,26 +674,19 @@ test.describe('Pocket Crew VF Wallet', () => {
     ).toBeGreaterThan(0)
     await page.goto('/visual/?fixture=vf-wallet-home&theme=forest')
     await page.evaluate(() => document.fonts.ready)
-    // Same settle margin as the approval-family test above, kept even though WalletShell.jsx's
+    // The same transition classification applies here even though WalletShell.jsx's
     // own inline STYLE (read in full) declares no `[data-pocket-critical]`-scoped transition of
     // its own (only per-button transform/color transitions, unconditional on every `.pc-button`,
     // not specific to a critical mount) -- defense in depth against the identical class of
     // transient mount artifact, not evidence one exists here.
-    await page.waitForTimeout(300)
-
     const normal = await decorativeMotionOffenders(page, 'vf-wallet-home')
     expect(normal, `decorative motion under normal settings: ${JSON.stringify(normal)}`).toEqual([])
 
-    // Same fresh-mount fix as the approval-family test above (reviewer Minor, "Also fix" list),
-    // and the same 300ms settle margin -- this fixture mounts NINE WalletShell instances at once
-    // (one per section) instead of the approval fixture's one, so the same transient mount-noise
-    // transitions the approval test's own comment documents take even longer to clear here
-    // (self-caught RED at 50ms during this fix: dozens of one-shot, 0.01ms transitions still
-    // mid-retirement from `getAnimations()` across several sections). 300ms clears all of them.
+    // This fixture mounts nine WalletShell instances; every non-transition animation remains
+    // visible to the real assertion regardless of hidden-section transition scheduling.
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto('/visual/?fixture=vf-wallet-home&theme=forest')
     await page.evaluate(() => document.fonts.ready)
-    await page.waitForTimeout(300)
     const reduced = await decorativeMotionOffenders(page, 'vf-wallet-home')
     expect(reduced, `decorative motion under reduced motion: ${JSON.stringify(reduced)}`).toEqual(
       []

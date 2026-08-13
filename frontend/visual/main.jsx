@@ -1,9 +1,9 @@
 // frontend/visual/main.jsx
 // Secondary Vite entry (frontend/visual/index.html) for Playwright visual regression + this
-// file's own jsdom-importable `FoundationFixture` (Foundation Task 7). Reads `?fixture=<id>` and
+// file's own jsdom-importable `FoundationAtlasFixture` (Foundation Task 10). Reads `?fixture=<id>` and
 // `?theme=forest|day-field` from the URL exactly like Task 1 established; the Playwright spec
 // (../e2e/pocket-crew.visual.spec.js) drives both params, and foundationA11y.test.jsx imports
-// `FoundationFixture` directly (no browser, no query string) to assert the same composition is
+// `FoundationAtlasFixture` directly (no browser, no query string) to assert the same composition is
 // axe-clean and meets every registered contrast tuple.
 //
 // The real app's own entry (src/main.jsx) loads the legacy stylesheet, the Pocket Crew semantic
@@ -37,11 +37,20 @@ import '@fontsource-variable/jetbrains-mono'
 import '@fontsource-variable/newsreader'
 import '../style.css'
 import '../src/design/pocket-crew.css'
-import { AgentMark } from '../src/components/pocket/AgentMark.jsx'
-import { BrandLockup } from '../src/components/pocket/BrandLockup.jsx'
-import { MoneyFigure, TechnicalDetails, VenueTruth } from '../src/components/pocket/Primitives.jsx'
-import { NetworkBadge, NetworkRoute } from '../src/components/pocket/NetworkIdentity.jsx'
-import { NETWORK_IDS } from '../src/design/networks.js'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { FoundationAtlasFixture } from './FoundationAtlasFixture.jsx'
+import {
+  CORE_FIXTURE_CLOCK,
+  CORE_FIXTURE_CLASSES,
+  CORE_FIXTURE_STATES,
+  buildCoreBaseWithdrawFixture,
+  buildCoreCrewFixture,
+  buildCoreDialogFixture,
+  buildCoreMoneyFixture,
+  buildCoreSettingsFixture,
+  buildCoreStrategyFixture,
+  withCoreFixtureEnvironment,
+} from './coreFixtures.js'
 import { StrategyRoute } from '../src/components/strategy/StrategyRoute.jsx'
 // Pure selector, not a React component -- no CSS side effect (confirmed by reading the file in
 // full), so a plain static top-level import here is safe exactly like approvalView.js/
@@ -66,6 +75,40 @@ import {
   CCTP_BASE_DOMAIN,
 } from '../src/stellar/cctpBurn.js'
 import { VF_TESTNET_ISSUER } from '../src/wallet/trustline.js'
+import LandingHero from '../src/components/LandingHero.jsx'
+import OnboardingFlow from '../src/components/OnboardingFlow.jsx'
+import ExplorerPage from '../src/components/ExplorerPage.jsx'
+import EcosystemPage from '../src/components/EcosystemPage.jsx'
+import ReplayPage from '../src/components/ReplayPage.jsx'
+import HistoryPanel from '../src/components/HistoryPanel.jsx'
+import VaultDetailPage from '../src/components/VaultDetailPage.jsx'
+import TxDetailPage from '../src/components/TxDetailPage.jsx'
+import DevelopersLayout from '../src/developers/DevelopersLayout.jsx'
+import KeysSection from '../src/developers/KeysSection.jsx'
+import UsageSection from '../src/developers/UsageSection.jsx'
+import DocsSection from '../src/developers/DocsSection.jsx'
+import SkillDrawer from '../src/components/SkillDrawer.jsx'
+import {
+  TweakButton,
+  TweakSection,
+  TweakSlider,
+  TweakToggle,
+  TweaksPanel,
+} from '../src/tweaks-panel.jsx'
+import {
+  BASE_HEX_FIXTURES,
+  SECONDARY_CLASS_ROUTES,
+  SECONDARY_NOW,
+  SECONDARY_OWNED_CLASSES,
+  SECONDARY_ROUTE_FIXTURES,
+  STELLAR_C_FIXTURES,
+  STELLAR_G_FIXTURE,
+  secondaryPayload,
+} from './secondaryFixtures.js'
+import {
+  REQUIRED_WALLET_ATLAS_SECTIONS,
+  WALLET_ATLAS_SECTION_MAP,
+} from './walletFixtureRegistry.js'
 // VF Wallet Task 14. WalletHome/WalletOnboarding/WalletActivity/WalletAdvanced/WalletSettings all
 // wrap the shared WalletShell, which renders its own <style> tag inline on every mount (see
 // VfWalletHomeFixture's own header comment below for why that makes it safe to import these
@@ -73,8 +116,13 @@ import { VF_TESTNET_ISSUER } from '../src/wallet/trustline.js'
 import { WalletHome } from '../src/wallet/ui/WalletHome.jsx'
 import { WalletOnboarding } from '../src/wallet/ui/WalletOnboarding.jsx'
 import { WalletActivity } from '../src/wallet/ui/WalletActivity.jsx'
+import { WalletReceive } from '../src/wallet/ui/WalletReceive.jsx'
 import { WalletAdvanced } from '../src/wallet/ui/WalletAdvanced.jsx'
 import { WalletSettings } from '../src/wallet/ui/WalletSettings.jsx'
+import { WalletShell } from '../src/wallet/ui/WalletShell.jsx'
+import { ApproveOverlay } from '../src/wallet/ui/ApproveOverlay.jsx'
+import SendScreen from '../src/wallet/ui/classic/SendScreen.jsx'
+import AddAssetScreen from '../src/wallet/ui/classic/AddAssetScreen.jsx'
 // Pure vanilla view-model + DOM renderers (extension/approvalView.js, extension/ceremonyView.js)
 // -- not React components, imported for their functions only. No CSS side effect (confirmed by
 // reading both files in full): the stylesheet these need (extension/approval.css) is loaded
@@ -138,336 +186,99 @@ const MyMoneyRoute = lazy(() =>
 const CrewRoute = lazy(() =>
   import('../src/components/crew/CrewRoute.jsx').then((m) => ({ default: m.CrewRoute }))
 )
+const SettingsPageRoute = lazy(() =>
+  import('../src/components/SettingsPage.jsx').then((m) => ({ default: m.default }))
+)
+const WithdrawRoute = lazy(() =>
+  Promise.all([
+    // Withdraw.jsx is a standalone lazy route in production, while MyMoneyRoute normally brings
+    // the money stylesheet onto the page first.  The Core CAP-18 fixture mounts Withdraw directly,
+    // so load the same route-owned stylesheet at this composition boundary instead of leaving
+    // technical/visually-hidden values unstyled (which can paint outside the 200% zoom viewport).
+    import('../src/components/money/my-money.css'),
+    import('../src/screens/Withdraw.jsx'),
+  ]).then(([, m]) => ({ default: m.default }))
+)
+const WithdrawDialogRoute = lazy(() =>
+  Promise.all([
+    import('../src/components/money/my-money.css'),
+    import('../src/components/money/WithdrawDialog.jsx'),
+  ]).then(([, m]) => ({ default: m.WithdrawDialog }))
+)
+const StopAccessDialogRoute = lazy(() =>
+  Promise.all([
+    import('../src/components/money/my-money.css'),
+    import('../src/components/money/StopAccessDialog.jsx'),
+  ]).then(([, m]) => ({ default: m.StopAccessDialog }))
+)
+const RecoveryPanelRoute = lazy(() =>
+  Promise.all([
+    import('../src/components/money/my-money.css'),
+    import('../src/components/money/RecoveryPanel.jsx'),
+  ]).then(([, m]) => ({ default: m.RecoveryPanel }))
+)
 
 const params = new URLSearchParams(window.location.search)
 const fixture = params.get('fixture') || 'foundation'
 const theme = params.get('theme') || 'forest'
+const motion = params.get('motion') === 'reduced' ? 'reduced' : 'normal'
+const walletSection = params.get('section')
+const secondaryClass = params.get('class')
+const secondaryState = params.get('state') || 'current'
+const secondaryBranch =
+  fixture === 'secondary-routes' ? SECONDARY_CLASS_ROUTES[secondaryClass] || 'landing' : fixture
+
+if (REQUIRED_WALLET_ATLAS_SECTIONS.length !== 41) {
+  throw new Error('VF Wallet atlas must expose exactly 41 P/A/C sections')
+}
+
+// Secondary functional fixtures are offline by construction. Install the browser guard before
+// the React root is mounted; local app assets are still loaded by the browser itself, while any
+// route reader that accidentally reaches for an external source fails closed and its existing
+// fail-soft path remains visible. The production readers/defaults are untouched.
+const SECONDARY_FIXTURE_IDS = new Set([
+  'landing',
+  'onboarding',
+  'explorer',
+  'ecosystem',
+  'replay',
+  'history',
+  'vault',
+  'tx',
+  'developers',
+  'developer-keys',
+  'developer-usage',
+  'developer-docs',
+  'skill-drawer',
+  'dev-panel',
+  'secondary-routes',
+])
+
+const isSecondaryFixture = SECONDARY_FIXTURE_IDS.has(fixture)
+if (isSecondaryFixture) {
+  const blocked = (kind) => {
+    throw new Error(`Secondary fixture attempted an unexpected ${kind} call`)
+  }
+  Date.now = () => Date.parse(SECONDARY_NOW)
+  Math.random = () => blocked('randomness')
+  globalThis.fetch = () => blocked('network')
+  globalThis.XMLHttpRequest = class SecondaryFixtureXHR {
+    constructor() {
+      blocked('XHR')
+    }
+  }
+  globalThis.WebSocket = class SecondaryFixtureWebSocket {
+    constructor() {
+      blocked('WebSocket')
+    }
+  }
+  if (globalThis.navigator && typeof globalThis.navigator.sendBeacon === 'function') {
+    globalThis.navigator.sendBeacon = () => blocked('beacon')
+  }
+}
 
 document.documentElement.dataset.theme = theme
-
-const { STELLAR_TESTNET, BASE_SEPOLIA } = NETWORK_IDS
-
-// Four fixed, address-shaped identities -- never a list index -- so AgentMark's crew color and
-// this whole fixture stay pixel-stable across every capture. Values are invented, not real
-// testnet accounts.
-const AGENT_IDENTITIES = Object.freeze([
-  'GAAWWQ5FGB4S3RUUY36F4FR3PPZTXVBYSTZ56MBK6IJDBTZ4D3AV3JVO',
-  'GB2NHY6IPX56JS3MSXTFOA6BSFVWK4CFEXMWMHZ6HYQAAT2A6TFICZ2E',
-  'GCT5U3EOQKQLLZP4YRYVK6KAY4L5UM3PN7MYWICM6QN2WJ2TRK6ZFXAC',
-  'GDXTJEK4JZNSTNQAWA3VFAJZLB3AVKMLU5MRDMWEGFYWMWFB3THLYFDD',
-])
-
-// Decorative color reference only -- every swatch carries its own always-visible text label
-// beside it, never a color-only identity (see the render below).
-const TOKEN_SWATCHES = Object.freeze([
-  { label: 'Canvas', varName: '--pc-canvas' },
-  { label: 'Workspace', varName: '--pc-workspace' },
-  { label: 'Owned (Rice)', varName: '--pc-owned' },
-  { label: 'Harvest', varName: '--pc-harvest' },
-  { label: 'Danger', varName: '--pc-danger' },
-  { label: 'Warn', varName: '--warn' },
-  { label: 'Muted', varName: '--pc-muted' },
-  { label: 'Focus ring', varName: '--focus-ring' },
-])
-
-// Fixed, never-computed grant scope for the disclosure example -- no Date.now()/new Date() so the
-// baseline never drifts.
-const GRANT_SCOPE_JSON = JSON.stringify(
-  {
-    router: 'CCEWWRQVFA6MJUYNGL2NHOMPGH3EQNRE6WVMWDT2QTQTSDNDHVN4GQXR',
-    budget: '500.0000000 USDC',
-    expiresAt: '2026-01-01T00:00:00Z',
-    agents: 4,
-  },
-  null,
-  2
-)
-
-function FoundationFixture() {
-  // Fix round 2 (Strategy Task 14, owner ruling superseding the earlier "leave Foundation alone"
-  // stance): no outer padding here. Unlike Strategy, Foundation has no `.pc-route` at all --
-  // `document.querySelector('.pc-route')` is null on this fixture at every width -- so the removed
-  // 24px was its ONLY gutter. This freezes Foundation's primitives at full bleed, not "fixes a
-  // 272px route" (that framing is Strategy's own, whose sections each wrap a real `.pc-route` with
-  // its own `--pc-route-gutter`; see StrategyFixture's comment below). A compulsory Foundation
-  // re-freeze (owner decision #19's font change, unrelated to this fix) made bundling this in the
-  // same pass strictly better than a second one later.
-  return (
-    <main data-fixture="foundation" style={{ display: 'grid', gap: '2rem' }}>
-      {/* ponytail: fake, permanent focus ring for the demo buttons below -- a real DOM focus is
-          singular per document, so only one of the two surfaces could ever hold a genuine
-          :focus-visible at screenshot time. This reproduces the exact same rule pocket-crew.css
-          already applies (see `:focus-visible` and its owned/harvest override there) via a
-          fixture-only attribute, so both surfaces are provably ring-visible in one frozen frame.
-          Real focus-trap/keyboard behavior is already covered by Primitives.test.jsx (Dialog). */}
-      <style>{`
-        [data-demo-focus-ring] {
-          outline: 3px solid var(--focus-ring);
-          outline-offset: 3px;
-          box-shadow: 0 0 0 5px var(--focus-ring-contrast);
-        }
-        .pc-owned [data-demo-focus-ring],
-        .pc-harvest [data-demo-focus-ring] {
-          outline-color: var(--pc-focus-on-light);
-          box-shadow: 0 0 0 5px var(--pc-owned);
-        }
-      `}</style>
-
-      <h1>Pocket Crew visual harness</h1>
-
-      <section aria-labelledby="lockups-heading">
-        <h2 id="lockups-heading">Brand lockups</h2>
-        <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <BrandLockup variant="full" tone="auto" />
-          <BrandLockup variant="compact" tone="auto" />
-          <BrandLockup variant="full" tone="mono" />
-        </div>
-      </section>
-
-      <section aria-labelledby="marks-heading">
-        <h2 id="marks-heading">Product mark and agent marks</h2>
-        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <BrandLockup variant="compact" />
-          <AgentMark identity={AGENT_IDENTITIES[0]} state="active" label="A1" size={16} />
-          <AgentMark identity={AGENT_IDENTITIES[1]} state="confirmed" label="A2" size={16} />
-          <AgentMark identity={AGENT_IDENTITIES[2]} state="idle" label="A3" size={20} />
-          <AgentMark identity={AGENT_IDENTITIES[3]} state="failed" label="A4" size={32} />
-        </div>
-      </section>
-
-      <section aria-labelledby="tokens-heading">
-        <h2 id="tokens-heading">Theme tokens</h2>
-        <ul
-          style={{
-            display: 'flex',
-            gap: '1rem',
-            flexWrap: 'wrap',
-            listStyle: 'none',
-            margin: 0,
-            padding: 0,
-          }}
-        >
-          {TOKEN_SWATCHES.map((token) => (
-            <li
-              key={token.label}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '0.35rem',
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  display: 'block',
-                  width: 48,
-                  height: 48,
-                  borderRadius: 8,
-                  background: `var(${token.varName})`,
-                  border: '1px solid var(--pc-muted)',
-                }}
-              />
-              <span style={{ fontSize: 11 }}>{token.label}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section aria-labelledby="badges-heading">
-        <h2 id="badges-heading">Network badges</h2>
-        <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <NetworkBadge networkId={STELLAR_TESTNET} size={16} />
-          <NetworkBadge networkId={STELLAR_TESTNET} size={14} />
-          <NetworkBadge networkId={BASE_SEPOLIA} size={16} />
-          <NetworkBadge networkId={BASE_SEPOLIA} size={14} />
-        </div>
-      </section>
-
-      <section aria-labelledby="routes-heading">
-        <h2 id="routes-heading">Network routes</h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div>
-            <h3 style={{ fontSize: 12, margin: '0 0 4px' }}>Source</h3>
-            <NetworkRoute
-              context={{
-                hostNetworkId: STELLAR_TESTNET,
-                sourceNetworkId: STELLAR_TESTNET,
-                destinationNetworkId: BASE_SEPOLIA,
-                custodyNetworkId: STELLAR_TESTNET,
-                transitState: 'source',
-              }}
-            />
-          </div>
-          <div>
-            <h3 style={{ fontSize: 12, margin: '0 0 4px' }}>Transit</h3>
-            <NetworkRoute
-              context={{
-                hostNetworkId: STELLAR_TESTNET,
-                sourceNetworkId: STELLAR_TESTNET,
-                destinationNetworkId: BASE_SEPOLIA,
-                custodyNetworkId: STELLAR_TESTNET,
-                transitState: 'burning',
-              }}
-            />
-          </div>
-          <div>
-            <h3 style={{ fontSize: 12, margin: '0 0 4px' }}>Arrived</h3>
-            <NetworkRoute
-              context={{
-                hostNetworkId: STELLAR_TESTNET,
-                sourceNetworkId: STELLAR_TESTNET,
-                destinationNetworkId: BASE_SEPOLIA,
-                custodyNetworkId: BASE_SEPOLIA,
-                transitState: 'arrived',
-              }}
-            />
-          </div>
-          <div>
-            <h3 style={{ fontSize: 12, margin: '0 0 4px' }}>Failed</h3>
-            <NetworkRoute
-              context={{
-                hostNetworkId: STELLAR_TESTNET,
-                sourceNetworkId: STELLAR_TESTNET,
-                destinationNetworkId: BASE_SEPOLIA,
-                custodyNetworkId: STELLAR_TESTNET,
-                transitState: 'failed',
-              }}
-            />
-          </div>
-          <div>
-            <h3 style={{ fontSize: 12, margin: '0 0 4px' }}>Missing asset</h3>
-            <NetworkRoute
-              context={{
-                sourceNetworkId: 'unrecognized-testnet-chain',
-                destinationNetworkId: BASE_SEPOLIA,
-                transitState: 'burning',
-              }}
-            />
-          </div>
-        </div>
-      </section>
-
-      <section aria-labelledby="money-heading">
-        <h2 id="money-heading">Money figures</h2>
-        <ul
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.5rem',
-            listStyle: 'none',
-            margin: 0,
-            padding: 0,
-          }}
-        >
-          <li>
-            <MoneyFigure state="loading" value={null} currency="USDC" />
-          </li>
-          <li>
-            <MoneyFigure state="current" value={1234.56} currency="USDC" freshness="Just now" />
-          </li>
-          <li>
-            <MoneyFigure state="stale" value={987.65} currency="USDC" freshness="5m ago" />
-          </li>
-          <li>
-            <MoneyFigure state="empty" value={null} currency="USDC" />
-          </li>
-          <li>
-            <MoneyFigure state="error" value={null} currency="USDC" />
-          </li>
-          <li>
-            <MoneyFigure state="unknown" value={undefined} currency="USDC" />
-          </li>
-        </ul>
-      </section>
-
-      <section aria-labelledby="venue-heading">
-        <h2 id="venue-heading">Venue truth</h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <VenueTruth
-            kind="stellar-live"
-            venue="Autofarm Vault"
-            apy={{ state: 'live', value: 8.2 }}
-            networkContext={{
-              hostNetworkId: STELLAR_TESTNET,
-              sourceNetworkId: STELLAR_TESTNET,
-              destinationNetworkId: STELLAR_TESTNET,
-              custodyNetworkId: STELLAR_TESTNET,
-              transitState: 'none',
-            }}
-          />
-          <VenueTruth
-            kind="base-proxy"
-            networkContext={{
-              hostNetworkId: STELLAR_TESTNET,
-              sourceNetworkId: STELLAR_TESTNET,
-              destinationNetworkId: BASE_SEPOLIA,
-              custodyNetworkId: BASE_SEPOLIA,
-              transitState: 'arrived',
-            }}
-          />
-        </div>
-      </section>
-
-      <section aria-labelledby="interactive-heading">
-        <h2 id="interactive-heading">Interactive states</h2>
-
-        <div
-          className="pc-harvest"
-          style={{ padding: '1rem', borderRadius: 12, display: 'inline-flex' }}
-        >
-          <button type="button" className="btn-primary" data-demo-focus-ring="true">
-            Confirm deposit
-          </button>
-        </div>
-
-        <div
-          className="pc-owned"
-          style={{
-            padding: '1rem',
-            borderRadius: 12,
-            display: 'inline-flex',
-            marginTop: '0.75rem',
-          }}
-        >
-          <button
-            type="button"
-            data-demo-focus-ring="true"
-            style={{
-              color: 'var(--pc-owned-ink)',
-              background: 'transparent',
-              border: '1px solid var(--pc-owned-ink)',
-              borderRadius: 8,
-              padding: '0.5rem 0.9rem',
-              font: 'inherit',
-            }}
-          >
-            Revoke agent
-          </button>
-        </div>
-
-        <TechnicalDetails summary="Raw grant scope" open>
-          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-            {GRANT_SCOPE_JSON}
-          </pre>
-        </TechnicalDetails>
-
-        <p style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all', margin: 0 }}>
-          {AGENT_IDENTITIES[0]}
-        </p>
-
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center' }}>
-          <NetworkBadge networkId={STELLAR_TESTNET} size={16} />
-          <NetworkBadge networkId={BASE_SEPOLIA} size={16} />
-          <AgentMark identity={AGENT_IDENTITIES[1]} size={16} />
-          <AgentMark identity={AGENT_IDENTITIES[2]} size={16} />
-          <AgentMark identity={AGENT_IDENTITIES[3]} size={16} />
-          <span>Wraps onto multiple lines at 320px; one line at desktop widths.</span>
-        </div>
-      </section>
-    </main>
-  )
-}
+document.documentElement.dataset.motion = motion
 
 // -------------------------------------------------------------------------------------------
 // Strategy Task 14 (Pocket Crew redesign, Wave 6 snapshot freeze). One deterministic composite
@@ -475,7 +286,7 @@ function FoundationFixture() {
 // mixed Stellar/Base truth review, Protect fresh/reuse/rejected, Start queued/partial-failure/
 // in-transit, all-success and mixed-partial receipts, long address/technical details, and (via the
 // e2e spec's separate `prefers-reduced-motion` capture of this SAME fixture, exactly like
-// Foundation's own `foundation-reduced-motion.png`) reduced motion.
+// FoundationAtlasFixture's own `foundation-reduced-motion.png`) reduced motion.
 //
 // Every real production component below (StrategyRoute -> PlanStage/ProtectStage/StartStage/
 // StrategyReceipt) is mounted through its real composition root, StrategyRoute -- never a
@@ -752,6 +563,7 @@ function reuseDecisionRaw() {
         headroom: { token: TOKEN_ADDR, units: '900000000', decimals: 7 },
         scopeExpiry: NOW_SECONDS + 7200,
         scopeFingerprint: '0xscope1',
+        executionCredentialRef: AGENT_1,
       },
     ],
   }
@@ -862,10 +674,21 @@ function waitFor(check, { timeout = 2000, interval = 10 } = {}) {
 // (canSubmit had not re-rendered yet), so the click was silently a no-op. Waiting for the button
 // to actually report enabled proves the click will land on a real, current DOM state.
 async function fillPlanForm(root, { amount, risk }) {
-  setNativeValue(root.querySelector('#plan-amount'), amount)
-  const radio = Array.from(root.querySelectorAll('[role="radio"]')).find(
-    (r) => r.textContent.trim() === risk
-  )
+  // StrategyRoute is lazy-mounted inside the atlas.  AutopilotSection's effect runs on the
+  // first commit, which can still be the Suspense fallback; wait for the actual PlanStage
+  // controls before dispatching native input.  Calling setNativeValue on the fallback's null
+  // field used to reject the driver, leaving plan-edit/reset in their un-driven default state.
+  const amountField = await waitFor(() => {
+    const field = root.querySelector('#plan-amount')
+    return field && field.getClientRects().length > 0 ? field : null
+  })
+  setNativeValue(amountField, amount)
+  const radio = await waitFor(() => {
+    const candidate = Array.from(root.querySelectorAll('[role="radio"]')).find(
+      (r) => r.textContent.trim() === risk && r.getClientRects().length > 0
+    )
+    return candidate || null
+  })
   radio.click()
   const submit = await waitFor(() => {
     const btn = findButton(root, 'Build my plan')
@@ -876,24 +699,33 @@ async function fillPlanForm(root, { amount, risk }) {
 
 // Runs `drive(rootEl)` once against the real mounted subtree, then clears `data-fixture-pending`
 // once it settles (success or failure -- a fixture-authoring mistake must never hang the
-// Playwright wait forever; it is logged loudly instead). Blurs any element the driven interaction
-// left focused so a captured frame never depends on the nondeterministic :focus-visible heuristic
-// for a click nobody performed with a real pointer.
+// Playwright wait forever; it is logged loudly instead). Blurs incidental focus from the driven
+// interaction, while preserving Foundation Dialog's deliberate initial focus so modal captures
+// retain the real keyboard-containment contract.
 function AutopilotSection({ drive, children }) {
   const ref = useRef(null)
   const [pending, setPending] = useState(true)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
     Promise.resolve()
       .then(() => drive(ref.current))
       .catch((err) => {
+        if (!cancelled) setError(err?.message || String(err))
         // eslint-disable-next-line no-console
         console.error('strategy fixture autopilot failed:', err)
       })
       .finally(() => {
         if (cancelled) return
-        if (document.activeElement && ref.current?.contains(document.activeElement)) {
+        const activeDialog = [...(ref.current?.querySelectorAll('.pc-dialog') || [])].find(
+          (dialog) => dialog.getClientRects().length > 0
+        )
+        if (
+          document.activeElement &&
+          ref.current?.contains(document.activeElement) &&
+          !activeDialog?.contains(document.activeElement)
+        ) {
           document.activeElement.blur()
         }
         setPending(false)
@@ -905,7 +737,11 @@ function AutopilotSection({ drive, children }) {
   }, [])
 
   return (
-    <div ref={ref} data-fixture-pending={pending ? 'true' : undefined}>
+    <div
+      ref={ref}
+      data-fixture-pending={pending ? 'true' : undefined}
+      data-fixture-error={error || undefined}
+    >
       {children}
     </div>
   )
@@ -1131,7 +967,7 @@ async function driveOpenTechnicalDetails(root) {
 // sections 2-4 silently resolves to section 1's own heading (browsers resolve an id reference to
 // the FIRST matching element in the document), which would give a false-clean result to any future
 // a11y test importing this fixture (none does today; `MyMoneyFixture` is not currently exported,
-// unlike `FoundationFixture`). Marking sections 2-4 `aria-hidden="true"` removes their whole subtree
+// unlike `FoundationAtlasFixture`). Marking sections 2-4 `aria-hidden="true"` removes their whole subtree
 // from the accessibility tree (and from testing-library's default `hidden:false` role queries and
 // axe's scan) without touching pixels -- `aria-hidden` has no effect on CSS layout/paint, so this
 // changes zero frozen bytes -- leaving section 1's copy as the one, unambiguous, fully-exposed
@@ -1149,11 +985,655 @@ function Section({ title, children, ariaHidden = false }) {
   )
 }
 
+// -------------------------------------------------------------------------------------------
+// Core Task 11 atlas branches.  The builders below are the only source of deterministic route
+// data.  These wrappers own composition and fixture lifecycle only; they do not recreate money,
+// identity, permission, custody, or withdrawal state.  Every mounted route is the same production
+// component used by the app, with source-shaped props supplied by visual/coreFixtures.js.
+const CORE_BUILDERS = Object.freeze({
+  'core-money': buildCoreMoneyFixture,
+  'core-strategy': buildCoreStrategyFixture,
+  'core-crew': buildCoreCrewFixture,
+  'core-settings': buildCoreSettingsFixture,
+  'core-dialog': buildCoreDialogFixture,
+  'core-base-withdraw': buildCoreBaseWithdrawFixture,
+})
+
+if (CORE_FIXTURE_CLASSES.some((id) => typeof CORE_BUILDERS[id] !== 'function')) {
+  throw new Error('Core visual atlas is missing a fixture builder')
+}
+
+function CoreAtlasSection({ title, state, children, ariaHidden = false, hidden = false }) {
+  return (
+    <section
+      className="pc-core-atlas-section"
+      aria-labelledby={`core-${state}-heading`}
+      aria-hidden={ariaHidden ? 'true' : undefined}
+      hidden={hidden ? true : undefined}
+      data-core-state={state}
+    >
+      <header>
+        <h2 id={`core-${state}-heading`}>{title}</h2>
+      </header>
+      {children}
+    </section>
+  )
+}
+
+function coreAtlas(id, builder) {
+  return CORE_FIXTURE_STATES[id].map((state) => builder(state))
+}
+
+// A Core page contains the complete source-state atlas, but only the requested state is exposed
+// to the browser.  Keeping selection in the URL makes every state a real, directly addressable
+// route fixture (and lets the Playwright functional sweeps exercise the same source seam that the
+// screenshot cell will capture) without fabricating a second state model in this harness.
+function coreActiveState(id, fallback) {
+  const requested = params.get('state')
+  return CORE_FIXTURE_STATES[id].includes(requested) ? requested : fallback
+}
+
+function CoreFixtureLoader({ fixtureId, build, children, allowFixtureStorage = false }) {
+  const [ready, setReady] = useState(false)
+  const fixturesRef = useRef(null)
+  if (!fixturesRef.current) fixturesRef.current = build()
+
+  useEffect(() => {
+    let cancelled = false
+    let release
+    const hold = new Promise((resolve) => {
+      release = resolve
+    })
+    let restoreFixtureStorage
+    void withCoreFixtureEnvironment(async () => {
+      // SettingsPage is a real route consumer of localStorage/sessionStorage.  Keep the
+      // fixture's network/storage guard in force for every other branch, but give this one route
+      // the already-defined in-memory adapter so its source code can render without touching a
+      // browser-persistent store.  This is still offline fixture state, never production storage.
+      if (allowFixtureStorage) restoreFixtureStorage = installCoreMemoryStorage()
+      if (!cancelled) setReady(true)
+      await hold
+    }).catch((error) => {
+      if (!cancelled) {
+        // eslint-disable-next-line no-console
+        console.error(`${fixtureId} fixture environment failed:`, error)
+        setReady(true)
+      }
+    })
+    return () => {
+      cancelled = true
+      release?.()
+      restoreFixtureStorage?.()
+    }
+  }, [allowFixtureStorage, fixtureId])
+
+  return (
+    <main
+      data-fixture={fixtureId}
+      data-fixture-pending={!ready ? 'true' : undefined}
+      data-fixture-clock={CORE_FIXTURE_CLOCK.nowIso}
+    >
+      {ready ? children(fixturesRef.current) : null}
+    </main>
+  )
+}
+
+function CoreMoneyRoute({ fixture, onRecoverAgent, onRecoverBase }) {
+  const props = fixture.createProps()
+  return (
+    <MyMoneyRoute
+      {...props}
+      onAction={() => {}}
+      onRecoverAgent={onRecoverAgent || (() => {})}
+      onRecoverBase={onRecoverBase || (() => {})}
+      venue={props.venue}
+    />
+  )
+}
+
+function CoreMoneyFixture() {
+  const fixtures = coreAtlas('core-money', buildCoreMoneyFixture)
+  return (
+    <CoreFixtureLoader fixtureId="core-money" build={() => fixtures}>
+      {(states) =>
+        states.map((fixture, index) => (
+          <CoreAtlasSection
+            key={fixture.state}
+            state={fixture.state}
+            title={`My money: ${fixture.state}`}
+            ariaHidden={index > 0}
+          >
+            <CoreMoneyRoute fixture={fixture} />
+          </CoreAtlasSection>
+        ))
+      }
+    </CoreFixtureLoader>
+  )
+}
+
+function CoreStrategyRoute({ fixture }) {
+  // Invoke the fixture's source-shaped closure at the direct route mount boundary.  The fixture
+  // owns all state, callbacks, and identity/custody values; this harness must not reconstruct or
+  // serialize a second model around the production route.
+  const props = fixture.createProps()
+  return (
+    <StrategyRoute {...props} vaultTotalShares={props.vaultTotalShares ?? FUNDED_VAULT_SHARES} />
+  )
+}
+
+async function driveCoreStrategyProtection(root, state) {
+  const check = findButton(root, 'Check my permission')
+  if (!check) throw new Error(`core strategy ${state}: missing permission check action`)
+  check.click()
+  if (state === 'permission-rejected') {
+    const authorize = await waitFor(() => findButton(root, 'Authorize with wallet'))
+    authorize.click()
+    await waitFor(() => findButton(root, 'Retry'))
+    return
+  }
+  if (state === 'permission-reuse-verified') {
+    await waitFor(() => findButton(root, 'Continue'))
+    return
+  }
+  if (state === 'permission-reuse-unavailable') {
+    await waitFor(() => findButton(root, 'Check again'))
+    return
+  }
+  await waitFor(() => findButton(root, 'Authorize with wallet'))
+}
+
+function CoreStrategyFixture() {
+  const fixtures = coreAtlas('core-strategy', buildCoreStrategyFixture)
+  return (
+    <CoreFixtureLoader fixtureId="core-strategy" build={() => fixtures}>
+      {(states) =>
+        states.map((fixture, index) => (
+          <CoreAtlasSection
+            key={fixture.state}
+            state={fixture.state}
+            title={`Put it to work: ${fixture.state}`}
+            ariaHidden={index > 0}
+          >
+            {fixture.stage === 'protect' ? (
+              <AutopilotSection drive={(root) => driveCoreStrategyProtection(root, fixture.state)}>
+                <CoreStrategyRoute fixture={fixture} />
+              </AutopilotSection>
+            ) : (
+              <CoreStrategyRoute fixture={fixture} />
+            )}
+          </CoreAtlasSection>
+        ))
+      }
+    </CoreFixtureLoader>
+  )
+}
+
+function CoreCrewFixture() {
+  const fixtures = coreAtlas('core-crew', buildCoreCrewFixture)
+  return (
+    <CoreFixtureLoader fixtureId="core-crew" build={() => fixtures}>
+      {(states) =>
+        states.map((fixture, index) => (
+          <CoreAtlasSection
+            key={fixture.state}
+            state={fixture.state}
+            title={`The crew: ${fixture.state}`}
+            ariaHidden={index > 0}
+          >
+            <Suspense fallback={<div data-fixture-pending="true" />}>
+              <CrewRoute
+                {...fixture.createProps()}
+                onRenewMandate={() => {}}
+                onCancelAgent={() => {}}
+              />
+            </Suspense>
+          </CoreAtlasSection>
+        ))
+      }
+    </CoreFixtureLoader>
+  )
+}
+
+function installCoreMemoryStorage() {
+  if (typeof window === 'undefined') return () => {}
+  const makeStorage = () => {
+    const memory = new Map()
+    return {
+      get length() {
+        return memory.size
+      },
+      clear: () => memory.clear(),
+      getItem: (key) => (memory.has(String(key)) ? memory.get(String(key)) : null),
+      key: (index) => [...memory.keys()][index] ?? null,
+      removeItem: (key) => memory.delete(String(key)),
+      setItem: (key, value) => memory.set(String(key), String(value)),
+    }
+  }
+  const storages = [
+    ['localStorage', makeStorage()],
+    ['sessionStorage', makeStorage()],
+  ]
+  const descriptors = storages.map(([key]) => [key, Object.getOwnPropertyDescriptor(window, key)])
+  try {
+    for (const [key, storage] of storages) {
+      Object.defineProperty(window, key, { configurable: true, value: storage })
+    }
+  } catch {
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(window, key, descriptor)
+      else delete window[key]
+    }
+    return () => {}
+  }
+  return () => {
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(window, key, descriptor)
+      else delete window[key]
+    }
+  }
+}
+
+const coreSettingsNoop = () => {}
+
+function CoreSettingsRoute({ fixture }) {
+  const props = fixture.createProps()
+  // SettingsPage's production parent normally supplies these callbacks from app state.  The
+  // fixture intentionally leaves them undefined because no write/network behavior belongs in a
+  // visual atlas.  Supplying inert handlers at this composition boundary keeps every source
+  // control keyboard/click reachable while preserving the fixture's read-only mandate view.
+  return (
+    <SettingsPageRoute
+      {...props}
+      setAgentEnabled={props.setAgentEnabled || coreSettingsNoop}
+      setAgentSettings={props.setAgentSettings || coreSettingsNoop}
+      onLanguageChange={props.onLanguageChange || coreSettingsNoop}
+      onChangeSkill={props.onChangeSkill || coreSettingsNoop}
+      onResetSkill={props.onResetSkill || coreSettingsNoop}
+      onResetAgentSettings={props.onResetAgentSettings || coreSettingsNoop}
+      onConnect={props.onConnect || coreSettingsNoop}
+      onDisconnect={props.onDisconnect || coreSettingsNoop}
+      onRevoke={props.onRevoke || coreSettingsNoop}
+      addLog={props.addLog || coreSettingsNoop}
+      onSetup={props.onSetup || coreSettingsNoop}
+      onRenew={props.onRenew || coreSettingsNoop}
+      onBaseRevoke={props.onBaseRevoke || coreSettingsNoop}
+      onRefresh={props.onRefresh || coreSettingsNoop}
+    />
+  )
+}
+
+function CoreSettingsFixture() {
+  const fixtures = coreAtlas('core-settings', buildCoreSettingsFixture)
+  const activeState = coreActiveState('core-settings', 'wallet')
+  useEffect(() => {
+    // This is a fixture-only deep-link, never a production route.  SettingsPage reads its normal
+    // pathname/query/hash contract during render, so seed it before the lazy route mounts.
+    const previous = window.history.state
+    const urlParams = new URLSearchParams(window.location.search)
+    const currentTheme = urlParams.get('theme') || 'forest'
+    const tab = activeState === 'default' ? 'agent' : 'wallet'
+    const hash = tab === 'wallet' ? '#base-mandate' : ''
+    window.history.replaceState(
+      previous,
+      '',
+      `/visual/?fixture=core-settings&theme=${encodeURIComponent(currentTheme)}&state=${encodeURIComponent(activeState)}&tab=${tab}${hash}`
+    )
+    return undefined
+  }, [activeState])
+  return (
+    <CoreFixtureLoader fixtureId="core-settings" build={() => fixtures} allowFixtureStorage>
+      {(states) =>
+        states.map((fixture) => {
+          const active = fixture.state === activeState
+          return (
+            <CoreAtlasSection
+              key={fixture.state}
+              state={fixture.state}
+              title={`Settings: ${fixture.state}`}
+              ariaHidden={!active}
+              hidden={!active}
+            >
+              {active ? (
+                <Suspense fallback={<div data-fixture-pending="true" />}>
+                  <CoreSettingsRoute fixture={fixture} />
+                </Suspense>
+              ) : null}
+            </CoreAtlasSection>
+          )
+        })
+      }
+    </CoreFixtureLoader>
+  )
+}
+
+function coreStrategyGenerationFromPlan(plan) {
+  const depositUnits = plan.agents
+    .filter((agent) => agent.kind === 'deposit')
+    .reduce((total, agent) => total + BigInt(agent.allocation.units), 0n)
+  const baseAllocations = plan.agents
+    .filter((agent) => agent.kind === 'bridge')
+    .flatMap((agent) =>
+      (agent.children || []).map((child) => ({
+        address: child.address,
+        proxyTarget: child.proxyTarget || child.destination,
+        units: child.allocation.units,
+        chain: 'base',
+      }))
+    )
+  return {
+    source: 'fallback',
+    sourceState: 'deterministic',
+    stellarUnits: depositUnits.toString(),
+    baseAllocations,
+  }
+}
+
+async function driveCorePlanRevision(root, state) {
+  await fillPlanForm(root, { amount: '250', risk: 'Steady' })
+  await waitFor(() => findButton(root, 'Accept plan'))
+  const menu = await waitFor(() => {
+    const details = root.querySelector('.pc-plan-change-menu')
+    const summary = details?.querySelector('summary')
+    return details && summary && summary.getClientRects().length > 0 ? details : null
+  })
+  menu.querySelector('summary').click()
+  const action = state === 'plan-reset' ? 'Reset plan' : 'Change amount'
+  const actionButton = await waitFor(() => {
+    const button = [...menu.querySelectorAll('button')].find(
+      (candidate) =>
+        candidate.textContent.trim() === action && candidate.getClientRects().length > 0
+    )
+    return button || null
+  })
+  actionButton.click()
+  await waitFor(() => {
+    const dialog = root.querySelector('.pc-dialog, dialog, [role="dialog"]')
+    return dialog && dialog.getClientRects().length > 0 ? dialog : null
+  })
+}
+
+async function driveCoreSettingsClear(root) {
+  const clear = await waitFor(() => findButton(root, 'Clear all data'))
+  clear.click()
+  await waitFor(() => root.querySelector('.pc-dialog, dialog, [role="dialog"]'))
+}
+
+function CoreDialogCaller({
+  dialogFixture,
+  moneyFixture,
+  strategyFixture,
+  settingsFixture,
+  active = false,
+}) {
+  const [recoveryOpen, setRecoveryOpen] = useState(false)
+  const dialogProps = dialogFixture.createProps()
+  const { caller, status } = dialogProps.dialog
+  const moneyProps = moneyFixture.createProps()
+  const strategyProps = strategyFixture.createProps()
+  const recoveryTarget = moneyProps.agents.find((agent) => agent.problems?.length) || null
+  const pending = status === 'submitting'
+
+  if (status === 'unknown') {
+    return (
+      <>
+        <CoreMoneyRoute fixture={moneyFixture} />
+        <RecoveryPanelRoute
+          open={active}
+          onClose={() => {}}
+          location="base-proxy"
+          amount={recoveryTarget?.amount}
+          agentAddress={recoveryTarget?.address}
+          submission={{ outcome: 'unknown' }}
+          onCheckStatus={() => {}}
+        />
+      </>
+    )
+  }
+
+  if (caller === 'plan-edit' || caller === 'plan-reset' || caller === 'Strategy Plan') {
+    return (
+      <StrategyRoute
+        {...strategyProps}
+        // CAP-16's source caller reads the already-seeded vault before allowing a reviewed plan
+        // to be revised.  The Core strategy fixture intentionally keeps that live read behind its
+        // closure; this dialog-only atlas seam uses the existing deterministic seeded-vault value
+        // so the real PlanStage validation can reach the genuine Change mind?/Reset plan dialog.
+        vaultTotalShares={strategyProps.vaultTotalShares ?? FUNDED_VAULT_SHARES}
+        stage="plan"
+        reached={['plan']}
+        onGenerate={async () => coreStrategyGenerationFromPlan(strategyProps.plan)}
+      />
+    )
+  }
+
+  if (
+    caller === 'withdraw' ||
+    caller === 'My Money Withdraw' ||
+    ['invalid', 'submitting', 'confirmed', 'failed'].includes(status)
+  ) {
+    return (
+      <>
+        <CoreMoneyRoute fixture={moneyFixture} />
+        <WithdrawDialogRoute
+          open={active}
+          onClose={() => {}}
+          agents={moneyProps.agents}
+          discovery={moneyProps.discovery}
+          account={moneyProps.account}
+          pending={pending}
+          progress={pending ? { index: 0, total: moneyProps.agents.length || 1 } : null}
+          onConfirmFull={() => {}}
+          onConfirmPartial={() => {}}
+          onConfirmBase={() => {}}
+        />
+      </>
+    )
+  }
+
+  if (caller === 'stop-access' || caller === 'Stop access') {
+    return (
+      <>
+        <CoreMoneyRoute fixture={moneyFixture} />
+        <StopAccessDialogRoute
+          open={active}
+          onClose={() => {}}
+          agent={recoveryTarget}
+          shareRead={recoveryTarget?.vaultShares}
+          idleBalanceRead={recoveryTarget?.idleToken}
+          account={moneyProps.account}
+          pending={pending}
+          onConfirmRevoke={() => {}}
+          onGoToWithdraw={() => {}}
+        />
+      </>
+    )
+  }
+
+  if (caller === 'recovery' || caller === 'Recovery') {
+    return (
+      <>
+        <CoreMoneyRoute fixture={moneyFixture} onRecoverAgent={() => setRecoveryOpen(true)} />
+        <RecoveryPanelRoute
+          open={active && recoveryOpen}
+          onClose={() => setRecoveryOpen(false)}
+          location="agent"
+          amount={recoveryTarget?.amount}
+          agentAddress={recoveryTarget?.address}
+          onRecoverViaFullExit={() => {}}
+        />
+      </>
+    )
+  }
+
+  if (caller === 'Settings clear') {
+    return <CoreSettingsRoute fixture={settingsFixture} />
+  }
+
+  return <CoreMoneyRoute fixture={moneyFixture} data-core-dialog-status={status} />
+}
+
+function CoreDialogFixture() {
+  const dialogFixtures = coreAtlas('core-dialog', buildCoreDialogFixture)
+  const activeState = coreActiveState('core-dialog', 'plan-edit')
+  const moneyFixture = buildCoreMoneyFixture('problem')
+  const strategyFixture = buildCoreStrategyFixture('plan')
+  const settingsFixture = buildCoreSettingsFixture('default')
+  useEffect(() => {
+    // Settings clear is the one dialog caller whose production surface is a deep-linked Settings
+    // route. Seed its normal tab contract before the lazy page evaluates; other callers do not
+    // read this location and remain on their source route composition.
+    const previous = window.history.state
+    const urlParams = new URLSearchParams(window.location.search)
+    const currentTheme = urlParams.get('theme') || 'forest'
+    const tab = activeState === 'settings-clear' ? 'data' : 'wallet'
+    const hash = tab === 'wallet' ? '#base-mandate' : ''
+    window.history.replaceState(
+      previous,
+      '',
+      `/visual/?fixture=core-dialog&theme=${encodeURIComponent(currentTheme)}&state=${encodeURIComponent(activeState)}&tab=${tab}${hash}`
+    )
+    return undefined
+  }, [activeState])
+  return (
+    <CoreFixtureLoader
+      fixtureId="core-dialog"
+      build={() => ({ dialogFixtures, moneyFixture, strategyFixture, settingsFixture })}
+      allowFixtureStorage
+    >
+      {({
+        dialogFixtures: states,
+        moneyFixture: currentMoney,
+        strategyFixture: currentStrategy,
+        settingsFixture: currentSettings,
+      }) =>
+        states.map((fixture) => {
+          const { dialog } = fixture.createProps()
+          const active = fixture.state === activeState
+          const activeRecovery = active && fixture.state === 'recovery'
+          const activePlanRevision = active && ['plan-edit', 'plan-reset'].includes(fixture.state)
+          const activeSettingsClear = active && fixture.state === 'settings-clear'
+          return (
+            <CoreAtlasSection
+              key={fixture.state}
+              state={fixture.state}
+              title={`Dialog: ${dialog.caller}`}
+              ariaHidden={!active}
+              hidden={!active}
+            >
+              {active ? (
+                activeRecovery || activePlanRevision || activeSettingsClear ? (
+                  <AutopilotSection
+                    drive={(root) =>
+                      activeRecovery
+                        ? driveOpenRecoveryDialog(root)
+                        : activePlanRevision
+                          ? driveCorePlanRevision(root, fixture.state)
+                          : driveCoreSettingsClear(root)
+                    }
+                  >
+                    <Suspense fallback={<div data-fixture-pending="true" />}>
+                      <CoreDialogCaller
+                        dialogFixture={fixture}
+                        moneyFixture={currentMoney}
+                        strategyFixture={currentStrategy}
+                        settingsFixture={currentSettings}
+                        active
+                      />
+                    </Suspense>
+                  </AutopilotSection>
+                ) : (
+                  <Suspense fallback={<div data-fixture-pending="true" />}>
+                    <CoreDialogCaller
+                      dialogFixture={fixture}
+                      moneyFixture={currentMoney}
+                      strategyFixture={currentStrategy}
+                      settingsFixture={currentSettings}
+                      active
+                    />
+                  </Suspense>
+                )
+              ) : null}
+            </CoreAtlasSection>
+          )
+        })
+      }
+    </CoreFixtureLoader>
+  )
+}
+
+function CoreBaseWithdrawRoute({ fixture }) {
+  const props = fixture.createProps()
+  return (
+    <>
+      <h1 className="pc-route-title">Base withdrawal</h1>
+      <Suspense fallback={<div data-fixture-pending="true" />}>
+        <WithdrawRoute
+          {...props}
+          // Withdraw keeps production's disabled-by-default behavior when this prop is omitted.
+          // The route seam owns the optional flag; the fixture supplies real deterministic
+          // adapters and this harness only opts into their already-reviewed Base surface.
+          baseCrossChainAvailable
+          onDone={() => {}}
+          onClose={() => {}}
+        />
+      </Suspense>
+    </>
+  )
+}
+
+async function driveCoreBaseWithdraw(root, state) {
+  if (state === 'idle') return
+  const primary = await waitFor(() => {
+    const button = findButton(root, 'Withdraw all')
+    return button && !button.disabled ? button : null
+  })
+  primary.click()
+  const expected = {
+    submitting: 'Confirm the passkey prompt to sign the unwind.',
+    relaying: 'Handing the transaction to the relayer.',
+    polling: 'Bridging USDC back to Stellar via CCTP.',
+    confirmed: 'Receipt and reconciliation confirm the Base unwind.',
+    failed: 'Withdraw failed. Please try again.',
+    'submission-unknown': 'may have been submitted',
+    'in-transit': 'Still settling. The relayer is finishing the bridge.',
+  }[state]
+  if (!expected) throw new Error(`core base withdraw ${state}: missing expected state copy`)
+  await waitFor(() => root.textContent.includes(expected))
+}
+
+function CoreBaseWithdrawFixture() {
+  const fixtures = coreAtlas('core-base-withdraw', buildCoreBaseWithdrawFixture)
+  const activeState = coreActiveState('core-base-withdraw', 'idle')
+  return (
+    <CoreFixtureLoader fixtureId="core-base-withdraw" build={() => fixtures} allowFixtureStorage>
+      {(states) =>
+        states.map((fixture) => {
+          const active = fixture.state === activeState
+          return (
+            <CoreAtlasSection
+              key={fixture.state}
+              state={fixture.state}
+              title={`Base withdrawal: ${fixture.state}`}
+              ariaHidden={!active}
+              hidden={!active}
+            >
+              {active ? (
+                <AutopilotSection drive={(root) => driveCoreBaseWithdraw(root, fixture.state)}>
+                  <CoreBaseWithdrawRoute fixture={fixture} />
+                </AutopilotSection>
+              ) : null}
+            </CoreAtlasSection>
+          )
+        })
+      }
+    </CoreFixtureLoader>
+  )
+}
+
 function StrategyFixture() {
   // I-3 (Strategy Task 14 fix round 1, reviewer ruling): no outer padding here, scoped to THIS
-  // fixture only. (Fix round 2 later removed FoundationFixture's own padding the same way and
-  // re-froze its twelve baselines -- see that function's comment above; the two removals are
-  // independent edits to separate functions/JSX literals and neither leaks into the other.) Every
+  // fixture only. FoundationAtlasFixture owns its own shell and remains independent of this
+  // route fixture. Every
   // section already wraps its content in a real `StrategyRoute` (`.pc-route`, its own
   // `--pc-route-gutter`) -- this harness's own extra 24px of padding sat OUTSIDE that, so the
   // `mobile-320` project was freezing a 272px route / 240px stack, not the 320px viewport its own
@@ -2043,69 +2523,23 @@ function CrewFixture() {
 }
 
 // -------------------------------------------------------------------------------------------
-// VF Wallet Task 14 (Pocket Crew redesign, Wave 6 snapshot freeze -- LAST of the three shared-
-// harness fixtures; this file's last owner). Split into TWO composites, never rendered on the
-// same page load, for two INDEPENDENTLY VERIFIED reasons (not an arbitrary split):
-//
-// 1. CSS isolation. WalletHome/WalletOnboarding/WalletActivity/WalletAdvanced/WalletSettings all
-//    wrap the shared WalletShell (src/wallet/ui/WalletShell.jsx), which renders its own <style>
-//    tag INLINE on every mount -- its own header: "No MV3 page has ever loaded
-//    frontend/extension/wallet.css or pocket-crew.css ... this component is therefore its own
-//    COMPLETE, self-sufficient copy". So `VfWalletHomeFixture` needs no stylesheet import at all
-//    and carries zero cascade risk, exactly like Strategy/My Money's own real components carry
-//    their CSS via a route-level import, just inlined instead. The consent/grant/ceremony
-//    screens are different: extension/approvalView.js and extension/ceremonyView.js are pure
-//    vanilla-DOM renderers with NO self-contained styling -- in production they are styled only
-//    by extension/approval.css, loaded via a <link> in approve.html/ceremony.html, two MV3
-//    documents that never coexist with popup.html (confirmed by reading both files' own header
-//    comments: "popup.html does not load [wallet.css]" / "approve.html and ceremony.html each
-//    load [approval.css] as their only stylesheet"). approval.css re-declares the SAME
-//    `.pc-wallet`/`.pc-wallet-shell/header/main/balance/actions/consequence`/`.pc-button` etc
-//    selectors WalletShell.jsx's inline STYLE defines -- confirmed NOT byte-identical between the
-//    two (approval.css carries an extra money-figure-style treatment WalletShell.jsx's copy
-//    lacks) -- so a plain top-level `import '../extension/approval.css'` would execute on EVERY
-//    `/visual/` page load regardless of `?fixture=` (ES imports are hoisted and always evaluated,
-//    not conditional on which branch of App() actually renders), repeating My Money's own cascade
-//    defect but WIDER: approval.css's `.pc-button`/`.pc-technical`/`.pc-field-help`/
-//    `.pc-network-badge` selectors are also live in Strategy/My Money/Foundation's own fixtures via
-//    pocket-crew.css/strategy.css/my-money.css. Fixed the same way MM14 fixed its own version of
-//    this: a dynamic `import()`, deferred until `VfWalletApprovalFixture` itself actually mounts
-//    (see that function's own `useEffect` below) -- never a static top-level import.
-// 2. Day Field theme support genuinely differs between the two families -- this is not a
-//    convenience choice, it is what "Forest is default; verify Day Field where supported" (this
-//    task's own brief) resolves to once checked. WalletShell.jsx's inline STYLE (read in full)
-//    hardcodes forest hex values with NO `:root[data-theme='day-field']` branch anywhere in it, so
-//    every Home/Onboarding/Advanced/Settings screen renders IDENTICALLY regardless of `?theme=` --
-//    a real, pre-existing production gap (WalletShell.jsx has no Day Field port at all), reported
-//    in the task report, not fixed here (WalletShell.jsx is outside this task's authorized file
-//    list). extension/approval.css DOES carry a `:root[data-theme='day-field']` block
-//    (approval.css:65) -- confirmed by grep. So Day Field is captured for `vf-wallet-approval`
-//    only; there would be nothing for a `vf-wallet-home` Day Field capture to show that Forest
-//    doesn't already show byte-for-byte.
-//
-// A third, smaller finding from the same read-through, reported rather than silently routed
-// around: WalletAdvanced.jsx's "Advanced direct vault action" section renders `ApproveOverlay`
-// (src/wallet/ui/ApproveOverlay.jsx) once `depositVerdict` is set -- that component's own header
-// comment says "Classes resolve from the popup's injected Acid Yield stylesheet" (`.approve`,
-// `.btn-primary`, ...), none of which are Pocket Crew `.pc-*` classes and none of which this
-// harness (or, per wallet.css's own header, popup.html itself) ever loads -- it would render
-// completely unstyled raw HTML inside an otherwise Pocket-Crew-styled screen. `depositVerdict`
-// stays `null` below so this fixture never freezes that known defect into a baseline; a null
-// verdict (before the user has clicked "Check eligibility") is itself a state production can
-// genuinely emit, not an evasion.
-//
-// Both approve.html and ceremony.html reference their header logo as the same-directory-relative
-// `./vibing_farmer.logo.svg` -- correct from the extension's own popup.html/approve.html location,
-// but this harness serves every fixture from `/visual/`, so that same relative reference 404s
-// here (confirmed: WalletShell.jsx's header uses the identical relative path, so this affects
-// BOTH composites below, not just the approval-styled markup this file authors itself). The
-// underlying file is real and unmodified; only the request path differs by page location, so
-// vf-wallet.visual.spec.js's own `page.route()` serves the on-disk asset back for that one
-// filename, regardless of the (wrong-but-harmless) directory prefix the browser resolves it to --
-// a harness-only network fixture, never a production file change. See that spec's own comment.
+// VF Wallet deterministic atlas. Popup screens and approval/ceremony screens are separate
+// composition families because their production documents load different external stylesheets.
+// The selected `section=P00..P20|A00..A09|C00..C09` query mounts one registry-bound production
+// composition; with no section the legacy composite remains available for compatibility checks.
+// Both CSS imports are deferred to the fixture boundary, and the explicit pending=false gate is
+// only released after the stylesheet side effect and two paint frames have settled. No fixture
+// branch invokes network, clock, randomness, signer, relay, or secret-handling code.
 
+// Exact public identity strings remain display-only evidence. Production component props below
+// use clearly synthetic account values so no Foundation-serialized fixture record can accidentally
+// treat these strings as authority, custody, owner, or signer data.
+const VFW_PUBLIC_G_DISPLAY = STELLAR_G_FIXTURE
+const VFW_PUBLIC_C_DISPLAY = STELLAR_C_FIXTURES[0]
 const VFW_STANDARD_ADDR = 'GVFWALLETSTANDARDFIXTUREAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const VFW_PASSKEY_ADDR = 'CVFWALLETPASSKEYFIXTUREBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
+const VFW_ALT_PASSKEY_ADDR = 'CDGDIPHVFWALLETPASSKEYFIXTURECCCCCCCCCCCCCCCCCCCCCCCCCC'
+const VFW_BASE_KERNEL_DISPLAY = BASE_HEX_FIXTURES[0]
 const VFW_DAPP_ORIGIN = 'https://example-dapp.test'
 const VFW_NOW = 1_800_000_000
 
@@ -2145,15 +2579,12 @@ const VFW_PORTFOLIO_PASSKEY = Object.freeze({
 const VFW_MNEMONIC = Array.from({ length: 24 }, (_, i) => `word${i}`).join(' ')
 const VFW_BACKUP_INDICES = [0, 5, 12]
 
-// Not valid XDR/auth-entry bytes -- long, base64-shaped, no natural break points, so the raw
-// technical-details disclosure genuinely exercises the 360px long-identifier wrap column this
-// task's brief names as its own trap, never a short stand-in that would hide that defect class.
+// Not valid XDR bytes -- long, base64-shaped, no natural break points, so the raw technical-details
+// disclosure genuinely exercises the 360px long-identifier wrap column this task's brief names as
+// its own trap, never a short stand-in that would hide that defect class.
 const VFW_FAKE_XDR =
   'AAAAAgAAAABWRldhbGxldEZpeHR1cmVPbmx5TmV2ZXJBUmVhbFNpZ25lZFRyYW5zYWN0aW9uRW52ZWxvcGVOb3RWYWxpZFhEUg' +
   'AAAABkAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAA=='
-const VFW_FAKE_AUTH_ENTRY =
-  'AAAAAQAAAABWRldhbGxldEZpeHR1cmVPbmx5TmV2ZXJBUmVhbFNpZ25lZEF1dGhFbnRyeU5vdFZhbGlkWERSAAAAAGQAAAAA' +
-  'AAAAAQAAAAAAAAAYAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAAA'
 
 // Hand-built to the EXACT shape extension/grantDecoder.js's decodeFundingRouterGrant /
 // extension/txSummary.js's summarizeInvokeArgs actually produce -- never re-derived through real
@@ -2270,6 +2701,11 @@ function VfwApprovalCard({ view, openRawDetails = false }) {
   useEffect(() => {
     if (!mainRef.current) return
     renderApprovalView(mainRef.current, view)
+    if (!mainRef.current.querySelector('h1')) {
+      const heading = document.createElement('h1')
+      heading.textContent = view.title
+      mainRef.current.prepend(heading)
+    }
     if (approveRef.current) approveRef.current.disabled = Boolean(view.needsAcknowledgment)
     if (openRawDetails) {
       const details = mainRef.current.querySelector('#raw-details')
@@ -2315,6 +2751,11 @@ function VfwCeremonyCard({ view, statusOverride = null }) {
   useEffect(() => {
     if (!mainRef.current) return
     renderCeremonyView(mainRef.current, view)
+    if (!mainRef.current.querySelector('h1')) {
+      const heading = document.createElement('h1')
+      heading.textContent = view.title
+      mainRef.current.prepend(heading)
+    }
     if (statusOverride) {
       const statusEl = mainRef.current.querySelector('#status')
       if (statusEl) statusEl.textContent = statusOverride
@@ -2337,39 +2778,437 @@ function VfwCeremonyCard({ view, statusOverride = null }) {
   )
 }
 
-// Every screen here mounts through WalletShell (see this section's own header) -- self-contained
-// CSS, no stylesheet import, no lazy() needed. Unlike Strategy's PlanStage/ProtectStage, none of
-// these components hold an internal "review"/"generating" phase reached only through driven
-// interaction (WalletOnboarding's own header: "a PURE presentational router... holds no state of
-// its own") -- every state below is reached directly by props, so no AutopilotSection is needed
-// anywhere in this fixture.
-// VFW14 fix round 3 (owner decision #44): the same explicit `data-fixture-pending` readiness
-// gate `VfWalletApprovalFixture` already carries (below), copied rather than invented -- this
-// fixture has no async CSS import to wait on (self-contained WalletShell styling, see this
-// section's own header), so there is nothing for the gate to await except the identical double
-// `requestAnimationFrame` proof-of-paint that fixture's own comment already justifies: a promise
-// resolving is not itself proof the browser has completed a style/layout pass, two rAFs guarantee
-// at least one full paint has happened since mount. Previously this fixture had no explicit
-// readiness signal at all and relied on incidental delay from the geometry sweeps that happen to
-// run before the frozen capture -- harmless today (the real test passes), but not a real gate.
+const VFW_RESULT_HASH = `0x${'ab'.repeat(32)}`
+const VFW_NOOP = () => {}
+
+function VfwPopupShell({ heading, account, onBack = VFW_NOOP, status = null, children }) {
+  return (
+    <WalletShell heading={heading} account={account} onBack={onBack} status={status}>
+      {children}
+    </WalletShell>
+  )
+}
+
+function VfwSendSection() {
+  return (
+    <VfwPopupShell heading="Send" account={VFW_STANDARD_ACCOUNT}>
+      <SendScreen
+        from={VFW_STANDARD_ADDR}
+        onPreview={VFW_NOOP}
+        onConfirm={VFW_NOOP}
+        preview={null}
+        busy={false}
+        error="Amount must be greater than 0"
+      />
+    </VfwPopupShell>
+  )
+}
+
+function VfwAddAssetSection() {
+  return (
+    <VfwPopupShell heading="Add asset" account={VFW_STANDARD_ACCOUNT}>
+      <AddAssetScreen onAddAsset={VFW_NOOP} busy={false} error={null} success={null} />
+    </VfwPopupShell>
+  )
+}
+
+function VfwPopupSection({ id }) {
+  switch (id) {
+    case 'P00':
+      return (
+        <WalletOnboarding
+          view="choose"
+          status={{ tone: 'info', message: 'Loading wallet' }}
+          onChooseStandard={VFW_NOOP}
+          onChoosePasskey={VFW_NOOP}
+        />
+      )
+    case 'P01':
+      return (
+        <WalletOnboarding
+          view="choose"
+          status={{ tone: 'error', message: 'Wallet data unavailable. Retry.' }}
+          onChooseStandard={VFW_NOOP}
+          onChoosePasskey={VFW_NOOP}
+        />
+      )
+    case 'P02':
+      return (
+        <WalletHome
+          account={VFW_STANDARD_ACCOUNT}
+          onNav={VFW_NOOP}
+          securityLabel="Unlocked"
+          portfolio={null}
+          onSend={VFW_NOOP}
+          onReceive={VFW_NOOP}
+          onAddAsset={VFW_NOOP}
+          onFund={VFW_NOOP}
+          onGetUsdc={VFW_NOOP}
+          status={{ tone: 'error', message: 'Balance unavailable. Retry.' }}
+        />
+      )
+    case 'P03':
+      return (
+        <WalletOnboarding
+          view="select-account"
+          accounts={[VFW_STANDARD_ACCOUNT, VFW_PASSKEY_ACCOUNT]}
+          onSelectAccount={VFW_NOOP}
+        />
+      )
+    case 'P04':
+      return (
+        <WalletOnboarding
+          view="standard-create"
+          onBack={VFW_NOOP}
+          createBusy={false}
+          createError={null}
+          onCreate={VFW_NOOP}
+          onGoImport={VFW_NOOP}
+        />
+      )
+    case 'P05':
+      return <VfwSendSection />
+    case 'P06':
+      return (
+        <WalletReceive
+          account={VFW_STANDARD_ACCOUNT}
+          onBack={VFW_NOOP}
+          status={{ message: 'Loading address' }}
+        />
+      )
+    case 'P07':
+      return <VfwAddAssetSection />
+    case 'P08':
+      return <WalletActivity account={VFW_STANDARD_ACCOUNT} onNav={VFW_NOOP} items={null} />
+    case 'P09':
+      return (
+        <WalletSettings
+          account={VFW_STANDARD_ACCOUNT}
+          onNav={VFW_NOOP}
+          securityLabel="Locked"
+          autoLockMin={15}
+          onSetAutoLock={VFW_NOOP}
+          onLock={VFW_NOOP}
+          onExport={VFW_NOOP}
+          onReset={VFW_NOOP}
+          onSwitchAccount={VFW_NOOP}
+          onOpenAdvanced={VFW_NOOP}
+        />
+      )
+    case 'P10':
+      return (
+        <WalletAdvanced
+          account={VFW_STANDARD_ACCOUNT}
+          onBack={VFW_NOOP}
+          busy
+          onGetUsdc={VFW_NOOP}
+          onFundXlm={VFW_NOOP}
+          onImportWallet={VFW_NOOP}
+        />
+      )
+    case 'P11':
+      return (
+        <WalletOnboarding
+          view="passkey-choose"
+          passkeyError={null}
+          onBack={VFW_NOOP}
+          onCreatePasskey={VFW_NOOP}
+          onConnectPasskey={VFW_NOOP}
+        />
+      )
+    case 'P12':
+      return (
+        <WalletHome
+          account={VFW_PASSKEY_ACCOUNT}
+          onNav={VFW_NOOP}
+          securityLabel="Secured by Face ID"
+          portfolio={VFW_PORTFOLIO_PASSKEY}
+          onSend={null}
+          onReceive={VFW_NOOP}
+          onGetUsdc={VFW_NOOP}
+        />
+      )
+    case 'P13':
+      return (
+        <WalletSettings
+          account={VFW_PASSKEY_ACCOUNT}
+          onNav={VFW_NOOP}
+          securityLabel="Secured by Face ID"
+          onSwitchAccount={VFW_NOOP}
+          switchLabel="Switch to Standard wallet"
+          onOpenAdvanced={VFW_NOOP}
+        />
+      )
+    case 'P14':
+      return (
+        <WalletAdvanced
+          account={VFW_PASSKEY_ACCOUNT}
+          onBack={VFW_NOOP}
+          busy
+          depositAmount="50"
+          onDepositAmountChange={VFW_NOOP}
+          depositVerdict={null}
+          onCheckEligibility={VFW_NOOP}
+          onEnableDeposits={VFW_NOOP}
+          onGetUsdc={VFW_NOOP}
+        />
+      )
+    case 'P15':
+      return (
+        <WalletAdvanced
+          account={VFW_PASSKEY_ACCOUNT}
+          onBack={VFW_NOOP}
+          depositAmount="50"
+          onDepositAmountChange={VFW_NOOP}
+          depositVerdict={{ allow: true, reasons: ['Allowance is within the reviewed cap.'] }}
+          onCheckEligibility={VFW_NOOP}
+          onEnableDeposits={VFW_NOOP}
+          onApproveDeposit={VFW_NOOP}
+          onRejectDeposit={VFW_NOOP}
+        />
+      )
+    case 'P16':
+      return (
+        <WalletAdvanced
+          account={VFW_PASSKEY_ACCOUNT}
+          onBack={VFW_NOOP}
+          recoveryAddress={VFW_STANDARD_ADDR}
+          onRecoveryAddressChange={VFW_NOOP}
+          onAddRecoverySigner={VFW_NOOP}
+        />
+      )
+    case 'P17':
+      return <WalletReceive account={VFW_PASSKEY_ACCOUNT} onBack={VFW_NOOP} />
+    case 'P18':
+      return (
+        <VfwPopupShell
+          heading="Signing pending"
+          account={VFW_PASSKEY_ACCOUNT}
+          status={{ tone: 'info', message: 'Waiting for Face ID' }}
+        >
+          <p className="pc-wallet-origin">
+            Requested by <span className="pc-technical">VF Wallet (this extension)</span>
+          </p>
+          <p className="pc-technical pc-address-full">Display G fixture: {VFW_PUBLIC_G_DISPLAY}</p>
+        </VfwPopupShell>
+      )
+    case 'P19':
+      return (
+        <VfwPopupShell
+          heading="Signing result"
+          account={VFW_PASSKEY_ACCOUNT}
+          status={{ tone: 'info', message: 'Confirmed' }}
+        >
+          <p className="pc-field-help">Submitted and reconciled on Stellar testnet.</p>
+          <p className="pc-technical pc-address-full">Transaction hash: {VFW_RESULT_HASH}</p>
+          <p className="pc-technical pc-address-full">Display C fixture: {VFW_PUBLIC_C_DISPLAY}</p>
+          <p className="pc-field-help">Base custody reference: {VFW_BASE_KERNEL_DISPLAY}</p>
+        </VfwPopupShell>
+      )
+    case 'P20':
+      return (
+        <VfwPopupShell heading="Shared allowance" account={VFW_PASSKEY_ACCOUNT}>
+          <ApproveOverlay
+            verdict={{ allow: false, reasons: ['Allowance read is pending.'] }}
+            simulate={null}
+            onApprove={VFW_NOOP}
+            onReject={VFW_NOOP}
+          />
+        </VfwPopupShell>
+      )
+    default:
+      return null
+  }
+}
+
+function buildVfwApprovalViews() {
+  const connectRequest = { method: 'getAddress', params: {}, origin: VFW_DAPP_ORIGIN }
+  const signRequest = {
+    method: 'signTransaction',
+    params: { xdr: VFW_FAKE_XDR },
+    origin: VFW_DAPP_ORIGIN,
+  }
+  return {
+    loading: buildApprovalView({ method: 'getAddress', params: {}, origin: null }, {}),
+    noWallet: buildApprovalView(connectRequest, {
+      address: null,
+      submissionState: SUBMISSION_STATE.REVIEWING,
+    }),
+    connect: buildApprovalView(connectRequest, {
+      address: VFW_STANDARD_ADDR,
+      kind: 'classic',
+      submissionState: SUBMISSION_STATE.REVIEWING,
+    }),
+    grant: buildApprovalView(signRequest, {
+      address: VFW_PASSKEY_ADDR,
+      kind: 'passkey',
+      summary: VFW_GRANT_SUMMARY,
+      submissionState: SUBMISSION_STATE.REVIEWING,
+    }),
+    schemaMismatch: buildApprovalView(signRequest, {
+      address: VFW_STANDARD_ADDR,
+      kind: 'classic',
+      unlocked: true,
+      summary: VFW_MISMATCH_SUMMARY,
+      submissionState: SUBMISSION_STATE.REVIEWING,
+    }),
+    waitingPassword: buildApprovalView(signRequest, {
+      address: VFW_STANDARD_ADDR,
+      kind: 'classic',
+      unlocked: false,
+      submissionState: SUBMISSION_STATE.WAITING_PASSWORD,
+      detail: 'Waiting for password',
+    }),
+    waitingPasskey: buildApprovalView(signRequest, {
+      address: VFW_PASSKEY_ADDR,
+      kind: 'passkey',
+      summary: VFW_GRANT_SUMMARY,
+      submissionState: SUBMISSION_STATE.WAITING_PASSKEY,
+    }),
+    signedReturned: buildApprovalView(signRequest, {
+      address: VFW_PASSKEY_ADDR,
+      kind: 'passkey',
+      summary: VFW_GRANT_SUMMARY,
+      submissionState: SUBMISSION_STATE.SIGNED_RETURNED,
+    }),
+    failed: buildApprovalView(signRequest, {
+      address: VFW_PASSKEY_ADDR,
+      kind: 'passkey',
+      summary: VFW_GRANT_SUMMARY,
+      submissionState: SUBMISSION_STATE.FAILED,
+      detail: 'The request was rejected by the user.',
+    }),
+    staleAccount: buildApprovalView(signRequest, {
+      address: VFW_ALT_PASSKEY_ADDR,
+      kind: 'passkey',
+      summary: VFW_GRANT_SUMMARY,
+      submissionState: SUBMISSION_STATE.FAILED,
+      detail: VFW_ACCOUNT_CHANGED_DETAIL,
+    }),
+    internalGuarded: buildApprovalView({ method: 'getAddress', params: {}, origin: null }, {}),
+  }
+}
+
+function buildVfwCeremonyViews() {
+  const depositRequest = { action: 'deposit', params: {} }
+  const approveRequest = { action: 'approve', params: {} }
+  const connectRequest = { action: 'connect', params: {} }
+  const signRequest = { action: 'signTransaction', params: { xdr: VFW_FAKE_XDR } }
+  const common = { address: VFW_PASSKEY_ADDR, kind: 'passkey', amountUnits: 50_0000000n }
+  return {
+    preparing: buildCeremonyView(depositRequest, {
+      ...common,
+      submissionState: CEREMONY_STATE.PREPARING,
+    }),
+    deposit: buildCeremonyView(depositRequest, {
+      ...common,
+      submissionState: CEREMONY_STATE.PREPARING,
+    }),
+    approve: buildCeremonyView(approveRequest, {
+      ...common,
+      submissionState: CEREMONY_STATE.PREPARING,
+    }),
+    connect: buildCeremonyView(connectRequest, {
+      ...common,
+      submissionState: CEREMONY_STATE.PREPARING,
+    }),
+    waitingPasskey: buildCeremonyView(depositRequest, {
+      ...common,
+      submissionState: CEREMONY_STATE.WAITING_PASSKEY,
+    }),
+    signed: buildCeremonyView(signRequest, {
+      ...common,
+      submissionState: CEREMONY_STATE.SIGNED,
+    }),
+    submitted: buildCeremonyView(depositRequest, {
+      ...common,
+      result: {
+        ok: true,
+        action: 'deposit',
+        status: 'PENDING',
+        hash: VFW_RESULT_HASH,
+      },
+    }),
+    checking: buildCeremonyView(depositRequest, {
+      ...common,
+      submissionState: CEREMONY_STATE.CHECKING_STATUS,
+    }),
+    confirmed: buildCeremonyView(depositRequest, {
+      ...common,
+      result: {
+        ok: true,
+        action: 'deposit',
+        status: 'SUCCESS',
+        hash: VFW_RESULT_HASH,
+        sharesBefore: '100000000',
+        sharesAfter: '105000000',
+      },
+    }),
+    notSubmitted: buildCeremonyView(signRequest, {
+      ...common,
+      result: {
+        ok: false,
+        action: 'signTransaction',
+        status: 'NOT_SUBMITTED',
+        error: VFW_CONTEXT_CHANGED_DETAIL,
+      },
+    }),
+    rejected: buildCeremonyView(depositRequest, {
+      ...common,
+      result: { ok: false, action: 'deposit', status: 'REJECTED' },
+    }),
+    baseDisclosure: buildCeremonyView(signRequest, {
+      ...common,
+      decodedSummary: VFW_GRANT_SUMMARY,
+      submissionState: CEREMONY_STATE.WAITING_PASSKEY,
+    }),
+  }
+}
+
+// Popup screens mount through real WalletShell compositions. wallet.css is loaded only here at
+// the fixture boundary (popup.html's production document has the same external boundary), and
+// the explicit readiness gate waits for the stylesheet side effect plus two paint frames. State
+// selection is direct prop data; no fixture autopilot or wallet action is needed.
 function VfWalletHomeFixture() {
   const [ready, setReady] = useState(false)
+  const selectedEntry = walletSection?.startsWith('P')
+    ? WALLET_ATLAS_SECTION_MAP[walletSection] || null
+    : null
   useEffect(() => {
     let cancelled = false
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        if (!cancelled) setReady(true)
-      })
-    )
+    import('../extension/wallet.css').then(() => {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (!cancelled) setReady(true)
+        })
+      )
+    })
     return () => {
       cancelled = true
     }
   }, [])
 
+  if (selectedEntry) {
+    return (
+      <div
+        data-fixture="vf-wallet-home"
+        data-fixture-section={selectedEntry.id}
+        data-fixture-pending={ready ? 'false' : 'true'}
+      >
+        <section
+          aria-labelledby={`wallet-${selectedEntry.id}-heading`}
+          data-wallet-section={selectedEntry.id}
+        >
+          <h2 id={`wallet-${selectedEntry.id}-heading`}>{selectedEntry.title}</h2>
+          <VfwPopupSection id={selectedEntry.id} />
+        </section>
+      </div>
+    )
+  }
+
   return (
     // Fix round 1 (real-Chromium overflow sweep, self-caught before review): NO outer padding
-    // here, the same trap Foundation Task 7/Strategy Task 14 both already hit and fixed on this
-    // exact file (see FoundationFixture/StrategyFixture's own comments) -- padding on a
+    // here, the same trap Strategy Task 14 already hit and fixed on this exact file -- padding on a
     // content-box <main> with no explicit width ADDS to the 360px viewport width rather than
     // eating into it (no box-sizing:border-box reset applies out here; that reset is scoped to
     // `.pc-wallet` and its descendants, not this fixture root above it), so `padding: '2rem'`
@@ -2377,7 +3216,7 @@ function VfWalletHomeFixture() {
     // overflow guard before a screenshot was ever frozen with it.
     <main
       data-fixture="vf-wallet-home"
-      data-fixture-pending={ready ? undefined : 'true'}
+      data-fixture-pending={ready ? 'false' : 'true'}
       style={{ display: 'grid', gap: '2rem' }}
     >
       <h1>Pocket Crew visual harness — VF Wallet (home)</h1>
@@ -2515,72 +3354,61 @@ function VfWalletApprovalFixture() {
     }
   }, [])
 
-  const connectView = buildApprovalView(
-    { method: 'getAddress', params: {}, origin: VFW_DAPP_ORIGIN },
-    { address: VFW_STANDARD_ADDR, kind: 'classic', submissionState: SUBMISSION_STATE.REVIEWING }
-  )
-  const grantView = buildApprovalView(
-    { method: 'signTransaction', params: { xdr: VFW_FAKE_XDR }, origin: VFW_DAPP_ORIGIN },
-    {
-      address: VFW_PASSKEY_ADDR,
-      kind: 'passkey',
-      summary: VFW_GRANT_SUMMARY,
-      submissionState: SUBMISSION_STATE.REVIEWING,
-    }
-  )
-  const mismatchView = buildApprovalView(
-    { method: 'signTransaction', params: { xdr: VFW_FAKE_XDR }, origin: VFW_DAPP_ORIGIN },
-    {
-      address: VFW_STANDARD_ADDR,
-      kind: 'classic',
-      unlocked: true,
-      summary: VFW_MISMATCH_SUMMARY,
-      submissionState: SUBMISSION_STATE.REVIEWING,
-    }
-  )
-  const wrongPasswordView = buildApprovalView(
-    { method: 'signTransaction', params: { xdr: VFW_FAKE_XDR }, origin: VFW_DAPP_ORIGIN },
-    {
-      address: VFW_STANDARD_ADDR,
-      kind: 'classic',
-      unlocked: false,
-      submissionState: SUBMISSION_STATE.WAITING_PASSWORD,
-      detail: 'Wrong password.',
-    }
-  )
+  const approvalViews = buildVfwApprovalViews()
+  const ceremonyViews = buildVfwCeremonyViews()
+  const selectedEntry = walletSection && WALLET_ATLAS_SECTION_MAP[walletSection]
 
-  const signingGrantView = buildCeremonyView(
-    { action: 'signTransaction', params: { xdr: VFW_FAKE_XDR } },
-    {
-      address: VFW_PASSKEY_ADDR,
-      decodedSummary: VFW_GRANT_SUMMARY,
-      submissionState: CEREMONY_STATE.WAITING_PASSKEY,
-    }
-  )
-  const passkeyMismatchView = buildCeremonyView(
-    { action: 'connect', params: {} },
-    {
-      address: VFW_PASSKEY_ADDR,
-      submissionState: CEREMONY_STATE.FAILED,
-      detail: VFW_ACCOUNT_CHANGED_DETAIL,
-    }
-  )
-  const notSubmittedView = buildCeremonyView(
-    { action: 'signAuthEntry', params: { authEntry: VFW_FAKE_AUTH_ENTRY } },
-    {
-      address: VFW_PASSKEY_ADDR,
-      submissionState: CEREMONY_STATE.NOT_SUBMITTED,
-      detail: VFW_CONTEXT_CHANGED_DETAIL,
-    }
-  )
-  const submittedView = buildCeremonyView(
-    { action: 'deposit', params: {} },
-    {
-      address: VFW_PASSKEY_ADDR,
-      amountUnits: 50_0000000n,
-      submissionState: CEREMONY_STATE.SUBMITTED,
-    }
-  )
+  if (selectedEntry && !selectedEntry.id.startsWith('P')) {
+    const view = selectedEntry.id.startsWith('A')
+      ? approvalViews[
+          {
+            A00: 'loading',
+            A01: 'noWallet',
+            A02: 'connect',
+            A03: 'grant',
+            A04: 'schemaMismatch',
+            A05: 'waitingPassword',
+            A06: 'signedReturned',
+            A07: 'failed',
+            A08: 'staleAccount',
+            A09: 'internalGuarded',
+          }[selectedEntry.id]
+        ]
+      : ceremonyViews[
+          {
+            C00: 'preparing',
+            C01: 'deposit',
+            C02: 'approve',
+            C03: 'connect',
+            C04: 'waitingPasskey',
+            C05: 'signed',
+            C06: 'submitted',
+            C07: 'confirmed',
+            C08: 'notSubmitted',
+            C09: 'baseDisclosure',
+          }[selectedEntry.id]
+        ]
+    const isApproval = selectedEntry.id.startsWith('A')
+    return (
+      <div
+        data-fixture="vf-wallet-approval"
+        data-fixture-section={selectedEntry.id}
+        data-fixture-pending={cssReady ? 'false' : 'true'}
+      >
+        <section
+          aria-labelledby={`wallet-${selectedEntry.id}-heading`}
+          data-wallet-section={selectedEntry.id}
+        >
+          <h2 id={`wallet-${selectedEntry.id}-heading`}>{selectedEntry.title}</h2>
+          {isApproval ? (
+            <VfwApprovalCard view={view} openRawDetails={selectedEntry.id === 'A03'} />
+          ) : (
+            <VfwCeremonyCard view={view} />
+          )}
+        </section>
+      </div>
+    )
+  }
 
   return (
     // Fix round 1: no outer padding here either -- see VfWalletHomeFixture's own comment above
@@ -2588,42 +3416,42 @@ function VfWalletApprovalFixture() {
     // real-Chromium overflow sweep.
     <main
       data-fixture="vf-wallet-approval"
-      data-fixture-pending={cssReady ? undefined : 'true'}
+      data-fixture-pending={cssReady ? 'false' : 'true'}
       style={{ display: 'grid', gap: '2rem' }}
     >
       <h1>Pocket Crew visual harness — VF Wallet (approval / ceremony)</h1>
 
       <Section title="Connection consent">
-        <VfwApprovalCard view={connectView} />
+        <VfwApprovalCard view={approvalViews.connect} />
       </Section>
 
       <Section ariaHidden title="Decoded multi-agent grant (technical details open)">
-        <VfwApprovalCard view={grantView} openRawDetails />
+        <VfwApprovalCard view={approvalViews.grant} openRawDetails />
       </Section>
 
       <Section ariaHidden title="Raw / schema-mismatch approval">
-        <VfwApprovalCard view={mismatchView} />
+        <VfwApprovalCard view={approvalViews.schemaMismatch} />
       </Section>
 
       <Section ariaHidden title="Passkey ceremony (signing a decoded grant, Base mandate visible)">
-        <VfwCeremonyCard view={signingGrantView} />
+        <VfwCeremonyCard view={ceremonyViews.baseDisclosure} />
       </Section>
 
       <Section ariaHidden title="Wrong password">
-        <VfwApprovalCard view={wrongPasswordView} />
+        <VfwApprovalCard view={approvalViews.waitingPassword} />
       </Section>
 
       <Section ariaHidden title="Passkey mismatch">
-        <VfwCeremonyCard view={passkeyMismatchView} />
+        <VfwCeremonyCard view={ceremonyViews.rejected} />
       </Section>
 
       <Section ariaHidden title="Relay not submitted">
-        <VfwCeremonyCard view={notSubmittedView} />
+        <VfwCeremonyCard view={ceremonyViews.notSubmitted} />
       </Section>
 
       <Section ariaHidden title="Submission unknown">
         <VfwCeremonyCard
-          view={submittedView}
+          view={ceremonyViews.submitted}
           statusOverride="Submitted (unknown). Not yet confirmed — check the shares balance before relying on this number."
         />
       </Section>
@@ -2631,12 +3459,246 @@ function VfWalletApprovalFixture() {
   )
 }
 
+// -------------------------------------------------------------------------------------------
+// Secondary functional fixture branches.  These wrappers only provide the composition context
+// production routes normally receive from app.jsx (router, settled read, or a dialog opener).
+// The route components themselves remain the sole owners of markup, effects, callbacks, and
+// navigation behaviour.
+
+function secondaryFixtureState() {
+  try {
+    secondaryPayload('onboarding', secondaryState)
+    return secondaryState
+  } catch {
+    return 'current'
+  }
+}
+
+function SecondaryFixtureShell({ fixtureId, cap, children, title }) {
+  return (
+    <div data-fixture={fixtureId} data-fixture-class={cap} data-fixture-pending="false">
+      {title ? <h1 className="pc-visually-hidden">{title}</h1> : null}
+      {children}
+    </div>
+  )
+}
+
+function SecondaryRouter({ entry, children }) {
+  return <MemoryRouter initialEntries={[entry]}>{children}</MemoryRouter>
+}
+
+function SecondaryDevelopersFixture({ branch, state }) {
+  const read = secondaryPayload('developers', state)
+  if (branch === 'developer-keys') {
+    return (
+      <main className="pc-route">
+        <KeysSection session={{ jwt: 'fixture-session' }} developersRead={read} />
+      </main>
+    )
+  }
+  if (branch === 'developer-usage') {
+    return (
+      <main className="pc-route">
+        <UsageSection session={{ jwt: 'fixture-session' }} developersRead={read} />
+      </main>
+    )
+  }
+  if (branch === 'developer-docs') {
+    return (
+      <main className="pc-route">
+        <DocsSection />
+      </main>
+    )
+  }
+  return (
+    <main className="pc-route">
+      <DevelopersLayout developersRead={read} />
+    </main>
+  )
+}
+
+function SecondaryTxFixture({ state }) {
+  const row = secondaryPayload('history', state).transactions[0]
+  const hash = row?.txHash || 'fixture-tx-not-found'
+  // TxDetailPage intentionally reads the same local history reader as production. Seed only this
+  // fixture's display record at the boundary; no reader or storage implementation is changed.
+  try {
+    localStorage.setItem('yv_history_transactions', JSON.stringify(row ? [row] : []))
+  } catch {
+    // A host with unavailable storage still exercises the real unavailable/not-found surface.
+  }
+  return (
+    <SecondaryRouter entry={`/tx/${hash}`}>
+      <Routes>
+        <Route path="/tx/:txHash" element={<TxDetailPage />} />
+      </Routes>
+    </SecondaryRouter>
+  )
+}
+
+function SecondaryDevPanelFixture() {
+  useEffect(() => {
+    window.postMessage({ type: '__activate_edit_mode' }, '*')
+  }, [])
+  return (
+    <main>
+      <h1 className="pc-visually-hidden">Developer tweaks</h1>
+      <TweaksPanel title="Tweaks">
+        <TweakSection label="Motion">
+          <TweakSlider
+            label="Scale"
+            value={1}
+            min={0.5}
+            max={1.5}
+            step={0.1}
+            unit="×"
+            onChange={() => {}}
+          />
+          <TweakToggle label="Reduced motion" value={false} onChange={() => {}} />
+        </TweakSection>
+        <TweakButton label="Apply" onClick={() => {}} />
+      </TweaksPanel>
+    </main>
+  )
+}
+
+function SecondaryFixture({ branch, cap, state }) {
+  const fixtureId = branch === 'landing' && cap === 'CAP-07' ? 'compat' : branch
+  const payloadRoute = SECONDARY_ROUTE_FIXTURES[branch]?.payloadRoute || branch
+  const payload =
+    payloadRoute === 'landing' || payloadRoute === 'skill-drawer' || payloadRoute === 'dev-panel'
+      ? null
+      : secondaryPayload(payloadRoute, state)
+
+  if (branch === 'landing') {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
+        <SecondaryRouter entry="/">
+          <LandingHero onStart={() => {}} />
+        </SecondaryRouter>
+      </SecondaryFixtureShell>
+    )
+  }
+  if (branch === 'onboarding') {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
+        <OnboardingFlow
+          connected={false}
+          onConnect={() => {}}
+          onComplete={() => {}}
+          onboardingRead={payload}
+        />
+      </SecondaryFixtureShell>
+    )
+  }
+  if (branch === 'explorer') {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
+        <SecondaryRouter entry="/explorer">
+          <ExplorerPage explorerRead={payload} />
+        </SecondaryRouter>
+      </SecondaryFixtureShell>
+    )
+  }
+  if (branch === 'ecosystem') {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
+        <SecondaryRouter entry="/ecosystem">
+          <EcosystemPage ecosystemRead={payload} />
+        </SecondaryRouter>
+      </SecondaryFixtureShell>
+    )
+  }
+  if (branch === 'replay') {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
+        <SecondaryRouter entry="/replay">
+          <ReplayPage replayRead={payload} />
+        </SecondaryRouter>
+      </SecondaryFixtureShell>
+    )
+  }
+  if (branch === 'history') {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
+        <main className="pc-route">
+          <HistoryPanel connectedAddress={null} historyRead={payload} />
+        </main>
+      </SecondaryFixtureShell>
+    )
+  }
+  if (branch === 'vault') {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
+        <SecondaryRouter entry="/vault/blend-usdc">
+          <Routes>
+            <Route
+              path="/vault/:protocol"
+              element={<VaultDetailPage positions={{}} vaultRead={payload} />}
+            />
+          </Routes>
+        </SecondaryRouter>
+      </SecondaryFixtureShell>
+    )
+  }
+  if (branch === 'tx') {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
+        <SecondaryTxFixture state={state} />
+      </SecondaryFixtureShell>
+    )
+  }
+  if (branch.startsWith('developer')) {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
+        <SecondaryRouter
+          entry={branch === 'developers' ? '/developers' : `/developers/${branch.slice(11)}`}
+        >
+          <SecondaryDevelopersFixture branch={branch} state={state} />
+        </SecondaryRouter>
+      </SecondaryFixtureShell>
+    )
+  }
+  if (branch === 'skill-drawer') {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap} title="Vault advisor skill">
+        <main>
+          <SkillDrawer open onClose={() => {}} skillSource="default" onSkillChange={() => {}} />
+        </main>
+      </SecondaryFixtureShell>
+    )
+  }
+  if (branch === 'dev-panel') {
+    return (
+      <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
+        <SecondaryDevPanelFixture />
+      </SecondaryFixtureShell>
+    )
+  }
+  return null
+}
+
 function App() {
+  if (fixture === 'core-money') return <CoreMoneyFixture />
+  if (fixture === 'core-strategy') return <CoreStrategyFixture />
+  if (fixture === 'core-crew') return <CoreCrewFixture />
+  if (fixture === 'core-settings') return <CoreSettingsFixture />
+  if (fixture === 'core-dialog') return <CoreDialogFixture />
+  if (fixture === 'core-base-withdraw') return <CoreBaseWithdrawFixture />
   if (fixture === 'strategy') return <StrategyFixture />
   if (fixture === 'my-money') return <MyMoneyFixture />
   if (fixture === 'crew') return <CrewFixture />
   if (fixture === 'vf-wallet-home') return <VfWalletHomeFixture />
   if (fixture === 'vf-wallet-approval') return <VfWalletApprovalFixture />
+  if (isSecondaryFixture) {
+    const branch = secondaryBranch
+    const entry = SECONDARY_ROUTE_FIXTURES[branch]
+    const cap =
+      secondaryClass && SECONDARY_OWNED_CLASSES.includes(secondaryClass)
+        ? secondaryClass
+        : entry?.cap || 'CAP-02'
+    return <SecondaryFixture branch={branch} cap={cap} state={secondaryFixtureState()} />
+  }
   if (fixture !== 'foundation') {
     return (
       <main data-fixture={fixture}>
@@ -2644,15 +3706,15 @@ function App() {
       </main>
     )
   }
-  return <FoundationFixture />
+  return <FoundationAtlasFixture theme={theme} />
 }
 
 // Guarded: this module is also imported directly by foundationA11y.test.jsx (jsdom, no #root
-// element) so the shared `FoundationFixture` composition never duplicates markup between the
+// element) so the shared `FoundationAtlasFixture` composition never duplicates markup between the
 // Playwright entry and the a11y test.
 const rootEl = typeof document !== 'undefined' ? document.getElementById('root') : null
 if (rootEl) {
   createRoot(rootEl).render(<App />)
 }
 
-export { FoundationFixture }
+export { FoundationAtlasFixture, FoundationAtlasFixture as FoundationFixture }

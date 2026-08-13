@@ -35,6 +35,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { TechnicalDetails } from '../pocket/Primitives.jsx'
 import { SOROBAN_ACTIVE_VAULT_ADDRESS } from '../../stellar/config.js'
+import { toFactView, toFreshnessView } from '../../core/coreRouteAdapters.js'
 
 const PixiSwarmGraph = lazy(() =>
   import('../../graph/PixiSwarmGraph.jsx').then((m) => ({ default: m.PixiSwarmGraph }))
@@ -90,7 +91,7 @@ function useGraphDisclosurePaused() {
   return [wrapRef, !open]
 }
 
-export function TechnicalMoneyDetails({ model, agents = [] }) {
+export function TechnicalMoneyDetails({ model, factView = null, agents = [] }) {
   const [graphWrapRef, graphPaused] = useGraphDisclosurePaused()
   // My Money Task 14: memoized on `agents` itself, not recomputed on every render. Toggling the
   // disclosure re-renders this component (useGraphDisclosurePaused's own `open` state) -- an
@@ -103,6 +104,8 @@ export function TechnicalMoneyDetails({ model, agents = [] }) {
   // pause-in-place (positions/particles surviving a close/reopen) requires the app to survive the
   // toggle, which requires this reference to stay stable across it.
   const graphData = useMemo(() => buildAgentNetworkGraphData(agents), [agents])
+  const freshness = factView?.freshness ?? toFreshnessView(toFactView({ state: 'unavailable' }))
+  const technicalState = factView ? freshness.label : model?.state
   return (
     <section
       className="pc-money-section"
@@ -117,24 +120,37 @@ export function TechnicalMoneyDetails({ model, agents = [] }) {
             are marked .pc-technical individually so they keep rendering in the mono face. */}
         <TechnicalDetails summary="Freshness and provenance">
           <p>
-            State: <span className="pc-technical">{model?.state ?? 'unavailable'}</span>
+            State: <span className="pc-technical">{technicalState ?? 'unavailable'}</span>
           </p>
           <p>
-            Checked at: <span className="pc-technical">{rawOrUnavailable(model?.checkedAt)}</span>
+            Checked at:{' '}
+            <span className="pc-technical">
+              {rawOrUnavailable(factView ? freshness.checkedAt : model?.checkedAt)}
+            </span>
           </p>
           <p>
             Confirmed ledger (Stellar):{' '}
-            <span className="pc-technical">{rawOrUnavailable(model?.confirmedLedger)}</span>
+            <span className="pc-technical">
+              {rawOrUnavailable(factView ? freshness.confirmedLedger : model?.confirmedLedger)}
+            </span>
           </p>
           <p>
             Confirmed block (Base):{' '}
-            <span className="pc-technical">{rawOrUnavailable(model?.confirmedBlock)}</span>
+            <span className="pc-technical">
+              {rawOrUnavailable(factView ? freshness.confirmedBlock : model?.confirmedBlock)}
+            </span>
           </p>
           <p>
-            Source: <span className="pc-technical">{rawOrUnavailable(model?.source)}</span>
+            Source:{' '}
+            <span className="pc-technical">
+              {rawOrUnavailable(factView ? freshness.source : model?.source)}
+            </span>
           </p>
           <p>
-            Freshness: <span className="pc-technical">{rawOrUnavailable(model?.freshness)}</span>
+            Freshness:{' '}
+            <span className="pc-technical">
+              {rawOrUnavailable(factView ? freshness.label : model?.freshness)}
+            </span>
           </p>
         </TechnicalDetails>
 

@@ -69,6 +69,22 @@ describe('approve.html — Cancel/Reject is present before (or alongside) Confir
     const html = readFileSync(path.resolve(here, './approve.html'), 'utf8')
     expect(html).not.toMatch(/autofocus/i)
   })
+
+  it('static fallback actions use the exact Reject/Confirm vocabulary before the request loads', () => {
+    const html = readFileSync(path.resolve(here, './approve.html'), 'utf8')
+    expect(html).toMatch(/id="reject">Reject<\/button>/)
+    expect(html).toMatch(/id="approve">Confirm<\/button>/)
+  })
+})
+
+describe('approve.js — presentation boundary keeps verified request facts and display-only account mapping', () => {
+  it('builds the approval view from the stashed requester origin and account snapshot', () => {
+    const source = readFileSync(path.resolve(here, './approve.js'), 'utf8')
+    expect(source).toMatch(/buildApprovalView\(\s*\{\s*method:\s*req\.method/)
+    expect(source).toMatch(/origin:\s*req\.requester\?\.origin/)
+    expect(source).toMatch(/\{\s*address,\s*summary,\s*kind,\s*unlocked/)
+    expect(source).not.toMatch(/routeLabel[\s\S]*networkPassphrase/)
+  })
 })
 
 // ---------------------------------------------------------------------------------------------

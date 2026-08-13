@@ -33,6 +33,7 @@ import { Dialog } from '../pocket/Primitives.jsx'
 import { planFullExit } from '../../money/ownerActions.js'
 import { SOROBAN_DECIMALS } from '../../stellar/config.js'
 import { formatUtcSeconds } from './formatUtc.js'
+import { formatCoreAmount, toAgentIdentityView } from '../../core/coreRouteAdapters.js'
 
 // Same explorer convention StrategyReceipt.jsx already uses for a Stellar account
 // (StrategyReceipt.jsx:97-99) -- re-declared locally per that file's own sibling-surface rationale
@@ -81,12 +82,14 @@ function locationName(location) {
 // it directly here made a split agent fall through every branch to the generic 'Active' -- the
 // same agent PositionList already shows correctly with both real legs. Matching that precedence
 // keeps the two components saying the same true thing about the same agent.
-function agentStateLabel(agent) {
+function agentStateLabel(agent, presentationNow = null) {
   if (agent.scope?.state !== 'known') return 'Status unknown'
   if (agent.scope.value?.revoked) return 'Revoked'
   const expiry = Number(agent.scope.value?.expiry ?? 0)
-  const nowSec = Math.floor(Date.now() / 1000)
-  if (Number.isFinite(expiry) && expiry > 0 && expiry <= nowSec) return 'Expired'
+  const nowSec = Number.isFinite(presentationNow) ? Math.floor(presentationNow / 1000) : null
+  if (nowSec != null && Number.isFinite(expiry) && expiry > 0 && expiry <= nowSec) {
+    return 'Expired'
+  }
   if (agent.executionStatus === 'queued') return 'Bridging queued'
   if (agent.executionStatus === 'executing') return 'Bridging in progress'
   if (agent.executionStatus === 'failed') return 'Bridge issue'
@@ -125,16 +128,13 @@ function capFor(agent, discovery) {
 // is the agent's OWN `amount.decimals` when a read exists (never a hardcoded 7) -- cap and amount
 // are the same token, so a non-canonical decimals count (a future non-SAC token) must scale both
 // identically, not silently misreport the cap by orders of magnitude.
-function formatCap(cap, decimals) {
+function formatCap(cap, decimals, token = 'USDC') {
   if (typeof cap !== 'string' || !cap.trim()) return 'Unavailable'
-  let units
   try {
-    units = BigInt(cap)
+    return formatCoreAmount({ token, units: cap, decimals })
   } catch {
     return 'Unavailable'
   }
-  const value = Number(units) / 10 ** decimals
-  return `${value.toLocaleString()} USDC`
 }
 
 function markStateFor(agent, recoveryNeeded) {
@@ -146,6 +146,9 @@ function markStateFor(agent, recoveryNeeded) {
   return 'idle'
 }
 
+const RECOVERY_COVERAGE_UNAVAILABLE =
+  'Recovery coverage is unavailable. We cannot confirm an account-wide exit yet.'
+
 export function AgentTeam({
   agents = [],
   problemAgents = [],
@@ -153,13 +156,21 @@ export function AgentTeam({
   account = null,
   onRecoverAgent,
   collectionState = null,
+  presentationNow = 0,
 }) {
   const [recoveryAddress, setRecoveryAddress] = useState(null)
   const recoveryTarget = agents.find((a) => a.address === recoveryAddress) ?? null
+  const effectivePresentationNow = Number.isFinite(presentationNow) ? presentationNow : 0
   const plan =
     recoveryTarget && discovery && account
-      ? planFullExit({ discovery, position: { agents }, account })
+      ? planFullExit({
+          discovery,
+          position: { agents },
+          account,
+          now: effectivePresentationNow,
+        })
       : null
+  const planAvailable = plan?.ok === true && typeof plan.label === 'string' && plan.label.length > 0
 
   // Same authoritative-empty rule as PositionList (2026-08-02 polish): "No agents deployed yet"
   // is only said once discovery actually finished proving it.
@@ -169,7 +180,7 @@ export function AgentTeam({
       : collectionState === 'loading'
         ? 'Checking your agent team…'
         : collectionState === 'unavailable' || collectionState === 'partial-discovery'
-          ? 'Your agent team is not fully confirmed yet — nothing confirmed this round.'
+          ? 'Your agent team is not fully confirmed yet. Nothing confirmed this round.'
           : 'No agents deployed yet.'
 
   return (
@@ -186,43 +197,60 @@ export function AgentTeam({
         <ul className="pc-crew-list">
           {agents.map((agent) => {
             const recoveryNeeded = problemAgents.includes(agent.address)
-            const label = recoveryNeeded ? 'Needs recovery' : agentStateLabel(agent)
+            const label = recoveryNeeded
+              ? 'Needs recovery'
+              : agentStateLabel(agent, effectivePresentationNow)
+            const identity = toAgentIdentityView({
+              phase: 'deployed',
+              address: agent.address,
+              verified: Boolean(agent.address),
+              source: 'owner-discovery',
+              state: markStateFor(agent, recoveryNeeded),
+            })
+            const identityAvailable = identity.identityAvailable
+            const cap = capFor(agent, discovery)
+            const capToken = cap?.token || agent.amount?.token || 'USDC'
             return (
               <li
                 key={agent.address}
                 className="pc-crew-row"
                 data-agent-state={recoveryNeeded ? 'needs-recovery' : 'ok'}
               >
-                <AgentMark identity={agent.address} state={markStateFor(agent, recoveryNeeded)} />
+                <AgentMark identity={identity} state={markStateFor(agent, recoveryNeeded)} />
                 <div>
                   <NetworkBadge networkId="stellar-testnet" />
-                  <p>
-                    <a
-                      href={explorerAccountUrl(agent.address)}
-                      target="_blank"
-                      rel="noreferrer"
-                      aria-label={`Agent account ${agent.address} on Stellar Expert`}
-                    >
-                      {shortAddress(agent.address)}
-                    </a>
-                  </p>
-                  <p>
-                    Cap:{' '}
-                    {formatCap(
-                      capFor(agent, discovery),
-                      agent.amount?.decimals ?? SOROBAN_DECIMALS
-                    )}
-                  </p>
-                  <p>
-                    Expires:{' '}
-                    {formatUtcSeconds(
-                      agent.scope?.state === 'known' ? agent.scope.value?.expiry : null
-                    )}
-                  </p>
+                  {identityAvailable ? (
+                    <>
+                      <p>
+                        <a
+                          href={explorerAccountUrl(agent.address)}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`Agent account ${agent.address} on Stellar Expert`}
+                        >
+                          {shortAddress(agent.address)}
+                        </a>
+                      </p>
+                      <p>
+                        Cap:{' '}
+                        {formatCap(
+                          cap && typeof cap === 'object' ? cap.units : cap,
+                          cap?.decimals ?? agent.amount?.decimals ?? SOROBAN_DECIMALS,
+                          capToken
+                        )}
+                      </p>
+                      <p>
+                        Expires:{' '}
+                        {formatUtcSeconds(
+                          agent.scope?.state === 'known' ? agent.scope.value?.expiry : null
+                        )}
+                      </p>
+                    </>
+                  ) : null}
                 </div>
-                <span>{label}</span>
+                <span>{identityAvailable ? label : null}</span>
 
-                {recoveryNeeded && (
+                {identityAvailable && recoveryNeeded && (
                   <ul className="pc-crew-row-recovery">
                     <li>
                       <button
@@ -260,27 +288,27 @@ export function AgentTeam({
             >
               Close
             </button>
-            <button
-              type="button"
-              className="pc-button pc-button--primary"
-              onClick={() => {
-                onRecoverAgent?.(recoveryAddress, plan)
-                setRecoveryAddress(null)
-              }}
-            >
-              {plan?.label || 'Exit all'}
-            </button>
+            {planAvailable && (
+              <button
+                type="button"
+                className="pc-button pc-button--primary"
+                onClick={() => {
+                  onRecoverAgent?.(recoveryAddress, plan)
+                  setRecoveryAddress(null)
+                }}
+              >
+                {plan.label}
+              </button>
+            )}
           </>
         }
       >
         <p>
-          The balance is not lost — a full exit can recover it. Owner withdrawal is always allowed
-          by the contract, regardless of the current scope state.
+          The balance is not lost. A full exit can recover it. Owner withdrawal is always allowed by
+          the contract, regardless of the current scope state.
         </p>
-        {plan?.limitation && <p>{plan.limitation}</p>}
-        {!discovery || !account ? (
-          <p>Full recovery details will be available once agent discovery finishes loading.</p>
-        ) : null}
+        {planAvailable && plan.limitation && <p>{plan.limitation}</p>}
+        {!planAvailable && <p>{RECOVERY_COVERAGE_UNAVAILABLE}</p>}
       </Dialog>
     </section>
   )

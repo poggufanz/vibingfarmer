@@ -59,7 +59,7 @@ export function VaultProtection({ protection }) {
       </header>
       <div>
         <p>
-          This protection is vault-wide — it covers every depositor in the vault, not just your own
+          This protection is vault-wide. It covers every depositor in the vault, not just your own
           funds, and only the vault's configured authority can renew it.
         </p>
 
@@ -74,7 +74,7 @@ export function VaultProtection({ protection }) {
         <p>Mandate expiry: {formatUtcSeconds(protection?.mandateExpiry)}</p>
 
         {ownerCanRenew && (
-          <p>Renewal is due — use the Renew vault protection action above to renew it.</p>
+          <p>Renewal is due. Use the Renew vault protection action above to renew it.</p>
         )}
         {authorityBlocked && (
           <p>

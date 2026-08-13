@@ -10,7 +10,7 @@
 // comment) -- this mock just keeps the test hermetic/fast rather than changing the code path.
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 
 vi.mock('pixi.js', () => ({
   Application: class {
@@ -63,5 +63,50 @@ describe('TechnicalMoneyDetails — agent network graph (My Money Task 13 Part B
     expect(
       rawFieldsRow.compareDocumentPosition(graphNode) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
+  })
+
+  it('keeps raw evidence available while closed and opens the real graph as a separate disclosure', async () => {
+    render(<TechnicalMoneyDetails model={{ state: 'stale' }} agents={[agent('CAGENT1')]} />)
+    const summary = screen.getByText('Agent network graph (advanced)')
+    const details = summary.closest('details')
+    expect(details.open).toBe(false)
+    expect(screen.getByText(/^CAGENT1: scope=/)).toBeTruthy()
+    fireEvent.click(summary)
+    expect(details.open).toBe(true)
+    expect(await screen.findByText('CAGENT1', { selector: 'span' })).toBeTruthy()
+    fireEvent.click(summary)
+    expect(details.open).toBe(false)
+    expect(screen.getByText(/^CAGENT1: scope=/)).toBeTruthy()
+  })
+
+  it('uses the shared freshness view for stale provenance instead of a lower-case model label', () => {
+    const factView = {
+      fact: {
+        state: 'stale',
+        value: { token: 'USDC', units: '5000000000', decimals: 7 },
+        source: 'soroban-rpc',
+        checkedAt: '2026-07-12T00:00:00.000Z',
+        confirmedLedger: '12345',
+        confirmedBlock: '67890',
+      },
+      freshness: {
+        state: 'stale',
+        label: 'Stale',
+        source: 'soroban-rpc',
+        checkedAt: '2026-07-12T00:00:00.000Z',
+        confirmedLedger: '12345',
+        confirmedBlock: '67890',
+      },
+    }
+    render(
+      <TechnicalMoneyDetails
+        model={{ state: 'stale', freshness: 'stale', checkedAt: 0, source: 'wrong-source' }}
+        factView={factView}
+        agents={[]}
+      />
+    )
+    expect(screen.getAllByText('Stale').length).toBeGreaterThan(0)
+    expect(screen.getByText('soroban-rpc')).toBeTruthy()
+    expect(screen.queryByText('wrong-source')).toBeNull()
   })
 })

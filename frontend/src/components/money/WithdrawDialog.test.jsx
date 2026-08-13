@@ -35,12 +35,17 @@ function revokedFundedRow(address) {
   return { address, scopeReadStatus: 'ok', revoked: true, expiry: 0 }
 }
 
-function positionAgent(address, units, location = 'stellar-vault') {
+function positionAgent(address, units, location = 'stellar-vault', decimals = 7) {
+  const amount = amt(units, decimals)
   return {
     address,
-    amount: amt(units),
+    amount,
     custody: { location },
-    custodyBreakdown: [{ location, amount: amt(units) }],
+    custodyBreakdown: [{ location, amount }],
+    // Real readOwnerMoney rows carry current proof for both Stellar legs. Keep the shared
+    // fixture production-shaped so amount-only rows can be tested explicitly below.
+    vaultShares: { state: 'known', amount, checkedAt: 1_725_000_000_000 },
+    idleToken: { state: 'known', amount: amt(0, decimals), checkedAt: 1_725_000_000_000 },
   }
 }
 
@@ -92,6 +97,31 @@ describe('WithdrawDialog — full exit, exact known-vs-partial target set', () =
     // one as 0) would render "100 USDC" here -- a confident-looking but wrong under-count. This
     // requires the honest "Unavailable" instead.
     expect(screen.getByText(/known amount across every target agent: unavailable/i)).toBeTruthy()
+  })
+
+  it('does not offer a partial withdraw when the selected vault amount has no decimals proof', async () => {
+    const discovery = discoveryWith([activeRow('CAGENT1')])
+    render(
+      <WithdrawDialog
+        open
+        agents={[
+          {
+            ...positionAgent('CAGENT1', 100_0000000n),
+            amount: { token: 'USDC', units: '100000000' },
+            custodyBreakdown: [
+              { location: 'stellar-vault', amount: { token: 'USDC', units: '100000000' } },
+            ],
+          },
+        ]}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+        onConfirmPartial={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+    fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+    expect(screen.queryByRole('button', { name: /withdraw this amount/i })).toBeNull()
   })
 
   // Fix loop 1, I1 regression -- the reviewer's exact reproduction: a target whose `amount.units`
@@ -162,8 +192,8 @@ describe('WithdrawDialog — full exit, exact known-vs-partial target set', () =
   it("formats the known total using the TARGET ROWS' own decimals, not a hardcoded assumption", () => {
     const discovery = discoveryWith([activeRow('CAGENT1'), activeRow('CAGENT2')])
     const agents = [
-      { address: 'CAGENT1', amount: { token: 'USDC', units: '100000000', decimals: 6 } },
-      { address: 'CAGENT2', amount: { token: 'USDC', units: '100000000', decimals: 6 } },
+      positionAgent('CAGENT1', 100000000n, 'stellar-vault', 6),
+      positionAgent('CAGENT2', 100000000n, 'stellar-vault', 6),
     ]
     render(
       <WithdrawDialog
@@ -195,6 +225,21 @@ describe('WithdrawDialog — full exit, exact known-vs-partial target set', () =
     expect(screen.getByRole('button', { name: /exit known agents/i })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /^exit all$/i })).toBeNull()
     expect(screen.getByText(/not a guaranteed full-account sweep/i)).toBeTruthy()
+  })
+
+  it('keeps revoke/stop access distinct from withdrawal', () => {
+    const discovery = discoveryWith([activeRow('CAGENT1')])
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 10_0000000n)]}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+      />
+    )
+    expect(screen.getByText(/revoke\/stop access is not withdrawal/i)).toBeTruthy()
+    expect(screen.getByText(/only stops future access/i)).toBeTruthy()
   })
 })
 
@@ -260,6 +305,7 @@ describe('WithdrawDialog — Cancel alongside the destructive action, disabled w
         discovery={discovery}
         account={gAccount}
         onClose={() => {}}
+        onConfirmFull={() => {}}
         pending={false}
       />
     )
@@ -275,6 +321,7 @@ describe('WithdrawDialog — Cancel alongside the destructive action, disabled w
         discovery={discovery}
         account={gAccount}
         onClose={() => {}}
+        onConfirmFull={() => {}}
         pending
       />
     )
@@ -573,7 +620,7 @@ describe('WithdrawDialog — Base full unwind: honest known set + knownPool exit
   it('explains that disabling new deposits does not block a knownPool exit', () => {
     const basePlan = {
       available: true,
-      positions: [{ pool: '0xPOOL1', poolName: 'Aave USDC', assets: 5_000000 }],
+      positions: [{ pool: '0xPOOL1', poolName: 'Aave USDC', assets: 5_000000n }],
     }
     render(
       <WithdrawDialog
@@ -587,16 +634,17 @@ describe('WithdrawDialog — Base full unwind: honest known set + knownPool exit
     )
     fireEvent.click(screen.getByRole('tab', { name: /base full unwind/i }))
     expect(screen.getByText(/aave usdc/i)).toBeTruthy()
-    expect(screen.getByText(/5\.00 usdc/i)).toBeTruthy()
+    expect(screen.getByText(/5 usdc/i)).toBeTruthy()
     expect(screen.getByText(/known.pool record/i)).toBeTruthy()
     expect(screen.getByText(/disabled pool remains sweepable/i)).toBeTruthy()
     expect(screen.queryByText(/skips that pool/i)).toBeNull()
-    expect(screen.queryByText(/partial base withdrawal isn't available/i)).toBeTruthy()
+    expect(screen.getByText(/partial base withdrawal is not available/i)).toBeTruthy()
+    expect(screen.getByText(/Destination: Stellar testnet/i)).toBeTruthy()
   })
 
   it('confirming Base calls onConfirmBase with no arguments claiming a guaranteed amount', () => {
     const onConfirmBase = vi.fn()
-    const basePlan = { available: true, positions: [{ pool: '0xPOOL1', assets: 1_000000 }] }
+    const basePlan = { available: true, positions: [{ pool: '0xPOOL1', assets: 1_000000n }] }
     render(
       <WithdrawDialog
         open
@@ -611,6 +659,328 @@ describe('WithdrawDialog — Base full unwind: honest known set + knownPool exit
     fireEvent.click(screen.getByRole('tab', { name: /base full unwind/i }))
     fireEvent.click(screen.getByRole('button', { name: /withdraw everything from base/i }))
     expect(onConfirmBase).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('WithdrawDialog — canonical full-exit proof gate and Base truth (Task 6)', () => {
+  it('connects each withdraw mode tab to its labelled panel', () => {
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 100_0000000n)]}
+        discovery={discoveryWith([activeRow('CAGENT1')])}
+        account={gAccount}
+        onClose={() => {}}
+        basePlan={{ available: true, positions: [{ pool: '0xPOOL1', assets: '5000000' }] }}
+      />
+    )
+    for (const mode of ['full', 'partial', 'base']) {
+      const tab = screen.getByRole('tab', {
+        name:
+          mode === 'full' ? /full exit/i : mode === 'partial' ? /partial/i : /base full unwind/i,
+      })
+      const panel = document.getElementById(tab.getAttribute('aria-controls'))
+      expect(panel).toBeTruthy()
+      expect(panel.getAttribute('aria-labelledby')).toBe(tab.id)
+    }
+  })
+
+  it('does not enable Exit all from a canonical amount without a current source proof', () => {
+    const discovery = discoveryWith([activeRow('CAGENT1')])
+    const onConfirmFull = vi.fn()
+    render(
+      <WithdrawDialog
+        open
+        agents={[
+          {
+            address: 'CAGENT1',
+            amount: amt('9007199254740993'),
+            custody: { location: 'stellar-vault' },
+            custodyBreakdown: [{ location: 'stellar-vault', amount: amt('9007199254740993') }],
+          },
+        ]}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+        onConfirmFull={onConfirmFull}
+      />
+    )
+    const confirm = screen.getByRole('button', { name: /exit all/i })
+    expect(confirm.disabled).toBe(true)
+    fireEvent.click(confirm)
+    expect(onConfirmFull).not.toHaveBeenCalled()
+  })
+
+  it('keeps Exit all enabled for a production-shaped current proof row', () => {
+    const onConfirmFull = vi.fn()
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 100_0000000n)]}
+        discovery={discoveryWith([activeRow('CAGENT1')])}
+        account={gAccount}
+        onClose={() => {}}
+        onConfirmFull={onConfirmFull}
+      />
+    )
+    const confirm = screen.getByRole('button', { name: /exit all/i })
+    expect(confirm.disabled).toBe(false)
+    fireEvent.click(confirm)
+    expect(onConfirmFull).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['full exit', 'full'],
+    ['fallback full exit', 'fallback-full-exit'],
+  ])('does not enable %s without its destructive handler', async (_label, mode) => {
+    const discovery = discoveryWith([revokedFundedRow('CAGENT1')])
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 100_0000000n)]}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+      />
+    )
+    if (mode === 'fallback-full-exit') {
+      fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+      fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+      fireEvent.change(screen.getByRole('textbox', { name: /amount/i }), {
+        target: { value: '1' },
+      })
+    }
+    const label = mode === 'full' ? /exit all/i : /use full exit instead/i
+    expect(screen.getByRole('button', { name: label }).disabled).toBe(true)
+  })
+
+  it('does not enable a valid partial withdrawal without its destructive handler', async () => {
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 100_0000000n)]}
+        discovery={discoveryWith([activeRow('CAGENT1')])}
+        account={gAccount}
+        onClose={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+    fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+    fireEvent.change(screen.getByRole('textbox', { name: /amount/i }), {
+      target: { value: '1' },
+    })
+    expect(screen.getByRole('button', { name: /withdraw this amount/i }).disabled).toBe(true)
+  })
+
+  it('does not enable a valid Base withdrawal without its destructive handler', () => {
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 100_0000000n)]}
+        discovery={discoveryWith([activeRow('CAGENT1')])}
+        account={gAccount}
+        onClose={() => {}}
+        basePlan={{
+          available: true,
+          positions: [{ pool: '0xPOOL1', assets: '5000000', decimals: 6, token: 'USDC' }],
+        }}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /base full unwind/i }))
+    expect(screen.getByRole('button', { name: /withdraw everything from base/i }).disabled).toBe(
+      true
+    )
+  })
+
+  it.each([
+    ['missing assets', { pool: '0xPOOL1', decimals: 6, token: 'USDC' }],
+    ['blank assets', { pool: '0xPOOL1', assets: '', decimals: 6, token: 'USDC' }],
+    ['negative assets', { pool: '0xPOOL1', assets: '-1', decimals: 6, token: 'USDC' }],
+    ['numeric assets', { pool: '0xPOOL1', assets: 5_000_000, decimals: 6, token: 'USDC' }],
+    ['wrong token', { pool: '0xPOOL1', assets: '5000000', decimals: 6, token: 'EUR' }],
+    ['undefined token', { pool: '0xPOOL1', assets: '5000000', decimals: 6, token: undefined }],
+    ['wrong decimals', { pool: '0xPOOL1', assets: '5000000', decimals: 7, token: 'USDC' }],
+    [
+      'undefined decimals',
+      { pool: '0xPOOL1', assets: '5000000', decimals: undefined, token: 'USDC' },
+    ],
+    ['missing pool', { assets: '5000000', decimals: 6, token: 'USDC' }],
+  ])('disables Base withdrawal for %s position proof', (_label, position) => {
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 100_0000000n)]}
+        discovery={discoveryWith([activeRow('CAGENT1')])}
+        account={gAccount}
+        onClose={() => {}}
+        basePlan={{ available: true, positions: [position] }}
+        onConfirmBase={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /base full unwind/i }))
+    const action = screen.queryByRole('button', { name: /withdraw everything from base/i })
+    expect(action).toBeTruthy()
+    expect(action.disabled).toBe(true)
+  })
+
+  it('documents the fixed Base USDC source contract for omitted token and decimals', () => {
+    const source = fs.readFileSync(path.resolve(here, '../../base/dashboardPositions.js'), 'utf8')
+    expect(source).toMatch(
+      /const BASE_USDC\s*=\s*['"]0x036CbD53842c5426634e7929541eC2318f3dCF7e['"]/
+    )
+    expect(source).toMatch(/return positions\.map\(\(pos\)\s*=>\s*\{[\s\S]*\.\.\.pos,/)
+    const fixedSourcePosition = { pool: '0xPOOL1', assets: '5000000' }
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 100_0000000n)]}
+        discovery={discoveryWith([activeRow('CAGENT1')])}
+        account={gAccount}
+        onClose={() => {}}
+        basePlan={{ available: true, positions: [fixedSourcePosition] }}
+        onConfirmBase={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /base full unwind/i }))
+    expect(screen.getByText(/5 usdc/i)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /withdraw everything from base/i }).disabled).toBe(
+      false
+    )
+  })
+
+  it.each([
+    [
+      'mixed tokens',
+      [
+        { token: 'USDC', units: '100000000', decimals: 7 },
+        { token: 'EUR', units: '2000000', decimals: 6 },
+      ],
+    ],
+    [
+      'mixed decimals',
+      [
+        { token: 'USDC', units: '100000000', decimals: 7 },
+        { token: 'USDC', units: '2000000', decimals: 6 },
+      ],
+    ],
+    [
+      'stale proof',
+      [
+        { token: 'USDC', units: '100000000', decimals: 7, state: 'stale' },
+        { token: 'USDC', units: '2000000', decimals: 7 },
+      ],
+    ],
+    ['missing proof', [{ token: 'USDC', units: '100000000', decimals: 7 }, null]],
+  ])(
+    'fails closed for %s instead of treating the target set as one current token',
+    (_label, rows) => {
+      const discovery = discoveryWith([activeRow('CAGENT1'), activeRow('CAGENT2')])
+      const agents = rows.map((amount, index) =>
+        amount
+          ? {
+              ...positionAgent(`CAGENT${index + 1}`, amount.units),
+              amount,
+              custodyBreakdown: [{ location: 'stellar-vault', amount }],
+              vaultShares: { state: amount.state || 'known', amount, checkedAt: 1_725_000_000_000 },
+            }
+          : { address: 'CAGENT2', custody: { location: 'stellar-vault' }, custodyBreakdown: [] }
+      )
+      render(
+        <WithdrawDialog
+          open
+          agents={agents}
+          discovery={discovery}
+          account={gAccount}
+          onClose={() => {}}
+        />
+      )
+      expect(screen.getByText(/known amount across every target agent: unavailable/i)).toBeTruthy()
+      const confirm = screen.getByRole('button', { name: /exit all/i })
+      expect(confirm.disabled).toBe(true)
+    }
+  )
+
+  it('keeps a 30-digit Base amount exact and places the required custody disclosure beside it', () => {
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 1_0000000n)]}
+        discovery={discoveryWith([activeRow('CAGENT1')])}
+        account={gAccount}
+        onClose={() => {}}
+        basePlan={{
+          available: true,
+          positions: [
+            {
+              pool: '0xPOOL1',
+              poolName: 'Base custody vault',
+              assets: 9007199254740993n,
+              decimals: 6,
+              token: 'USDC',
+            },
+          ],
+        }}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /base full unwind/i }))
+    expect(screen.getByText(/9007199254\.740993 usdc/i)).toBeTruthy()
+    expect(screen.getByText('Base Sepolia proxy. Custody only. No protocol yield.')).toBeTruthy()
+    expect(
+      screen.getByText(/does not confirm that money moved until receipt and reconciliation/i)
+    ).toBeTruthy()
+  })
+
+  it.each([
+    ['explicitly missing decimals', { decimals: undefined }],
+    ['wrong decimals', { decimals: 7 }],
+    ['non-integer decimals', { decimals: '6' }],
+    ['out-of-range decimals', { decimals: 39 }],
+    ['wrong token', { decimals: 6, token: 'EUR' }],
+  ])('renders Base position as Unavailable for %s precision metadata', (_label, metadata) => {
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 1_0000000n)]}
+        discovery={discoveryWith([activeRow('CAGENT1')])}
+        account={gAccount}
+        onClose={() => {}}
+        basePlan={{
+          available: true,
+          positions: [
+            { pool: '0xPOOL1', poolName: 'Malformed Base position', assets: 5_000000, ...metadata },
+          ],
+        }}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /base full unwind/i }))
+    expect(screen.getByText(/malformed base position: unavailable/i)).toBeTruthy()
+  })
+
+  it('does not expose visible dash separators in money copy', () => {
+    const { container } = render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 10_0000000n)]}
+        discovery={discoveryWith([activeRow('CAGENT1')])}
+        account={gAccount}
+        onClose={() => {}}
+      />
+    )
+    expect(container.textContent).not.toMatch(/[—–]|--/)
+  })
+
+  it('removes visible dash separators from C-owner fee copy too', () => {
+    const discovery = discoveryWith([activeRow('CAGENT1')])
+    const { container } = render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 10_0000000n)]}
+        discovery={discovery}
+        account={cAccount}
+        onClose={() => {}}
+      />
+    )
+    expect(container.textContent).not.toMatch(/[—–]|--/)
   })
 })
 

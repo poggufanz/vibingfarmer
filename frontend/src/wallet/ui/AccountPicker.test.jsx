@@ -80,6 +80,6 @@ describe('AccountPicker — rejection-checklist items 6/7 (source-parse, mutatio
     expect(SOURCE).not.toMatch(/@keyframes/i)
     expect(SOURCE).not.toMatch(/\banimation(-name)?\s*:/i)
     expect(SOURCE).not.toMatch(/gradient/i)
-    expect(SOURCE).not.toMatch(/style=/i)
+    expect(SOURCE).not.toMatch(/style\s*=\s*\{/i)
   })
 })

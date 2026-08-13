@@ -55,6 +55,7 @@ describe('StopAccessDialog — always says it prevents future access and never r
         idleBalanceRead={knownZero}
         account={account}
         onClose={() => {}}
+        onConfirmRevoke={() => {}}
       />
     )
     expect(
@@ -125,6 +126,7 @@ describe('StopAccessDialog — a healthy, unfunded, fully-known agent revokes cl
         idleBalanceRead={knownZero}
         account={account}
         onClose={() => {}}
+        onConfirmRevoke={() => {}}
       />
     )
     expect(screen.getByRole('button', { name: /stop access/i }).disabled).toBe(false)
@@ -150,6 +152,7 @@ describe('StopAccessDialog — Base bridge agent: scoped Stellar-only, fail-clos
         idleBalanceRead={knownZero}
         account={account}
         onClose={() => {}}
+        onConfirmRevoke={() => {}}
       />
     )
     expect(screen.getByText(/can't be stopped from here yet/i)).toBeTruthy()
@@ -188,6 +191,7 @@ describe('StopAccessDialog — Cancel alongside the destructive action, Escape-s
         account={account}
         onClose={() => {}}
         pending
+        onConfirmRevoke={() => {}}
       />
     )
     expect(screen.getByRole('button', { name: /cancel/i }).disabled).toBe(true)
@@ -225,6 +229,57 @@ describe('StopAccessDialog — Cancel alongside the destructive action, Escape-s
   })
 })
 
+describe('StopAccessDialog — Task 6 handoff and copy contract', () => {
+  it('does not render a dead destructive action when its caller did not provide the handler', () => {
+    render(
+      <StopAccessDialog
+        open
+        agent={plainAgent()}
+        shareRead={knownZero}
+        idleBalanceRead={knownZero}
+        account={account}
+        onClose={() => {}}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /^stop access$/i })).toBeNull()
+  })
+
+  it('keeps the kill switch available with a handler when funding proof is unavailable', () => {
+    const onConfirmRevoke = vi.fn()
+    render(
+      <StopAccessDialog
+        open
+        agent={plainAgent()}
+        shareRead={unavailable}
+        idleBalanceRead={unavailable}
+        account={account}
+        onClose={() => {}}
+        onConfirmRevoke={onConfirmRevoke}
+      />
+    )
+    const button = screen.getByRole('button', { name: /^stop access$/i })
+    expect(button.disabled).toBe(false)
+    fireEvent.click(button)
+    expect(onConfirmRevoke).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses direct copy without dash separators and names withdrawal as separate', () => {
+    const { container } = render(
+      <StopAccessDialog
+        open
+        agent={plainAgent()}
+        shareRead={knownZero}
+        idleBalanceRead={knownZero}
+        account={account}
+        onClose={() => {}}
+      />
+    )
+    expect(container.textContent).toMatch(/stops future access/i)
+    expect(container.textContent).toMatch(/does not move, return, or touch any money/i)
+    expect(container.textContent).not.toMatch(/[—–]|--/)
+  })
+})
+
 describe('StopAccessDialog — accessibility', () => {
   it('has no axe violations in the warning state', async () => {
     const { container } = render(
@@ -248,10 +303,6 @@ const POCKET_CREW_CSS = fs.readFileSync(path.resolve(here, '../../design/pocket-
 const MY_MONEY_CSS = fs.readFileSync(path.resolve(here, './my-money.css'), 'utf8')
 const REAL_STYLESHEET = [POCKET_CREW_CSS, MY_MONEY_CSS].join('\n')
 const LEGACY_STYLESHEET = fs.readFileSync(path.resolve(here, '../../../style.css'), 'utf8')
-// Fix round 1 (reviewer M2): style.css is not the only file declaring the three legacy overlay
-// selectors -- console.css:532 has its own `.modal-backdrop` (z-index 60, harmless today, but
-// still in the class the self-retiring guard below claims to cover).
-const CONSOLE_CSS = fs.readFileSync(path.resolve(here, '../../console.css'), 'utf8')
 const GEIST_FONT_HREF =
   'file://' + path.resolve(here, '../../../node_modules/@fontsource-variable/geist/index.css')
 
@@ -421,11 +472,9 @@ describe('StopAccessDialog — dialog layer regression guard: wins the panel-cen
 //   self-destructed on the correct end state: retiring BOTH together left nothing for it to assert
 //   FOR. An equality check (`overridePresent === legacyPresent`) is symmetric -- green exactly when
 //   the two facts agree, in EITHER direction, including the intended end state.
-//   M2 -- the original guard (a) substring-scanned style.css alone, so a comment merely NAMING a
-//   selector short-circuited it forever, and (b) never looked at console.css:532, which declares
-//   its own `.modal-backdrop` (z-index 60, harmless today, but still in the class this guard
-//   claims to cover). `declaresSelector` now requires real CSS declaration syntax (a selector
-//   immediately followed by `{` or `,`), and both files are scanned.
+//   M2 -- the original guard substring-scanned style.css, so a comment merely NAMING a selector
+//   short-circuited it forever. `declaresSelector` now requires real CSS declaration syntax (a
+//   selector immediately followed by `{` or `,`).
 // ---------------------------------------------------------------------------------------------
 describe('my-money.css — self-retiring --pc-z-dialog:1000 override guard (My Money Task 12 review, M8)', () => {
   const LEGACY_SELECTORS = ['.modal-backdrop', '.skill-drawer-overlay', '.skill-drawer']
@@ -441,10 +490,8 @@ describe('my-money.css — self-retiring --pc-z-dialog:1000 override guard (My M
 
   const overridePresent = (myMoneyCssText) => /--pc-z-dialog:\s*1000/.test(myMoneyCssText)
 
-  it('the override is present if and only if a legacy overlay selector is still declared in style.css or console.css', () => {
-    expect(overridePresent(MY_MONEY_CSS)).toBe(
-      anyLegacySelectorPresent([LEGACY_STYLESHEET, CONSOLE_CSS])
-    )
+  it('the override is present if and only if a legacy overlay selector is still declared in style.css', () => {
+    expect(overridePresent(MY_MONEY_CSS)).toBe(anyLegacySelectorPresent([LEGACY_STYLESHEET]))
   })
 
   it('does not short-circuit on a comment merely naming a legacy selector -- only a real declaration counts', () => {
@@ -454,7 +501,7 @@ describe('my-money.css — self-retiring --pc-z-dialog:1000 override guard (My M
   })
 
   // Fix round 2 (reviewer M1 residue): all four sides of the three cells below are now LITERAL,
-  // synthetic strings -- none reads MY_MONEY_CSS/LEGACY_STYLESHEET/CONSOLE_CSS. The round-1 version
+  // synthetic strings -- none reads MY_MONEY_CSS/LEGACY_STYLESHEET. The round-1 version
   // mixed a synthetic side against a REAL one (e.g. `overridePresent(MY_MONEY_CSS)` -- still `true`
   // today) -- correct only because today's real files happen to disagree with the synthetic side.
   // The moment the real files actually retire together, "mismatch" stops being a mismatch and cell

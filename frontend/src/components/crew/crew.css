@@ -49,7 +49,7 @@
   align-items: center;
   justify-content: center;
   min-width: max-content;
-  min-height: max(var(--pc-control-height), 44px);
+  min-height: var(--pc-control-height);
   padding: 0 var(--pc-space-6);
   border: 1px solid transparent;
   border-radius: var(--pc-radius-control);
@@ -112,6 +112,16 @@
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
+.pc-crew-rate-evidence {
+  display: block;
+  max-width: 100%;
+  margin-top: var(--pc-space-1);
+  color: var(--pc-faint);
+  font-family: var(--pc-font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 .pc-crew-amount-list {
   display: grid;
   min-width: 0;
@@ -157,6 +167,7 @@
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   gap: clamp(24px, 4vw, 48px);
   align-items: start;
+  min-width: 0;
 }
 
 /* Fix round 1, F2: `pc-crew-side` (the guard + activity column, CrewRoute.jsx) had no rule at
@@ -165,6 +176,7 @@
   display: grid;
   gap: var(--pc-space-6);
   align-content: start;
+  min-width: 0;
 }
 
 /* Persistent persona cards and their exact child accounts. */
@@ -261,6 +273,10 @@
   margin: var(--pc-space-1) 0 0;
   font-size: 13px;
   color: var(--pc-faint);
+}
+.pc-crew-child-identity-unavailable {
+  color: var(--pc-faint);
+  font-size: 13px;
 }
 .pc-crew-child-total {
   justify-items: end;
@@ -407,6 +423,7 @@
 
 /* Emergency guard */
 .pc-crew-guard {
+  min-width: 0;
   border: 1px solid var(--pc-line);
   border-radius: 16px;
   padding: 20px;
@@ -465,15 +482,14 @@
   width: 2px;
   height: 50%;
   transform-origin: top center;
-  background: var(--pc-harvest);
-  opacity: 0.85;
-  animation: pc-crew-sweep 5.5s linear infinite;
-}
-.pc-crew-guard[data-guard-phase='lapsed'] .pc-crew-radar-sweep {
-  background: var(--pc-danger);
-}
-.pc-crew-guard[data-guard-phase='unknown'] .pc-crew-radar-sweep {
+  transform: rotate(45deg);
   background: var(--pc-muted);
+  opacity: 0.85;
+  animation: none;
+}
+.pc-crew-radar-sweep--active {
+  background: var(--pc-harvest);
+  animation: pc-crew-sweep 5.5s linear infinite;
 }
 .pc-crew-radar-core {
   position: absolute;
@@ -502,6 +518,7 @@
   margin: 0;
   font-size: 13px;
   color: var(--pc-faint);
+  overflow-wrap: anywhere;
 }
 @keyframes pc-crew-sweep {
   to {
@@ -509,9 +526,11 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pc-crew-radar-sweep {
+  .pc-crew-radar-sweep,
+  .pc-crew-radar-sweep--active {
     animation: none;
     transform: rotate(45deg);
+    background: var(--pc-muted);
   }
 }
 
@@ -519,6 +538,12 @@
 .pc-crew-activity {
   display: grid;
   gap: 24px;
+  min-width: 0;
+}
+.pc-crew-activity-live {
+  margin: 0;
+  color: var(--pc-muted);
+  font-size: 12px;
 }
 .pc-crew-keeper-list,
 .pc-crew-decision-list {
@@ -529,6 +554,7 @@
   gap: 10px;
 }
 .pc-crew-keeper-row {
+  min-width: 0;
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -537,10 +563,19 @@
   border-bottom: 1px solid var(--pc-line);
 }
 .pc-crew-keeper-time {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--pc-space-1);
   font-family: var(--pc-font-mono);
   font-size: 12px;
   color: var(--pc-faint);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.pc-crew-keeper-time > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .pc-crew-decision-row {
   display: grid;
@@ -576,10 +611,18 @@
   color: var(--pc-faint);
 }
 .pc-crew-decision-time {
+  min-width: 0;
+  max-width: 100%;
   font-family: var(--pc-font-mono);
   font-size: 12px;
   color: var(--pc-faint);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.pc-crew-decision-tone {
+  color: var(--pc-muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 .pc-crew-empty-note {
   margin: 8px 0 0;
@@ -661,5 +704,23 @@
   }
   .pc-crew-child-actions .pc-button {
     width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .pc-crew-keeper-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .pc-crew-keeper-time {
+    justify-items: start;
+  }
+  .pc-crew-decision-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .pc-crew-decision-tone,
+  .pc-crew-decision-time {
+    grid-column: 2;
   }
 }

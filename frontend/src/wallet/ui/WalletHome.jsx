@@ -52,6 +52,7 @@ export function WalletHome({
       </p>
       <HomeScreen
         publicKey={account.address}
+        accountKind={account.kind}
         portfolio={portfolio}
         unfunded={unfunded}
         busy={busy}

@@ -3,6 +3,7 @@ import { CrewAmountList, CrewLanes, formatCrewAmount } from './CrewLanes.jsx'
 import { CrewGuard } from './CrewGuard.jsx'
 import { CrewActivity } from './CrewActivity.jsx'
 import { usePocketTransition } from '../../design/usePocketTransition.js'
+import { toAgentIdentityView, toFactView, toLiveVenueView } from '../../core/coreRouteAdapters.js'
 import './crew.css'
 
 const EMPTY_CREW = Object.freeze({
@@ -14,9 +15,50 @@ const EMPTY_CREW = Object.freeze({
   totals: [],
 })
 
-function liveApy(model) {
-  const apy = model?.yield?.state === 'live' ? model.yield.apy : null
-  return typeof apy === 'number' && Number.isFinite(apy) ? apy : null
+function liveYield(model) {
+  const input = model?.yield
+  if (
+    input === null ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    !['stellar-live', 'base-custody-proxy'].includes(input.venueKind) ||
+    !Object.prototype.hasOwnProperty.call(input, 'yield')
+  ) {
+    return null
+  }
+  const view = toLiveVenueView(input)
+  return view.state === 'live' ? view : null
+}
+
+function keeperStatusLabel(keeper) {
+  if (keeper?.label === 'healthy' || keeper?.label === 'running') return 'Running'
+  if (keeper?.label === 'stale') return 'Stale'
+  if (keeper?.label === 'configured') return 'Configured'
+  return 'Unavailable'
+}
+
+function earnedFact(model) {
+  const earned = model?.earned
+  if (!earned || !['current', 'confirmed'].includes(earned.state) || !earned.amount) {
+    return null
+  }
+  const fact = toFactView({
+    state: earned.state,
+    value: earned.amount,
+    source: earned.source,
+    checkedAt: earned.checkedAt,
+    confirmedLedger: earned.confirmedLedger,
+    confirmedBlock: earned.confirmedBlock,
+  })
+  const anchor = fact.confirmedLedger ?? fact.confirmedBlock
+  return ['current', 'confirmed'].includes(fact.state) && fact.value != null && anchor ? fact : null
+}
+
+function earnedStateCopy(model) {
+  const state = model?.earned?.state
+  if (state === 'partial') return 'Partial'
+  if (state === 'stale') return 'Stale'
+  return 'Unavailable'
 }
 
 function assignedCount(crew) {
@@ -35,6 +77,9 @@ function shortAddress(address) {
 }
 
 function PendingAmountEvidence({ child }) {
+  const identity = toAgentIdentityView(child?.identity ?? {})
+  if (!identity.identityAvailable) return 'Amount unavailable'
+  const countedLegs = child.workingLegs.filter((leg) => leg.counted && leg.amount != null)
   const sharedLegs = child.workingLegs.filter(
     (leg) => leg.shared && !leg.counted && leg.amount != null
   )
@@ -45,11 +90,17 @@ function PendingAmountEvidence({ child }) {
       {child.workingTotals.map((amount) => (
         <span className="pc-crew-pending-amount" key={`counted:${amount.token}:${amount.decimals}`}>
           <span>{formatCrewAmount(amount)}</span>
+          {countedLegs.some((leg) => leg.location === 'base-proxy') ? (
+            <span>Base Sepolia proxy. Custody only. No protocol yield.</span>
+          ) : null}
         </span>
       ))}
       {sharedLegs.map((leg, index) => (
         <span className="pc-crew-pending-amount" key={`shared:${leg.key ?? 'unknown'}:${index}`}>
           <span>{formatCrewAmount(leg.amount)}</span>
+          {leg.location === 'base-proxy' ? (
+            <span>Base Sepolia proxy. Custody only. No protocol yield.</span>
+          ) : null}
           <span>shared, counted under another account</span>
         </span>
       ))}
@@ -59,24 +110,37 @@ function PendingAmountEvidence({ child }) {
 
 function PendingAssignments({ pendingAssignments }) {
   if (!pendingAssignments.length) return null
+  const hasUnavailableIdentity = pendingAssignments.some(
+    (child) => !toAgentIdentityView(child?.identity ?? {}).identityAvailable
+  )
   return (
     <section className="pc-crew-pending" aria-labelledby="crew-pending-heading" role="status">
       <div>
         <h2 id="crew-pending-heading">Crew assignment syncing</h2>
         <p>
-          Productive custody is known, but indexed assignment evidence is still incomplete. These
-          accounts are not assigned to a persona yet.
+          {hasUnavailableIdentity
+            ? 'Some assignment evidence is waiting for identity confirmation. These rows remain visible until that evidence catches up.'
+            : 'Productive custody is known, but indexed assignment evidence is still incomplete. These accounts are not assigned to a persona yet.'}
         </p>
       </div>
       <ul>
-        {pendingAssignments.map((child) => (
-          <li key={child.agent.address}>
-            <span>{shortAddress(child.agent.address)}</span>
-            <span>
-              <PendingAmountEvidence child={child} />
-            </span>
-          </li>
-        ))}
+        {pendingAssignments.map((child, index) => {
+          const identityView = toAgentIdentityView(child?.identity ?? {})
+          const identity = identityView.identityAvailable ? identityView : null
+          const label = identity?.address
+            ? shortAddress(identity.address)
+            : 'Agent identity unavailable'
+          return (
+            <li
+              key={`${identityView.key ?? identityView.allocationId ?? identityView.runId ?? 'unavailable'}:${index}`}
+            >
+              <span>{label}</span>
+              <span>
+                <PendingAmountEvidence child={child} />
+              </span>
+            </li>
+          )
+        })}
       </ul>
     </section>
   )
@@ -93,11 +157,13 @@ export function CrewRoute({
   onWithdrawAgent,
   onStartStrategy,
   actionPending = false,
+  nowMs,
 }) {
   const childCount = assignedCount(crew)
   const pendingAssignments = crew.pendingAssignments ?? []
-  const apy = liveApy(model)
-  const running = keeper?.label === 'healthy'
+  const yieldView = liveYield(model)
+  const keeperLabel = keeperStatusLabel(keeper)
+  const earned = earnedFact(model)
   const rootRef = useRef(null)
   usePocketTransition(rootRef, childCount)
 
@@ -137,28 +203,34 @@ export function CrewRoute({
       <div className="pc-crew-stats" role="group" aria-label="Crew status" data-pocket-enter>
         <div className="pc-crew-stat">
           <p className="pc-crew-stat-label">Status</p>
-          <p className="pc-crew-stat-value" data-tone={running ? 'good' : 'warn'}>
-            {running ? 'Running' : keeper?.label === 'stale' ? 'Quiet' : 'Unavailable'}
+          <p className="pc-crew-stat-value" data-tone={keeperLabel === 'Running' ? 'good' : 'warn'}>
+            {keeperLabel}
           </p>
         </div>
         <div className="pc-crew-stat">
-          <p className="pc-crew-stat-label">Active accounts</p>
+          <p className="pc-crew-stat-label">Working for you</p>
           <p className="pc-crew-stat-value">
             {crew.activeCount} of {crew.productiveAgentCount}
           </p>
+          {crew.status !== 'complete' && <span className="pc-crew-coverage">Partial coverage</span>}
         </div>
         <div className="pc-crew-stat">
-          <p className="pc-crew-stat-label">Total working</p>
+          <p className="pc-crew-stat-label">Earned this run</p>
           <div className="pc-crew-stat-value">
-            <CrewAmountList amounts={crew.totals} />
-            {crew.status !== 'complete' && (
-              <span className="pc-crew-coverage">Partial coverage</span>
-            )}
+            <CrewAmountList amounts={earned ? [earned.value] : []} empty={earnedStateCopy(model)} />
           </div>
         </div>
         <div className="pc-crew-stat">
-          <p className="pc-crew-stat-label">Rate</p>
-          <p className="pc-crew-stat-value">{apy != null ? `${apy.toFixed(1)}%` : '—'}</p>
+          <p className="pc-crew-stat-label">Blended rate</p>
+          <p className="pc-crew-stat-value">
+            {yieldView ? `${yieldView.apy.toFixed(1)}%` : 'Unavailable'}
+          </p>
+          {yieldView ? (
+            <span className="pc-crew-rate-evidence">
+              Source: {yieldView.source} · As of: {String(yieldView.asOf)} · Checked:{' '}
+              {String(yieldView.checkedAt)}
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -176,8 +248,9 @@ export function CrewRoute({
             protection={model?.protection}
             onRenew={onRenewMandate}
             pending={actionPending}
+            nowMs={nowMs}
           />
-          <CrewActivity keeperEvents={keeperEvents} decisions={decisions} />
+          <CrewActivity keeperEvents={keeperEvents} decisions={decisions} nowMs={nowMs} />
         </div>
       </div>
     </div>

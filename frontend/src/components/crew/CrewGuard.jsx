@@ -39,7 +39,7 @@ function formatClock(totalSeconds) {
 const GUARD_COPY = Object.freeze({
   unknown: {
     state: 'STATUS UNKNOWN',
-    line: "We can't confirm the emergency guard's state right now -- it may still be armed, this device just has no evidence of it.",
+    line: "We can't confirm the emergency guard's state right now. It may still be armed, but this device has no evidence of it.",
   },
   armed: {
     state: 'ARMED',
@@ -49,19 +49,42 @@ const GUARD_COPY = Object.freeze({
     state: 'ALARM ONLY',
     line: 'Permission expired. It will still watch and shout, but it can no longer move the vault.',
   },
+  engaged: {
+    state: 'ALARM ONLY',
+    line: 'The vault is de-risked. The guard remains watch-only until a live mandate is confirmed.',
+  },
 })
 
-export function CrewGuard({ protection = null, onRenew, pending = false }) {
+function prefersReducedMotion() {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+export function CrewGuard({ protection = null, onRenew, pending = false, nowMs }) {
   // Number arithmetic throughout (never fed into BigInt) -- mandateExpiry is a real unix-seconds
   // integer off-chain evidence, not user input, so `* 1000` here never enters the
   // BigInt(Math.round(x*N)) overflow zone the rest of this plan has hit three times.
-  const expiryMs = (protection?.mandateExpiry ?? 0) * 1000
-  const [now, setNow] = useState(() => Date.now())
+  const expiryMs =
+    typeof protection?.mandateExpiry === 'number' &&
+    Number.isInteger(protection.mandateExpiry) &&
+    Number.isFinite(protection.mandateExpiry) &&
+    protection.mandateExpiry > 0
+      ? protection.mandateExpiry * 1000
+      : null
+  const [clockNowMs, setClockNowMs] = useState(() => (Number.isFinite(nowMs) ? nowMs : Date.now()))
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000)
+    if (Number.isFinite(nowMs)) {
+      setClockNowMs(nowMs)
+      return undefined
+    }
+    const id = setInterval(() => setClockNowMs(Date.now()), 1000)
     return () => clearInterval(id)
-  }, [])
-  const remaining = (expiryMs - now) / 1000
+  }, [nowMs])
+  const now = Number.isFinite(nowMs) ? nowMs : clockNowMs
+  const remaining = expiryMs == null ? 0 : (expiryMs - now) / 1000
 
   // `state` governs first: no evidence at all is a THIRD, honest phase (never ARMED, never the
   // confident "expired" safety claim); a confirmed-disarmed mandate is forced off regardless of
@@ -69,16 +92,23 @@ export function CrewGuard({ protection = null, onRenew, pending = false }) {
   // falls through to the live countdown, which is what lets the ARMED phase decay to ALARM ONLY
   // client-side the instant the ticking clock crosses zero (both existing tests key off exactly
   // this: state:'armed' with a lapsed mandateExpiry must still show ALARM ONLY).
-  const hasState = Boolean(protection?.state) && protection.state !== 'unavailable'
-  const phase = !hasState
-    ? 'unknown'
-    : protection.state === 'disarmed'
-      ? 'lapsed'
-      : remaining > 0
-        ? 'armed'
-        : 'lapsed'
+  const phase =
+    protection?.state === 'armed'
+      ? expiryMs == null
+        ? 'unknown'
+        : remaining > 0
+          ? 'armed'
+          : 'lapsed'
+      : protection?.state === 'disarmed' || protection?.state === 'expired'
+        ? 'lapsed'
+        : protection?.state === 'engaged'
+          ? 'engaged'
+          : 'unknown'
   const copy = GUARD_COPY[phase]
-  const canRenew = protection?.ownerIsAuthority === true
+  const canRenew = phase === 'armed' && protection?.ownerIsAuthority === true
+  const reducedMotion = prefersReducedMotion()
+  const sweepActive = phase === 'armed' && !reducedMotion
+  const authority = typeof protection?.authority === 'string' ? protection.authority : null
 
   return (
     <section
@@ -95,12 +125,15 @@ export function CrewGuard({ protection = null, onRenew, pending = false }) {
       <div className="pc-crew-radar" aria-hidden="true">
         <span className="pc-crew-radar-ring" />
         <span className="pc-crew-radar-ring pc-crew-radar-ring--inner" />
-        <span className="pc-crew-radar-sweep" />
+        <span
+          className={`pc-crew-radar-sweep${sweepActive ? ' pc-crew-radar-sweep--active' : ''}`}
+        />
         <span className="pc-crew-radar-core" />
       </div>
       <p className="pc-crew-guard-line">{copy.line}</p>
+      <p className="pc-crew-guard-scope">Scope: vault-wide</p>
       <p className="pc-crew-guard-clock">
-        {phase === 'unknown' ? 'Unavailable' : formatClock(remaining)}
+        {phase === 'unknown' || phase === 'engaged' ? 'Unavailable' : formatClock(remaining)}
       </p>
       {canRenew ? (
         <button
@@ -112,7 +145,10 @@ export function CrewGuard({ protection = null, onRenew, pending = false }) {
           Renew for 24 hours
         </button>
       ) : (
-        <p className="pc-crew-guard-renew-note">Only the configured authority can renew this.</p>
+        <p className="pc-crew-guard-renew-note">
+          Only the configured authority can renew this.
+          {authority ? ` Authority: ${authority}` : ''}
+        </p>
       )}
     </section>
   )

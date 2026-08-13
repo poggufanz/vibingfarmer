@@ -17,7 +17,6 @@
 // stays context-agnostic and does not duplicate that copy itself).
 import { useState } from 'react'
 import { classifyImport } from './importValidate.js'
-import { HonestyLabels } from '../HonestyLabels.jsx'
 
 export default function ImportScreen({
   onImport,
@@ -34,7 +33,6 @@ export default function ImportScreen({
   return (
     <div className="pc-standard-form" data-testid="standard-import">
       <h2>{heading}</h2>
-      <HonestyLabels scope="global" />
       <div className="pc-field">
         <label htmlFor="wallet-import-secret">Secret key or recovery phrase</label>
         <textarea

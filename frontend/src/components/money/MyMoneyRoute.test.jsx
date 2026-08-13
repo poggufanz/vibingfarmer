@@ -13,6 +13,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { MyMoneyRoute } from './MyMoneyRoute.jsx'
+import { HowMoneyWorks } from './HowMoneyWorks.jsx'
 import { buildMyMoneyModel } from '../../money/myMoneyModel.js'
 
 expect.extend(axeMatchers)
@@ -38,9 +39,9 @@ function baseModel(overrides = {}) {
     problemAgentCount: 0,
     freshness: 'current',
     checkedAt: NOW,
-    confirmedLedger: null,
-    confirmedBlock: null,
-    source: null,
+    confirmedLedger: '12345',
+    confirmedBlock: '67890',
+    source: 'soroban-rpc',
     problemAgents: [],
     protection: {
       state: 'armed',
@@ -65,6 +66,260 @@ function baseModel(overrides = {}) {
 function realLoadingModel() {
   return buildMyMoneyModel({ owner: 'GOWNER', now: NOW })
 }
+
+// Task 5 route-state contract fixtures. These are complete source-shaped reads so the route
+// tests exercise the real model precedence rather than contradictory hand-written state labels.
+const TASK_NOW = Date.UTC(2026, 7, 11, 0, 0, 0)
+
+function stateMoneySnapshot({
+  units = 500_0000000n,
+  checkedAt = TASK_NOW,
+  agents = [],
+  ...overrides
+} = {}) {
+  return {
+    status: 'complete',
+    confirmedTotal: { state: 'known', amount: amt(units) },
+    yield: { state: 'unavailable', apy: null },
+    earned: { state: 'unavailable', amount: null },
+    custodyBreakdown: units > 0n ? { 'stellar-vault': String(units) } : {},
+    unattributed: {},
+    executionBreakdown: {},
+    agentCount: agents.length,
+    problemAgentCount: 0,
+    agents,
+    checkedAt,
+    confirmedLedger: '12345',
+    confirmedBlock: '67890',
+    source: 'soroban-rpc',
+    ...overrides,
+  }
+}
+
+function stateDiscovery(status = 'complete', agents = []) {
+  return { status, agents }
+}
+
+function realRouteState(state) {
+  const healthy = stellarVaultAgent('CSTATE1', 500_0000000n)
+  if (state === 'disconnected') {
+    return { model: buildMyMoneyModel({ owner: null, now: TASK_NOW }), agents: [] }
+  }
+  if (state === 'loading') {
+    return { model: buildMyMoneyModel({ owner: 'GOWNER', now: TASK_NOW }), agents: [] }
+  }
+  if (state === 'unavailable') {
+    const money = stateMoneySnapshot({ checkedAt: null })
+    return {
+      model: buildMyMoneyModel({
+        owner: 'GOWNER',
+        discovery: stateDiscovery('complete'),
+        money,
+        now: TASK_NOW,
+      }),
+      agents: [],
+    }
+  }
+  if (state === 'stale') {
+    const cached = stateMoneySnapshot({
+      checkedAt: TASK_NOW - 30 * 24 * 60 * 60 * 1000,
+      agents: [healthy],
+    })
+    const failed = {
+      status: 'unavailable',
+      confirmedTotal: { state: 'unavailable', amount: null },
+      agents: [],
+      checkedAt: TASK_NOW,
+      source: 'soroban-rpc',
+    }
+    return {
+      model: buildMyMoneyModel({
+        owner: 'GOWNER',
+        discovery: stateDiscovery('complete', [{ address: healthy.address }]),
+        money: failed,
+        cache: { money: cached },
+        now: TASK_NOW,
+      }),
+      agents: [healthy],
+    }
+  }
+  if (state === 'empty') {
+    return {
+      model: buildMyMoneyModel({
+        owner: 'GOWNER',
+        discovery: stateDiscovery('complete'),
+        money: stateMoneySnapshot({ units: 0n }),
+        now: TASK_NOW,
+      }),
+      agents: [],
+    }
+  }
+  if (state === 'partial-discovery') {
+    return {
+      model: buildMyMoneyModel({
+        owner: 'GOWNER',
+        discovery: stateDiscovery('partial', [{ address: healthy.address }]),
+        money: stateMoneySnapshot({ agents: [healthy] }),
+        now: TASK_NOW,
+      }),
+      agents: [healthy],
+    }
+  }
+  if (state === 'problem') {
+    const revoked = revokedFundedAgent('CREVOKEDSTATE')
+    return {
+      model: buildMyMoneyModel({
+        owner: 'GOWNER',
+        discovery: stateDiscovery('complete', [{ address: revoked.address }]),
+        money: stateMoneySnapshot({ agents: [revoked], problemAgentCount: 1 }),
+        now: TASK_NOW,
+      }),
+      agents: [revoked],
+    }
+  }
+  const protection =
+    state === 'disarmed'
+      ? { state: 'disarmed', authority: 'GOWNER', mandateExpiry: 1 }
+      : { state: 'armed', authority: 'GOWNER', mandateExpiry: TASK_NOW / 1000 + 100000 }
+  return {
+    model: buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: stateDiscovery('complete', [{ address: healthy.address }]),
+      money: stateMoneySnapshot({ agents: [healthy] }),
+      protection,
+      now: TASK_NOW,
+    }),
+    agents: [healthy],
+  }
+}
+
+describe('MyMoneyRoute Task 5 state truth matrix', () => {
+  const cases = [
+    ['disconnected', 'Connect wallet', 'Source: Wallet connection'],
+    ['loading', 'Add money', 'Source: Money read'],
+    ['current', 'Add money', 'Source: soroban-rpc'],
+    ['stale', 'Add money', 'Source: soroban-rpc'],
+    ['empty', 'Make a deposit', 'Source: soroban-rpc'],
+    ['partial-discovery', 'Add money', 'Source: soroban-rpc'],
+    ['problem', 'Review problem', 'Source: soroban-rpc'],
+    ['unavailable', 'Add money', 'Source: soroban-rpc'],
+    ['disarmed', 'Renew vault protection', 'Source: soroban-rpc'],
+  ]
+
+  it.each(cases)(
+    '%s keeps an explicit source/read label, never renders a temporary zero, and gates the canonical action',
+    (state, expectedAction, expectedSource) => {
+      const { model, agents } = realRouteState(state)
+      render(<MyMoneyRoute model={model} agents={agents} />)
+
+      const hero = screen.getByRole('region', { name: 'Your money' })
+      expect(within(hero).getByText(expectedSource)).toBeTruthy()
+      expect(screen.queryByText(/^0\s*USDC/)).toBeNull()
+      expect(screen.getByRole('button', { name: expectedAction })).toBeTruthy()
+    }
+  )
+
+  it('stale preserves the last confirmed amount, source, checked time, and freshness label', () => {
+    const { model, agents } = realRouteState('stale')
+    render(<MyMoneyRoute model={model} agents={agents} />)
+
+    expect(model.state).toBe('stale')
+    expect(screen.getAllByText(/500/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('(stale)').length).toBeGreaterThan(0)
+    expect(screen.getByText('Source: soroban-rpc')).toBeTruthy()
+    expect(screen.getByText(/Last checked: 12 Jul 2026/)).toBeTruthy()
+    expect(screen.getByText(/Confirmed ledger \(Stellar\):/)).toBeTruthy()
+    expect(screen.getByText('12345')).toBeTruthy()
+  })
+
+  it('unavailable does not expose a money value and says Unavailable', () => {
+    const { model, agents } = realRouteState('unavailable')
+    render(<MyMoneyRoute model={model} agents={agents} />)
+
+    expect(model.state).toBe('unavailable')
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
+    expect(within(screen.getByRole('region', { name: 'Your money' })).queryByText(/500/)).toBeNull()
+  })
+
+  it('disarmed protection remains explicit and preserves the canonical renewal action', () => {
+    const { model, agents } = realRouteState('disarmed')
+    render(<MyMoneyRoute model={model} agents={agents} />)
+
+    expect(model.protection.state).toBe('disarmed')
+    expect(screen.getByText('Disarmed')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Renew vault protection' })).toBeTruthy()
+  })
+
+  it('uses the explicit route nowMs for expiry labels and recovery planning, not stale checkedAt', () => {
+    const nowMs = Date.parse('2026-08-12T00:00:00.000Z')
+    const checkedAt = Date.parse('2026-08-11T00:00:00.000Z')
+    const expiry = Math.floor((nowMs - 1_000) / 1000)
+    const expired = {
+      ...stellarVaultAgent('CEXPIRED', 50_0000000n),
+      scope: {
+        state: 'known',
+        value: { vault: 'CVAULT', revoked: false, expiry, authorized: true },
+      },
+    }
+    const recovery = {
+      ...expired,
+      address: 'CRECOVERYEXPIRED',
+      problems: ['scope-expired'],
+    }
+    const discovery = {
+      status: 'complete',
+      agents: [
+        { address: expired.address, scopeReadStatus: 'ok', revoked: false, expiry },
+        { address: recovery.address, scopeReadStatus: 'ok', revoked: false, expiry },
+      ],
+    }
+    const model = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery,
+      money: stateMoneySnapshot({
+        units: 100_0000000n,
+        checkedAt,
+        agents: [expired, recovery],
+      }),
+      now: nowMs,
+    })
+    const onRecoverAgent = vi.fn()
+
+    expect(model.state).toBe('problem')
+    expect(model.freshness).toBe('stale')
+    render(
+      <MyMoneyRoute
+        model={model}
+        agents={[expired, recovery]}
+        discovery={discovery}
+        account={{ kind: 'G', address: 'GOWNER' }}
+        onRecoverAgent={onRecoverAgent}
+        nowMs={nowMs}
+      />
+    )
+
+    expect(screen.getByText('Expired')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Recover funds' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Exit all' }))
+    expect(onRecoverAgent).toHaveBeenCalledWith(
+      recovery.address,
+      expect.objectContaining({
+        targets: [
+          expect.objectContaining({ address: expired.address, state: 'expired-funded' }),
+          expect.objectContaining({ address: recovery.address, state: 'expired-funded' }),
+        ],
+      })
+    )
+  })
+})
+
+describe('MyMoneyRoute — presentation clock boundary', () => {
+  it('has no ambient Date.now default and forwards the explicit clock to AgentTeam', () => {
+    const source = fs.readFileSync(path.resolve(here, './MyMoneyRoute.jsx'), 'utf8')
+    expect(source).not.toMatch(/nowMs\s*=\s*Date\.now\(\)/)
+    expect(source).toMatch(/presentationNow=\{nowMs\}/)
+  })
+})
 
 function stellarVaultAgent(address = 'CAGENT1', units = 300_0000000n) {
   return {
@@ -321,6 +576,52 @@ describe('MyMoneyRoute — mixed Stellar/Base custody', () => {
   })
 })
 
+describe('HowMoneyWorks — nested venue yield is the only direct venue APY source', () => {
+  it('accepts a complete nested venue.yield record when no model yield override is supplied', () => {
+    render(
+      <HowMoneyWorks
+        venue={{
+          name: 'Autofarm Vault',
+          yield: {
+            state: 'live',
+            apy: 8.2,
+            asOf: '2026-08-11T00:00:00.000Z',
+            source: 'defillama',
+            checkedAt: '2026-08-11T00:01:00.000Z',
+          },
+        }}
+      />
+    )
+    expect(screen.getByText(/8\.2% APY/)).toBeTruthy()
+    expect(screen.queryByText(/undefined% APY/)).toBeNull()
+  })
+})
+
+describe('MyMoneyRoute — historical Base amounts keep their canonical units and decimals', () => {
+  it('does not coerce an unsafe-integer-sized Base position through Number', () => {
+    render(
+      <MyMoneyRoute
+        model={baseModel()}
+        agents={[]}
+        basePlan={{
+          available: true,
+          positions: [
+            {
+              pool: '0xPOOL1',
+              poolName: 'Autofarm Base pool',
+              assets: '9007199254740993',
+              decimals: 7,
+              token: 'USDC',
+            },
+          ],
+        }}
+      />
+    )
+    expect(screen.getByText('900719925.4740993 USDC')).toBeTruthy()
+    expect(screen.queryByText('900719925.4740992 USDC')).toBeNull()
+  })
+})
+
 describe('MyMoneyRoute — DOM lists contain every position/agent before the optional graph disclosure', () => {
   it('renders the full position list and agent list before the graph disclosure appears in the DOM', () => {
     render(
@@ -437,11 +738,14 @@ describe('MyMoneyRoute — no forbidden motion/gradient across the whole shipped
 describe('MyMoneyRoute — checklist item 10: AgentMark identity is never seeded from list index', () => {
   it('AgentTeam.jsx never derives AgentMark identity from a map index or array position', () => {
     const source = fs.readFileSync(path.resolve(here, './AgentTeam.jsx'), 'utf8')
-    // A real regression would look like `identity={index}` or `identity={String(i)}` -- assert the
-    // only `identity=` usage present is keyed off `agent.address`.
+    // A real regression would look like `identity={index}` or `identity={String(i)}`. The route
+    // now passes the adapter's structured identity view so Foundation can enforce deployed proof;
+    // that view itself is built from `agent.address` above.
     const identityUsages = [...source.matchAll(/identity=\{([^}]+)\}/g)].map((m) => m[1].trim())
     expect(identityUsages.length).toBeGreaterThan(0)
-    for (const usage of identityUsages) expect(usage).toBe('agent.address')
+    expect(identityUsages).toContain('identity')
+    expect(source).toMatch(/address:\s*agent\.address/)
+    expect(identityUsages).not.toContain('index')
   })
 })
 

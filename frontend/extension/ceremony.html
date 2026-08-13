@@ -6,17 +6,8 @@
     <meta name="color-scheme" content="dark" />
     <link rel="icon" type="image/svg+xml" href="./vibing_farmer.logo.svg" />
     <link rel="stylesheet" href="./approval.css" />
-    <style>
-      /* ceremony.html opens as a full browser tab (background.js's tabs.create), not a fixed
-         popup window -- approval.css already centers the wallet shell horizontally; add vertical
-         centering too since a tab (unlike the approve.html popup window) is tall. */
-      body {
-        min-height: 100vh;
-        align-items: center;
-      }
-    </style>
   </head>
-  <body>
+  <body class="ceremony-page">
     <div class="pc-wallet pc-wallet-shell" data-pocket-critical>
       <header class="pc-wallet-header">
         <div class="pc-brand-lockup pc-brand-lockup--compact">

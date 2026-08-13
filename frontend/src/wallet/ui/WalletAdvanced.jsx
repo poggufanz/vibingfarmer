@@ -24,6 +24,16 @@ import { ApproveOverlay } from './ApproveOverlay.jsx'
 import { HonestyLabels } from './HonestyLabels.jsx'
 import ImportScreen from './classic/ImportScreen.jsx'
 
+function isEligibleVerdict(verdict) {
+  return (
+    verdict !== null &&
+    typeof verdict === 'object' &&
+    typeof verdict.allow === 'boolean' &&
+    Array.isArray(verdict.reasons) &&
+    verdict.allow
+  )
+}
+
 export function WalletAdvanced({
   account,
   onBack,
@@ -78,9 +88,9 @@ export function WalletAdvanced({
         </div>
       )}
 
-      {onCheckEligibility && (
+      {account?.kind === 'C' && onCheckEligibility && (
         <div className="pc-support" data-testid="advanced-direct-deposit">
-          <h2>Advanced direct vault action — not the Pocket Crew route</h2>
+          <h2>Direct vault deposit (single wallet account)</h2>
           <p className="pc-field-help">
             Deposits straight into the vault contract, bypassing the Pocket Crew agent flow. The
             same F8 eligibility gate still applies.
@@ -101,7 +111,7 @@ export function WalletAdvanced({
               <button
                 type="button"
                 className="pc-button pc-button--secondary"
-                disabled={!depositAmount}
+                disabled={busy || !depositAmount}
                 onClick={onCheckEligibility}
               >
                 Check eligibility
@@ -110,12 +120,13 @@ export function WalletAdvanced({
             <button
               type="button"
               className="pc-button pc-button--secondary"
+              disabled={busy || !isEligibleVerdict(depositVerdict) || !onEnableDeposits}
               onClick={onEnableDeposits}
             >
               Enable deposits
             </button>
           </div>
-          {depositVerdict && (
+          {depositVerdict !== null && depositVerdict !== undefined && (
             <ApproveOverlay
               verdict={depositVerdict}
               simulate={null}
@@ -123,16 +134,22 @@ export function WalletAdvanced({
               onReject={onRejectDeposit}
             />
           )}
+          <HonestyLabels scope="deposit" />
         </div>
       )}
 
-      {onAddRecoverySigner && (
+      {account?.kind === 'C' && onAddRecoverySigner && (
         <div className="pc-support" data-testid="advanced-recovery-signer">
           <h2>Recovery signer</h2>
           <p className="pc-field-help">
-            Adds a VF-custodied recovery address as a delegated signer — a centralization trade-off,
+            Adds a VF-custodied recovery address as a delegated signer, a centralization trade-off,
             not a self-custodied backup.
           </p>
+          {!recoveryAddress && (
+            <p className="pc-field-help" data-testid="recovery-signer-status">
+              Recovery signer: Unavailable
+            </p>
+          )}
           <div className="pc-field">
             <label htmlFor="advanced-recovery-address">Recovery G-address</label>
             <input
@@ -155,7 +172,7 @@ export function WalletAdvanced({
         </div>
       )}
 
-      {onImportWallet && (
+      {account?.kind === 'G' && onImportWallet && (
         <div className="pc-support" data-testid="advanced-import">
           <p className="pc-backup-warning">
             Restoring a different wallet replaces the wallet on this device. Back up or export this
@@ -173,13 +190,23 @@ export function WalletAdvanced({
       <div className="pc-support" data-testid="advanced-agent-preview">
         <h2>Standalone agent signer (preview)</h2>
         <p className="pc-field-help">
-          A future agent signer would let a scoped agent spend from this wallet up to a cap you
-          choose, restricted to the vault, expiring after seven days. There is nothing to fill in or
-          submit here — this is documentation only.
+          A future agent signer would let a scoped agent spend from this wallet within a policy
+          boundary. There is nothing to fill in or submit here. This is documentation only.
         </p>
-        <p className="pc-backup-warning">
-          Preview only — the required on-chain cap policy is not deployed
-        </p>
+        <div className="pc-preview-facts">
+          <div className="pc-preview-fact">
+            <p className="pc-technical">Scope: vault-only agent spending</p>
+            <p className="pc-backup-warning">Preview only: this cap policy is not deployed.</p>
+          </div>
+          <div className="pc-preview-fact">
+            <p className="pc-technical">Cap: user-selected spending ceiling</p>
+            <p className="pc-backup-warning">Preview only: this cap policy is not deployed.</p>
+          </div>
+          <div className="pc-preview-fact">
+            <p className="pc-technical">Expiry: seven days</p>
+            <p className="pc-backup-warning">Preview only: this cap policy is not deployed.</p>
+          </div>
+        </div>
       </div>
     </WalletShell>
   )

@@ -20,6 +20,8 @@ import { CrewGuard } from './CrewGuard.jsx'
 
 afterEach(cleanup)
 
+const FIXTURE_NOW_MS = Date.parse('2026-08-11T00:00:00.000Z')
+
 describe('CrewGuard', () => {
   // The expiry below and the clock CrewGuard reads at render time have to be the SAME instant, or
   // this asserts on a moving target: it used to build the expiry from a live `Date.now()` and match
@@ -27,29 +29,26 @@ describe('CrewGuard', () => {
   // idle machine, not enough on a loaded runner (observed failing mid-suite locally). Frozen, the
   // remaining time is exactly 3661s and the expected string is exact.
   it('shows ARMED with a countdown while the mandate is live', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
-    try {
-      render(
-        <CrewGuard
-          protection={{ state: 'armed', mandateExpiry: Math.floor(Date.now() / 1000) + 3661 }}
-          onRenew={vi.fn()}
-          pending={false}
-        />
-      )
-      expect(screen.getByText('ARMED')).toBeTruthy()
-      expect(screen.getByText('01:01:01')).toBeTruthy()
-    } finally {
-      vi.useRealTimers()
-    }
+    const { container } = render(
+      <CrewGuard
+        protection={{ state: 'armed', mandateExpiry: Math.floor(FIXTURE_NOW_MS / 1000) + 3661 }}
+        onRenew={vi.fn()}
+        pending={false}
+        nowMs={FIXTURE_NOW_MS}
+      />
+    )
+    expect(screen.getByText('ARMED')).toBeTruthy()
+    expect(screen.getByText('01:01:01')).toBeTruthy()
+    expect(container.querySelector('.pc-crew-radar-sweep--active')).toBeTruthy()
   })
 
   it('shows ALARM ONLY when the mandate has lapsed', () => {
     render(
       <CrewGuard
-        protection={{ state: 'armed', mandateExpiry: Math.floor(Date.now() / 1000) - 10 }}
+        protection={{ state: 'armed', mandateExpiry: Math.floor(FIXTURE_NOW_MS / 1000) - 10 }}
         onRenew={vi.fn()}
         pending={false}
+        nowMs={FIXTURE_NOW_MS}
       />
     )
     expect(screen.getByText('ALARM ONLY')).toBeTruthy()
@@ -60,22 +59,54 @@ describe('CrewGuard', () => {
     const onRenew = vi.fn()
     const { rerender } = render(
       <CrewGuard
-        protection={{ state: 'armed', mandateExpiry: 0, ownerIsAuthority: true }}
+        protection={{
+          state: 'armed',
+          mandateExpiry: Math.floor(FIXTURE_NOW_MS / 1000) + 3600,
+          ownerIsAuthority: true,
+        }}
         onRenew={onRenew}
         pending={false}
+        nowMs={FIXTURE_NOW_MS}
       />
     )
     fireEvent.click(screen.getByRole('button', { name: /renew/i }))
     expect(onRenew).toHaveBeenCalled()
     rerender(
       <CrewGuard
-        protection={{ state: 'armed', mandateExpiry: 0, ownerIsAuthority: true }}
+        protection={{
+          state: 'armed',
+          mandateExpiry: Math.floor(FIXTURE_NOW_MS / 1000) + 3600,
+          ownerIsAuthority: true,
+        }}
         onRenew={onRenew}
         pending
+        nowMs={FIXTURE_NOW_MS}
       />
     )
     expect(screen.getByRole('button', { name: /renew/i }).disabled).toBe(true)
   })
+
+  it.each([
+    { mandateExpiry: null, label: 'missing' },
+    { mandateExpiry: 'not-a-number', label: 'non-numeric' },
+    { mandateExpiry: NaN, label: 'non-finite' },
+  ])(
+    'shows unknown and no renewal for an armed mandate with $label expiry',
+    ({ mandateExpiry }) => {
+      render(
+        <CrewGuard
+          protection={{ state: 'armed', mandateExpiry, ownerIsAuthority: true }}
+          onRenew={vi.fn()}
+          pending={false}
+          nowMs={FIXTURE_NOW_MS}
+        />
+      )
+      expect(screen.getByText('STATUS UNKNOWN')).toBeTruthy()
+      expect(screen.getByText('Unavailable')).toBeTruthy()
+      expect(screen.queryByText('ALARM ONLY')).toBeNull()
+      expect(screen.queryByRole('button', { name: /renew/i })).toBeNull()
+    }
+  )
 
   it("hides the renew button for a visitor who is not the vault's configured authority, and shows the honest alternative line instead (F1: was rendered unconditionally, prompting a doomed wallet signature)", () => {
     render(
@@ -83,6 +114,7 @@ describe('CrewGuard', () => {
         protection={{ state: 'armed', mandateExpiry: 0, ownerIsAuthority: false }}
         onRenew={vi.fn()}
         pending={false}
+        nowMs={FIXTURE_NOW_MS}
       />
     )
     expect(screen.queryByRole('button', { name: /renew/i })).toBeNull()
@@ -90,7 +122,7 @@ describe('CrewGuard', () => {
   })
 
   it('also hides the renew button when authority is simply unknown (no protection read, or a read that never says ownerIsAuthority true)', () => {
-    render(<CrewGuard protection={null} onRenew={vi.fn()} pending={false} />)
+    render(<CrewGuard protection={null} onRenew={vi.fn()} pending={false} nowMs={FIXTURE_NOW_MS} />)
     expect(screen.queryByRole('button', { name: /renew/i })).toBeNull()
     expect(screen.getByText(/only the configured authority can renew this/i)).toBeTruthy()
   })
@@ -101,6 +133,7 @@ describe('CrewGuard', () => {
         protection={{ state: 'unavailable', mandateExpiry: null }}
         onRenew={vi.fn()}
         pending={false}
+        nowMs={FIXTURE_NOW_MS}
       />
     )
     expect(screen.getByText('STATUS UNKNOWN')).toBeTruthy()
@@ -111,12 +144,75 @@ describe('CrewGuard', () => {
   it('a disarmed mandate never reads as ARMED, even with a future mandateExpiry still on record', () => {
     render(
       <CrewGuard
-        protection={{ state: 'disarmed', mandateExpiry: Math.floor(Date.now() / 1000) + 3600 }}
+        protection={{ state: 'disarmed', mandateExpiry: Math.floor(FIXTURE_NOW_MS / 1000) + 3600 }}
         onRenew={vi.fn()}
         pending={false}
+        nowMs={FIXTURE_NOW_MS}
       />
     )
     expect(screen.queryByText('ARMED')).toBeNull()
     expect(screen.getByText('ALARM ONLY')).toBeTruthy()
+  })
+
+  it('keeps a confirmed engaged or stale guard out of ARMED and shows a static watch frame', () => {
+    const { container, rerender } = render(
+      <CrewGuard
+        protection={{
+          state: 'engaged',
+          mandateExpiry: Math.floor(FIXTURE_NOW_MS / 1000) + 3600,
+          ownerIsAuthority: true,
+        }}
+        onRenew={vi.fn()}
+        nowMs={FIXTURE_NOW_MS}
+      />
+    )
+    expect(container.querySelector('[data-guard-phase="armed"]')).toBeNull()
+    expect(screen.getByText('ALARM ONLY')).toBeTruthy()
+    expect(container.querySelector('.pc-crew-radar-sweep--active')).toBeNull()
+
+    rerender(
+      <CrewGuard
+        protection={{
+          state: 'stale',
+          mandateExpiry: Math.floor(FIXTURE_NOW_MS / 1000) + 3600,
+          ownerIsAuthority: true,
+        }}
+        onRenew={vi.fn()}
+        nowMs={FIXTURE_NOW_MS}
+      />
+    )
+    expect(screen.getByText('STATUS UNKNOWN')).toBeTruthy()
+    expect(container.querySelector('.pc-crew-radar-sweep--active')).toBeNull()
+  })
+
+  it('renders the same static radar geometry under reduced motion', () => {
+    const originalMatchMedia = window.matchMedia
+    window.matchMedia = vi.fn().mockImplementation((query) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    try {
+      const { container } = render(
+        <CrewGuard
+          protection={{
+            state: 'armed',
+            mandateExpiry: Math.floor(FIXTURE_NOW_MS / 1000) + 3600,
+            ownerIsAuthority: true,
+          }}
+          onRenew={vi.fn()}
+          nowMs={FIXTURE_NOW_MS}
+        />
+      )
+      expect(screen.getByText('ARMED')).toBeTruthy()
+      expect(screen.getByText('01:00:00')).toBeTruthy()
+      expect(container.querySelector('.pc-crew-radar-sweep--active')).toBeNull()
+      expect(container.querySelectorAll('.pc-crew-radar-ring')).toHaveLength(2)
+      expect(container.querySelector('.pc-crew-radar-core')).toBeTruthy()
+      expect(screen.getByRole('button', { name: /renew/i })).toBeTruthy()
+    } finally {
+      window.matchMedia = originalMatchMedia
+    }
   })
 })

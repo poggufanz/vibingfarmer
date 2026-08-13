@@ -64,6 +64,29 @@ describe('HomeScreen — portfolio total money-truth', () => {
     expect(screen.getByText('$41.25')).toBeTruthy()
     expect(screen.queryByText(/some prices unavailable/i)).toBeNull()
   })
+
+  it('formats canonical unit amounts without converting units through Number', () => {
+    render(
+      <HomeScreen
+        publicKey={G_ADDRESS}
+        portfolio={{
+          amount: { token: 'USDC', units: '9007199254740993', decimals: 7 },
+          complete: true,
+          rows: [
+            {
+              asset: 'USDC:ISSUER',
+              code: 'USDC',
+              amount: { token: 'USDC', units: '9007199254740993', decimals: 7 },
+              usd: null,
+            },
+          ],
+        }}
+        unfunded={false}
+      />
+    )
+    expect(screen.getAllByText('900719925.4740993 USDC')).toHaveLength(2)
+    expect(screen.getByText('Unavailable')).toBeTruthy()
+  })
 })
 
 describe('HomeScreen — asset rows: raw amount independent of price availability', () => {

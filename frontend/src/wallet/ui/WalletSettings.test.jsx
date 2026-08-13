@@ -77,7 +77,9 @@ describe('WalletSettings — Standard (G) account-model controls', () => {
       />
     )
     expect(screen.getByRole('button', { name: 'Lock now' })).toBeTruthy()
+    expect(screen.getByLabelText('Auto-lock (minutes)')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Export secret' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Reset wallet' })).toBeTruthy()
   })
 
   it('does not render classic security controls for a Passkey (C) account (no dead button)', () => {
@@ -92,7 +94,10 @@ describe('WalletSettings — Standard (G) account-model controls', () => {
       />
     )
     expect(screen.queryByRole('button', { name: 'Lock now' })).toBeNull()
+    expect(screen.queryByLabelText('Auto-lock (minutes)')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Export secret' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reset wallet' })).toBeNull()
+    expect(screen.queryByText(/seed|password/i)).toBeNull()
   })
 
   it('does not render classic security controls when the caller supplies no lock handler', () => {
@@ -133,11 +138,16 @@ describe('WalletSettings — Advanced/Testnet link', () => {
 })
 
 describe('WalletSettings — Base mandate: no unverifiable status claim, no unsupported revoke control', () => {
-  it('links out with the exact required copy to the web app, in a new tab', () => {
+  it('hands Base management to the web app without claiming local status or authority', () => {
     render(<WalletSettings account={G_ACCOUNT} onNav={() => {}} onOpenAdvanced={() => {}} />)
-    const link = screen.getByRole('link', { name: 'Manage Base testnet in Vibing Farmer' })
-    expect(link.getAttribute('href')).toBe('https://vibing-farmer.pages.dev')
+    const link = screen.getByRole('link', { name: /manage base mandate on the web app/i })
+    expect(link.getAttribute('href')).toBe(
+      'https://vibing-farmer.pages.dev/settings?tab=wallet#base-mandate'
+    )
     expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.className).toContain('pc-external-link')
+    expect(link.hasAttribute('style')).toBe(false)
+    expect(screen.queryByText(/kernel address|relayer status|revoke mandate/i)).toBeNull()
   })
 
   it('never renders a mandate status value (active/expired/revoked) it cannot verify', () => {
@@ -164,6 +174,13 @@ describe('WalletSettings — Base mandate: no unverifiable status claim, no unsu
     expect(summary.textContent).not.toMatch(/destroys? (the )?key everywhere/i)
     expect(summary.textContent).not.toMatch(/wipes? this wallet/i)
     expect(summary.textContent).toMatch(/does not guarantee the key is destroyed everywhere/i)
+  })
+
+  it('keeps visible settings copy free of em/en-dash separators', () => {
+    const { container } = render(
+      <WalletSettings account={G_ACCOUNT} onNav={() => {}} onOpenAdvanced={() => {}} />
+    )
+    expect(container.textContent).not.toMatch(/[—–]/)
   })
 })
 

@@ -4,7 +4,15 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { contrastRatio } from './contrast.js'
-import { THEME_IDS, THEMES, applyTheme, isLightTheme, normalizeTheme } from './theme.js'
+import { FOUNDATION_SHARED_TOKENS, FOUNDATION_THEMES } from './pocket-crew-contract.js'
+import {
+  THEME_IDS,
+  THEMES,
+  applyTheme,
+  currentDomTheme,
+  isLightTheme,
+  normalizeTheme,
+} from './theme.js'
 
 const CORE_VARIABLES = Object.freeze({
   '--pc-canvas': 'canvas',
@@ -68,14 +76,14 @@ const compatibilityValues = (tokens, themeId) => ({
 
 const SHADOWS = Object.freeze({
   forest: Object.freeze({
-    '--shadow-sm': '0 1px 2px rgb(7 15 11 / 24%)',
-    '--shadow-md': '0 8px 20px rgb(7 15 11 / 22%)',
-    '--shadow-lg': '0 18px 44px rgb(7 15 11 / 28%)',
+    '--shadow-sm': `0 8px 24px ${FOUNDATION_THEMES.forest['--pc-shadow-color']}`,
+    '--shadow-md': `0 8px 24px ${FOUNDATION_THEMES.forest['--pc-shadow-color']}`,
+    '--shadow-lg': `0 24px 60px ${FOUNDATION_THEMES.forest['--pc-shadow-color']}`,
   }),
   'day-field': Object.freeze({
-    '--shadow-sm': '0 1px 2px rgb(23 37 31 / 12%)',
-    '--shadow-md': '0 8px 20px rgb(23 37 31 / 14%)',
-    '--shadow-lg': '0 18px 44px rgb(23 37 31 / 18%)',
+    '--shadow-sm': `0 8px 24px ${FOUNDATION_THEMES['day-field']['--pc-shadow-color']}`,
+    '--shadow-md': `0 8px 24px ${FOUNDATION_THEMES['day-field']['--pc-shadow-color']}`,
+    '--shadow-lg': `0 24px 60px ${FOUNDATION_THEMES['day-field']['--pc-shadow-color']}`,
   }),
 })
 
@@ -91,6 +99,8 @@ const normalizedCssValue = (value) =>
     .trim()
     .replace(/\s+/g, ' ')
     .replace(/\s*\/\s*/g, '/')
+    .replace(/\s*,\s*/g, ',')
+    .replace(/['"]/g, '')
     .toUpperCase()
 
 // jsdom's getComputedStyle does not substitute var() references inside a custom property's own
@@ -110,12 +120,131 @@ const resolveComputedVar = (computed, rawValue, depth = 5) => {
   return value
 }
 
+const assertResolvedAlias = (computed, alias, canonical, expected) => {
+  expect(computed.getPropertyValue(alias).trim(), `${alias} direct mapping`).toBe(
+    `var(${canonical})`
+  )
+  expect(
+    normalizedCssValue(resolveComputedVar(computed, computed.getPropertyValue(alias))),
+    alias
+  ).toBe(normalizedCssValue(expected))
+}
+
 describe('Pocket Crew theme contract', () => {
   it('exports the exact theme ids and deeply immutable theme records', () => {
     expect(THEME_IDS).toEqual({ FOREST: 'forest', DAY_FIELD: 'day-field' })
     expect(Object.keys(THEMES)).toEqual(['forest', 'day-field'])
     assertDeepFrozen(THEME_IDS)
     assertDeepFrozen(THEMES)
+  })
+
+  it('derives the public theme records from the foundation contract', async () => {
+    vi.resetModules()
+    vi.doMock('./pocket-crew-contract.js', () => ({
+      FOUNDATION_THEMES: {
+        forest: {
+          '--pc-canvas': '#101010',
+          '--pc-workspace': '#202020',
+          '--pc-owned': '#303030',
+          '--pc-ink': '#404040',
+          '--pc-muted': '#505050',
+          '--pc-owned-ink': '#606060',
+          '--pc-owned-muted': '#707070',
+          '--pc-harvest': '#808080',
+          '--pc-harvest-ink': '#909090',
+          '--pc-danger': '#A0A0A0',
+          '--pc-danger-on-light': '#B0B0B0',
+          '--pc-danger-ink': '#C0C0C0',
+          '--pc-focus': '#D0D0D0',
+          '--pc-focus-contrast': '#E0E0E0',
+          '--pc-faint': '#F0F0F0',
+        },
+        'day-field': {
+          '--pc-canvas': '#111111',
+          '--pc-workspace': '#222222',
+          '--pc-owned': '#333333',
+          '--pc-ink': '#444444',
+          '--pc-muted': '#555555',
+          '--pc-owned-ink': '#666666',
+          '--pc-owned-muted': '#777777',
+          '--pc-harvest': '#888888',
+          '--pc-harvest-ink': '#999999',
+          '--pc-danger': '#AAAAAA',
+          '--pc-danger-on-light': '#BBBBBB',
+          '--pc-danger-ink': '#CCCCCC',
+          '--pc-focus': '#DDDDDD',
+          '--pc-focus-contrast': '#EEEEEE',
+          '--pc-faint': '#FFFFFF',
+        },
+      },
+    }))
+
+    try {
+      const { THEMES: derivedThemes } = await import('./theme.js?contract-derivation')
+
+      expect(derivedThemes.forest).toMatchObject({
+        canvas: '#101010',
+        workspace: '#202020',
+        harvest: '#808080',
+        disabledOnDark: '#F0F0F0',
+        disabledOnLight: '#FFFFFF',
+        light: false,
+      })
+      expect(derivedThemes['day-field']).toMatchObject({
+        canvas: '#111111',
+        workspace: '#222222',
+        harvest: '#888888',
+        disabledOnDark: '#F0F0F0',
+        disabledOnLight: '#FFFFFF',
+        light: true,
+      })
+    } finally {
+      vi.doUnmock('./pocket-crew-contract.js')
+      vi.resetModules()
+    }
+  })
+
+  it('projects the reviewed semantic values into the legacy public theme API', () => {
+    expect(THEMES).toEqual({
+      forest: {
+        canvas: '#17251F',
+        workspace: '#20342B',
+        owned: '#F2F5EF',
+        text: '#F2F5EF',
+        textMuted: '#A8B5AD',
+        ownedInk: '#17251F',
+        ownedMuted: '#536159',
+        harvest: '#DFF56C',
+        harvestInk: '#17251F',
+        danger: '#E26E67',
+        dangerOnLight: '#A8403C',
+        dangerInk: '#17251F',
+        focusOnDark: '#DFF56C',
+        focusOnLight: '#17251F',
+        disabledOnDark: '#8C9B93',
+        disabledOnLight: '#5F6C65',
+        light: false,
+      },
+      'day-field': {
+        canvas: '#E9EEE8',
+        workspace: '#F7F9F5',
+        owned: '#F2F5EF',
+        text: '#17251F',
+        textMuted: '#536159',
+        ownedInk: '#17251F',
+        ownedMuted: '#536159',
+        harvest: '#DFF56C',
+        harvestInk: '#17251F',
+        danger: '#A8403C',
+        dangerOnLight: '#A8403C',
+        dangerInk: '#F2F5EF',
+        focusOnDark: '#DFF56C',
+        focusOnLight: '#17251F',
+        disabledOnDark: '#8C9B93',
+        disabledOnLight: '#5F6C65',
+        light: true,
+      },
+    })
   })
 
   it.each([
@@ -158,6 +287,15 @@ describe('Pocket Crew theme contract', () => {
     expect(root.setAttribute).toHaveBeenCalledWith('data-theme', 'day-field')
   })
 
+  it('reads the normalized theme that the DOM is actually rendering', () => {
+    const root = document.createElement('html')
+    root.setAttribute('data-theme', 'bone-paper')
+
+    expect(currentDomTheme(root)).toBe(THEME_IDS.DAY_FIELD)
+    root.setAttribute('data-theme', 'not-a-theme')
+    expect(currentDomTheme(root)).toBe(THEME_IDS.FOREST)
+  })
+
   it('treats only Day Field, including its legacy value, as light', () => {
     expect(isLightTheme('day-field')).toBe(true)
     expect(isLightTheme('bone-paper')).toBe(true)
@@ -193,13 +331,17 @@ describe('Pocket Crew CSS theme parity', () => {
         expect(normalizedCssValue(resolvedValue), property).toBe(tokens[token])
       })
       Object.entries(compatibilityValues(tokens, themeId)).forEach(([property, expected]) => {
-        expect(normalizedCssValue(computed.getPropertyValue(property)), property).toBe(
-          normalizedCssValue(expected)
-        )
+        expect(
+          normalizedCssValue(resolveComputedVar(computed, computed.getPropertyValue(property))),
+          property
+        ).toBe(normalizedCssValue(expected))
       })
       Object.entries(SHADOWS[themeId]).forEach(([property, expected]) => {
-        expect(normalizedCssValue(computed.getPropertyValue(property)), property).toBe(
-          normalizedCssValue(expected)
+        assertResolvedAlias(
+          computed,
+          property,
+          property === '--shadow-lg' ? '--pc-shadow-dominant' : '--pc-shadow-support',
+          expected
         )
       })
 
@@ -210,12 +352,42 @@ describe('Pocket Crew CSS theme parity', () => {
 
   it('keeps the exact radius tiers and scopes Newsreader to the wordmark utility', () => {
     const computed = getComputedStyle(document.documentElement)
-    expect(computed.getPropertyValue('--pc-radius-sm').trim()).toBe('12px')
-    expect(computed.getPropertyValue('--pc-radius-md').trim()).toBe('16px')
-    expect(computed.getPropertyValue('--pc-radius-lg').trim()).toBe('24px')
-    expect(computed.getPropertyValue('--font-body')).toContain('Geist Variable')
-    expect(computed.getPropertyValue('--font-mono')).toContain('JetBrains Mono Variable')
-    expect(computed.getPropertyValue('--font-script')).not.toContain('Newsreader')
+    assertResolvedAlias(
+      computed,
+      '--pc-radius-sm',
+      '--pc-radius-control',
+      FOUNDATION_SHARED_TOKENS['--pc-radius-control']
+    )
+    assertResolvedAlias(
+      computed,
+      '--pc-radius-md',
+      '--pc-radius-support',
+      FOUNDATION_SHARED_TOKENS['--pc-radius-support']
+    )
+    assertResolvedAlias(
+      computed,
+      '--pc-radius-lg',
+      '--pc-radius-dominant',
+      FOUNDATION_SHARED_TOKENS['--pc-radius-dominant']
+    )
+    assertResolvedAlias(
+      computed,
+      '--font-body',
+      '--pc-font-body',
+      FOUNDATION_SHARED_TOKENS['--pc-font-body']
+    )
+    assertResolvedAlias(
+      computed,
+      '--font-mono',
+      '--pc-font-mono',
+      FOUNDATION_SHARED_TOKENS['--pc-font-mono']
+    )
+    assertResolvedAlias(
+      computed,
+      '--font-script',
+      '--pc-font-body',
+      FOUNDATION_SHARED_TOKENS['--pc-font-body']
+    )
 
     const wordmark = document.createElement('span')
     wordmark.className = 'pc-wordmark'

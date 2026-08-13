@@ -13,7 +13,6 @@ import { getTestUsdc } from '../src/wallet/faucet.js'
 import { VF_TESTNET_ISSUER } from '../src/wallet/trustline.js'
 import { ApproveOverlay } from '../src/wallet/ui/ApproveOverlay.jsx'
 import { HonestyLabels } from '../src/wallet/ui/HonestyLabels.jsx'
-import { toDisplay } from '../src/stellar/format.js'
 import { SOROBAN_VAULT_ADDRESS } from '../src/stellar/config.js'
 import HomeScreen from '../src/wallet/ui/classic/HomeScreen.jsx'
 import SendScreen from '../src/wallet/ui/classic/SendScreen.jsx'
@@ -29,6 +28,7 @@ import { WalletActivity } from '../src/wallet/ui/WalletActivity.jsx'
 import { WalletReceive } from '../src/wallet/ui/WalletReceive.jsx'
 import { WalletSettings } from '../src/wallet/ui/WalletSettings.jsx'
 import { WalletAdvanced } from '../src/wallet/ui/WalletAdvanced.jsx'
+import { PopupResult, PopupSigningPending, toPopupResultModel } from './popupView.js'
 import {
   ACTIVE_ACCOUNT_KEY,
   resolveActiveAccount,
@@ -45,11 +45,12 @@ import {
 // collapsing loading into "unavailable" is still honest (never a wrong number, only a delayed one).
 function passkeyPortfolio(balance) {
   if (balance == null || balance === '-') return null
-  const amount = Number(toDisplay(balance))
+  const units = typeof balance === 'bigint' ? balance.toString() : String(balance)
+  const amount = { token: 'USDC', units, decimals: 7 }
   return {
-    total: amount,
+    amount,
     complete: true,
-    rows: [{ asset: 'USDC', code: 'USDC', balance: toDisplay(balance), usd: amount }],
+    rows: [{ asset: 'USDC', code: 'USDC', amount, usd: null }],
   }
 }
 
@@ -68,326 +69,6 @@ function postSignRequest(action, params) {
     action,
     params: { ...params, requestedAt: Date.now() },
   })
-}
-
-// Acid Yield design system (DESIGN.md §2/§3/§6) ported to the wallet popup:
-// dark warm-near-black canvas, one acid-lime accent per screen, Geist for prose,
-// JetBrains Mono for every number/address, document-grade rows divided by borders.
-const CSS = `
-:root{
-  --bg-base:#0a0b09; --bg-canvas:#0e100c; --bg-card:#161813; --bg-elev:#1e201a; --bg-elev-2:#262821;
-  --border:rgba(236,235,225,.06); --border-strong:rgba(236,235,225,.12); --border-accent:rgba(207,255,61,.45);
-  --text:#f0efe6; --text-muted:#a0a096; --text-faint:#5a5a52;
-  --accent:#cfff3d; --accent-soft:rgba(207,255,61,.07); --accent-fg:#0a0b09;
-  --accent-glow:rgba(207,255,61,.12); --accent-glow-strong:rgba(207,255,61,.22);
-  --info:#7aa2ff; --warn:#f0b54a; --danger:#ff7479; --ok:#6fe39a;
-  --font:"Geist",system-ui,-apple-system,sans-serif;
-  --mono:"JetBrains Mono","Geist Mono",ui-monospace,"SF Mono",monospace;
-  --r-sm:6px; --r-md:10px; --r-lg:16px; --r-xl:20px;
-  --ease:cubic-bezier(0.16, 1, 0.3, 1);
-}
-.vf *{box-sizing:border-box}
-.vf{width:360px;min-height:540px;display:flex;flex-direction:column;background:var(--bg-canvas);color:var(--text);
-  font-family:var(--font);font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased}
-.vf .tnum{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"lnum" 1}
-.vf .mono{font-family:var(--mono);letter-spacing:-.01em}
-
-/* ───── header ───── */
-.vf-head{display:flex;align-items:center;gap:10px;padding:12px 16px;
-  border-bottom:1px solid var(--border);background:var(--bg-canvas)}
-.vf-logo{width:34px;height:34px;flex:0 0 34px;border-radius:var(--r-md);overflow:hidden;display:grid;place-items:center;
-  border:1px solid var(--border-strong)}
-.vf-logo img{width:100%;height:100%;display:block}
-.vf-brand{display:flex;flex-direction:column;line-height:1.2;flex:1;min-width:0}
-.vf-brand-name{font-weight:600;font-size:14px;letter-spacing:-.01em}
-.vf-brand-sub{font-family:var(--mono);font-size:10px;color:var(--text-faint);letter-spacing:.02em}
-.vf-net{font-family:var(--mono);font-size:9.5px;color:var(--ok);padding:3px 8px;letter-spacing:.03em;
-  border:1px solid rgba(111,227,154,.15);border-radius:999px;display:flex;align-items:center;gap:5px;
-  background:rgba(111,227,154,.04);text-transform:uppercase;font-weight:500}
-
-/* ───── main ───── */
-.vf-main{padding:16px;display:flex;flex-direction:column;gap:14px;flex:1}
-
-/* screen transition -- VF Wallet Task 9: a critical wallet screen must not animate content on
-   entry (rejection-checklist item 7); the old entry-animation keyframe applied to every
-   .vf-screen (including seed/backup/import/unlock) is removed, not merely disabled. */
-.vf-screen{display:flex;flex-direction:column;gap:14px}
-
-/* ───── typography ───── */
-.eyebrow{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;color:var(--text-faint)}
-.eyebrow .dot{color:var(--accent)}.eyebrow .sec{color:var(--text-muted)}.eyebrow .rule{flex:1;height:1px;background:var(--border)}
-.vf-h{margin:0;font-size:21px;font-weight:600;letter-spacing:-.02em;text-wrap:balance}
-.lede{margin:0;font-size:13px;color:var(--text-muted);text-wrap:pretty}
-.note{margin:0;font-size:11.5px;color:var(--text-faint);line-height:1.5}
-.info{margin:0;font-size:12px;color:var(--text-muted)}
-.err{margin:0;font-size:12px;color:var(--danger)}
-.link{font-family:var(--mono);font-size:11.5px;color:var(--accent);text-decoration:none;border-bottom:1px solid transparent}
-.link:hover{border-bottom-color:var(--accent)}
-
-/* signature figure */
-.figure-block{display:flex;align-items:baseline;gap:8px}
-.figure{font-family:var(--mono);font-weight:500;font-size:clamp(34px,12vw,46px);letter-spacing:-.02em;line-height:1}
-.ticker{font-family:var(--mono);font-size:14px;color:var(--text-faint)}
-
-/* document rows */
-.doc{border-top:1px solid var(--border)}
-.row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border)}
-.row-k{font-family:var(--mono);font-size:11px;color:var(--text-faint);min-width:88px}
-.row-v{font-size:13px;color:var(--text);flex:1;min-width:0}
-.addr{font-family:var(--mono);font-size:12px;word-break:break-all}
-
-/* ───── fields ───── */
-.field{display:flex;flex-direction:column;gap:6px}
-.field .row-k{min-width:0}
-.input{width:100%;padding:10px 12px;background:var(--bg-elev);color:var(--text);
-  border:1px solid var(--border);border-radius:var(--r-md);font-size:13px;transition:border-color 160ms ease,box-shadow 160ms ease}
-.input.mono{font-family:var(--mono);font-size:12px}
-.input:focus{border-color:var(--border-accent);outline:none;box-shadow:0 0 0 3px var(--accent-soft)}
-.input::placeholder{color:var(--text-faint)}
-.vf :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-sm)}
-
-/* amount-input */
-.amount-row{display:flex;align-items:baseline;gap:10px;border-bottom:1px solid var(--border-strong);padding-bottom:8px}
-.amount-row:focus-within{border-bottom-color:var(--border-accent)}
-.amount{flex:1;min-width:0;background:none;border:none;color:var(--text);
-  font-family:var(--mono);font-weight:500;font-size:clamp(30px,11vw,42px);letter-spacing:-.02em}
-.amount::placeholder{color:var(--text-faint)}
-.amount::-webkit-outer-spin-button,.amount::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
-.amount{-moz-appearance:textfield}
-
-/* ───── buttons (passkey) ───── */
-.btn{font-family:var(--font);font-size:13px;font-weight:500;padding:11px 18px;border-radius:var(--r-md);
-  border:1px solid transparent;cursor:pointer;transition:background-color 160ms ease,border-color 160ms ease,color 160ms ease,transform 160ms var(--ease);text-align:center}
-/* VF Wallet Task 9: dropped the gradient background-image + infinite btn-lava keyframe animation
-   this primary button used to carry (rejection-checklist item 6: no button may use a gradient,
-   outer glow, shimmer, pulse, or infinite animation) -- a flat, solid accent fill instead. */
-.btn-primary{color:var(--accent-fg);border-color:transparent;background-color:var(--accent)}
-.btn-primary:active:not(:disabled){transform:scale(.97)}
-.btn-ghost{background:transparent;color:var(--text);border-color:var(--border-strong)}
-.btn-ghost:hover:not(:disabled){background-color:var(--bg-elev)}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.btn-row{display:flex;gap:8px;flex-wrap:wrap}
-.btn-row .btn{flex:1}
-.btn-row.col{flex-direction:column}
-.copy{font-family:var(--mono);font-size:11px;color:var(--text-muted);background:transparent;
-  border:1px solid var(--border);border-radius:var(--r-sm);padding:4px 8px;cursor:pointer;transition:color 150ms ease,border-color 150ms ease,background-color 150ms ease,transform 160ms var(--ease)}
-.copy:hover{color:var(--text);border-color:var(--border-strong);background:rgba(236,235,225,0.03)}
-.copy:active{transform:scale(.97)}
-
-/* approve overlay */
-.approve{display:flex;flex-direction:column;gap:12px;background:var(--bg-card);border:1px solid var(--border-strong);
-  border-radius:var(--r-lg);padding:16px}
-.approve-verdict{margin:0;font-size:12px}
-.approve-verdict.ok{color:var(--ok)}.approve-verdict.bad{color:var(--danger)}
-
-/* pending status line -- VF Wallet Task 9: friendly copy ("working…", "loading…", ceremony
-   status) must not be styled in monospace (rejection-checklist item 5); monospace stays reserved
-   for real technical/secret data (.mono/.addr/.tnum elsewhere in this file). The decorative
-   .marker/.blink dot is dropped outright, not just its animation. */
-.pending{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted)}
-
-/* ───── bottom nav — frosted glass ───── */
-.vf-nav{display:flex;justify-content:space-around;padding:6px 8px 8px;
-  background:var(--bg-base);
-  border-top:1px solid var(--border)}
-.vf-tab{display:flex;flex-direction:column;align-items:center;gap:3px;font-family:var(--font);
-  font-size:9.5px;font-weight:500;text-transform:capitalize;color:var(--text-faint);
-  padding:6px 8px;border:none;background:transparent;cursor:pointer;transition:color 160ms ease,transform 160ms var(--ease);position:relative;
-  letter-spacing:.02em}
-.vf-tab:hover{color:var(--text-muted)}
-.vf-tab.active{color:var(--accent)}
-.vf-tab-icon{width:20px;height:20px;display:flex;align-items:center;justify-content:center;transition:transform .2s var(--ease)}
-.vf-tab.active .vf-tab-icon{transform:scale(1.1)}
-.vf-tab.active::after{content:'';position:absolute;bottom:0;left:25%;right:25%;height:2px;
-  background:var(--accent);border-radius:2px}
-
-/* inline link button */
-button.link{background:none;border:none;padding:0;cursor:pointer;font:inherit}
-
-/* ════════════════════════════════════════════════════════════════════ */
-/* Classic (seed / ed25519) wallet screens                            */
-/* ════════════════════════════════════════════════════════════════════ */
-.vf-screen{display:flex;flex-direction:column;gap:14px}
-.vf-screen h2{margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em;color:var(--text)}
-.vf-screen > label{display:flex;flex-direction:column;gap:5px;font-family:var(--mono);font-size:10.5px;
-  color:var(--text-faint);letter-spacing:.01em;text-transform:uppercase}
-.vf-screen input,.vf-screen textarea{font-family:var(--font);font-size:13px;color:var(--text);
-  background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--r-md);padding:11px 12px;
-  transition:border-color 160ms ease,box-shadow 160ms ease}
-.vf-screen input:focus,.vf-screen textarea:focus{border-color:var(--border-accent);outline:none;
-  box-shadow:0 0 0 3px var(--accent-soft)}
-.vf-screen input[type=password]{font-family:var(--mono)}
-.vf-screen input[type=number]{width:76px;font-family:var(--mono)}
-
-/* buttons (classic) */
-.vf-btn{font-family:var(--font);font-size:13px;font-weight:600;padding:12px 18px;border-radius:var(--r-md);
-  border:1px solid var(--border-strong);background:var(--bg-elev);color:var(--text);cursor:pointer;
-  transition:background-color 160ms ease,border-color 160ms ease,color 160ms ease,transform 160ms var(--ease);text-align:center;letter-spacing:-.01em}
-.vf-btn:hover:not(:disabled){background:var(--bg-elev-2)}
-.vf-btn:active:not(:disabled){transform:scale(.97)}
-.vf-btn:disabled{opacity:.35;cursor:not-allowed}
-/* VF Wallet Task 9: dropped the gradient background-image + infinite btn-lava keyframe animation
-   these classic buttons used to carry -- flat, solid fills only (rejection-checklist item 6). */
-.vf-btn.primary{color:var(--accent-fg);border-color:transparent;background-color:var(--accent)}
-.vf-btn.primary:active:not(:disabled){transform:scale(.97)}
-.vf-btn.ghost{background:transparent;border-color:transparent;color:var(--text-muted)}
-.vf-btn.ghost:hover:not(:disabled){color:var(--text);background-color:var(--bg-elev)}
-
-/* feedback text */
-.vf-hint{margin:0;font-size:11.5px;color:var(--text-faint)}
-.vf-error{margin:0;font-size:12px;color:var(--danger)}
-.vf-muted{color:var(--text-faint);font-family:var(--mono);font-size:11px}
-.vf-warn{margin:0;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--warn);
-  background:rgba(240,181,74,.06);border:1px solid rgba(240,181,74,.2);border-radius:var(--r-md);padding:10px 12px}
-
-/* backup phrase grid + confirm */
-.vf-phrase{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 10px;padding:14px;
-  background:var(--bg-card);border:1px solid var(--border-strong);border-radius:var(--r-lg)}
-.vf-phrase.blurred{display:flex;justify-content:center;padding:24px 12px}
-.vf-word{font-family:var(--mono);font-size:12px;display:flex;gap:4px;color:var(--text)}
-.vf-word-idx{color:var(--text-faint)}.vf-word-text{color:var(--text)}
-.vf-confirm{display:flex;flex-direction:column;gap:10px;padding-top:8px;border-top:1px solid var(--border)}
-
-/* ───── home: balance card ───── */
-.vf-balance-card{display:flex;flex-direction:column;gap:8px;padding:22px 20px;position:relative;overflow:hidden;
-  background:var(--bg-card);border:1px solid var(--border-strong);border-radius:var(--r-xl)}
-.vf-portfolio{font-family:var(--mono);font-weight:600;font-size:clamp(30px,10vw,40px);
-  letter-spacing:-.03em;color:var(--text)}
-.vf-address{font-family:var(--mono);font-size:11px;color:var(--text-faint)}
-.vf-address-container{display:flex;align-items:center;gap:8px}
-.vf-address-copy-btn{background:rgba(236,235,225,.04);border:1px solid var(--border);color:var(--text-faint);cursor:pointer;
-  display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;transition:color 150ms ease,border-color 150ms ease,background-color 150ms ease,transform 160ms var(--ease);font-family:var(--mono);font-size:10px}
-.vf-address-copy-btn:hover{color:var(--accent);border-color:rgba(207,255,61,.2);background:var(--accent-soft)}
-.vf-address-copy-btn:active{transform:scale(.97)}
-
-.vf-fund{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px dashed var(--border-strong);
-  border-radius:var(--r-md);font-size:12px;color:var(--text-muted)}
-.vf-actions{display:flex;gap:8px}
-.vf-actions .vf-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;border-radius:var(--r-lg)}
-
-/* ───── token list ───── */
-.vf-tokens{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
-.vf-token-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 10px;
-  border-radius:var(--r-md);transition:background-color 160ms ease;cursor:default}
-.vf-token-row:hover{background:rgba(236,235,225,.03)}
-.vf-token-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
-.vf-token-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;
-  justify-content:center;font-family:var(--mono);font-weight:700;font-size:11px;color:#fff;
-  flex-shrink:0;text-transform:uppercase;box-shadow:0 2px 8px rgba(0,0,0,.25)}
-/* brand mark (tokenIcons.jsx); the marks carry their own round background */
-svg.vf-token-icon{display:block;overflow:hidden}
-.vf-token-icon.unknown{background:#546e7a;border:1px solid rgba(120,144,156,.2)}
-.vf-token-meta{display:flex;flex-direction:column;line-height:1.3;min-width:0}
-.vf-token-code{font-family:var(--font);font-weight:600;font-size:13px;color:var(--text)}
-.vf-token-name{font-size:11px;color:var(--text-muted)}
-.vf-token-right{display:flex;flex-direction:column;align-items:flex-end;line-height:1.3;font-family:var(--mono)}
-.vf-token-balance{font-weight:500;font-size:13px;color:var(--text)}
-.vf-token-usd{font-size:11px;color:var(--text-faint)}
-
-/* ───── send confirm card ───── */
-.vf-confirm-card{display:flex;flex-direction:column;gap:12px;padding:16px;
-  background:var(--bg-card);border:1px solid var(--border-strong);border-radius:var(--r-lg)}
-.vf-confirm-card h3{margin:0 0 4px 0;font-size:13px;font-weight:600;color:var(--accent);
-  display:flex;align-items:center;gap:6px;letter-spacing:-.01em}
-.vf-confirm-card dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 12px}
-.vf-confirm-card dt{font-family:var(--mono);font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.02em}
-.vf-confirm-card dd{margin:0;font-family:var(--mono);font-size:12px;color:var(--text);word-break:break-all}
-
-/* ───── receive ───── */
-.vf-qr{display:block;margin:0 auto;border-radius:var(--r-lg);background:#fff;padding:10px;
-  border:1px solid var(--border-strong);transition:transform 160ms var(--ease)}
-.vf-address-full{display:block;font-family:var(--mono);font-size:10.5px;word-break:break-all;
-  color:var(--text-muted);background:var(--bg-elev);border:1px solid var(--border);
-  border-radius:var(--r-md);padding:10px 12px;user-select:all;line-height:1.5}
-
-/* ───── history ───── */
-.vf-history{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
-.vf-history li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 10px;
-  border-radius:var(--r-md);transition:background-color 160ms ease;cursor:default}
-.vf-history li:hover{background:rgba(236,235,225,.03)}
-.vf-history-row{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%}
-.vf-history-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
-.vf-history-badge{width:32px;height:32px;border-radius:var(--r-md);display:flex;align-items:center;
-  justify-content:center;font-size:14px;font-weight:600;flex-shrink:0}
-.vf-history-badge.in{background:rgba(111,227,154,.08);color:var(--ok);border:1px solid rgba(111,227,154,.15)}
-.vf-history-badge.out{background:rgba(236,235,225,.04);color:var(--text-muted);border:1px solid rgba(236,235,225,.06)}
-.vf-history-meta{display:flex;flex-direction:column;line-height:1.3;min-width:0}
-.vf-history-title{font-weight:500;font-size:13px;color:var(--text)}
-.vf-history-address{font-family:var(--mono);font-size:10.5px;color:var(--text-faint)}
-.vf-history-right{display:flex;flex-direction:column;align-items:flex-end;line-height:1.3;font-family:var(--mono)}
-.vf-history-amount{font-weight:500;font-size:13px}
-.vf-history-amount.in{color:var(--ok)}.vf-history-amount.out{color:var(--text)}
-.vf-history-time{font-size:10px;color:var(--text-faint)}
-
-/* unlock / settings / export */
-.vf-unlock,.vf-settings,.vf-export{gap:16px}
-.vf-settings label{flex-direction:row;align-items:center;justify-content:space-between;
-  font-family:var(--font);font-size:13px;color:var(--text);text-transform:none}
-
-/* screen-root tweaks */
-.vf-create{gap:16px}
-.vf-backup h2{color:var(--warn)}
-.vf-import textarea{font-family:var(--mono);font-size:12px;resize:vertical}
-.vf-home{gap:16px}
-.vf-send label{gap:5px}
-.vf-receive{align-items:center;text-align:center}
-.vf-receive .vf-address-full{text-align:left}
-
-@media (hover:hover) and (pointer:fine){
-  .btn-primary:hover:not(:disabled),.btn-ghost:hover:not(:disabled),
-  .vf-btn:hover:not(:disabled){transform:translateY(-1px)}
-  .btn:active:not(:disabled),.vf-btn:active:not(:disabled){transform:scale(.97)}
-  .vf-tab:hover .vf-tab-icon{transform:translateY(-1px)}
-  .vf-qr:hover{transform:scale(1.02)}
-}
-
-@media (prefers-reduced-motion:reduce){
-  .btn,.copy,.vf-tab,.vf-tab-icon,.vf-btn,.vf-address-copy-btn,.vf-qr{transition:color 160ms ease,background-color 160ms ease,border-color 160ms ease,opacity 160ms ease}
-  .btn:hover,.btn:active,.vf-btn:hover,.vf-btn:active,.vf-tab:hover .vf-tab-icon,.vf-tab.active .vf-tab-icon,.vf-qr:hover,.vf-address-copy-btn:active,.copy:active{transform:none}
-  .btn:active:not(:disabled),.vf-btn:active:not(:disabled){opacity:.82}
-}
-
-@media (prefers-contrast:more){
-  .vf-head,.vf-nav{border-color:var(--border-strong)}
-}
-`
-
-function Eyebrow({ sec, meta }) {
-  return (
-    <div className="eyebrow">
-      <span className="dot">·</span>
-      <span className="sec">{sec}</span>
-      <span className="rule" />
-      <span>{meta}</span>
-    </div>
-  )
-}
-
-// VF Wallet Task 11 -- the old bottom NavBar (7-tab passkey set + a separate 5-tab classic set)
-// is removed along with it: every screen that used to render it (deposit/signers/recovery/agent)
-// is gone (see this task's report -- those screens had no route IN from the beginner
-// Home/Activity/Settings nav Task 10 shipped, and 'agent' exposed `addAgentSigner` as a live
-// submit control, which this task's brief forbids outright), and classic-settings/wallet-settings
-// now render through WalletSettings.jsx, which supplies its own pc-wallet-nav via WalletShell. The
-// remaining Shell callers (signing-pending/result/loading fallback) never used `nav` in a way that
-// still has a valid destination, so this component keeps only what they need.
-function Shell({ children, sub = 'passkey · secp256r1' }) {
-  return (
-    <div className="vf">
-      <style>{CSS}</style>
-      <header className="vf-head">
-        <div className="vf-logo">
-          <img src="./vibing_farmer.logo.svg" alt="Vibing Farmer" />
-        </div>
-        <div className="vf-brand">
-          <div className="vf-brand-name">VF Wallet</div>
-          <div className="vf-brand-sub">{sub}</div>
-        </div>
-        <span className="vf-net">testnet</span>
-      </header>
-      <div className="vf-main">{children}</div>
-    </div>
-  )
 }
 
 // Pure decision: given resolveActiveAccount's status (activeAccount.js) and the classic wallet's
@@ -451,7 +132,7 @@ function Popup() {
   const [recoveryG, setRecoveryG] = useState('')
 
   // Result
-  const [lastTx, setLastTx] = useState(null)
+  const [lastResult, setLastResult] = useState(null)
 
   function clear() {
     setError('')
@@ -602,18 +283,16 @@ function Popup() {
   }, [])
 
   function applyResult(r) {
-    if (!r.ok) {
-      setError(r.error || 'Ceremony failed')
+    const result = r && typeof r === 'object' ? r : {}
+    const model = toPopupResultModel(result)
+    setLastResult(result)
+    if (result.ok !== true) {
+      setError(model.message)
       setScreen('home')
       return
     }
-    if (r.action === 'deposit') {
-      const minted = BigInt(r.sharesAfter ?? '0') - BigInt(r.sharesBefore ?? '0')
-      setStatus(`Minted ${minted} shares. tx: ${r.hash}`)
-    } else if (r.action === 'approve') {
-      setStatus('Deposits enabled. You can deposit now.')
-    }
-    setLastTx(r.hash || null)
+    setError('')
+    setStatus('')
     setScreen('result')
   }
 
@@ -1056,10 +735,8 @@ function Popup() {
   }
 
   if (screen === 'classic-add-asset') {
-    // VF Wallet Task 11 -- wrapped in the real WalletShell instead of the old unstyled Acid Yield
-    // Shell: AddAssetScreen.jsx now renders pc-* markup (recomposed this task), and pc-* classes
-    // have no declarations at all inside the old Shell's <style>{CSS}</style> -- it would render
-    // unstyled there. WalletShell's own Back control replaces the hand-rolled "← Back" button.
+    // VF Wallet Task 11 -- wrapped in the shared WalletShell; AddAssetScreen.jsx renders pc-*
+    // markup and WalletShell's own Back control replaces the hand-rolled "← Back" button.
     return (
       <WalletShell
         heading="Add asset"
@@ -1105,12 +782,11 @@ function Popup() {
   }
 
   if (screen === 'classic-settings') {
-    // VF Wallet Task 11 -- migrated off the old Acid Yield Shell/NavBar onto WalletSettings, the
+    // VF Wallet Task 11 -- migrated onto WalletSettings, the
     // same pc-* redesign classic-home/classic-activity already use. The export-secret reveal
     // (popup.jsx-owned state, unchanged) is restyled onto pc-* classes as WalletSettings children:
-    // the old vf-* classes have no declarations inside WalletShell's <style>, so left as-is they
-    // would render unstyled. The revealed secret carries .pc-address-full -- a 56-char S-key is
-    // exactly the unbreakable-long-technical-string case that guard exists for.
+    // the revealed secret carries .pc-address-full -- a 56-char S-key is exactly the
+    // unbreakable-long-technical-string case that guard exists for.
     return (
       <WalletSettings
         account={{ kind: 'G', address: cw.publicKey }}
@@ -1291,42 +967,23 @@ function Popup() {
 
   if (screen === 'signing-pending') {
     return (
-      <Shell>
-        <Eyebrow sec="ceremony" meta="face id" />
-        <h1 className="vf-h">Approve in the ceremony tab</h1>
-        <div className="pending">{status}</div>
-        <p className="note">
-          Face ID opens in a new tab. This popup may close, so reopen it to see the result.
-        </p>
-        <button className="btn btn-ghost" onClick={() => nav('home')}>
-          Back to home
-        </button>
-      </Shell>
+      <PopupSigningPending
+        account={{ kind: 'C', address: wallet?.contractId }}
+        origin="VF Wallet (this extension)"
+        status={status || 'Waiting for Face ID'}
+        onBack={() => nav('home')}
+      />
     )
   }
 
   if (screen === 'result') {
     return (
-      <Shell>
-        <Eyebrow sec="result" meta="testnet" />
-        <h1 className="vf-h">Done.</h1>
-        <p data-testid="result-status" className="info">
-          {status}
-        </p>
-        {lastTx && (
-          <a
-            className="link"
-            href={`https://stellar.expert/explorer/testnet/tx/${lastTx}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            View on Stellar Expert
-          </a>
-        )}
-        <button className="btn btn-primary" onClick={() => setScreen('home')}>
-          Done
-        </button>
-      </Shell>
+      <PopupResult
+        account={{ kind: 'C', address: wallet?.contractId }}
+        origin="VF Wallet (this extension)"
+        result={lastResult}
+        onDone={() => nav('home')}
+      />
     )
   }
 
@@ -1349,7 +1006,6 @@ function Popup() {
               : null
         }
         portfolio={passkeyPortfolio(balance)}
-        onSend={() => setScreen('send')}
         onReceive={() => setScreen('receive')}
         onGetUsdc={handlePasskeyGetUsdc}
       >
@@ -1466,7 +1122,7 @@ function Popup() {
     )
   }
 
-  // VF Wallet Task 11 -- the old 'deposit'/'signers'/'recovery'/'agent' Shell screens are deleted
+  // VF Wallet Task 11 -- the old 'deposit'/'signers'/'recovery'/'agent' screens are deleted
   // outright, not just unlinked. They were already unreachable dead code before this task (Task
   // 10's beginner Home/Activity/Settings nav only links to Send/Receive/Add asset/Get test USDC --
   // nothing routed INTO this cluster once Home stopped rendering the old 7-tab NavBar), and the
@@ -1525,10 +1181,10 @@ function Popup() {
   }
 
   return (
-    <Shell>
-      <Eyebrow sec="loading" meta="" />
-      <div className="pending">loading…</div>
-    </Shell>
+    <WalletShell
+      heading="Loading wallet…"
+      status={{ tone: 'neutral', message: 'Loading wallet…' }}
+    />
   )
 }
 

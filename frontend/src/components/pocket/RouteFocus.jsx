@@ -7,6 +7,8 @@
 
 import { useEffect, useId } from 'react'
 
+const MAX_ROUTE_FOCUS_RETRIES = 3
+
 // Ordered so a longer/more specific prefix (e.g. '/vault/') never loses to a shorter one; every
 // entry after the exact-path matches is a prefix match for a param/nested route.
 // Task 10 (IA remap): /home is My money, /strategy is Put it to work, /agent is The crew --
@@ -44,9 +46,10 @@ export function routeTitle(pathname) {
 // for focusing a landmark without requiring every page to hand-author `tabindex="-1"` itself.
 function focusRouteTarget() {
   const target = document.querySelector('[data-route-heading]') || document.querySelector('main')
-  if (!target) return
+  if (!target) return false
   if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1')
   target.focus()
+  return true
 }
 
 // Module-scoped (not a per-instance ref): App renders a fresh RouteFocus instance per branch
@@ -89,15 +92,34 @@ export function RouteFocus({ pathname }) {
   const liveId = useId()
 
   useEffect(() => {
+    let cancelled = false
+    let frameId = null
+    let retries = 0
+
+    const focusWithRetry = () => {
+      if (cancelled || focusRouteTarget()) return
+      if (retries >= MAX_ROUTE_FOCUS_RETRIES) return
+
+      retries += 1
+      frameId = window.requestAnimationFrame(focusWithRetry)
+    }
+
     if (!hasFocusedRoute) {
       // True cold load: let the browser's natural initial focus stand so the skip link stays the
       // first stop, instead of this effect jumping straight past it.
       hasFocusedRoute = true
-      return
+      return () => {
+        cancelled = true
+      }
     }
-    focusRouteTarget()
+
+    focusWithRetry()
+
+    return () => {
+      cancelled = true
+      if (frameId !== null) window.cancelAnimationFrame(frameId)
+    }
     // pathname is the only thing this effect should ever react to -- see the comment above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
 
   const label = routeLabel(pathname)

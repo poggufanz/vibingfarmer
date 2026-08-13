@@ -23,7 +23,11 @@ import { planRevoke } from '../../money/ownerActions.js'
 function shortAddr(address) {
   return typeof address === 'string' && address.length > 12
     ? `${address.slice(0, 4)}…${address.slice(-4)}`
-    : (address ?? '-')
+    : (address ?? 'Unavailable')
+}
+
+function safeMoneyCopy(value) {
+  return typeof value === 'string' ? value.replace(/\s*(?:--|—|–)\s*/g, '. ') : value
 }
 
 export function StopAccessDialog({
@@ -64,7 +68,7 @@ export function StopAccessDialog({
           >
             Cancel
           </button>
-          {funded && (
+          {funded && typeof onGoToWithdraw === 'function' && (
             <button
               type="button"
               className="pc-button pc-button--primary"
@@ -74,7 +78,7 @@ export function StopAccessDialog({
               Go to Withdraw
             </button>
           )}
-          {plan?.ok && (
+          {plan?.ok && typeof onConfirmRevoke === 'function' && (
             <button
               type="button"
               className="pc-button pc-button--danger"
@@ -88,23 +92,22 @@ export function StopAccessDialog({
       }
     >
       <p>
-        Stopping access prevents this agent from acting on your money going forward. It does not
-        move, return, or touch any money already there.
+        Stops future access for this agent. It does not move, return, or touch any money already
+        there. Withdrawal is a separate action.
       </p>
 
       {!agent && <p>Agent details are unavailable.</p>}
 
       {funded && (
         <StatusNotice state="warning" title="This agent still holds money">
-          <p>{plan.message}</p>
+          <p>{safeMoneyCopy(plan.message)}</p>
         </StatusNotice>
       )}
 
       {plan?.ok && plan.warning && (
-        <StatusNotice state="warning" title={plan.warning}>
+        <StatusNotice state="warning" title={safeMoneyCopy(plan.warning)}>
           <p>
-            The kill switch still works -- stopping access does not require knowing the balance
-            first.
+            The kill switch still works. Stopping access does not require knowing the balance first.
           </p>
         </StatusNotice>
       )}
@@ -113,8 +116,8 @@ export function StopAccessDialog({
         <StatusNotice state="info" title="Base access can't be stopped from here yet">
           <p>
             This only stops the Stellar side of {shortAddr(agent?.address)}. Stopping the Base
-            bridge mandate needs a relayer route that does not exist yet -- there is no working
-            "stop Base access" button to offer until it does.
+            bridge mandate needs a relayer route that does not exist yet. There is no working "stop
+            Base access" button to offer until it does.
           </p>
         </StatusNotice>
       )}

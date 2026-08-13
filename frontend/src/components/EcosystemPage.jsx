@@ -1,16 +1,15 @@
-// EcosystemPage.jsx
-// Public tech-stack + partner page for Vibing Farmer.
-// Aesthetic: dark terminal, single accent, mono for raw values only.
-// Same pattern as ExplorerPage: fixed scroll container, inherited CSS-var tokens.
-
-import { useRef, useEffect } from 'react'
+// Public technology catalog and architecture route.
+// The catalog model is presentation-only; any settled read remains an injected input owned by
+// the route caller and passes through the Secondary adapter before it reaches the primitives.
 import { useNavigate } from 'react-router-dom'
 import NavBar from './NavBar.jsx'
 import { ECOSYSTEM } from './LandingHero.jsx'
-
-/* ------------------------------------------------------------------ */
-/* data                                                                  */
-/* ------------------------------------------------------------------ */
+import { NETWORK_IDS } from '../design/networks.js'
+import { toEcosystemPresentation } from '../secondary/secondaryRouteAdapters.js'
+import { createEcosystemModel } from '../secondary/ecosystemModel.js'
+import { NetworkBadge, NetworkRoute } from './pocket/NetworkIdentity.jsx'
+import { StageShell, StatusNotice, TechnicalDetails, VenueTruth } from './pocket/Primitives.jsx'
+import './EcosystemPage.css'
 
 const STANDARDS = [
   {
@@ -38,12 +37,23 @@ const STANDARDS = [
 ]
 
 const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
+const DEFAULT_ECOSYSTEM_MODEL = createEcosystemModel()
 
-/* ── Visual architecture diagram (SVG) ── */
+const CATALOG_BRANDS = Object.freeze({
+  'stellar-soroban': 'Stellar / Soroban',
+  'autofarm-vault': null,
+  'blend-capital-v2': 'Blend Capital',
+  'base-sepolia-proxy': 'Base',
+  'circle-cctp': 'Circle CCTP',
+  openzeppelin: 'OpenZeppelin',
+  defillama: 'DeFiLlama',
+  zerodev: 'ZeroDev',
+})
 
-// Node layout coordinates (designed for 800×560 viewBox). Mirrors the real pipeline in
-// CLAUDE.md: wallet → AI + council/gate → one grant → scoped agents (parallel) → ONE autofarm
-// vault (deposits fee-bumped by the relay) → Blend v2. Single vault, not one-per-agent.
+/* ── Static architecture diagram ───────────────────────────────────────── */
+
+// The diagram mirrors the product pipeline: wallet → council gate → one grant → parallel agents
+// → one vault → Blend v2.  The adjacent semantic list below is the complete stack catalog.
 const ARCH_NODES = [
   {
     id: 'wallet',
@@ -52,7 +62,6 @@ const ARCH_NODES = [
     label: 'User Wallet',
     sub: 'VF Wallet / Freighter',
     icon: 'W',
-    // Was a retired-palette ink literal, frozen to the dark theme. --text follows both.
     color: 'var(--text)',
   },
   {
@@ -71,7 +80,6 @@ const ARCH_NODES = [
     label: 'Funding Router',
     sub: 'One sign: budget + expiry',
     icon: 'FR',
-    // Current Harvest/accent hex -- was a retired-branding lime value (see legacyPocketStyle.test.js).
     color: '#dff56c',
     hero: true,
   },
@@ -124,21 +132,12 @@ const ARCH_EDGES = [
 ]
 
 function ArchNode({ node }) {
-  const w = 200,
-    h = 56,
-    rx = 10
+  const w = 200
+  const h = 56
+  const rx = 10
+
   return (
-    <g className={'arch-node' + (node.hero ? ' arch-node--hero' : '')}>
-      {node.hero && (
-        <rect
-          x={node.x - w / 2 - 4}
-          y={node.y - h / 2 - 4}
-          width={w + 8}
-          height={h + 8}
-          rx={rx + 2}
-          className="arch-glow"
-        />
-      )}
+    <g className={`arch-node${node.hero ? ' arch-node--hero' : ''}`}>
       <rect
         x={node.x - w / 2}
         y={node.y - h / 2}
@@ -150,13 +149,12 @@ function ArchNode({ node }) {
           stroke: node.hero ? 'color-mix(in srgb, var(--accent) 40%, transparent)' : undefined,
         }}
       />
-      {/* icon circle */}
       <circle
         cx={node.x - w / 2 + 24}
         cy={node.y}
         r={14}
         className="arch-icon-bg"
-        style={{ fill: node.color + '18', stroke: node.color + '40' }}
+        style={{ fill: `${node.color}18`, stroke: `${node.color}40` }}
       />
       <text
         x={node.x - w / 2 + 24}
@@ -168,7 +166,6 @@ function ArchNode({ node }) {
       >
         {node.icon}
       </text>
-      {/* labels */}
       <text
         x={node.x - w / 2 + 48}
         y={node.y - 6}
@@ -184,30 +181,21 @@ function ArchNode({ node }) {
   )
 }
 
-function ArchEdge({ from, to, label, index }) {
-  const x1 = from.x,
-    y1 = from.y + 28
-  const x2 = to.x,
-    y2 = to.y - 28
-  const mx = (x1 + x2) / 2,
-    my = (y1 + y2) / 2
+function ArchEdge({ from, to, label }) {
+  const x1 = from.x
+  const y1 = from.y + 28
+  const x2 = to.x
+  const y2 = to.y - 28
+  const mx = (x1 + x2) / 2
+  const my = (y1 + y2) / 2
 
   return (
     <g className="arch-edge">
-      <line
-        x1={x1}
-        y1={y1}
-        x2={x2}
-        y2={y2}
-        className="arch-line"
-        style={{ animationDelay: `${index * 0.3}s` }}
-      />
-      {/* arrowhead */}
+      <line x1={x1} y1={y1} x2={x2} y2={y2} className="arch-line" />
       <polygon
         points={`${x2},${y2} ${x2 - 4},${y2 - 8} ${x2 + 4},${y2 - 8}`}
         className="arch-arrow"
       />
-      {/* label */}
       <rect
         x={mx - label.length * 3.2}
         y={my - 8}
@@ -230,25 +218,15 @@ function ArchEdge({ from, to, label, index }) {
 }
 
 function ArchDiagram() {
-  const nodeMap = Object.fromEntries(ARCH_NODES.map((n) => [n.id, n]))
+  const nodeMap = Object.fromEntries(ARCH_NODES.map((node) => [node.id, node]))
 
   return (
     <svg
       className="arch-svg"
       viewBox="0 0 800 560"
       role="img"
-      aria-label="Architecture: the user's limits inform the AI strategy and council gate; one Funding Router signature deploys scoped agent accounts; the agents deposit — network fee sponsored by fee-bump relay — into a single Autofarm vault, which supplies the Blend v2 pool for yield"
+      aria-label="Architecture: wallet limits inform the AI strategy and council gate; one Funding Router signature deploys scoped agents; the agents deposit into one Autofarm Vault, which supplies the Blend v2 pool"
     >
-      <defs>
-        <filter id="arch-glow-f">
-          <feGaussianBlur stdDeviation="8" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-      {/* Network-fee badge annotates the relayed deposit hop. */}
       <rect x={585} y={392} width={180} height={22} rx={6} className="arch-gas-bg" />
       <text
         x={675}
@@ -259,25 +237,21 @@ function ArchDiagram() {
       >
         Network fee sponsored by fee-bump relay
       </text>
-      {/* edges first (behind nodes) */}
-      {ARCH_EDGES.map((e, i) => (
-        <ArchEdge key={i} from={nodeMap[e.from]} to={nodeMap[e.to]} label={e.label} index={i} />
+      {ARCH_EDGES.map((edge) => (
+        <ArchEdge
+          key={`${edge.from}-${edge.to}`}
+          from={nodeMap[edge.from]}
+          to={nodeMap[edge.to]}
+          label={edge.label}
+        />
       ))}
-      {/* nodes */}
-      {ARCH_NODES.map((n) => (
-        <ArchNode key={n.id} node={n} />
+      {ARCH_NODES.map((node) => (
+        <ArchNode key={node.id} node={node} />
       ))}
     </svg>
   )
 }
 
-/* ------------------------------------------------------------------ */
-/* components                                                            */
-/* ------------------------------------------------------------------ */
-
-// Wordmark fallback for entries without a shipped logo: initials of the first two words
-// (e.g. "Blend Capital" -> "BC", "Soroban" -> "SO"), the same 2-char lockup style as the
-// old partner marks and the design-system wallet monogram.
 function initials(name) {
   const words = name.split(/\s+/).filter(Boolean)
   if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase()
@@ -285,24 +259,27 @@ function initials(name) {
 }
 
 function EcoCard({ item }) {
+  const brandName = CATALOG_BRANDS[item.id]
+  const brand = ECOSYSTEM.find((entry) => entry.name === brandName)
   return (
-    <article className="eco-card eco-card--brand">
+    <article className="eco-card eco-card--brand" data-ecosystem-card={item.id}>
       <span className="eco-card__logo" aria-hidden="true">
-        {item.icon ? (
+        {brand?.icon ? (
           <img
-            src={item.icon}
+            src={brand.icon}
             alt=""
             loading="lazy"
-            className={item.iconDark ? 'eco-card__logo-icon--default' : undefined}
+            className={brand.iconDark ? 'eco-card__logo-icon--default' : undefined}
           />
         ) : (
           <span className="eco-card__mark">{initials(item.name)}</span>
         )}
-        {item.iconDark ? (
-          <img src={item.iconDark} alt="" loading="lazy" className="eco-card__logo-icon--dark" />
+        {brand?.iconDark ? (
+          <img src={brand.iconDark} alt="" loading="lazy" className="eco-card__logo-icon--dark" />
         ) : null}
       </span>
       <h3 className="eco-card__name">{item.name}</h3>
+      <span className={`eco-card__state eco-card__state--${item.state}`}>{item.status}</span>
     </article>
   )
 }
@@ -323,29 +300,66 @@ function StandardBadge({ standard }) {
   )
 }
 
-/* ------------------------------------------------------------------ */
-/* page                                                                  */
-/* ------------------------------------------------------------------ */
+const STELLAR_ROUTE = Object.freeze({
+  hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  destinationNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  transitState: 'none',
+})
 
-export default function EcosystemPage() {
+const CCTP_ROUTE = Object.freeze({
+  hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  destinationNetworkId: NETWORK_IDS.BASE_SEPOLIA,
+  custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  transitState: 'unknown',
+})
+
+function CatalogRow({ item, fact }) {
+  const statusFact = { ...fact, state: fact.state }
+  return (
+    <li
+      className="eco-catalog-row"
+      data-ecosystem-list-card={item.id}
+      data-testid={`ecosystem-row-${item.id}`}
+    >
+      <div className="eco-catalog-row__heading">
+        <h3>{item.name}</h3>
+        <span className={`eco-catalog-row__state eco-catalog-row__state--${item.state}`}>
+          {item.status}
+        </span>
+      </div>
+      {item.networkId && <NetworkBadge networkId={item.networkId} compact />}
+      {item.network && <p className="eco-catalog-row__network">Network: {item.network}</p>}
+      {item.kind === 'base-proxy' ? (
+        <VenueTruth kind="base-proxy" fact={statusFact} />
+      ) : item.kind === 'bridge' ? (
+        <NetworkRoute context={CCTP_ROUTE} compact />
+      ) : (
+        <p className="eco-catalog-row__truth">{item.truth}</p>
+      )}
+      <p className="eco-catalog-row__description">{item.description}</p>
+      <p className="eco-catalog-row__source">
+        Source: <span>{item.source}</span>
+      </p>
+    </li>
+  )
+}
+
+/* ── page ──────────────────────────────────────────────────────────────── */
+
+export default function EcosystemPage({ ecosystemRead } = {}) {
   const navigate = useNavigate()
-  const diagramRef = useRef(null)
-
-  useEffect(() => {
-    const el = diagramRef.current
-    if (!el) return
-    const obs = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          el.classList.add('is-visible')
-          obs.disconnect()
-        }
-      },
-      { threshold: 0.2 }
-    )
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [])
+  const settledRead = ecosystemRead || DEFAULT_ECOSYSTEM_MODEL
+  const presentation = toEcosystemPresentation(settledRead)
+  const model = Array.isArray(settledRead.cards) ? settledRead : DEFAULT_ECOSYSTEM_MODEL
+  const fact = presentation.fact
+  const statusFact = {
+    ...fact,
+    consequence: presentation.notice.consequence,
+    safeNextAction: presentation.notice.nextAction,
+  }
 
   const launchApp = () => {
     localStorage.setItem('yv_skip_landing', 'true')
@@ -355,54 +369,74 @@ export default function EcosystemPage() {
 
   return (
     <div className="eco-page">
-      <EcoStyle />
       <NavBar />
 
-      <main className="eco-main">
-        {/* header */}
-        <header className="eco-header">
-          <h1 className="eco-title">Ecosystem</h1>
-          <p className="eco-lede">
-            Vibing Farmer runs on Soroban contracts, scoped agent accounts, current market data, and
-            an allowlisted fee-bump relay.
-          </p>
-        </header>
+      <main className="eco-main" id="main-content" data-route-heading>
+        <StageShell
+          eyebrow="Public catalog"
+          title="Ecosystem"
+          description="Vibing Farmer runs on Soroban contracts, scoped agent accounts, current market data, and an allowlisted fee-bump relay."
+          state={fact.state}
+        >
+          <div className="eco-stage-evidence">
+            <NetworkRoute context={STELLAR_ROUTE} />
+            <StatusNotice fact={statusFact} title="Catalog read" />
+            {fact.state === 'unavailable' && presentation.notice.consequence && (
+              <div className="eco-notice-copy" role="status">
+                <p>{presentation.notice.consequence}</p>
+                {presentation.notice.nextAction && <p>{presentation.notice.nextAction}</p>}
+              </div>
+            )}
+            <TechnicalDetails summary="Technical details" fact={fact} open />
+          </div>
+        </StageShell>
 
-        {/* partners */}
         <section className="eco-section" aria-labelledby="eco-sec-partners">
           <h2 id="eco-sec-partners" className="eco-section__title">
             Core services
           </h2>
           <div className="eco-grid">
-            {ECOSYSTEM.map((item) => (
-              <EcoCard key={item.name} item={item} />
+            {model.cards.map((item) => (
+              <EcoCard key={item.id} item={item} />
             ))}
           </div>
         </section>
 
-        {/* standards */}
+        <section className="eco-section eco-section--catalog" aria-labelledby="eco-sec-catalog">
+          <h2 id="eco-sec-catalog" className="eco-section__title">
+            Service details
+          </h2>
+          <ol className="eco-catalog-list" aria-label="Ecosystem services">
+            {model.cards.map((item) => (
+              <CatalogRow key={item.id} item={item} fact={fact} />
+            ))}
+          </ol>
+        </section>
+
         <section className="eco-section" aria-labelledby="eco-sec-stds">
           <h2 id="eco-sec-stds" className="eco-section__title">
             Integrated standards
           </h2>
           <div className="eco-stds-wrap">
-            {STANDARDS.map((s) => (
-              <StandardBadge key={s.id} standard={s} />
+            {STANDARDS.map((standard) => (
+              <StandardBadge key={standard.id} standard={standard} />
             ))}
           </div>
         </section>
 
-        {/* architecture diagram */}
         <section className="eco-section" aria-labelledby="eco-sec-arch">
           <h2 id="eco-sec-arch" className="eco-section__title">
             How they connect
           </h2>
-          <div ref={diagramRef} className="eco-diagram">
+          <div className="eco-diagram">
             <ArchDiagram />
           </div>
+          <p className="eco-diagram-note">
+            The service list above remains the readable source of the route. The diagram adds the
+            execution sequence for visual scanning.
+          </p>
         </section>
 
-        {/* CTA */}
         <section className="eco-section eco-section--cta" aria-labelledby="eco-sec-cta">
           <div className="eco-cta__inner">
             <h2 id="eco-sec-cta" className="eco-cta__heading">
@@ -431,461 +465,5 @@ export default function EcosystemPage() {
         </footer>
       </main>
     </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* styles                                                                */
-/* ------------------------------------------------------------------ */
-
-function EcoStyle() {
-  return (
-    <style>{`
-/* Fixed + own scroll - same pattern as ExplorerPage. */
-.eco-page {
-  position: fixed;
-  inset: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  background: var(--bg-base);
-  color: var(--text);
-  font-family: var(--font-body);
-  --eco-accent: var(--accent);
-}
-/* Grid-texture ::before removed: a linear-gradient pair masked by a radial-gradient is still
-   a gradient (contract rule 7 bans them outright), and it was decorative, not load-bearing. */
-
-.eco-main {
-  position: relative;
-  z-index: 1;
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: calc(64px + clamp(2.5rem, 7vw, 5rem)) clamp(1.1rem, 5vw, 2.6rem) 4rem;
-}
-
-/* ---------- header ---------- */
-.eco-header {
-  padding-bottom: clamp(2rem, 5vw, 3.4rem);
-  border-bottom: 1px solid var(--border);
-}
-.eco-title {
-  font-family: var(--font-display);
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1;
-  font-size: clamp(2.6rem, 7vw, 4.6rem);
-  color: var(--text);
-}
-.eco-lede {
-  margin-top: 1.1rem;
-  max-width: 62ch;
-  font-family: var(--font-body);
-  font-size: clamp(0.82rem, 1.1vw, 0.95rem);
-  line-height: 1.7;
-  color: var(--text-muted);
-}
-
-/* ---------- sections ---------- */
-.eco-section {
-  padding: clamp(2.2rem, 5vw, 3.6rem) 0;
-  border-bottom: 1px solid var(--border);
-}
-.eco-section--cta { border-bottom: none; }
-.eco-section__title {
-  font-family: var(--font-body);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--accent-text);
-  margin-bottom: 1.5rem;
-}
-
-/* ---------- ecosystem cards (logo + name, one source with the landing marquee) ---------- */
-.eco-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.7rem;
-}
-.eco-card {
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  transition: transform 220ms cubic-bezier(0.16,1,0.3,1),
-              border-color 220ms ease, box-shadow 220ms ease;
-}
-.eco-card--brand {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.85rem;
-  padding: clamp(1.4rem, 3vw, 1.9rem) 1rem;
-  text-align: center;
-}
-.eco-card:hover {
-  border-color: var(--border-accent);
-}
-.eco-card__logo {
-  display: inline-grid;
-  place-items: center;
-  height: 40px;
-}
-.eco-card__logo img {
-  height: 32px;
-  width: auto;
-  /* each logo carries its own official brand color — shown at full strength, not tinted. */
-}
-/* Stellar ships official Black + White finals; swap by live [data-theme] instead of
-   filtering the artwork (no recoloring). Default (Day Field/no attribute) shows Black;
-   Forest (this page's default card background is dark) shows White. */
-.eco-card__logo img.eco-card__logo-icon--dark {
-  display: none;
-}
-:root[data-theme='forest'] .eco-card__logo img.eco-card__logo-icon--dark {
-  display: inline-block;
-}
-:root[data-theme='forest'] .eco-card__logo img.eco-card__logo-icon--default {
-  display: none;
-}
-.eco-card__mark {
-  display: inline-grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elev);
-  /* Not mono: an identity monogram (initials fallback for a missing logo), same role and
-     font as AgentMark's '.pc-agent-mark-label' — a name, not a raw value. */
-  font-family: var(--font-body);
-  font-size: 0.82rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text);
-}
-.eco-card__name {
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: clamp(0.9rem, 1.4vw, 1.05rem);
-  letter-spacing: -0.015em;
-  color: var(--text);
-  margin: 0;
-}
-
-/* ---------- standards row ---------- */
-.eco-stds-wrap {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 0.7rem;
-}
-.eco-std {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  padding: 1.1rem 1rem;
-  text-decoration: none;
-  transition: border-color 200ms ease, transform 200ms cubic-bezier(0.16,1,0.3,1);
-}
-.eco-std:hover {
-  border-color: var(--border-accent);
-}
-.eco-std:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 2px; }
-/* Mono: a spec/standard identifier ("SEP-41", "x402"), not prose — same class as a version string. */
-.eco-std__id {
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--accent-text);
-  line-height: 1;
-}
-.eco-std__desc {
-  font-family: var(--font-body);
-  font-size: 0.68rem;
-  line-height: 1.45;
-  color: var(--text-muted);
-  flex-grow: 1;
-}
-.eco-std__view {
-  font-family: var(--font-body);
-  font-size: 0.64rem;
-  letter-spacing: 0.04em;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3ch;
-  margin-top: auto;
-}
-
-/* ---------- architecture diagram (SVG) ---------- */
-.eco-diagram {
-  opacity: 0;
-  transform: translateY(14px);
-  transition: opacity 600ms ease, transform 600ms cubic-bezier(0.16,1,0.3,1);
-}
-.eco-diagram.is-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-@media (prefers-reduced-motion: reduce) {
-  .eco-diagram { opacity: 1 !important; transform: none !important; transition: none !important; }
-}
-.arch-svg {
-  display: block;
-  width: 100%;
-  max-width: 800px;
-  height: auto;
-  margin: 0 auto;
-}
-.arch-card {
-  fill: var(--bg-card);
-  stroke: var(--border-strong);
-  stroke-width: 1;
-  transition: stroke 200ms ease;
-}
-.arch-node:hover .arch-card {
-  stroke: color-mix(in srgb, var(--accent) 40%, transparent);
-}
-/* Was a blurred lime stroke behind the hero node (feGaussianBlur filter) -- an outer glow,
-   contract rule 7. ArchNode.jsx still renders the <rect className="arch-glow"> (a JSX/markup
-   change is out of scope for this pass), so it's hidden here rather than left to paint with
-   the SVG fill default (black) once its fill/stroke/filter declarations are gone. The accent
-   stroke on .arch-card already marks the hero node without any glow. */
-.arch-glow {
-  display: none;
-}
-.arch-icon-bg {
-  stroke-width: 1;
-}
-/* Not mono: a 1-3 letter node monogram, same role as AgentMark's identity label
-   ('.pc-agent-mark-label'), which is also font-sans, not mono. */
-.arch-icon-text {
-  font-family: var(--font-body);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-.arch-label {
-  font-family: var(--font-display);
-  font-size: 11.5px;
-  font-weight: 600;
-  fill: var(--text);
-}
-.arch-sublabel {
-  font-family: var(--font-body);
-  font-size: 8.5px;
-  fill: var(--text-faint);
-}
-.arch-line {
-  stroke: var(--border-strong);
-  stroke-width: 1;
-  stroke-dasharray: 6 4;
-  stroke-dashoffset: 0;
-  animation: arch-dash 8s linear infinite;
-}
-@keyframes arch-dash {
-  to { stroke-dashoffset: -40; }
-}
-.arch-arrow {
-  fill: var(--border-strong);
-}
-.arch-edge-bg {
-  fill: var(--bg-base);
-  stroke: var(--border);
-  stroke-width: 0.5;
-}
-.arch-edge-label {
-  font-family: var(--font-body);
-  font-size: 8px;
-  letter-spacing: 0.03em;
-  fill: var(--text-muted);
-}
-.arch-gas-bg {
-  fill: color-mix(in srgb, var(--accent) 6%, transparent);
-  stroke: color-mix(in srgb, var(--accent) 20%, transparent);
-  stroke-width: 0.5;
-}
-.arch-gas-text {
-  font-family: var(--font-body);
-  font-size: 8.5px;
-  font-weight: 600;
-  fill: var(--accent-text);
-  letter-spacing: 0.03em;
-}
-
-/* ---------- CTA ---------- */
-.eco-cta__inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.2rem;
-  text-align: center;
-  padding: clamp(2rem, 6vw, 4rem) clamp(1rem, 4vw, 2rem);
-  /* Radial-gradient glow removed (contract rule 7) -- accent-soft is the flat, themed panel fill. */
-  background: var(--accent-soft);
-  border-radius: var(--radius-xl);
-}
-.eco-cta__heading {
-  font-family: var(--font-display);
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  line-height: 1;
-  font-size: clamp(2.2rem, 5.5vw, 4.2rem);
-  color: var(--text);
-  margin: 0;
-}
-.eco-cta__tagline {
-  font-family: var(--font-body);
-  font-size: clamp(0.84rem, 1.2vw, 0.98rem);
-  color: var(--text-muted);
-  margin: 0;
-}
-.eco-cta__tagline em {
-  font-family: var(--font-script);
-  font-style: italic;
-  font-weight: 500;
-  color: var(--text-muted);
-}
-.eco-cta__row {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
-  flex-wrap: wrap;
-  justify-content: center;
-  margin-top: 0.4rem;
-}
-.eco-btn-primary {
-  font-family: var(--font-body);
-  font-weight: 600;
-  font-size: 0.96rem;
-  letter-spacing: 0.01em;
-  padding: 0.9rem 2rem;
-  border-radius: var(--radius-lg);
-  color: var(--accent-fg);
-  background: var(--eco-accent);
-  border: none;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5ch;
-  transition: transform 220ms cubic-bezier(0.16,1,0.3,1),
-              box-shadow 220ms ease;
-}
-.eco-btn-primary span { transition: transform 220ms cubic-bezier(0.16,1,0.3,1); }
-.eco-btn-primary:active { transform: scale(0.97); }
-.eco-btn-primary:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 3px; }
-
-.eco-btn-ghost {
-  font-family: var(--font-body);
-  font-weight: 500;
-  font-size: 0.96rem;
-  letter-spacing: 0.01em;
-  padding: 0.9rem 2rem;
-  border-radius: var(--radius-lg);
-  color: var(--text-muted);
-  background: transparent;
-  border: 1px solid var(--border-strong);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5ch;
-  text-decoration: none;
-  transition: border-color 200ms ease, color 200ms ease,
-              transform 200ms cubic-bezier(0.16,1,0.3,1);
-}
-.eco-btn-ghost span { transition: transform 200ms cubic-bezier(0.16,1,0.3,1); }
-.eco-btn-ghost:hover {
-  border-color: var(--border-accent);
-  color: var(--text);
-}
-.eco-btn-ghost:active { transform: scale(0.97); }
-.eco-btn-ghost:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 2px; }
-
-@media (hover: hover) and (pointer: fine) {
-  /* Was a custom drop shadow; offsets aren't 0 0 so this was elevation, not glow -- reuse the
-     canonical elevation token instead of a one-off shadow. */
-  .eco-card:hover { transform: translateY(-2px); box-shadow: var(--pc-shadow-support); }
-  .eco-extlink:hover span { transform: translate(2px, -2px); }
-  .eco-std:hover { transform: translateY(-2px); }
-  /* Outer glow removed (contract rule 7) -- the lift + accent fill already signal hover. */
-  .eco-btn-primary:hover { transform: translateY(-2px); }
-  .eco-btn-primary:hover span { transform: translateX(4px); }
-  .eco-btn-primary:active { transform: scale(0.97); }
-  .eco-btn-ghost:hover { transform: translateY(-1px); }
-  .eco-btn-ghost:hover span { transform: translate(2px, -2px); }
-  .eco-btn-ghost:active { transform: scale(0.97); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .arch-glow,
-  .arch-line { animation: none !important; }
-  .eco-card,
-  .eco-extlink span,
-  .eco-std,
-  .eco-btn-primary,
-  .eco-btn-primary span,
-  .eco-btn-ghost,
-  .eco-btn-ghost span { transition: color 160ms ease, border-color 160ms ease; }
-  .eco-card:hover,
-  .eco-std:hover,
-  .eco-btn-primary:hover,
-  .eco-btn-primary:active,
-  .eco-btn-ghost:hover,
-  .eco-btn-ghost:active { transform: none; }
-  .eco-extlink:hover span,
-  .eco-btn-primary:hover span,
-  .eco-btn-ghost:hover span { transform: none; }
-}
-
-/* ---------- footer ---------- */
-.eco-foot {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-top: 3rem;
-  padding-top: 1.8rem;
-  border-top: 1px solid var(--border);
-}
-.eco-foot__mark {
-  font-family: var(--font-body);
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
-.eco-foot__tag {
-  font-family: var(--font-script);
-  font-style: italic;
-  font-size: 0.95rem;
-  color: var(--text-faint);
-}
-
-/* ---------- responsive ---------- */
-@media (max-width: 900px) {
-  .eco-grid { grid-template-columns: repeat(3, 1fr); }
-  .eco-stds-wrap {
-    display: flex;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 0.6rem;
-    scroll-snap-type: x mandatory;
-    gap: 0.7rem;
-  }
-  .eco-std {
-    flex-shrink: 0;
-    min-width: 155px;
-    scroll-snap-align: start;
-  }
-}
-@media (max-width: 580px) {
-  .eco-grid { grid-template-columns: repeat(2, 1fr); }
-}
-`}</style>
   )
 }
