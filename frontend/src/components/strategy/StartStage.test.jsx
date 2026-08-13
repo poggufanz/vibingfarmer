@@ -265,17 +265,22 @@ function renderStartStage(overrides = {}) {
 }
 
 describe('Start polish', () => {
-  it('uses shared persona names and avatar URLs for every provisional lane', () => {
+  it('keeps AgentMark as the sole lane identity child so the mobile lane has no implicit grid column', () => {
+    const { container } = renderStartStage()
+    for (const lane of container.querySelectorAll('.pc-agent-lane')) {
+      expect(lane.children).toHaveLength(2)
+      expect(lane.querySelector('.pc-start-agent-avatar')).toBeNull()
+      expect(within(lane).getByRole('img', { name: 'Planned agent, Active' })).toBeTruthy()
+    }
+  })
+
+  it('uses shared persona names while AgentMark owns every lane identity', () => {
     const { container } = renderStartStage()
     const lanes = container.querySelectorAll('.pc-agent-lane')
     expect(within(lanes[0]).getByText('Sprout')).toBeTruthy()
     expect(within(lanes[1]).getByText('Clover')).toBeTruthy()
-    expect(lanes[0].querySelector('.pc-start-agent-avatar').getAttribute('src')).toBe(
-      '/brand/agents/sprout.svg'
-    )
-    expect(lanes[1].querySelector('.pc-start-agent-avatar').getAttribute('src')).toBe(
-      '/brand/agents/clover.svg'
-    )
+    expect(lanes[0].querySelector('.pc-start-agent-avatar')).toBeNull()
+    expect(lanes[1].querySelector('.pc-start-agent-avatar')).toBeNull()
     expect(within(lanes[0]).getByRole('img', { name: 'Planned agent, Active' })).toBeTruthy()
     expect(within(lanes[1]).getByRole('img', { name: 'Planned agent, Active' })).toBeTruthy()
     expect(container.textContent).not.toMatch(/Pepper|Juniper|Basil/)
@@ -313,9 +318,7 @@ describe('Start polish', () => {
     expect(firstLane.getAttribute('data-agent-address')).toBe(AGENT_1)
     expect(within(firstLane).getByText('Mochi')).toBeTruthy()
     expect(within(firstLane).queryByText('Sprout')).toBeNull()
-    expect(firstLane.querySelector('.pc-start-agent-avatar').getAttribute('src')).toBe(
-      '/brand/agents/mochi.svg'
-    )
+    expect(firstLane.querySelector('.pc-start-agent-avatar')).toBeNull()
     expect(within(firstLane).getByRole('img', { name: 'Existing agent, Active' })).toBeTruthy()
   })
 
@@ -337,9 +340,7 @@ describe('Start polish', () => {
     expect(firstLane.getAttribute('data-agent-address')).toBe(AGENT_1)
     expect(within(firstLane).getByText('Sprout')).toBeTruthy()
     expect(within(firstLane).getByText('Crew assignment syncing.')).toBeTruthy()
-    expect(firstLane.querySelector('.pc-start-agent-avatar').getAttribute('src')).toBe(
-      '/brand/agents/sprout.svg'
-    )
+    expect(firstLane.querySelector('.pc-start-agent-avatar')).toBeNull()
     expect(within(firstLane).getByRole('img', { name: 'Deployed agent, Active' })).toBeTruthy()
   })
 
@@ -461,12 +462,10 @@ describe('Start polish', () => {
     expect(container.querySelector('.pc-lane-cap').textContent).toBe('900719925.4740993 USDC')
   })
 
-  it('keeps persona art decorative while AgentMark remains the accessible lane identity', () => {
+  it('does not duplicate AgentMark with decorative persona art', () => {
     const { container } = renderStartStage()
     const lane = container.querySelector('.pc-agent-lane')
-    const persona = lane.querySelector('.pc-start-agent-avatar')
-    expect(persona.getAttribute('alt')).toBe('')
-    expect(persona.getAttribute('aria-hidden')).toBe('true')
+    expect(lane.querySelector('.pc-start-agent-avatar')).toBeNull()
     expect(within(lane).getByRole('img', { name: 'Planned agent, Active' })).toBeTruthy()
   })
 
@@ -1236,12 +1235,10 @@ describe('StartStage -- evidence-selected recovery actions', () => {
 })
 
 describe('StartStage -- bridge lane: one mark, all Base child destinations, correct network route/custody', () => {
-  it('shows one persistent crew avatar for the bridge leg and lists every child destination inside it', () => {
+  it('shows one deterministic AgentMark for the bridge leg and lists every child destination inside it', () => {
     render(<StartStage plan={PLAN_WITH_BRIDGE} permission={PERMISSION_FRESH} events={[]} />)
     const bridgeLane = document.querySelector('[data-agent-kind="bridge"]')
-    expect(bridgeLane.querySelector('.pc-start-agent-avatar').getAttribute('src')).toBe(
-      '/brand/agents/clover.svg'
-    )
+    expect(bridgeLane.querySelector('.pc-start-agent-avatar')).toBeNull()
     expect(within(bridgeLane).getByRole('img', { name: 'Planned agent, Active' })).toBeTruthy()
     expect(screen.getByText(/aave-v3/)).toBeTruthy()
     expect(screen.getByText(/moonwell/)).toBeTruthy()

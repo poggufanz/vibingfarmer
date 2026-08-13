@@ -1019,10 +1019,7 @@ describe('Strategy journey — shared crew persona identity', () => {
     expect(startMark.getAttribute('data-state')).toBe('active')
     expect(startMark.getAttribute('data-identity-source')).toBe('owner-discovery')
     expect(startMark.getAttribute('data-verified')).toBe('true')
-    const startPersona = startRow.querySelector('.pc-start-agent-avatar')
-    expect(startPersona.getAttribute('src')).toBe('/brand/agents/mochi.svg')
-    expect(startPersona.getAttribute('alt')).toBe('')
-    expect(startPersona.getAttribute('aria-hidden')).toBe('true')
+    expect(startRow.querySelector('.pc-start-agent-avatar')).toBeNull()
   })
 })
 

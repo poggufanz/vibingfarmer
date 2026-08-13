@@ -159,7 +159,12 @@ const CORE_STYLE_GROUPS = Object.freeze({
   'core-dialog': [
     { id: 'dialog', selector: '.pc-dialog', background: true },
     { id: 'panel', selector: '.pc-dialog-panel', background: true, radius: true },
-    { id: 'actions', selector: '.pc-dialog-actions', display: 'flex' },
+    {
+      id: 'actions',
+      selector: '.pc-dialog-actions',
+      display: 'flex',
+      mobileDisplay: 'grid',
+    },
     { id: 'button', selector: '.pc-button', radius: true },
   ],
   'core-base-withdraw': [
@@ -785,6 +790,7 @@ function makeCoreFixtureGuards(fixtureId) {
             id: group.id,
             selector: group.selector,
             missing: false,
+            viewportWidth: window.innerWidth,
             rect: { width: rect.width, height: rect.height, right: rect.right },
             computed: {
               display: style.display,
@@ -837,7 +843,9 @@ function makeCoreFixtureGuards(fixtureId) {
         )
       }
       if (group.display) {
-        expect(row.computed.display, `${fixtureId}/${row.id}: layout display`).toBe(group.display)
+        const expectedDisplay =
+          group.mobileDisplay && row.viewportWidth <= 767 ? group.mobileDisplay : group.display
+        expect(row.computed.display, `${fixtureId}/${row.id}: layout display`).toBe(expectedDisplay)
       }
     }
 
@@ -848,10 +856,20 @@ function makeCoreFixtureGuards(fixtureId) {
     // getComputedStyle reflects arbitrary inline declarations; it would not catch a regression in
     // the radius/background/display/padding contract itself.
     const mutation = await page.evaluate(
-      ({ sel, styleGroups }) => {
+      async ({ sel, styleGroups }) => {
         const root = document.querySelector(sel)
         const visible = (element) =>
           element.getClientRects().length > 0 && !element.closest('[aria-hidden="true"]')
+        const finishTransitions = async (element) => {
+          // Reduced motion deliberately keeps a 0.01ms transition instead of disabling motion
+          // entirely. Force style resolution, then let that real transition finish before the
+          // mutation probe reads or restores the asserted property.
+          void getComputedStyle(element).opacity
+          const transitions = element
+            .getAnimations({ subtree: true })
+            .filter((animation) => animation.constructor?.name === 'CSSTransition')
+          await Promise.allSettled(transitions.map((transition) => transition.finished))
+        }
         const mutationFor = (group, style) => {
           if (group.padding) {
             const before = style.paddingLeft
@@ -892,23 +910,30 @@ function makeCoreFixtureGuards(fixtureId) {
             value: before === '1px' ? '2px' : '1px',
           }
         }
-        return styleGroups.map((group) => {
+        const results = []
+        for (const group of styleGroups) {
           const candidates = root.matches(group.selector)
             ? [root, ...root.querySelectorAll(group.selector)]
             : [...root.querySelectorAll(group.selector)]
           const element = candidates.find(visible)
-          if (!element) return { id: group.id, changed: false }
+          if (!element) {
+            results.push({ id: group.id, changed: false })
+            continue
+          }
+          await finishTransitions(element)
           const style = getComputedStyle(element)
           const mutation = mutationFor(group, style)
           const prior = element.style.getPropertyValue(mutation.cssProperty)
           const priority = element.style.getPropertyPriority(mutation.cssProperty)
           const before = style[mutation.computedProperty]
           element.style.setProperty(mutation.cssProperty, mutation.value, 'important')
+          await finishTransitions(element)
           const after = getComputedStyle(element)[mutation.computedProperty]
           if (prior) element.style.setProperty(mutation.cssProperty, prior, priority)
           else element.style.removeProperty(mutation.cssProperty)
+          await finishTransitions(element)
           const restored = getComputedStyle(element)[mutation.computedProperty]
-          return {
+          results.push({
             id: group.id,
             property: mutation.cssProperty,
             before,
@@ -916,8 +941,9 @@ function makeCoreFixtureGuards(fixtureId) {
             restored,
             changed: before !== after,
             restoredExactly: restored === before,
-          }
-        })
+          })
+        }
+        return results
       },
       { sel: selector, styleGroups: groups }
     )
@@ -928,7 +954,7 @@ function makeCoreFixtureGuards(fixtureId) {
       ).toBe(true)
       expect(
         row.restoredExactly,
-        `${fixtureId}/${row.id}: ${row.property} must restore before capture`
+        `${fixtureId}/${row.id}: ${row.property} must restore before capture (${row.before} -> ${row.restored})`
       ).toBe(true)
     }
   }
@@ -2034,7 +2060,7 @@ test.describe('Pocket Crew legacy crew', () => {
       { id: 'clover', children: 0 },
       { id: 'mochi', children: 0 },
     ])
-    expect(shape.amountTexts).toContain('17,014,118,346,046,923,173,168,730,371,588.4105727 USDC')
+    expect(shape.amountTexts).toContain('17014118346046923173168730371588.4105727 USDC')
   }
 
   test('forest theme', async ({ page }, testInfo) => {

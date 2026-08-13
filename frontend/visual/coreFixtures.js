@@ -671,7 +671,13 @@ function reuseDecision() {
       {
         allocationId: `${CORE_FIXTURE_RUN}:deposit:0`,
         agentAddress: CORE_FIXTURE_ADDRESSES.agentA,
-        scopeExpiry: 13000,
+        workerId: `${CORE_FIXTURE_RUN}:deposit:0`,
+        scopeExpiry: Math.floor(CORE_FIXTURE_CLOCK.nowMs / 1000) + 7200,
+        scopeFingerprint: '0xscope1',
+        // The raw decision carries this non-secret cache lookup key so ProtectStage can prove
+        // that a zero-signature reuse action still has an execution credential. The UI projection
+        // strips it before the decision can enter journal/event/public state.
+        executionCredentialRef: CORE_FIXTURE_ADDRESSES.agentA,
         headroom: sourceAmount('2500000000'),
       },
     ],

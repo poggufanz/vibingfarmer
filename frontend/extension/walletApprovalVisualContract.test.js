@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const css = readFileSync(path.join(here, 'approval.css'), 'utf8')
+const walletCss = readFileSync(path.join(here, 'wallet.css'), 'utf8')
 const html = readFileSync(path.join(here, 'approve.html'), 'utf8')
 const viewSource = readFileSync(path.join(here, 'approvalView.js'), 'utf8')
 
@@ -38,6 +39,18 @@ describe('VF Wallet approval visual contract', () => {
     expect(css).toMatch(
       /:where\(a,\s*button,\s*input,\s*select,\s*textarea,\s*summary\):focus-visible/
     )
+  })
+
+  it('stacks approval actions below the 360px breakpoint so both labels fit at 320px', () => {
+    for (const stylesheet of [css, walletCss]) {
+      const narrowBlock = stylesheet.slice(stylesheet.indexOf('@media (max-width: 359px)'))
+      expect(narrowBlock).toMatch(
+        /\.pc-wallet-approval-actions\s*\{[^}]*grid-template-columns:\s*1fr/
+      )
+      expect(narrowBlock).toMatch(
+        /\.pc-wallet-approval-actions\s+\.pc-button\s*\{[^}]*width:\s*100%/
+      )
+    }
   })
 
   it('wraps the 320px shell and long security values without an inline style escape hatch', () => {

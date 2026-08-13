@@ -830,17 +830,6 @@ export function StartStage({
                     size={44}
                     label="agent"
                   />
-                  {identity.identityAvailable && (
-                    <img
-                      className="pc-start-agent-avatar pc-crew-avatar"
-                      src={persona.avatar}
-                      alt=""
-                      aria-hidden="true"
-                      data-state={laneMarkState(lane.phase)}
-                      width="44"
-                      height="44"
-                    />
-                  )}
                   <div className="pc-agent-lane-body" data-pocket-enter>
                     <p className="pc-worker-name">{persona.name}</p>
                     {assignmentSyncing && (

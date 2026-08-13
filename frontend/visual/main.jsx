@@ -563,6 +563,7 @@ function reuseDecisionRaw() {
         headroom: { token: TOKEN_ADDR, units: '900000000', decimals: 7 },
         scopeExpiry: NOW_SECONDS + 7200,
         scopeFingerprint: '0xscope1',
+        executionCredentialRef: AGENT_1,
       },
     ],
   }

@@ -848,6 +848,17 @@ svg.vf-token-icon {
   .pc-wallet-main {
     padding-inline: 16px;
   }
+
+  /* At the 320px floor, the approve label's max-content width cannot share one row with
+     Cancel. Stack both real actions while retaining the same full-width control treatment. */
+  .pc-wallet-approval-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .pc-wallet-approval-actions .pc-button {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 @media (hover: none), (pointer: coarse) {

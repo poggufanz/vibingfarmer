@@ -9,6 +9,7 @@ vi.mock('../src/base/deploymentFacts.js', async () => {
 import { reserveUnwind, postUnwindAttach, pollUnwindStatus } from '../src/base/relayerClient.js'
 import { buildUnwindCalls } from '../src/base/withdrawBatch.js'
 import { maxAtRisk } from '../src/strategy/permissionScope.js'
+import { toPermissionDecisionView } from '../src/strategy/reusePreflight.js'
 
 import {
   CORE_CAPTURE_PROJECTS,
@@ -518,6 +519,29 @@ describe('Core Pocket Crew visual fixture contract', () => {
         })
       ).not.toThrow()
     }
+  })
+
+  it('keeps reuse permission evidence source-shaped while stripping the credential reference from the view', () => {
+    const decision = buildCoreStrategyFixture('permission-reuse-verified').createProps()
+      .permissionDecision
+    const agent = decision.agents[0]
+
+    expect(agent).toMatchObject({
+      allocationId: `${CORE_FIXTURE_RUN}:deposit:0`,
+      workerId: `${CORE_FIXTURE_RUN}:deposit:0`,
+      agentAddress: CORE_FIXTURE_ADDRESSES.agentA,
+      scopeFingerprint: '0xscope1',
+      executionCredentialRef: CORE_FIXTURE_ADDRESSES.agentA,
+    })
+    expect(agent.scopeExpiry).toBe(Math.floor(CORE_FIXTURE_CLOCK.nowMs / 1000) + 7200)
+
+    const view = toPermissionDecisionView(decision)
+    expect(view.agents[0]).toMatchObject({
+      workerId: `${CORE_FIXTURE_RUN}:deposit:0`,
+      scopeFingerprint: '0xscope1',
+    })
+    expect(view.agents[0].executionCredentialRef).toBeUndefined()
+    expect(JSON.stringify(view)).not.toContain('executionCredentialRef')
   })
 
   it('keeps canonical ledger and block anchors as decimal strings at fixture source boundaries', () => {

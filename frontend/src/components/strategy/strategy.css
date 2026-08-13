@@ -782,8 +782,7 @@
   border-bottom: 0;
 }
 
-.pc-start-stage .pc-agent-mark,
-.pc-start-stage .pc-start-agent-avatar {
+.pc-start-stage .pc-agent-mark {
   margin-top: var(--pc-space-1);
 }
 
