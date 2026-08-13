@@ -996,14 +996,21 @@ describe('Strategy journey — shared crew persona identity', () => {
     ref.current.feedEvent('reuse-confirmed', {
       runId: 'run-1',
       agentAddresses: ['CAGENT1'],
-      allocations: [
-        {
-          allocationId: 'run-1:deposit:0',
-          agentAddress: 'CAGENT1',
-        },
-      ],
     })
     await waitFor(() => expect(ref.current.getState().moment).toBe('start'))
+
+    const pendingStartRow = document.querySelector('.pc-agent-lane')
+    expect(pendingStartRow.getAttribute('data-agent-address')).toBeNull()
+    expect(within(pendingStartRow).getByText('Agent identity unavailable')).toBeTruthy()
+
+    ref.current.feedEvent('worker-queued', {
+      runId: 'run-1',
+      allocationId: 'run-1:deposit:0',
+      agentId: 'worker-0',
+      agent: 'CAGENT1',
+      queueIndex: 0,
+    })
+    await waitFor(() => expect(screen.getByText('CAGENT1')).toBeTruthy())
     const startRow = screen.getByText('CAGENT1').closest('[data-agent-address]')
     expect(within(startRow).getByText('Mochi')).toBeTruthy()
     const startMark = within(startRow).getByRole('img', { name: 'Existing agent, Active' })
