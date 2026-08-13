@@ -15,6 +15,35 @@ import { Resvg } from '@resvg/resvg-js'
 const here = dirname(fileURLToPath(import.meta.url))
 const publicDir = resolve(here, '../public')
 const brandDir = resolve(publicDir, 'brand')
+const manifestPath = resolve(brandDir, 'assets.manifest.json')
+
+// Validate the existing manifest before rendering or writing any derived asset. A syntactically
+// valid JSON value is still invalid here unless it is the manifest array we merge below.
+const existing = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : []
+if (!Array.isArray(existing)) {
+  throw new Error(`brand assets build failed — manifest must be an array: ${manifestPath}`)
+}
+
+const seenManifestPaths = new Set()
+for (const [index, entry] of existing.entries()) {
+  const entryPath = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry.path : null
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error(`brand assets build failed — manifest entry ${index} must be an object`)
+  }
+  if (
+    !Object.prototype.hasOwnProperty.call(entry, 'path') ||
+    typeof entry.path !== 'string' ||
+    entry.path.trim().length === 0
+  ) {
+    throw new Error(
+      `brand assets build failed — manifest entry ${entryPath ?? index} needs a non-empty string path`
+    )
+  }
+  if (seenManifestPaths.has(entry.path)) {
+    throw new Error(`brand assets build failed — duplicate manifest path: ${entry.path}`)
+  }
+  seenManifestPaths.add(entry.path)
+}
 
 // Every asset in this wave was authored/rendered on the same date and never
 // fetched from a network source — see CLAUDE.md's Task 3 binding decisions.
@@ -84,8 +113,8 @@ writeFileSync(resolve(publicDir, 'vibing_farmer.logo.png'), readBrand('icon-512.
 // This script only knows how to author/render the Vibing Farmer mark family
 // below — it must NOT clobber manifest entries for assets it doesn't own
 // (e.g. the hand-recorded third-party network marks under public/brand/networks/,
-// added by a later task). Regenerate the entries this script owns, then merge
-// in any existing entries whose path isn't one of them, preserved verbatim.
+// added by a later task). Recompute only the bytes' hashes for generated entries,
+// preserve their existing provenance, then merge unrelated entries verbatim.
 const MANIFEST_ENTRIES = [
   { path: '/brand/vibing-farmer-mark.svg', kind: 'mark' },
   { path: '/brand/vibing-farmer-mark-forest.svg', kind: 'mark-forest' },
@@ -107,18 +136,25 @@ const MANIFEST_ENTRIES = [
   { path: '/brand/social-card.png', kind: 'social-card' },
 ]
 
-const generated = MANIFEST_ENTRIES.map(({ path, kind }) => ({
-  path,
-  kind,
-  sha256: sha256(readFileSync(resolve(publicDir, path.replace(/^\//, '')))),
-  source: SOURCE,
-  sourceUrl: '',
-  retrievedAt: RETRIEVED_AT,
-  trademarkTreatment: TRADEMARK_TREATMENT,
-}))
+const existingByPath = new Map(existing.map((entry) => [entry.path, entry]))
 
-const manifestPath = resolve(brandDir, 'assets.manifest.json')
-const existing = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : []
+const generated = MANIFEST_ENTRIES.map(({ path, kind }) => {
+  const previous = existingByPath.get(path)
+  return {
+    // Preserve every existing provenance field (and any future additive metadata) for generated
+    // assets. The only value this build owns is the content hash, which must follow the bytes it
+    // just rendered.
+    ...(previous ?? {}),
+    path,
+    kind: previous?.kind ?? kind,
+    sha256: sha256(readFileSync(resolve(publicDir, path.replace(/^\//, '')))),
+    source: previous?.source ?? SOURCE,
+    sourceUrl: previous?.sourceUrl ?? '',
+    retrievedAt: previous?.retrievedAt ?? RETRIEVED_AT,
+    trademarkTreatment: previous?.trademarkTreatment ?? TRADEMARK_TREATMENT,
+  }
+})
+
 const generatedPaths = new Set(generated.map((entry) => entry.path))
 const preserved = existing.filter((entry) => !generatedPaths.has(entry.path))
 

@@ -83,9 +83,7 @@ describe('WalletAdvanced — direct vault deposit (Passkey-only, gated on real s
   it('labels the section with the exact required copy', () => {
     render(<WalletAdvanced account={C_ACCOUNT} onBack={() => {}} onCheckEligibility={() => {}} />)
     expect(
-      screen.getByRole('heading', {
-        name: 'Advanced direct vault action — not the Pocket Crew route',
-      })
+      screen.getByRole('heading', { name: 'Direct vault deposit (single wallet account)' })
     ).toBeTruthy()
   })
 
@@ -105,10 +103,10 @@ describe('WalletAdvanced — direct vault deposit (Passkey-only, gated on real s
     expect(onDepositAmountChange).toHaveBeenCalledWith('5')
   })
 
-  it('fires onCheckEligibility/onEnableDeposits from their own buttons', () => {
+  it('fires onCheckEligibility and Enable deposits only after eligibility is eligible', () => {
     const onCheckEligibility = vi.fn()
     const onEnableDeposits = vi.fn()
-    render(
+    const { rerender } = render(
       <WalletAdvanced
         account={C_ACCOUNT}
         onBack={() => {}}
@@ -118,9 +116,47 @@ describe('WalletAdvanced — direct vault deposit (Passkey-only, gated on real s
       />
     )
     fireEvent.click(screen.getByRole('button', { name: /check eligibility/i }))
+    rerender(
+      <WalletAdvanced
+        account={C_ACCOUNT}
+        onBack={() => {}}
+        depositAmount="5"
+        onCheckEligibility={onCheckEligibility}
+        onEnableDeposits={onEnableDeposits}
+        depositVerdict={{ allow: true, reasons: [] }}
+      />
+    )
     fireEvent.click(screen.getByRole('button', { name: /enable deposits/i }))
     expect(onCheckEligibility).toHaveBeenCalledTimes(1)
     expect(onEnableDeposits).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps Enable deposits disabled while eligibility is unknown or loading', () => {
+    const { rerender } = render(
+      <WalletAdvanced
+        account={C_ACCOUNT}
+        onBack={() => {}}
+        depositAmount="5"
+        onCheckEligibility={() => {}}
+        onEnableDeposits={() => {}}
+        depositVerdict={null}
+      />
+    )
+    expect(screen.getByRole('button', { name: /enable deposits/i }).disabled).toBe(true)
+
+    rerender(
+      <WalletAdvanced
+        account={C_ACCOUNT}
+        onBack={() => {}}
+        depositAmount="5"
+        onCheckEligibility={() => {}}
+        onEnableDeposits={() => {}}
+        depositVerdict={{ status: 'loading' }}
+      />
+    )
+    expect(screen.getByTestId('verdict').textContent).toBe('Unavailable')
+    expect(screen.getByRole('button', { name: /enable deposits/i }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: /approve with face id/i }).disabled).toBe(true)
   })
 
   it('renders the eligibility verdict via ApproveOverlay and hides Check eligibility once a verdict exists', () => {
@@ -138,6 +174,8 @@ describe('WalletAdvanced — direct vault deposit (Passkey-only, gated on real s
     )
     expect(screen.queryByRole('button', { name: /^check eligibility$/i })).toBeNull()
     expect(screen.getByTestId('verdict').textContent).toMatch(/eligible/i)
+    expect(screen.getByText(/can start a transaction ceremony/i)).toBeTruthy()
+    expect(screen.getByText(/may move funds/i)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /approve with face id/i }))
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
     expect(onApproveDeposit).toHaveBeenCalledTimes(1)
@@ -186,6 +224,22 @@ describe('WalletAdvanced — recovery signer (Passkey-only, gated on real suppor
   it('shows the VF-custodied recovery honesty label', () => {
     render(<WalletAdvanced account={C_ACCOUNT} onBack={() => {}} onAddRecoverySigner={() => {}} />)
     expect(screen.getByTestId('honesty-recovery')).toBeTruthy()
+    expect(screen.getByTestId('recovery-signer-status').textContent).toBe(
+      'Recovery signer: Unavailable'
+    )
+  })
+
+  it('does not expose C-only direct deposit or recovery controls to Standard', () => {
+    render(
+      <WalletAdvanced
+        account={G_ACCOUNT}
+        onBack={() => {}}
+        onCheckEligibility={() => {}}
+        onAddRecoverySigner={() => {}}
+      />
+    )
+    expect(screen.queryByTestId('advanced-direct-deposit')).toBeNull()
+    expect(screen.queryByTestId('advanced-recovery-signer')).toBeNull()
   })
 })
 
@@ -204,14 +258,44 @@ describe('WalletAdvanced — recovery/import for the Standard (G) account model,
       screen.getByRole('heading', { name: 'Restore a different Standard wallet' })
     ).toBeTruthy()
   })
+
+  it('does not expose G-only import to Passkey', () => {
+    render(<WalletAdvanced account={C_ACCOUNT} onBack={() => {}} onImportWallet={() => {}} />)
+    expect(screen.queryByTestId('advanced-import')).toBeNull()
+  })
 })
 
 describe('WalletAdvanced — standalone agent-signer preview: structurally inert, always present', () => {
   it('renders the exact required warning', () => {
     render(<WalletAdvanced account={C_ACCOUNT} onBack={() => {}} />)
+    expect(screen.getAllByText('Preview only: this cap policy is not deployed.')).toHaveLength(3)
+  })
+
+  it('keeps direct deposit outside Pocket Crew and agent preview read-only', () => {
+    render(<WalletAdvanced account={C_ACCOUNT} onBack={() => {}} onCheckEligibility={() => {}} />)
+    expect(screen.getByText(/direct vault deposit \(single wallet account\)/i)).toBeTruthy()
+    expect(screen.getAllByText('Preview only: this cap policy is not deployed.')).toHaveLength(3)
+    const preview = screen.getByTestId('advanced-agent-preview')
     expect(
-      screen.getByText('Preview only — the required on-chain cap policy is not deployed')
-    ).toBeTruthy()
+      within(preview).queryByRole('button', { name: /confirm|submit|enable preview/i })
+    ).toBeNull()
+    expect(preview.querySelectorAll('input, textarea, select')).toHaveLength(0)
+  })
+
+  it('shows every preview policy fact with the exact adjacent warning', () => {
+    render(<WalletAdvanced account={C_ACCOUNT} onBack={() => {}} />)
+    const preview = screen.getByTestId('advanced-agent-preview')
+    expect(within(preview).getByText(/scope: vault-only agent spending/i)).toBeTruthy()
+    expect(within(preview).getByText(/cap: user-selected spending ceiling/i)).toBeTruthy()
+    expect(within(preview).getByText(/expiry: seven days/i)).toBeTruthy()
+    expect(
+      within(preview).getAllByText('Preview only: this cap policy is not deployed.')
+    ).toHaveLength(3)
+  })
+
+  it('keeps visible Advanced copy free of em/en-dash separators', () => {
+    const { container } = render(<WalletAdvanced account={C_ACCOUNT} onBack={() => {}} />)
+    expect(container.textContent).not.toMatch(/[—–]/)
   })
 
   it('renders no input and no button anywhere inside the preview (no Confirm/submit control)', () => {

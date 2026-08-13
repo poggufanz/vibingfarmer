@@ -12,6 +12,7 @@
 // -- My Money Task 13 does) still gets an honest "Unavailable" for each, never a silent gap.
 import { VenueTruth } from '../pocket/Primitives.jsx'
 import { formatUtcMs } from './formatUtc.js'
+import { toLiveVenueView } from '../../core/coreRouteAdapters.js'
 
 const KEEPER_LABEL = Object.freeze({
   healthy: 'Healthy',
@@ -26,10 +27,47 @@ export function HowMoneyWorks({ keeper, strategyConfig, riskWatch, yieldInfo, ve
   const riskWatchLabel =
     riskWatch?.label && riskWatch.label !== 'unavailable' ? riskWatch.label : 'Unavailable'
 
-  const showApy =
-    yieldInfo?.state === 'live' &&
-    typeof yieldInfo.apy === 'number' &&
-    Number.isFinite(yieldInfo.apy)
+  // A route-provided model yield is authoritative when present. Direct callers may instead
+  // supply the source-owned nested venue.yield record; flat APY fields are never consulted.
+  const effectiveYield =
+    yieldInfo !== undefined
+      ? yieldInfo
+      : venue && typeof venue === 'object'
+        ? venue.yield
+        : undefined
+  const venueInput =
+    venue && typeof venue === 'object'
+      ? { ...venue, yield: effectiveYield }
+      : typeof venue === 'string'
+        ? { venueKind: 'stellar-live', yield: effectiveYield }
+        : { venueKind: undefined, yield: effectiveYield }
+  const venueView = toLiveVenueView(venueInput)
+  const showApy = venueView.state === 'live'
+  // A missing venue source is not evidence of the Stellar route. Preserve the existing
+  // unavailable/unknown presentation for explicit `none` yield instead of inventing Base or
+  // claiming Autofarm/Blend. A live, source-backed yield still uses the established Stellar copy.
+  const sourceVenueKind =
+    venue && typeof venue === 'object' && typeof venue.venueKind === 'string'
+      ? venue.venueKind
+      : null
+  const isExplicitBaseVenue =
+    venue &&
+    typeof venue === 'object' &&
+    (venue.venueKind === 'base-custody-proxy' || venue.chain === 'base')
+  const isExplicitStellarVenue =
+    typeof venue === 'string' ||
+    (venue && typeof venue === 'object' && venue.venueKind === 'stellar-live')
+  const venueKind = isExplicitBaseVenue
+    ? 'base-proxy'
+    : isExplicitStellarVenue
+      ? 'stellar-live'
+      : sourceVenueKind
+        ? 'unknown'
+        : venueView.state === 'none'
+          ? 'base-proxy'
+          : venueView.state === 'live'
+            ? 'stellar-live'
+            : 'unknown'
 
   return (
     <section
@@ -42,9 +80,29 @@ export function HowMoneyWorks({ keeper, strategyConfig, riskWatch, yieldInfo, ve
       </header>
       <div>
         <VenueTruth
-          kind="stellar-live"
-          venue={venue || 'Autofarm Vault'}
-          apy={showApy ? { state: 'live', value: yieldInfo.apy } : undefined}
+          kind={venueKind}
+          venue={typeof venue === 'string' ? venue : venue?.name || 'Autofarm Vault'}
+          networkContext={
+            venueKind === 'stellar-live'
+              ? {
+                  hostNetworkId: 'stellar-testnet',
+                  sourceNetworkId: 'stellar-testnet',
+                  destinationNetworkId: 'stellar-testnet',
+                  custodyNetworkId: 'stellar-testnet',
+                  transitState: 'none',
+                }
+              : undefined
+          }
+          apy={
+            showApy
+              ? {
+                  state: 'live',
+                  value: venueView.apy,
+                  source: venueView.source,
+                  freshness: venueView.checkedAt,
+                }
+              : undefined
+          }
         />
 
         <p>Keeper automation: {keeperLabel}</p>

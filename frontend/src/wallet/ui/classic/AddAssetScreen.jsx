@@ -1,16 +1,15 @@
 // frontend/src/wallet/ui/classic/AddAssetScreen.jsx
 // VF Wallet Task 11 -- recomposed onto the shared WalletShell/pc-* primitives (WalletShell.jsx
-// owns the CSS), the same treatment Task 9 gave BackupScreen/ImportScreen: dropped the vf-*
-// classes and every inline style, no behavior change. classifyTrustAsset/KNOWN_ASSETS wiring
-// (trustline.js) is untouched. Reached from Home's "Add asset" action, now wrapped in a real
-// WalletShell by popup.jsx instead of the old unstyled Acid Yield Shell (pc-* classes have no
-// declarations at all inside that old Shell's stylesheet -- this component would otherwise render
-// unstyled). No address/hash is ever rendered as a static block here (the issuer is a live,
-// scrollable <input>, not a text node), so the .pc-address-full overflow guard does not apply.
+// owns the CSS), the same treatment Task 9 gave BackupScreen/ImportScreen: dropped the retired
+// shell classes and every inline style, no behavior change. classifyTrustAsset/KNOWN_ASSETS wiring
+// (trustline.js) is untouched. Reached from Home's "Add asset" action and wrapped by popup.jsx
+// in the shared WalletShell. No address/hash is ever rendered as a static block here (the issuer
+// is a live, scrollable <input>, not a text node), so the .pc-address-full overflow guard does not
+// apply.
 import { useState } from 'react'
 import { KNOWN_ASSETS, classifyTrustAsset } from '../../trustline.js'
 
-export default function AddAssetScreen({ onAddAsset, busy, error }) {
+export default function AddAssetScreen({ onAddAsset, busy, error, success }) {
   const [code, setCode] = useState('')
   const [issuer, setIssuer] = useState('')
   const cls = code.trim() || issuer.trim() ? classifyTrustAsset(code, issuer) : { ok: false }
@@ -26,11 +25,7 @@ export default function AddAssetScreen({ onAddAsset, busy, error }) {
       </p>
 
       {KNOWN_ASSETS.length > 0 && (
-        // ponytail: a plain flex-wrap row, not a new pc-* class -- KNOWN_ASSETS is one quick-fill
-        // chip today and .pc-money-actions (the contract's wrapping-button-row class) is not
-        // ported into the wallet's manifest (My Money-only, grep-confirmed zero wallet usage).
-        // Every value below is a ported spacing token, never a one-off number.
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--pc-space-2)' }}>
+        <div className="pc-asset-quick-actions">
           {KNOWN_ASSETS.map((a) => (
             <button
               key={`${a.code}:${a.issuer}`}
@@ -77,12 +72,13 @@ export default function AddAssetScreen({ onAddAsset, busy, error }) {
       <p className="pc-field-help">Adding an asset reserves 0.5 XLM in your account.</p>
 
       {error && <p className="pc-field-error">{error}</p>}
+      {success && <p className="pc-field-success">{success}</p>}
 
       <button
         type="button"
         className="pc-button pc-button--primary"
         disabled={busy || !ok}
-        onClick={() => onAddAsset(cls.code, cls.issuer)}
+        onClick={() => onAddAsset?.(cls.code, cls.issuer)}
       >
         {busy ? 'Adding…' : 'Add asset'}
       </button>

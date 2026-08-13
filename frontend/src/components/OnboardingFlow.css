@@ -1,0 +1,236 @@
+/* Onboarding-only composition. Shared colour, type, surface, and status geometry stay in
+   Pocket Crew Foundation; this file owns the route's two-screen arrangement. */
+
+.onb-screen {
+  min-height: 100vh;
+  overflow-y: auto;
+  display: grid;
+  place-items: center;
+  padding: var(--pc-space-10) var(--pc-space-8);
+}
+
+.onb-split {
+  width: 100%;
+  max-width: 60rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(22rem, 0.95fr);
+  gap: var(--pc-space-10);
+  align-items: center;
+}
+
+.onb-left {
+  text-align: left;
+}
+
+.onb-h1 {
+  font-size: clamp(30px, 2.6vw, 46px);
+  line-height: 1.04;
+  letter-spacing: -0.025em;
+  margin-top: var(--pc-space-5);
+}
+
+.onb-sub {
+  font-size: 15px;
+  margin-top: var(--pc-space-3);
+  max-width: 34ch;
+}
+
+.onb-route {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-5);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+}
+
+.onb-route-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  color: var(--pc-ink);
+}
+
+.onb-route-copy strong {
+  font-weight: 600;
+}
+
+.onb-cta {
+  margin-top: var(--pc-space-6);
+}
+
+.onb-foot {
+  margin-top: var(--pc-space-4);
+  line-height: 1.7;
+}
+
+.onb-link {
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-strong);
+  padding-bottom: 1px;
+}
+
+.onb-link:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.onb-sig {
+  margin-bottom: var(--pc-space-4);
+  border-bottom: 1px solid var(--pc-line);
+  padding-bottom: var(--pc-space-4);
+}
+
+.onb-evidence {
+  display: grid;
+  gap: var(--pc-space-3);
+  min-width: 0;
+  padding: var(--pc-space-4);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background: var(--bg-card);
+}
+
+.onb-evidence-heading,
+.onb-evidence-venue {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--pc-space-3);
+}
+
+.onb-evidence-heading {
+  font-size: var(--pc-type-body-small);
+  font-weight: 600;
+}
+
+.onb-evidence-network,
+.onb-evidence-venue span,
+.onb-vault-row-state {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 400;
+}
+
+.onb-evidence-venue {
+  padding-bottom: var(--pc-space-3);
+  border-bottom: 1px solid var(--pc-line);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+.onb-evidence-venue strong {
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body-small);
+  font-weight: 500;
+}
+
+.onb-notice-copy {
+  display: grid;
+  gap: var(--pc-space-2);
+  padding: var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+.onb-notice-copy p {
+  margin: 0;
+}
+
+.onb-vaults {
+  display: grid;
+  gap: 0;
+  margin-top: var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  overflow: hidden;
+}
+
+.onb-vault-row,
+.onb-vault-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+  min-height: 44px;
+  padding: var(--pc-space-3) var(--pc-space-4);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body-small);
+}
+
+.onb-vault-row + .onb-vault-row,
+.onb-vault-empty {
+  border-top: 1px solid var(--pc-line);
+}
+
+.onb-vault-empty {
+  color: var(--pc-muted);
+}
+
+.onb-how-content {
+  width: 100%;
+  max-width: 34rem;
+  text-align: left;
+}
+
+.onb-how-title {
+  font-size: var(--pc-type-section);
+}
+
+.onb-how-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pc-space-5);
+  margin: var(--pc-space-8) 0;
+}
+
+.onb-how-step {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pc-space-4);
+}
+
+.onb-how-step-number {
+  flex: none;
+  min-width: 22px;
+  font-size: var(--pc-type-label);
+  font-weight: 600;
+}
+
+.onb-how-step-title {
+  font-size: var(--pc-type-body-small);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.onb-how-step-sub {
+  margin-top: var(--pc-space-2);
+  font-size: var(--pc-type-technical);
+}
+
+.onb-how-actions {
+  gap: var(--pc-space-3);
+}
+
+@media (max-width: 820px) {
+  .onb-screen {
+    padding-inline: var(--pc-space-4);
+  }
+
+  .onb-split {
+    grid-template-columns: 1fr;
+    gap: var(--pc-space-6);
+    max-width: 29rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onb-screen,
+  .onb-screen * {
+    scroll-behavior: auto;
+  }
+}

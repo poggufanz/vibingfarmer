@@ -15,6 +15,12 @@
 import { MoneyFigure, StatusNotice, TechnicalDetails } from '../pocket/Primitives.jsx'
 import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
+import {
+  formatCoreAmount,
+  normalizeCoreAmount,
+  toFactView,
+  toFreshnessView,
+} from '../../core/coreRouteAdapters.js'
 
 // Same real-contract -> human-symbol map ProtectStage.jsx uses (fix loop 1 -- C1 there): a
 // `token` field on a canonical amount is a Stellar CONTRACT ADDRESS in production, never a
@@ -32,8 +38,45 @@ function tokenSymbol(token) {
   return token
 }
 
-function unitsToDisplay(units, decimals) {
-  return Number(BigInt(units)) / 10 ** decimals
+function receiptAmount(units, decimals, token) {
+  try {
+    return normalizeCoreAmount({
+      token: tokenSymbol(token),
+      units: BigInt(units).toString(),
+      decimals,
+    })
+  } catch {
+    return null
+  }
+}
+
+function receiptAmountText(units, decimals, token) {
+  const amount = receiptAmount(units, decimals, token)
+  return amount ? formatCoreAmount(amount) : 'Amount unavailable'
+}
+
+function terminalCustodyLocationFor(allocation) {
+  const context = allocation?.networkContext
+  if (!context || typeof context !== 'object') return null
+  if (context.destinationNetwork === 'base-sepolia') return 'base-proxy'
+  if (
+    context.executionNetwork === 'stellar-testnet' &&
+    (context.destinationNetwork == null || context.destinationNetwork === 'stellar-testnet')
+  ) {
+    return 'stellar-vault'
+  }
+  return null
+}
+
+function hasReceiptProof(allocation) {
+  const terminalLocation = terminalCustodyLocationFor(allocation)
+  return (
+    terminalLocation != null &&
+    allocation?.executionStatus === 'succeeded' &&
+    allocation.custody?.confirmed === true &&
+    allocation.custody?.source === 'receipt' &&
+    allocation.custody?.location === terminalLocation
+  )
 }
 
 /**
@@ -42,8 +85,9 @@ function unitsToDisplay(units, decimals) {
  * Never mixes two different tokens' units in one sum: a mixed Stellar (7dp) + Base (6dp) run's
  * units are not the same integer scale, so each (token,decimals) pair gets its own row.
  *
- * - `deposited`  executionStatus 'succeeded' (custody stellar-vault, or base-proxy for a bridged
- *                child -- both are the honest "arrived where it was supposed to" outcome).
+ * - `deposited`  executionStatus 'succeeded' with receipt-sourced confirmed custody (stellar-vault,
+ *                or base-proxy for a bridged child -- both are the honest "arrived where it was
+ *                supposed to" outcome). A succeeded outcome without that proof stays unknown.
  * - `inTransit`  executionStatus 'pending' (dispatchSummary.js's branchStatus marks a Base branch
  *                with any pending child 'in-transit' -- the CCTP job is still running server-side;
  *                this is the reconciliation-level mirror of that same fact, never resolved by a
@@ -62,7 +106,7 @@ function unitsToDisplay(units, decimals) {
  *                (`not-started`/`unknown` executionStatus) -- the conservative bucket. Never claim
  *                custody this receipt cannot prove.
  * @param {Array} allocations DispatchReceiptV1['allocations'] (AllocationOutcomeV1[])
- * @returns {Array<{token:string, decimals:number, deposited:bigint, inTransit:bigint, held:bigint, unmoved:bigint, total:bigint}>}
+ * @returns {Array<{token:string, decimals:number, deposited:bigint, confirmed:bigint, inTransit:bigint, held:bigint, unmoved:bigint, unknown:bigint, total:bigint}>}
  */
 export function reconcileAllocations(allocations) {
   const byGroup = new Map()
@@ -74,27 +118,47 @@ export function reconcileAllocations(allocations) {
         token: a.amount.token,
         decimals: a.amount.decimals,
         deposited: 0n,
+        confirmed: 0n,
         inTransit: 0n,
         held: 0n,
         unmoved: 0n,
+        unknown: 0n,
         total: 0n,
       })
     const units = BigInt(a.amount.units)
     row.total += units
-    if (a.executionStatus === 'succeeded') row.deposited += units
-    else if (a.executionStatus === 'pending') row.inTransit += units
+    if (a.executionStatus === 'succeeded' && hasReceiptProof(a)) {
+      row.deposited += units
+      row.confirmed += units
+    } else if (a.executionStatus === 'succeeded') {
+      row.unmoved += units
+      row.unknown += units
+    } else if (a.executionStatus === 'pending') row.inTransit += units
     else if (a.custody?.location === 'agent') row.held += units
-    else row.unmoved += units
+    else {
+      row.unmoved += units
+      if (!['failed', 'cancelled'].includes(a.executionStatus)) row.unknown += units
+    }
     byGroup.set(key, row)
   }
   return [...byGroup.values()]
 }
 
-// A "nominal total" collapses every token group into one display number under the assumption
-// every group is a 1:1 stablecoin -- exact only when explicitly labeled that way (Step 3's rule).
-// Display-only float math; never touches the bigint reconciliation above.
+// A "nominal total" collapses every token group into one display amount under the assumption every
+// group is a 1:1 stablecoin -- exact only when explicitly labeled that way (Step 3's rule). Groups
+// may use different decimal scales, so each is promoted to the largest scale before the BigInt sum.
 function nominalTotal(groups) {
-  return groups.reduce((sum, g) => sum + unitsToDisplay(g.total, g.decimals), 0)
+  try {
+    if (groups.some((group) => group.unknown > 0n)) return 'Unavailable'
+    const decimals = groups.reduce((max, group) => Math.max(max, group.decimals), 0)
+    const units = groups.reduce(
+      (sum, group) => sum + group.total * 10n ** BigInt(decimals - group.decimals),
+      0n
+    )
+    return formatCoreAmount({ token: 'USDC', units: units.toString(), decimals })
+  } catch {
+    return 'Unavailable'
+  }
 }
 
 function explorerTxUrl(allocation) {
@@ -104,10 +168,6 @@ function explorerTxUrl(allocation) {
   return isBase
     ? `https://sepolia.basescan.org/tx/${allocation.txHash}`
     : `https://stellar.expert/explorer/testnet/tx/${allocation.txHash}`
-}
-
-function explorerAccountUrl(address) {
-  return `https://stellar.expert/explorer/testnet/account/${address}`
 }
 
 // Task 6 chunk C2 -- projects an allocation's own custody evidence AS EVIDENCE, rather than the
@@ -146,16 +206,91 @@ function custodyEvidenceText(custody) {
   const amountText =
     custody.amount == null
       ? ''
-      : `, ${unitsToDisplay(custody.amount.units, custody.amount.decimals)} ${tokenSymbol(custody.amount.token)}`
+      : `, ${receiptAmountText(custody.amount.units, custody.amount.decimals, custody.amount.token)}`
   return `custody: ${custody.location}${amountText} (${provenance})`
+}
+
+function receiptFactView(receipt, allocations, runMatches) {
+  if (!runMatches) return null
+  const evidence = allocations.find(
+    (allocation) => allocation.custody?.source && allocation.custody?.checkedAt != null
+  )
+  const source = receipt.source || receipt.receiptSource || evidence?.custody?.source
+  const checkedAt = receipt.checkedAt ?? receipt.observedAt ?? evidence?.custody?.checkedAt
+  if (!source || checkedAt == null) return null
+  try {
+    const fact = toFactView({
+      phase: 'confirmed',
+      state: allocations.length > 0 && allocations.every(hasReceiptProof) ? 'confirmed' : 'current',
+      source,
+      checkedAt,
+    })
+    return toFreshnessView(fact).state === 'unavailable' ? null : fact
+  } catch {
+    return null
+  }
+}
+
+function allocationAgentAddress(allocation) {
+  const evidence = allocation?.evidence
+  if (!evidence || typeof evidence !== 'object') return null
+  if (
+    typeof allocation?.allocationId !== 'string' ||
+    allocation.allocationId.trim().length === 0 ||
+    evidence.allocationId !== allocation.allocationId
+  ) {
+    return null
+  }
+  const address = evidence.agentAddress
+  return typeof address === 'string' && address.trim().length > 0 ? address.trim() : null
+}
+
+function isRealCheckedAt(value) {
+  return (
+    (typeof value === 'number' && Number.isFinite(value)) ||
+    (typeof value === 'string' && value.trim().length > 0)
+  )
+}
+
+function networkEvidence(allocation) {
+  const context = allocation?.networkContext
+  if (!context || typeof context !== 'object') return []
+  return [
+    ['Execution network', context.executionNetwork],
+    ['Source network', context.sourceNetwork],
+    ['Destination network', context.destinationNetwork],
+    ['Current custody network', context.currentCustodyNetwork],
+    ['Transit', context.transit],
+  ].filter(([, value]) => value !== null && value !== undefined && value !== '')
 }
 
 export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDeposit, onViewCrew }) {
   const allocations = receipt.allocations || []
-  const groups = reconcileAllocations(allocations)
-  const effectiveRunId = runId || receipt.runId
+  const runMatches =
+    typeof runId === 'string' &&
+    runId.trim().length > 0 &&
+    typeof receipt.runId === 'string' &&
+    receipt.runId.trim().length > 0 &&
+    runId === receipt.runId
+  const displayAllocations = runMatches
+    ? allocations
+    : allocations.map((allocation) => ({
+        ...allocation,
+        executionStatus: 'unknown',
+        custody: { ...allocation.custody, location: 'unknown', confirmed: false },
+      }))
+  const groups = reconcileAllocations(displayAllocations)
+  const effectiveRunId = runId || receipt.runId || 'Unavailable'
   const anyFailed = allocations.some((a) => a.executionStatus === 'failed')
   const anyPending = allocations.some((a) => a.executionStatus === 'pending')
+  const succeededWithoutProof = allocations.some(
+    (allocation) => allocation.executionStatus === 'succeeded' && !hasReceiptProof(allocation)
+  )
+  const anyUnknown =
+    !runMatches ||
+    succeededWithoutProof ||
+    allocations.some((a) => !['succeeded', 'failed', 'pending'].includes(a.executionStatus))
+  const receiptFact = receiptFactView(receipt, allocations, runMatches)
   // Optional and separate from the deposit reconciliation above (Step 1's rule: "optional
   // attestation is separate and counts its own confirmation") -- only rendered when a real
   // allocation actually carries attestation evidence (dispatchSummary.js's safeEvidence() only
@@ -166,23 +301,31 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
     <div className="pc-dominant pc-dominant--owned pc-strategy-receipt">
       <h2>Your receipt</h2>
 
-      {anyFailed && (
+      {anyUnknown && (
+        <StatusNotice state="warning" title="Receipt unavailable">
+          <p>Some allocation outcomes could not be reconciled from a trusted receipt.</p>
+          <p>Next safe action: Check the latest ledger receipt before retrying.</p>
+        </StatusNotice>
+      )}
+      {!anyUnknown && anyFailed && (
         <StatusNotice state="warning" title="Some agents did not complete">
           <p>
             Agents that already finished stay confirmed -- nothing already deposited was undone.
           </p>
+          <p>Next safe action: Review held or unmoved allocations before retrying.</p>
         </StatusNotice>
       )}
-      {!anyFailed && !anyPending && allocations.length > 0 && (
+      {!anyUnknown && !anyFailed && !anyPending && allocations.length > 0 && (
         <StatusNotice state="success" title="Every agent completed">
           <p>Every planned allocation reached its destination.</p>
         </StatusNotice>
       )}
-      {!anyFailed && anyPending && (
+      {!anyUnknown && !anyFailed && anyPending && (
         <StatusNotice state="info" title="Still in transit">
           <p>
             The rest is still moving. This page will keep reflecting the real, reconciled state.
           </p>
+          <p>Next safe action: Wait for the in-transit receipt before retrying.</p>
         </StatusNotice>
       )}
 
@@ -192,28 +335,25 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
             <div>
               <p>{tokenSymbol(g.token)}</p>
               <MoneyFigure
-                state="current"
-                value={unitsToDisplay(g.deposited, g.decimals)}
-                currency={tokenSymbol(g.token)}
+                state={g.deposited > 0n ? 'current' : 'unavailable'}
+                amount={g.deposited > 0n ? receiptAmount(g.deposited, g.decimals, g.token) : null}
               />
-              <p>Deposited</p>
+              {g.deposited > 0n && <p>Deposited</p>}
+              {g.confirmed > 0n && <p>Confirmed</p>}
               {g.inTransit > 0n && (
-                <p>
-                  In transit: {unitsToDisplay(g.inTransit, g.decimals)} {tokenSymbol(g.token)}
-                </p>
+                <p>In transit: {receiptAmountText(g.inTransit, g.decimals, g.token)}</p>
               )}
-              {g.held > 0n && (
-                <p>
-                  Held: {unitsToDisplay(g.held, g.decimals)} {tokenSymbol(g.token)}
-                </p>
-              )}
-              {g.unmoved > 0n && (
-                <p>
-                  Unmoved: {unitsToDisplay(g.unmoved, g.decimals)} {tokenSymbol(g.token)}
-                </p>
+              {g.held > 0n && <p>Held: {receiptAmountText(g.held, g.decimals, g.token)}</p>}
+              {g.unknown > 0n ? (
+                <p>Reconciliation unavailable: Unavailable</p>
+              ) : (
+                g.unmoved > 0n && (
+                  <p>Money did not move: {receiptAmountText(g.unmoved, g.decimals, g.token)}</p>
+                )
               )}
               <p>
-                Total: {unitsToDisplay(g.total, g.decimals)} {tokenSymbol(g.token)}
+                Total:{' '}
+                {g.unknown > 0n ? 'Unavailable' : receiptAmountText(g.total, g.decimals, g.token)}
               </p>
             </div>
           </li>
@@ -224,8 +364,7 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
           when there is more than one token group to blend in the first place. */}
       {groups.length > 1 && (
         <p className="pc-field-help">
-          Nominal total (assumes each token above is worth 1 USDC):{' '}
-          {nominalTotal(groups).toLocaleString()}
+          Nominal total (assumes each token above is worth 1 USDC): {nominalTotal(groups)}
         </p>
       )}
 
@@ -237,12 +376,17 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
 
       {/* Owner decision #19: the container no longer defaults to mono -- every raw run id/address/
           tx hash below is marked .pc-technical individually so it keeps rendering in the mono
-          face; "Reused existing permission"/"Fresh grant"/"No transaction yet" stay friendly
-          prose in the body face, which is correct. */}
-      <TechnicalDetails summary="Technical details">
+          face; "Reused existing permission"/"Fresh grant" stay friendly prose in the body face,
+          which is correct. */}
+      <TechnicalDetails summary="Technical details" fact={receiptFact}>
         <p>
           Run: <span className="pc-technical">{effectiveRunId}</span>
         </p>
+        {!runMatches && (
+          <p>
+            Receipt run: <span className="pc-technical">{receipt.runId || 'Unavailable'}</span>
+          </p>
+        )}
         <p>
           Grant/permission:{' '}
           {receipt.permission?.mode === 'reuse' ? 'Reused existing permission' : 'Fresh grant'}
@@ -260,40 +404,47 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
             </a>
           </p>
         )}
-        {(receipt.permission?.agentAddresses || []).map((addr) => (
-          <p key={addr}>
-            Agent:{' '}
-            <a
-              className="pc-technical"
-              href={explorerAccountUrl(addr)}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {addr}
-            </a>
-          </p>
-        ))}
         {allocations.map((a) => {
           // Fix round 1 (minor): computed once, not twice, per allocation.
           const custodyNote = custodyEvidenceText(a.custody)
+          const agentAddress = allocationAgentAddress(a)
+          const networkFacts = networkEvidence(a)
+          const checkedAt = a.custody?.checkedAt
           return (
-            <p key={a.allocationId}>
-              <span className="pc-technical">{a.allocationId}</span>:{' '}
-              {a.txHash ? (
-                <a
-                  className="pc-technical"
-                  href={explorerTxUrl(a)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {a.txHash}
-                </a>
-              ) : (
-                'No transaction yet'
+            <div key={a.allocationId}>
+              <p>
+                <span className="pc-technical">{a.allocationId}</span>:{' '}
+                {a.txHash ? (
+                  <a
+                    className="pc-technical"
+                    href={explorerTxUrl(a)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {a.txHash}
+                  </a>
+                ) : (
+                  <span className="pc-technical">—</span>
+                )}
+                {a.error ? ` -- ${a.error}` : ''}
+                {custodyNote && <span className="pc-field-help"> ({custodyNote})</span>}
+              </p>
+              {agentAddress && (
+                <p>
+                  Agent: <span className="pc-technical">{agentAddress}</span>
+                </p>
               )}
-              {a.error ? ` -- ${a.error}` : ''}
-              {custodyNote && <span className="pc-field-help"> ({custodyNote})</span>}
-            </p>
+              {networkFacts.map(([label, value]) => (
+                <p key={`${a.allocationId}:${label}`}>
+                  {label}: <span className="pc-technical">{String(value)}</span>
+                </p>
+              ))}
+              {isRealCheckedAt(checkedAt) && (
+                <p>
+                  Checked at: <span className="pc-technical">{String(checkedAt)}</span>
+                </p>
+              )}
+            </div>
           )
         })}
       </TechnicalDetails>

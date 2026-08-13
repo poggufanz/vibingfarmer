@@ -1,6 +1,17 @@
 import { useRef } from 'react'
 import { ENDPOINTS, ERRORS, SCOPES } from './docsData.js'
 import CodeBlock from './CodeBlock.jsx'
+import { NetworkRoute } from '../components/pocket/NetworkIdentity.jsx'
+import { NETWORK_IDS } from '../design/networks.js'
+import './Developers.css'
+
+const NETWORK_CONTEXT = Object.freeze({
+  hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  destinationNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  transitState: 'none',
+})
 
 // pre look only — right padding leaves room for the copy button; spacing lives on the wrapper.
 const codeBlock = {
@@ -34,7 +45,10 @@ export default function DocsSection() {
         <span>Developers</span>
         <span>API reference</span>
       </div>
-      <h1 className="h-display">API documentation</h1>
+      <h1 className="h-display" data-route-heading>
+        API documentation
+      </h1>
+      <NetworkRoute compact context={NETWORK_CONTEXT} />
       <p className="lede">
         All endpoints live under <span className="mono">/api/vf</span> on this origin and
         authenticate with a secret key as a Bearer token. Responses are JSON.

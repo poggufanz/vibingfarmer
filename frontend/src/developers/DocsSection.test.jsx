@@ -14,4 +14,12 @@ describe('DocsSection', () => {
     for (const e of ENDPOINTS) expect(screen.getByText(e.path)).toBeTruthy()
     expect(ENDPOINTS).toHaveLength(8)
   })
+
+  it('uses the shared route heading contract without changing docs data', () => {
+    render(<DocsSection />)
+
+    expect(screen.getByRole('heading', { level: 1 }).hasAttribute('data-route-heading')).toBe(true)
+    expect(screen.getAllByText('Stellar testnet').length).toBeGreaterThan(0)
+    for (const e of ENDPOINTS) expect(screen.getByText(e.path)).toBeTruthy()
+  })
 })

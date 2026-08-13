@@ -10,6 +10,15 @@ import { createScene } from './scene.js'
 
 const REDUCED_MQ = '(prefers-reduced-motion: reduce)'
 
+// Pixi's renderer resize updates both the backing-store dimensions and the canvas's inline CSS
+// width/height in pixels. Keep the backing store authoritative for rendering, but let layout own
+// the CSS box so a canvas mounted in a disclosure follows its available content width through
+// responsive reflow and CSS zoom.
+const keepCanvasInLayoutBox = (canvas) => {
+  canvas.style.width = '100%'
+  canvas.style.height = '100%'
+}
+
 // pixijs-application skill (Common Mistakes / destroy): pass releaseGlobalResources so
 // global pools (batches, texture caches) drain on teardown — without it, re-creating an
 // Application in the same tab (React StrictMode double-mount, or remount on new data)
@@ -74,6 +83,7 @@ export function PixiSwarmGraph({
         }
         app.canvas.style.position = 'absolute'
         app.canvas.style.inset = '0'
+        keepCanvasInLayoutBox(app.canvas)
         el.appendChild(app.canvas)
         const scene = createScene(PIXI, app, {
           data,
@@ -97,6 +107,7 @@ export function PixiSwarmGraph({
           const { width, height } = entry.contentRect
           if (width > 0 && height > 0) {
             app.renderer.resize(width, height)
+            keepCanvasInLayoutBox(app.canvas)
             scene.relayout(width, height)
           }
         })

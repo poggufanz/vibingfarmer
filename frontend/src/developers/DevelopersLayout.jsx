@@ -3,8 +3,19 @@ import { NavLink, Routes, Route, Navigate } from 'react-router-dom'
 import { signIn } from './portalClient.js'
 import { connectWallet } from './walletSign.js'
 import { OverviewSection, KeysSection, UsageSection, DocsSection } from './sections.jsx'
+import { NetworkRoute } from '../components/pocket/NetworkIdentity.jsx'
+import { NETWORK_IDS } from '../design/networks.js'
+import './Developers.css'
 
 const shortAddr = (g) => (g ? `${g.slice(0, 6)}…${g.slice(-4)}` : '')
+
+const NETWORK_CONTEXT = Object.freeze({
+  hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  destinationNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  transitState: 'none',
+})
 
 // Scope contract — shown pre-auth on gated sections.
 export const SCOPE_INFO = [
@@ -26,7 +37,10 @@ export function ConnectGate({ connecting, onConnect }) {
         <span>Developers</span>
         <span>SEP-10 wallet auth</span>
       </div>
-      <h1 className="h-display">Connect to continue</h1>
+      <h1 className="h-display" data-route-heading>
+        Connect to continue
+      </h1>
+      <NetworkRoute compact context={NETWORK_CONTEXT} />
       <p className="lede">
         Authenticate with a Stellar wallet to manage keys and view usage. Keys are hashed at rest.
         Plaintext appears <b>once</b>, only when the key is issued.
@@ -81,7 +95,7 @@ function loadSession() {
   return null
 }
 
-export default function DevelopersLayout() {
+export default function DevelopersLayout({ developersRead, read }) {
   const [session, setSession] = useState(loadSession) // { jwt, address, expiresAt }
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState('')
@@ -133,9 +147,22 @@ export default function DevelopersLayout() {
           </p>
         )}
         <Routes>
-          <Route index element={<OverviewSection session={session} />} />
-          <Route path="keys" element={gate(<KeysSection session={session} />)} />
-          <Route path="usage" element={gate(<UsageSection session={session} />)} />
+          <Route
+            index
+            element={<OverviewSection session={session} developersRead={developersRead ?? read} />}
+          />
+          <Route
+            path="keys"
+            element={gate(
+              <KeysSection session={session} developersRead={developersRead ?? read} />
+            )}
+          />
+          <Route
+            path="usage"
+            element={gate(
+              <UsageSection session={session} developersRead={developersRead ?? read} />
+            )}
+          />
           <Route path="docs" element={<DocsSection />} />
           <Route path="*" element={<Navigate to="." replace />} />
         </Routes>

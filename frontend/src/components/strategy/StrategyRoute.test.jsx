@@ -301,6 +301,15 @@ describe('StrategyRoute header', () => {
     expect(screen.getByText('Step 1 of 3')).toBeTruthy()
   })
 
+  it('keeps the route introduction bounded and explicit before any movement', () => {
+    render(<StrategyRoute {...baseProps} />)
+    const intro = screen.getByText(
+      'Three short steps. You sign at the very end, one time, and the limits you set are enforced by the chain not by us.'
+    )
+    expect(intro).toBeTruthy()
+    expect(intro.textContent).not.toMatch(/forever|everything/i)
+  })
+
   it('numbers the stage tabs', () => {
     render(<StrategyRoute {...baseProps} />)
     expect(screen.getByRole('button', { name: /1 · Plan/ })).toBeTruthy()

@@ -10,6 +10,21 @@ afterEach(() => {
 })
 
 describe('SendScreen', () => {
+  it('shows busy and controller failure state without enabling a stale action', () => {
+    render(
+      <SendScreen
+        from="GME"
+        onPreview={vi.fn()}
+        onConfirm={vi.fn()}
+        preview={null}
+        busy
+        error="Could not submit transaction"
+      />
+    )
+    expect(screen.getByRole('button', { name: /building/i }).disabled).toBe(true)
+    expect(screen.getByText(/could not submit transaction/i)).toBeTruthy()
+  })
+
   it('requires a preview (clear-sign) before confirm is enabled', () => {
     const onPreview = vi.fn()
     const onConfirm = vi.fn()

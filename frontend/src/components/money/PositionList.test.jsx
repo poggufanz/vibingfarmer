@@ -8,6 +8,9 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { PositionList } from './PositionList.jsx'
+import { MyMoneyRoute } from './MyMoneyRoute.jsx'
+import { toMoneyFactView } from './MoneyHero.jsx'
+import { buildMyMoneyModel } from '../../money/myMoneyModel.js'
 
 expect.extend(axeMatchers)
 afterEach(cleanup)
@@ -212,6 +215,87 @@ describe('PositionList — two Base children on one agent render as distinguisha
   })
 })
 
+describe('PositionList — exact Core amount boundary', () => {
+  it('keeps a huge canonical unit string exact in the rendered amount', () => {
+    render(<PositionList agents={[stellarVaultAgent('CHUGE', '9007199254740993')]} />)
+    expect(screen.getByText(/900,719,925\.4740993 USDC/)).toBeTruthy()
+  })
+})
+
+describe('PositionList — deployed identity fails closed without hiding healthy siblings', () => {
+  it('renders Agent identity unavailable and omits the unidentified row money/custody/action', () => {
+    render(
+      <PositionList
+        agents={[
+          stellarVaultAgent('CAGENT1', 25_0000000n),
+          {
+            address: '',
+            amount: amt('9007199254740993'),
+            scope: { state: 'known', value: { revoked: false, expiry: 0 } },
+            executionStatus: 'succeeded',
+            custody: { location: 'stellar-vault' },
+            custodyBreakdown: [],
+            problems: [],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Agent identity unavailable')).toBeTruthy()
+    const rows = [...document.querySelectorAll('ul.pc-position-list > li')]
+    const unidentified = rows.find((row) => row.textContent.includes('Agent identity unavailable'))
+    expect(unidentified).toBeTruthy()
+    expect(unidentified.querySelector('.pc-money')).toBeNull()
+    expect(unidentified.querySelector('.network-badge')).toBeNull()
+    expect(unidentified.querySelector('button')).toBeNull()
+    expect(unidentified.querySelector('.pc-agent-mark')).toBeNull()
+    expect(screen.getByText('Autofarm Vault to Blend Capital v2')).toBeTruthy()
+    expect(document.querySelectorAll('.pc-agent-mark')).toHaveLength(1)
+  })
+
+  it('keeps multiple identity-unavailable rows visible with unique fallback keys and no React warning', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(
+      <PositionList
+        agents={[
+          {
+            address: '',
+            amount: amt('1000000000'),
+            scope: { state: 'known', value: { revoked: false, expiry: 0 } },
+            custody: { location: 'stellar-vault' },
+            custodyBreakdown: [],
+          },
+          stellarVaultAgent('CVALID', 25_0000000n),
+          {
+            address: null,
+            amount: amt('2000000000'),
+            scope: { state: 'known', value: { revoked: false, expiry: 0 } },
+            custody: { location: 'stellar-vault' },
+            custodyBreakdown: [],
+          },
+        ]}
+      />
+    )
+
+    const rows = [...document.querySelectorAll('ul.pc-position-list > li')]
+    const unavailableRows = rows.filter((row) =>
+      row.textContent.includes('Agent identity unavailable')
+    )
+    expect(unavailableRows).toHaveLength(2)
+    expect(new Set(unavailableRows.map((row) => row.getAttribute('data-row-key'))).size).toBe(2)
+    for (const row of unavailableRows) {
+      expect(row.querySelector('.pc-money')).toBeNull()
+      expect(row.querySelector('.network-badge')).toBeNull()
+      expect(row.querySelector('.pc-agent-mark')).toBeNull()
+      expect(row.querySelector('button')).toBeNull()
+    }
+    expect(screen.getByText('Autofarm Vault to Blend Capital v2')).toBeTruthy()
+    expect(document.querySelectorAll('.pc-agent-mark')).toHaveLength(1)
+    expect(errorSpy.mock.calls.some((args) => String(args[0]).includes('same key'))).toBe(false)
+    errorSpy.mockRestore()
+  })
+})
+
 describe('PositionList — Stellar vault destination and network truth', () => {
   it('shows the exact Autofarm -> Blend destination string and a visible Stellar testnet badge', () => {
     render(<PositionList agents={[stellarVaultAgent()]} />)
@@ -250,7 +334,184 @@ describe('PositionList — Base children are separate nested rows under their St
     // must not render one.
     expect(screen.queryByRole('img', { name: 'to' })).toBeNull()
   })
+
+  it('keeps independently-known Stellar and Base legs visible while live APY comes only from nested yield evidence', () => {
+    const model = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: { status: 'complete', agents: [{ address: 'CBRIDGE1' }] },
+      money: {
+        status: 'complete',
+        confirmedTotal: { state: 'known', amount: amt(50_0000000n) },
+        yield: {
+          state: 'live',
+          apy: 8.2,
+          asOf: '2026-08-11T00:00:00.000Z',
+          source: 'defillama',
+          checkedAt: '2026-08-11T00:01:00.000Z',
+        },
+        earned: { state: 'unavailable', amount: null },
+        custodyBreakdown: { 'stellar-vault': '3000000000', 'base-proxy': '2000000000' },
+        unattributed: {},
+        executionBreakdown: {},
+        agentCount: 1,
+        problemAgentCount: 0,
+        agents: [splitAgent()],
+        checkedAt: Date.parse('2026-08-11T00:01:00.000Z'),
+        confirmedLedger: '12345',
+        confirmedBlock: '67890',
+        source: 'soroban-rpc',
+      },
+      now: Date.parse('2026-08-11T00:02:00.000Z'),
+    })
+    render(
+      <MyMoneyRoute
+        model={model}
+        agents={[splitAgent()]}
+        venue={{
+          name: 'Autofarm Vault',
+          yield: {
+            state: 'live',
+            apy: 99.9,
+            asOf: '2026-08-11T00:00:00.000Z',
+            source: 'untrusted-venue-override',
+            checkedAt: '2026-08-11T00:01:00.000Z',
+          },
+        }}
+      />
+    )
+    const parentRow = document.querySelector('.pc-position-row')
+    expect(within(parentRow).getByText(/30/)).toBeTruthy()
+    expect(within(parentRow).getByText(/20/)).toBeTruthy()
+    expect(
+      within(parentRow).getByText('Base Sepolia proxy. Custody only. No protocol yield.')
+    ).toBeTruthy()
+    expect(screen.getAllByText('Earning 8.2% APY').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/99\.9% APY/)).toBeNull()
+  })
 })
+
+describe('PositionList — route freshness is shared with the model fact', () => {
+  it('keeps a source-current funded leg Current during partial discovery', () => {
+    const now = Date.parse('2026-08-11T00:00:00.000Z')
+    const agent = stellarVaultAgent('CPARTIALCURRENT', 30_0000000n)
+    const model = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: { status: 'partial', agents: [{ address: agent.address }] },
+      money: {
+        ...stateMoneySnapshotForPartial(agent, now),
+        checkedAt: now,
+      },
+      now,
+    })
+
+    expect(model.state).toBe('partial-discovery')
+    expect(model.freshness).toBe('current')
+    render(<MyMoneyRoute model={model} agents={[agent]} />)
+    const position = document.querySelector('ul.pc-position-list .pc-money')
+    expect(position).toBeTruthy()
+    expect(position.className).toContain('pc-money--current')
+    expect(position.className).not.toContain('pc-money--stale')
+    expect(position.getAttribute('data-freshness')).toBe('Partial')
+  })
+
+  it('marks a real cached position stale instead of presenting it as current', () => {
+    const now = Date.parse('2026-08-11T00:00:00.000Z')
+    const agent = stellarVaultAgent('CSTALE', 30_0000000n)
+    const model = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: { status: 'complete', agents: [{ address: agent.address }] },
+      money: {
+        status: 'complete',
+        confirmedTotal: { state: 'known', amount: amt(30_0000000n) },
+        yield: { state: 'unavailable', apy: null },
+        earned: { state: 'unavailable', amount: null },
+        custodyBreakdown: { 'stellar-vault': '3000000000' },
+        unattributed: {},
+        executionBreakdown: {},
+        agentCount: 1,
+        problemAgentCount: 0,
+        agents: [agent],
+        checkedAt: now - 30 * 24 * 60 * 60 * 1000,
+        confirmedLedger: '12345',
+        confirmedBlock: '67890',
+        source: 'soroban-rpc',
+      },
+      now,
+    })
+    render(<MyMoneyRoute model={model} agents={[agent]} />)
+    const position = document.querySelector('ul.pc-position-list .pc-money')
+    expect(position).toBeTruthy()
+    expect(position.className).toContain('pc-money--stale')
+    expect(position.textContent).toMatch(/stale/i)
+  })
+
+  it('keeps a known unattributed Base balance stale when the real model is stale', () => {
+    const now = Date.parse('2026-08-11T00:00:00.000Z')
+    const model = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: { status: 'complete', agents: [] },
+      money: {
+        status: 'complete',
+        confirmedTotal: { state: 'known', amount: amt(30_0000000n) },
+        yield: { state: 'unavailable', apy: null },
+        earned: { state: 'unavailable', amount: null },
+        custodyBreakdown: {},
+        unattributed: {
+          '0xkernel1': {
+            state: 'known',
+            amount: amt(30_0000000n),
+            checkedAt: now - 30 * 24 * 60 * 60 * 1000,
+          },
+        },
+        executionBreakdown: {},
+        agentCount: 0,
+        problemAgentCount: 0,
+        agents: [],
+        checkedAt: now - 30 * 24 * 60 * 60 * 1000,
+        confirmedLedger: '12345',
+        confirmedBlock: '67890',
+        source: 'soroban-rpc',
+      },
+      now,
+    })
+    render(
+      <PositionList
+        agents={[]}
+        unattributed={model.unattributed}
+        collectionState={model.state}
+        factView={toMoneyFactView(model)}
+      />
+    )
+    const position = document.querySelector('ul.pc-position-list .pc-money')
+    expect(position).toBeTruthy()
+    expect(position.className).toContain('pc-money--stale')
+  })
+
+  it('renders an unsafe-integer-sized Stellar position exactly, without Number coercion', () => {
+    render(<PositionList agents={[stellarVaultAgent('CPRECISION', '9007199254740993')]} />)
+    expect(screen.getByText('900,719,925.4740993 USDC')).toBeTruthy()
+    expect(screen.queryByText('900719925.4740992 USDC')).toBeNull()
+  })
+})
+
+function stateMoneySnapshotForPartial(agent, checkedAt) {
+  return {
+    status: 'complete',
+    confirmedTotal: { state: 'known', amount: amt(30_0000000n) },
+    yield: { state: 'unavailable', apy: null },
+    earned: { state: 'unavailable', amount: null },
+    custodyBreakdown: { 'stellar-vault': '3000000000' },
+    unattributed: {},
+    executionBreakdown: {},
+    agentCount: 1,
+    problemAgentCount: 0,
+    agents: [agent],
+    checkedAt,
+    confirmedLedger: '12345',
+    confirmedBlock: '67890',
+    source: 'soroban-rpc',
+  }
+}
 
 describe('PositionList — an in-transit leg uses NetworkRoute, never a settled badge', () => {
   it('renders a truthful bridge-in-progress route for an in-transit-only leg', () => {

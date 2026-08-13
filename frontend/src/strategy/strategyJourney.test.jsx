@@ -25,7 +25,6 @@ import { SOROBAN_TOKEN_ADDRESS } from '../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../stellar/cctpBurn.js'
 import { buildPersonaByAddress } from '../app.jsx'
 
-const AMOUNT_UNITS = 1_000_000_000n // 100 USDC, 7dp
 const FUNDED_VAULT = 5_000_000_000n
 
 const disconnectedBase = { connected: false, healthy: null, mandateView: null, action: null }
@@ -89,6 +88,8 @@ function reuseDecision(runId, allocationId, agentAddress = 'CAGENT1') {
     confirmationCount: 0,
     grantReceiptFingerprint: '0xreceipt1',
     allowanceExpiryProof: {
+      gapFree: true,
+      noLaterMutation: true,
       latestLedger: 1000,
       approvals: [{ amount: { token: SOROBAN_TOKEN_ADDRESS, units: '1000000000' } }],
     },
@@ -272,7 +273,6 @@ const Harness = forwardRef(function Harness({ mocks, initialFlowState }, ref) {
 })
 
 function generatedPlan({
-  runId = 'run-1',
   source = 'deepseek',
   sourceState = 'live-ai',
   stellarUnits = '1000000000',
@@ -940,17 +940,29 @@ describe('Strategy journey — shared crew persona identity', () => {
 
     await buildPlan(utils)
     await waitFor(() => expect(screen.getByText('Sprout')).toBeTruthy())
-    expect(screen.getByRole('img', { name: 'Sprout agent, planned' }).getAttribute('src')).toBe(
-      '/brand/agents/sprout.svg'
-    )
+    const planRow = screen.getByText('Sprout').closest('.pc-allocation-row')
+    const planMark = within(planRow).getByRole('img', { name: 'Planned agent, Planned' })
+    expect(planMark.getAttribute('data-identity-phase')).toBe('planned')
+    expect(planMark.getAttribute('data-identity-key')).toBe('run-1:deposit:0')
+    expect(planMark.getAttribute('data-state')).toBe('planned')
+    expect(planMark.getAttribute('data-identity-source')).toBe('reviewed-plan')
+    expect(planMark.getAttribute('data-verified')).toBe('false')
+    const planPersona = planRow.querySelector('.pc-plan-agent-avatar')
+    expect(planPersona.getAttribute('src')).toBe('/brand/agents/sprout.svg')
+    expect(planPersona.getAttribute('alt')).toBe('')
+    expect(planPersona.getAttribute('aria-hidden')).toBe('true')
     fireEvent.click(screen.getByText('Accept plan'))
     fireEvent.click(screen.getByText('Check my permission'))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeTruthy())
     const protectRow = screen.getByText('CAGENT1').closest('[data-agent-address]')
     expect(within(protectRow).getByText('Mochi')).toBeTruthy()
-    expect(within(protectRow).getByRole('img', { name: 'Mochi agent' }).getAttribute('src')).toBe(
-      '/brand/agents/mochi.svg'
-    )
+    const protectPersona = protectRow.querySelector('.pc-protect-agent-avatar')
+    expect(protectPersona.getAttribute('src')).toBe('/brand/agents/mochi.svg')
+    expect(protectPersona.getAttribute('alt')).toBe('')
+    expect(protectPersona.getAttribute('aria-hidden')).toBe('true')
+    const protectMark = within(protectRow).getByRole('img', { name: 'Existing agent, Existing' })
+    expect(protectMark.getAttribute('data-identity-phase')).toBe('reused')
+    expect(protectMark.getAttribute('data-identity-key')).toBe('CAGENT1')
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     ref.current.feedEvent('reuse-confirmed', {
@@ -960,9 +972,16 @@ describe('Strategy journey — shared crew persona identity', () => {
     await waitFor(() => expect(ref.current.getState().moment).toBe('start'))
     const startRow = screen.getByText('CAGENT1').closest('[data-agent-address]')
     expect(within(startRow).getByText('Mochi')).toBeTruthy()
-    expect(within(startRow).getByRole('img', { name: 'Mochi agent' }).getAttribute('src')).toBe(
-      '/brand/agents/mochi.svg'
-    )
+    const startMark = within(startRow).getByRole('img', { name: 'Existing agent, Active' })
+    expect(startMark.getAttribute('data-identity-phase')).toBe('reused')
+    expect(startMark.getAttribute('data-identity-key')).toBe('CAGENT1')
+    expect(startMark.getAttribute('data-state')).toBe('active')
+    expect(startMark.getAttribute('data-identity-source')).toBe('owner-discovery')
+    expect(startMark.getAttribute('data-verified')).toBe('true')
+    const startPersona = startRow.querySelector('.pc-start-agent-avatar')
+    expect(startPersona.getAttribute('src')).toBe('/brand/agents/mochi.svg')
+    expect(startPersona.getAttribute('alt')).toBe('')
+    expect(startPersona.getAttribute('aria-hidden')).toBe('true')
   })
 })
 

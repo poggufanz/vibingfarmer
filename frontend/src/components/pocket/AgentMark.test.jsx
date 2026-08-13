@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
+import { resolveAgentIdentity } from '../../design/pocket-crew-foundation.js'
 import { AgentMark } from './AgentMark.jsx'
 import { BrandLockup } from './BrandLockup.jsx'
 
@@ -100,12 +101,117 @@ describe('AgentMark', () => {
     expect(fillTwo).toBeDefined()
   })
 
-  it('missing identity throws loudly in development rather than silently rendering', () => {
-    expect(() => render(<AgentMark />)).toThrow(/identity/i)
+  it('planned identity may use a reviewed allocationId without an address', () => {
+    const identity = resolveAgentIdentity({
+      phase: 'planned',
+      allocationId: 'allocation-reviewed-1',
+      source: 'reviewed-plan',
+    })
+    const { container } = render(<AgentMark identity={identity} />)
+    expect(container.querySelector('svg')).toBeTruthy()
+    expect(container.querySelector('[data-identity-state="available"]')).toBeTruthy()
+    expect(container.querySelector('[data-identity-key="allocation-reviewed-1"]')).toBeTruthy()
+    expect(screen.getByRole('img', { name: /Planned/i })).toBeTruthy()
   })
 
-  it('empty-string identity throws loudly in development', () => {
-    expect(() => render(<AgentMark identity="" />)).toThrow(/identity/i)
+  it('planned identity may use a reviewed runId without an address', () => {
+    const identity = resolveAgentIdentity({
+      phase: 'planned',
+      runId: 'run-reviewed-1',
+      source: 'reviewed-plan',
+    })
+    const { container } = render(<AgentMark identity={identity} />)
+    expect(container.querySelector('svg')).toBeTruthy()
+    expect(container.querySelector('[data-identity-key="run-reviewed-1"]')).toBeTruthy()
+  })
+
+  it('deployed and reused identities require a verified address and provenance source', () => {
+    for (const phase of ['deployed', 'reused']) {
+      const identity = resolveAgentIdentity({
+        phase,
+        allocationId: 'allocation-reviewed-2',
+        runId: 'run-reviewed-2',
+        verifiedAddress: 'GVERIFIED-AGENT-1',
+        verified: true,
+        source: phase === 'deployed' ? 'creation-event' : 'owner-discovery',
+      })
+      const { container, unmount } = render(<AgentMark identity={identity} />)
+      expect(container.querySelector('svg')).toBeTruthy()
+      expect(container.querySelector('[data-identity-key="GVERIFIED-AGENT-1"]')).toBeTruthy()
+      expect(
+        screen.getByRole('img', { name: phase === 'reused' ? /Existing/i : /Deployed/i })
+      ).toBeTruthy()
+      unmount()
+    }
+  })
+
+  it('uses the canonical Existing label for a verified reused identity', () => {
+    const identity = resolveAgentIdentity({
+      phase: 'reused',
+      verifiedAddress: 'GREUSED-AGENT-1',
+      verified: true,
+      source: 'owner-discovery',
+    })
+    render(<AgentMark identity={identity} />)
+    expect(screen.getByRole('img', { name: 'Existing, Reused' })).toBeTruthy()
+  })
+
+  it('missing deployed proof fails closed with a neutral unavailable message and no mark', () => {
+    const { container } = render(
+      <AgentMark
+        identity={{
+          phase: 'deployed',
+          allocationId: 'allocation-no-proof',
+          source: 'reviewed-plan',
+        }}
+      />
+    )
+    expect(container.querySelector('svg')).toBeNull()
+    expect(container.querySelector('.pc-agent-mark')).toBeNull()
+    expect(container.querySelector('[data-identity-state="unavailable"]')).toBeTruthy()
+    expect(screen.getByText('Agent identity unavailable')).toBeTruthy()
+    for (const forbidden of ['balance', 'cap', 'custody', 'action']) {
+      expect(container.textContent.toLowerCase()).not.toContain(forbidden)
+    }
+  })
+
+  it('does not use persona text as identity or change a reviewed identity color', () => {
+    const first = render(
+      <AgentMark
+        identity={{
+          phase: 'planned',
+          allocationId: 'allocation-persona-stable',
+          source: 'reviewed-plan',
+          persona: 'Sprout',
+        }}
+      />
+    )
+    const firstFill = bodyFill(first.container)
+    first.unmount()
+
+    const second = render(
+      <AgentMark
+        identity={{
+          phase: 'planned',
+          allocationId: 'allocation-persona-stable',
+          source: 'reviewed-plan',
+          persona: 'Mochi',
+        }}
+      />
+    )
+    expect(bodyFill(second.container)).toBe(firstFill)
+    expect(second.container.textContent).not.toMatch(/Sprout|Mochi/)
+  })
+
+  it('fails closed for missing or empty identity without rendering a decorative mark', () => {
+    const missing = render(<AgentMark />)
+    expect(missing.container.querySelector('svg')).toBeNull()
+    expect(screen.getByText('Agent identity unavailable')).toBeTruthy()
+    missing.unmount()
+
+    const empty = render(<AgentMark identity="" />)
+    expect(empty.container.querySelector('svg')).toBeNull()
+    expect(screen.getByText('Agent identity unavailable')).toBeTruthy()
   })
 
   it('state is dual-coded: visible text/glyph changes with state, not only color', () => {
@@ -118,6 +224,35 @@ describe('AgentMark', () => {
 
     expect(activeGlyph).not.toBe(failedGlyph)
     expect(screen.getByRole('img', { name: /Failed/i })).toBeTruthy()
+  })
+
+  it('keeps six deterministic crew colors independent of theme and list position', () => {
+    const allocationIds = [
+      'allocation-2',
+      'allocation-1',
+      'allocation-0',
+      'allocation-5',
+      'allocation-4',
+      'allocation-3',
+    ]
+    for (const theme of ['forest', 'day-field']) {
+      document.documentElement.dataset.theme = theme
+      const { container } = render(
+        <div>
+          {allocationIds.map((allocationId) => (
+            <AgentMark
+              key={allocationId}
+              identity={{ phase: 'planned', allocationId, source: 'reviewed-plan' }}
+            />
+          ))}
+        </div>
+      )
+      const fills = Array.from(container.querySelectorAll('.pc-agent-mark path:first-child')).map(
+        (path) => path.getAttribute('fill')
+      )
+      expect(new Set(fills)).toHaveLength(6)
+      cleanup()
+    }
   })
 
   it('renders an optional label as the visible center glyph', () => {

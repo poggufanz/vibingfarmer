@@ -98,9 +98,9 @@ function baseModel(overrides = {}) {
     problemAgentCount: 0,
     freshness: 'current',
     checkedAt: NOW,
-    confirmedLedger: null,
-    confirmedBlock: null,
-    source: null,
+    confirmedLedger: '12345',
+    confirmedBlock: '67890',
+    source: 'soroban-rpc',
     problemAgents: [],
     protection: {
       state: 'armed',

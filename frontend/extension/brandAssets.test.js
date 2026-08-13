@@ -6,6 +6,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -15,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import { resolve, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const FRONTEND_DIR = resolve(import.meta.dirname, '..')
@@ -87,6 +88,14 @@ function setupTmpGenDir() {
 }
 
 describe('extension brand asset contract', () => {
+  it('popup uses the local wallet stylesheet and Foundation logo path', () => {
+    const html = readFileSync(resolve(EXT_DIR, 'popup.html'), 'utf8')
+    expect(html).toContain('<link rel="stylesheet" href="./wallet.css">')
+    expect(html).toContain('data-theme="forest"')
+    expect(html).toContain('class="pc-wallet-page"')
+    expect(html).toContain('href="./vibing_farmer.logo.svg"')
+  })
+
   it('vibing_farmer.logo.svg is byte-identical to the Foundation product mark (no alternate wallet logo geometry)', () => {
     const logo = readFileSync(LOGO_SVG)
     const mark = readFileSync(MARK_SVG)
@@ -205,6 +214,42 @@ describe('extension brand asset contract', () => {
     }
   })
 
+  it('keeps shipped brand references local and closes the public brand directory through its manifest', () => {
+    const manifest = JSON.parse(readFileSync(ASSETS_MANIFEST, 'utf8'))
+    const manifestPaths = new Set(manifest.map((entry) => entry.path))
+    const brandDir = resolve(PUBLIC_DIR, 'brand')
+    const brandFiles = readdirSync(brandDir, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name !== 'assets.manifest.json')
+      .map((entry) => {
+        const absolute = resolve(entry.parentPath ?? entry.path, entry.name)
+        return `/brand/${absolute.slice(brandDir.length + 1).replaceAll(sep, '/')}`
+      })
+
+    for (const file of brandFiles) {
+      expect(manifestPaths, `${file} must be recorded in assets.manifest.json`).toContain(file)
+    }
+    for (const entry of manifest) {
+      expect(entry?.path, 'manifest entries need a path').toEqual(expect.any(String))
+      expect(
+        existsSync(resolve(PUBLIC_DIR, entry.path.replace(/^\//, ''))),
+        `${entry.path} must exist on disk`
+      ).toBe(true)
+    }
+
+    const markEntry = manifest.find((entry) => entry.path === '/brand/vibing-farmer-mark.svg')
+    expect(markEntry, 'the extension mark must have a frozen public manifest entry').toBeTruthy()
+    expect(sha256(readFileSync(LOGO_SVG))).toBe(markEntry.sha256)
+
+    for (const file of PAGES) {
+      const html = readFileSync(resolve(EXT_DIR, file), 'utf8')
+      const refs = [...html.matchAll(/(?:src|href)=["']([^"']+)["']/gi)].map((match) => match[1])
+      for (const ref of refs.filter((value) => /\.(?:svg|png|jpe?g|webp|woff2?)$/i.test(value))) {
+        expect(ref, `${file} must use a relative local asset`).not.toMatch(/^(?:https?:)?\/\//i)
+        expect(existsSync(resolve(EXT_DIR, ref.replace(/^\.\//, ''))), `${file}: ${ref}`).toBe(true)
+      }
+    }
+  })
+
   it('popup/approve/ceremony authored markup carries no em/en-dash design separator', () => {
     for (const file of PAGES) {
       const html = readFileSync(resolve(EXT_DIR, file), 'utf8')
@@ -255,7 +300,7 @@ describe('extension brand asset contract', () => {
   it('approval.css declares the shared wallet approval action grid verbatim', () => {
     const approval = readFileSync(resolve(EXT_DIR, 'approval.css'), 'utf8')
     expect(approval).toMatch(
-      /\.pc-wallet-approval-actions\s*\{[^}]*grid-template-columns:\s*1fr 1\.35fr/
+      /\.pc-wallet-approval-actions\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/
     )
   })
 

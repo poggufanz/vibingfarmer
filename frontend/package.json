@@ -25,6 +25,9 @@
     "build:ext": "vite build -c extension/vite.config.extension.js",
     "brand:build": "node scripts/build-brand-assets.mjs",
     "brand:check": "node scripts/check-brand-assets.mjs",
+    "foundation:check": "node scripts/check-pocket-crew-foundation.mjs",
+    "foundation:contract": "node scripts/generate-pocket-crew-foundation-contract.mjs",
+    "foundation:contract:check": "node scripts/generate-pocket-crew-foundation-contract.mjs --check",
     "manifest:check": "node scripts/generate-wallet-contract-manifest.mjs --check",
     "test:visual": "playwright test"
   },

@@ -8,6 +8,10 @@ import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  FOUNDATION_ASSET_PATHS,
+  assertFoundationAssetManifest,
+} from '../src/design/brandAssets.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const publicDir = resolve(here, '../public')
@@ -33,6 +37,12 @@ const REQUIRED_FIELDS = [
   'trademarkTreatment',
 ]
 
+const FOUNDATION_MARK_PATHS = new Set(FOUNDATION_ASSET_PATHS.slice(0, 3))
+const POCKET_D = 'M8 11H21L25 17H39L43 11H56V50C56 55 52 59 47 59H17C12 59 8 55 8 50Z'
+const V_D = 'M18 24L31 48L43 24'
+const SLASH_D = 'M40 44L52 20'
+const OLD_SLASH_D = 'M38 44L50 20'
+
 function sha256(buffer) {
   return createHash('sha256').update(buffer).digest('hex')
 }
@@ -55,35 +65,73 @@ if (!Array.isArray(manifest) || manifest.length === 0) {
   process.exit(1)
 }
 
+try {
+  assertFoundationAssetManifest(manifest, FOUNDATION_ASSET_PATHS)
+} catch (error) {
+  errors.push(error instanceof Error ? error.message : String(error))
+}
+
 for (const entry of manifest) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    errors.push('(unknown path): manifest entry must be an object')
+    continue
+  }
+
+  const entryPath = typeof entry.path === 'string' ? entry.path : ''
   for (const field of REQUIRED_FIELDS) {
     if (typeof entry[field] !== 'string' || entry[field].length === 0) {
       // sourceUrl may legitimately be empty (original artwork, no external source).
       if (field === 'sourceUrl' && typeof entry[field] === 'string') continue
-      errors.push(`${entry.path ?? '(unknown)'}: missing/empty required field "${field}"`)
+      errors.push(`${entryPath || '(unknown path)'}: missing/empty required field "${field}"`)
     }
   }
 
-  const filePath = resolve(publicDir, String(entry.path).replace(/^\//, ''))
+  if (entryPath.length === 0) continue
+
+  const filePath = resolve(publicDir, entryPath.replace(/^\//, ''))
   if (!existsSync(filePath)) {
-    errors.push(`${entry.path}: file does not exist`)
+    errors.push(`${entryPath}: file does not exist`)
     continue
   }
 
   const buffer = readFileSync(filePath)
   const actualHash = sha256(buffer)
   if (actualHash !== entry.sha256) {
-    errors.push(`${entry.path}: sha256 drift (manifest ${entry.sha256}, actual ${actualHash})`)
+    errors.push(`${entryPath}: sha256 drift (manifest ${entry.sha256}, actual ${actualHash})`)
   }
 
-  if (entry.path.endsWith('.png')) {
+  if (entryPath.endsWith('.svg')) {
+    const svg = buffer.toString('utf8')
+    if (!/<svg\b[^>]*\bviewBox="[^"]+"/i.test(svg)) {
+      errors.push(`${entryPath}: SVG must declare a viewBox`)
+    }
+    if (/<image[\s>]/i.test(svg) || /base64/i.test(svg)) {
+      errors.push(`${entryPath}: SVG must not embed image/base64 payloads`)
+    }
+    if (FOUNDATION_MARK_PATHS.has(entryPath)) {
+      for (const [label, geometry] of [
+        ['pocket body', POCKET_D],
+        ['V', V_D],
+        ['Harvest slash', SLASH_D],
+      ]) {
+        if (!svg.includes(geometry)) {
+          errors.push(`${entryPath}: missing fixed ${label} geometry`)
+        }
+      }
+      if (svg.includes(OLD_SLASH_D)) {
+        errors.push(`${entryPath}: uses retired Harvest slash geometry`)
+      }
+    }
+  }
+
+  if (entryPath.endsWith('.png')) {
     const expected = RASTER_DIMENSIONS[entry.kind]
     if (expected) {
       const { width, height } = readPngSize(buffer)
       const [expectedWidth, expectedHeight] = expected
       if (width !== expectedWidth || height !== expectedHeight) {
         errors.push(
-          `${entry.path}: dimension drift (expected ${expectedWidth}x${expectedHeight}, actual ${width}x${height})`
+          `${entryPath}: dimension drift (expected ${expectedWidth}x${expectedHeight}, actual ${width}x${height})`
         )
       }
     }

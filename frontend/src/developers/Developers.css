@@ -1,0 +1,105 @@
+.developers-section {
+  min-width: 0;
+}
+
+.developers-section > .network-route {
+  margin-top: 12px;
+}
+
+.developers-evidence {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.developers-notice-copy {
+  border-left: 2px solid var(--border-accent);
+  background: var(--accent-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+}
+
+.developers-notice-copy p {
+  margin: 0;
+}
+
+.developers-notice-copy p + p {
+  margin-top: 4px;
+}
+
+.developers-error {
+  color: var(--danger);
+  font-size: 12px;
+  margin: 14px 0 0;
+}
+
+.developers-usage-figures {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 32px 48px;
+  margin-top: 28px;
+}
+
+.developers-usage-figures > div {
+  display: grid;
+  gap: 4px;
+}
+
+.developers-money-label {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.developers-cap {
+  font-size: 1.6rem;
+}
+
+.developers-filter-tabs {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.developers-filter-tabs .btn {
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.developers-empty {
+  font-size: 12.5px;
+  margin-top: 20px;
+}
+
+.developers-usage-table {
+  margin-top: 20px;
+}
+
+.developers-usage-row {
+  align-items: center;
+  grid-template-columns: 0.8fr 1.2fr 0.9fr 0.5fr;
+}
+
+.developers-usage-row--head {
+  opacity: 0.75;
+}
+
+.developers-usage-count {
+  text-align: right;
+}
+
+.developers-footnote {
+  margin-top: 16px;
+}
+
+@media (max-width: 640px) {
+  .developers-usage-row {
+    grid-template-columns: 0.9fr 1.4fr 0.9fr;
+  }
+
+  .developers-usage-row > :nth-child(4) {
+    grid-column: 3;
+  }
+}

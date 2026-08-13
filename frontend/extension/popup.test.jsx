@@ -4,6 +4,8 @@
 // function directly rather than rendering the full popup (which pulls in the passkey kit, every
 // classic screen component, etc.) — importing popup.jsx is safe because its only DOM-touching
 // top-level statement (mounting into #root) is guarded, same discipline as approve.js.
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { resolveEntryScreen } from './popup.jsx'
 
@@ -111,5 +113,22 @@ describe('resolveEntryScreen — popup routing off the resolution matrix', () =>
     )
     expect(entry.screen).not.toBe('home')
     expect(entry.screen).not.toBe('classic-home')
+  })
+})
+
+const POPUP_SOURCE = fs.readFileSync(path.resolve(import.meta.dirname, './popup.jsx'), 'utf8')
+
+describe('popup presentation boundary — the legacy shell is gone', () => {
+  it('keeps popup.jsx free of the retired inline shell and Acid tokens', () => {
+    expect(POPUP_SOURCE).not.toMatch(/const CSS|<style|\.vf-head|\.vf-history|btn-lava/i)
+    expect(POPUP_SOURCE).not.toContain('--accent: #cfff3d')
+    expect(POPUP_SOURCE).not.toContain('#0e0f0c')
+    expect(POPUP_SOURCE).not.toMatch(/Yield Vibe|Acid/i)
+  })
+
+  it('routes pending and result branches through WalletShell and the truthful result view', () => {
+    expect(POPUP_SOURCE).toMatch(/screen === ['"]signing-pending['"][\s\S]*<PopupSigningPending/)
+    expect(POPUP_SOURCE).toMatch(/screen === ['"]result['"][\s\S]*<PopupResult/)
+    expect(POPUP_SOURCE).toMatch(/<WalletShell[\s\S]*status=/)
   })
 })

@@ -54,14 +54,21 @@
 // file's phase names instead come directly from the brief's own lane-state list, mapped only onto
 // events that genuinely fire.
 import { useMemo, useRef } from 'react'
-import { StatusNotice, TechnicalDetails } from '../pocket/Primitives.jsx'
-import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
-import { buildStrategyViewModel, buildAmountDisplayMap } from '../../strategy/planModel.js'
+import { StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
+import { AgentMark } from '../pocket/AgentMark.jsx'
+import { NetworkRoute } from '../pocket/NetworkIdentity.jsx'
 import { usePocketTransition } from '../../design/usePocketTransition.js'
 import { SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
 import { StrategyReceipt } from './StrategyReceipt.jsx'
 import { CREW_PERSONAS, personaForOrdinal } from '../../crew/personas.js'
 import { baseRecoveryIdentityKey } from '../../strategy/baseRecoveryIdentity.js'
+import {
+  formatCoreAmount,
+  normalizeCoreAmount,
+  toAgentIdentityView,
+  toBaseCustodyTruth,
+  toStartProgress,
+} from '../../core/coreRouteAdapters.js'
 
 const TOKEN_SYMBOLS = Object.freeze({
   [SOROBAN_TOKEN_ADDRESS]: 'USDC',
@@ -73,6 +80,28 @@ function tokenSymbol(token) {
   if (typeof token === 'string' && token.length > 12)
     return `${token.slice(0, 4)}…${token.slice(-4)}`
   return token
+}
+
+function coreAmountForDisplay(amount) {
+  if (!amount || typeof amount !== 'object') return null
+  try {
+    return normalizeCoreAmount({ ...amount, token: tokenSymbol(amount.token) })
+  } catch {
+    return null
+  }
+}
+
+function exactCoreAmountText(amount) {
+  const normalized = coreAmountForDisplay(amount)
+  return normalized ? formatCoreAmount(normalized) : 'Amount unavailable'
+}
+
+function laneProgress(phase) {
+  if (phase === 'queued') return toStartProgress('queued')
+  if (phase === 'moving') return toStartProgress('pulling')
+  if (phase === 'depositing') return toStartProgress('depositing')
+  if (phase === 'working' || phase === 'confirmed') return toStartProgress('done')
+  return null
 }
 
 // Rank 0 is shared by two DIFFERENT labels depending on permission mode -- 'creating' (fresh: the
@@ -227,6 +256,17 @@ function bridgeNetworkContext(phase) {
   }
 }
 
+function stellarNetworkContext(phase) {
+  const settled = phase === 'working' || phase === 'confirmed'
+  return {
+    hostNetworkId: 'stellar-testnet',
+    sourceNetworkId: 'stellar-testnet',
+    destinationNetworkId: 'stellar-testnet',
+    custodyNetworkId: settled ? 'stellar-testnet' : null,
+    transitState: settled ? 'none' : 'unknown',
+  }
+}
+
 // Custody labels only ever come from the settled receipt (never guessed live) -- 'held'/'unmoved'
 // for a deposit lane, 'held' relabeled 'Recovery available' for the bridge lane (baseLeg.js's own
 // "stranded, recoverable via an owner sweep" vocabulary).
@@ -248,7 +288,6 @@ function foldDepositReceipt(lane, outcome) {
   if (outcome.executionStatus === 'succeeded') {
     return {
       ...lane,
-      phase: 'working',
       txHash: outcome.txHash,
       error: null,
       custodyLabel: null,
@@ -457,6 +496,17 @@ function bridgeChildRows(children, allocationById) {
   })
 }
 
+function hasFreshBaseCustodyProof(custody) {
+  if (!custody || custody.location !== 'base-proxy') return false
+  if (custody.confirmed !== true || custody.source !== 'receipt') return false
+  return (
+    (typeof custody.checkedAt === 'number' && Number.isFinite(custody.checkedAt)) ||
+    (typeof custody.checkedAt === 'string' &&
+      custody.checkedAt.trim().length > 0 &&
+      Number.isFinite(Date.parse(custody.checkedAt)))
+  )
+}
+
 // `receipt` is only ever passed once the whole run has settled (see this file's own header
 // comment), and `buildDispatchReceipt` structurally produces one outcome for EVERY child in
 // `plan.agents[].children[]` (dispatchSummary.js's `plannedAllocations`/`buildBranch`) -- so once
@@ -465,7 +515,7 @@ function bridgeChildRows(children, allocationById) {
 function bridgeSettledPhase(childRows) {
   if (childRows.length === 0) return null
   if (childRows.some((c) => c.failed)) return 'failed'
-  if (childRows.every((c) => c.custody?.location === 'base-proxy')) return 'confirmed'
+  if (childRows.every((c) => hasFreshBaseCustodyProof(c.custody))) return 'confirmed'
   return 'in-transit' // pending/unknown residual -- never claim arrived without proof
 }
 
@@ -566,34 +616,89 @@ function recoveryControl(projection, pending, { baseChild = false } = {}) {
   return { label, disabled: pending || !actionable }
 }
 
-function validAgentAddresses(agentAddresses, expectedLength) {
+function presentAddress(value) {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
+}
+
+// Identity is intentionally collected only from records that carry their own allocation key.
+// `grant-confirmed.agentAddresses` and `permission.agentAddresses` are vectors without a
+// stable allocation binding; using their array position would make a reordered reviewed plan
+// silently show one worker's identity on another worker's lane.
+function workerAddressFromRecord(record) {
+  if (!record || typeof record !== 'object') return null
   return (
-    Array.isArray(agentAddresses) &&
-    agentAddresses.length === expectedLength &&
-    agentAddresses.every((address) => typeof address === 'string' && address.length > 0) &&
-    new Set(agentAddresses).size === agentAddresses.length
+    presentAddress(record.agentAddress) ||
+    presentAddress(record.agent) ||
+    presentAddress(record.bridgeAgentAddress)
   )
+}
+
+function receiptAddressFromRecord(record) {
+  if (!record || typeof record !== 'object') return null
+  const allocationId = presentAddress(record.allocationId)
+  const evidence = record.evidence
+  if (!allocationId || !evidence || typeof evidence !== 'object') return null
+  if (presentAddress(evidence.allocationId) !== allocationId) return null
+  const address = presentAddress(evidence.agentAddress)
+  return address || null
+}
+
+function addKeyedIdentity(map, record, fallbackAllocationId = null, source = 'event') {
+  if (!record || typeof record !== 'object') return
+  const allocationId = presentAddress(record.allocationId) || fallbackAllocationId
+  const address =
+    source === 'receipt' ? receiptAddressFromRecord(record) : workerAddressFromRecord(record)
+  if (allocationId && address) map.set(allocationId, address)
+}
+
+function addKeyedIdentityCollection(map, collection, source = 'event') {
+  if (Array.isArray(collection)) {
+    collection.forEach((record) => addKeyedIdentity(map, record, null, source))
+    return
+  }
+  if (!collection || typeof collection !== 'object') return
+  for (const [allocationId, record] of Object.entries(collection)) {
+    if (typeof record === 'string') {
+      if (source !== 'receipt') addKeyedIdentity(map, { allocationId, agentAddress: record })
+    } else addKeyedIdentity(map, record, allocationId, source)
+  }
 }
 
 function confirmedAgentAddresses({ plan, runId, events, receipt }) {
   const currentRunId = plan.runId || runId
-  const confirmation = [...events]
-    .reverse()
-    .find(
-      (event) =>
-        (event?.name === 'grant-confirmed' || event?.name === 'reuse-confirmed') &&
-        event.data?.runId === currentRunId
-    )
-  if (validAgentAddresses(confirmation?.data?.agentAddresses, plan.agents.length)) {
-    return confirmation.data.agentAddresses
+  const addresses = new Map()
+
+  for (const event of events) {
+    const data = event?.data
+    if (!data || (data.runId && data.runId !== currentRunId)) continue
+    addKeyedIdentity(addresses, data)
+    addKeyedIdentityCollection(addresses, data.allocations)
+    addKeyedIdentityCollection(addresses, data.agents)
+    addKeyedIdentityCollection(addresses, data.confirmed?.allocations)
+    addKeyedIdentityCollection(addresses, data.confirmed?.agents)
   }
-  if (
-    receipt?.runId === currentRunId &&
-    validAgentAddresses(receipt.permission?.agentAddresses, plan.agents.length)
-  ) {
-    return receipt.permission.agentAddresses
+
+  if (receipt?.runId === currentRunId) {
+    for (const allocation of receipt.allocations || []) {
+      addKeyedIdentity(addresses, allocation, null, 'receipt')
+    }
+    addKeyedIdentityCollection(addresses, receipt.permission?.allocations, 'receipt')
+    addKeyedIdentityCollection(addresses, receipt.permission?.agents, 'receipt')
+    addKeyedIdentityCollection(addresses, receipt.permission?.agentRecords, 'receipt')
+    addKeyedIdentityCollection(addresses, receipt.permission?.addressesByAllocation, 'receipt')
   }
-  return null
+
+  const allocationIdsByAddress = new Map()
+  for (const [allocationId, address] of addresses) {
+    const ids = allocationIdsByAddress.get(address) || []
+    ids.push(allocationId)
+    allocationIdsByAddress.set(address, ids)
+  }
+  for (const ids of allocationIdsByAddress.values()) {
+    if (ids.length > 1) ids.forEach((allocationId) => addresses.delete(allocationId))
+  }
+
+  return addresses.size > 0 ? addresses : null
 }
 
 function addressPersona(personaByAddress, address) {
@@ -610,7 +715,6 @@ export function StartStage({
   receipt = null,
   personaByAddress = null,
   runId,
-  stellarVenue,
   recoveryByAllocation = {},
   recoveryPendingAllocations = new Set(),
   onRecoverAllocation,
@@ -622,22 +726,6 @@ export function StartStage({
   onViewCrew,
 }) {
   const scopeRef = useRef(null)
-  const viewModel = useMemo(
-    () => buildStrategyViewModel({ plan, stellarVenue }),
-    [plan, stellarVenue]
-  )
-  const displayByAllocation = useMemo(
-    () => new Map(viewModel.agents.map((a) => [a.id, a])),
-    [viewModel]
-  )
-  // Fix round 1 (Task 7 review, F1) -- the per-lane cap must show the SAME formatted figure the
-  // Plan stage's own allocation rows show for the identical agent (`PlanStage.jsx`'s
-  // `allocationDisplay`), not `display.allocation`'s raw float (a 100 USDC / 3-agent plan renders
-  // "33.3333333 USDC" from the raw field vs. Plan's "33.33 USDC" -- two stages of the same wizard
-  // disagreeing on the same money). `buildAmountDisplayMap` was lifted to planModel.js (its natural
-  // home, now imported by both PlanStage.jsx and this file) rather than re-implemented here --
-  // re-implementing money rounding is exactly how this repo has reintroduced rounding bugs before.
-  const capDisplay = useMemo(() => buildAmountDisplayMap(plan.agents, 'allocation'), [plan.agents])
 
   const effectiveReceipt = useMemo(
     () => foldRecoveryReceipt(receipt, recoveryByAllocation, baseRecoveryByIdentity),
@@ -648,13 +736,13 @@ export function StartStage({
     () => buildLanes({ plan, permission, events, receipt: effectiveReceipt }),
     [plan, permission, events, effectiveReceipt]
   )
-  const agentAddresses = useMemo(
-    () => confirmedAgentAddresses({ plan, runId, events, receipt: effectiveReceipt }),
-    [plan, runId, events, effectiveReceipt]
-  )
+  const agentAddressesByAllocation = useMemo(() => {
+    return confirmedAgentAddresses({ plan, runId, events, receipt: effectiveReceipt })
+  }, [plan, runId, events, effectiveReceipt])
 
   const anyFailed = lanes.some((lane) => lane.phase === 'failed')
   const announcement = summarizeLanes(lanes)
+  const baseCustodyTruth = toBaseCustodyTruth()
   // Step 2: GSAP animates only state changes the reducer has already committed. `events.length`
   // plus a settled-receipt marker is exactly that committed state -- never a wall-clock timer.
   const stateKey = `${events.length}:${receipt ? 'settled' : 'running'}`
@@ -674,12 +762,57 @@ export function StartStage({
           <ul className="pc-agent-lanes">
             {lanes.map((lane, index) => {
               const isBridge = lane.kind === 'bridge'
-              const planAgent = plan.agents[index]
-              const agentAddress = agentAddresses?.[index] || null
+              const planAgent = plan.agents.find(
+                (agent) => agent.allocationId === lane.allocationId
+              )
+              const agentAddress = agentAddressesByAllocation?.get(lane.allocationId) || null
               const assignedPersona = addressPersona(personaByAddress, agentAddress)
               const persona = assignedPersona || personaForOrdinal(index)
               const assignmentSyncing = Boolean(agentAddress && !assignedPersona)
-              const display = displayByAllocation.get(lane.allocationId)
+              const currentRunId = plan.runId || runId
+              const hasConfirmationEvidence =
+                permission?.mode === 'reuse' ||
+                events.some(
+                  (event) =>
+                    (event?.name === 'grant-confirmed' || event?.name === 'reuse-confirmed') &&
+                    event.data?.runId === currentRunId
+                )
+              const identityPhase = agentAddress
+                ? permission?.mode === 'reuse'
+                  ? 'reused'
+                  : 'deployed'
+                : hasConfirmationEvidence
+                  ? permission?.mode === 'reuse'
+                    ? 'reused'
+                    : 'deployed'
+                  : 'planned'
+              const receiptIdentityEvidence = Boolean(
+                effectiveReceipt?.allocations?.some(
+                  (allocation) =>
+                    allocation?.allocationId === lane.allocationId &&
+                    receiptAddressFromRecord(allocation)
+                )
+              )
+              const identity = toAgentIdentityView({
+                phase: identityPhase,
+                allocationId: lane.allocationId,
+                runId: currentRunId,
+                address: agentAddress,
+                verified: Boolean(agentAddress),
+                source:
+                  identityPhase === 'planned'
+                    ? 'reviewed-plan'
+                    : identityPhase === 'reused'
+                      ? 'owner-discovery'
+                      : receiptIdentityEvidence
+                        ? 'receipt'
+                        : 'creation-event',
+                state: lane.phase,
+              })
+              // Receipt custody may describe a settled status, but it cannot manufacture the
+              // visual milestone. Bridge progress is always projected from the received farm
+              // event phase; deposit progress remains the allocation event-derived lane phase.
+              const progress = laneProgress(isBridge ? bridgeLanePhase(events) : lane.phase)
               const phaseLabel = isBridge
                 ? BRIDGE_PHASE_LABEL[lane.phase]
                 : DEPOSIT_PHASE_LABEL[lane.phase]
@@ -691,44 +824,68 @@ export function StartStage({
                   data-lane-phase={lane.phase}
                   data-agent-address={agentAddress || undefined}
                 >
-                  <img
-                    className="pc-start-agent-avatar pc-crew-avatar"
-                    src={persona.avatar}
-                    alt={`${persona.name} agent${
-                      assignmentSyncing ? ', assignment syncing' : agentAddress ? '' : ', planned'
-                    }`}
-                    data-state={laneMarkState(lane.phase)}
-                    width="44"
-                    height="44"
+                  <AgentMark
+                    identity={identity}
+                    state={laneMarkState(lane.phase)}
+                    size={44}
+                    label="agent"
                   />
+                  {identity.identityAvailable && (
+                    <img
+                      className="pc-start-agent-avatar pc-crew-avatar"
+                      src={persona.avatar}
+                      alt=""
+                      aria-hidden="true"
+                      data-state={laneMarkState(lane.phase)}
+                      width="44"
+                      height="44"
+                    />
+                  )}
                   <div className="pc-agent-lane-body" data-pocket-enter>
                     <p className="pc-worker-name">{persona.name}</p>
                     {assignmentSyncing && (
                       <p className="pc-crew-syncing">Crew assignment syncing.</p>
                     )}
-                    {agentAddress && <p className="pc-lane-address pc-technical">{agentAddress}</p>}
                     <div className="pc-agent-lane-meta">
-                      {isBridge ? (
-                        <NetworkRoute context={bridgeNetworkContext(lane.phase)} />
-                      ) : (
-                        <NetworkBadge networkId="stellar-testnet" />
-                      )}
-                      {/* Fix round 1 (F1): the formatted 2dp figure (capDisplay, keyed by
-                          allocationId), never the raw `display.allocation` float -- see capDisplay's
-                          own comment above. Bridge child rows a few lines below intentionally stay
-                          raw (`childDisplay?.allocation`): PlanStage.jsx's own sibling bridge-child
-                          row (line 676) also renders that field raw, so those two already agree. */}
-                      {display && (
-                        <p className="pc-lane-cap">
-                          {capDisplay[lane.allocationId]}{' '}
-                          {tokenSymbol(planAgent?.allocation.token ?? plan.amount.token)}
-                        </p>
+                      <NetworkRoute
+                        context={
+                          isBridge
+                            ? bridgeNetworkContext(lane.phase)
+                            : stellarNetworkContext(lane.phase)
+                        }
+                      />
+                      {/* The lane cap is the reviewed canonical amount, never the float projection
+                          from buildStrategyViewModel or a rounded display map. */}
+                      {identity.showCap && planAgent?.cap && (
+                        <p className="pc-lane-cap">{exactCoreAmountText(planAgent.cap)}</p>
                       )}
                     </div>
                     <p className="pc-lane-phase">{phaseLabel || lane.phase}</p>
-                    <div className="pc-agent-lane-progress">
-                      <span />
-                    </div>
+                    {isBridge && (
+                      <VenueTruth
+                        kind={baseCustodyTruth.yield.state === 'none' ? 'base-proxy' : 'unknown'}
+                      />
+                    )}
+                    {!isBridge && (
+                      <VenueTruth
+                        kind="stellar-live"
+                        venue="Autofarm Vault"
+                        networkContext={stellarNetworkContext(lane.phase)}
+                      />
+                    )}
+                    {progress !== null && (
+                      <div
+                        className="pc-agent-lane-progress"
+                        role="progressbar"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        aria-valuenow={progress}
+                        aria-label={`${phaseLabel || lane.phase} progress`}
+                        data-progress={progress}
+                      >
+                        <span />
+                      </div>
+                    )}
                     {!isBridge && lane.custodyLabel && <p>{lane.custodyLabel}</p>}
                     {!isBridge && lane.error && <p role="alert">{lane.error}</p>}
                     {/* Step 1: one bridge mark contains ALL Base child destinations -- a single
@@ -737,9 +894,6 @@ export function StartStage({
                     {isBridge && lane.children.length > 0 && (
                       <ul>
                         {lane.children.map((child) => {
-                          const childDisplay = display?.children?.find(
-                            (c) => c.allocationId === child.allocationId
-                          )
                           let identityKey = null
                           try {
                             identityKey = baseRecoveryIdentityKey(child.identity)
@@ -758,17 +912,23 @@ export function StartStage({
                           )
                           return (
                             <li key={child.allocationId}>
-                              <span>
-                                {/* m-7 (Strategy Task 14 fix round 1): matched PlanStage.jsx's
-                                    sibling bridge-child row, which always names the currency
-                                    alongside the amount -- this one silently omitted it. */}
-                                {child.proxyTarget || child.destination}:{' '}
-                                {childDisplay?.allocation ?? ''}{' '}
-                                {tokenSymbol(planAgent?.allocation.token ?? plan.amount.token)}
-                              </span>
+                              {identity.showMoney && (
+                                <span>
+                                  {/* m-7 (Strategy Task 14 fix round 1): matched PlanStage.jsx's
+                                      sibling bridge-child row, which always names the currency
+                                      alongside the amount -- this one silently omitted it. */}
+                                  {child.proxyTarget || child.destination}:{' '}
+                                  {exactCoreAmountText(
+                                    planAgent?.children?.find(
+                                      (plannedChild) =>
+                                        plannedChild.allocationId === child.allocationId
+                                    )?.allocation
+                                  )}
+                                </span>
+                              )}
                               {child.custodyLabel && <span> {child.custodyLabel}</span>}
                               {child.error && <span role="alert"> {child.error}</span>}
-                              {child.failed && !control.hidden && (
+                              {identity.showAction && child.failed && !control.hidden && (
                                 <button
                                   type="button"
                                   className="pc-button pc-button--secondary"
@@ -787,21 +947,29 @@ export function StartStage({
                         })}
                       </ul>
                     )}
-                    {lane.txHash && (
+                    {(lane.txHash || agentAddress || lane.allocationId) && (
                       <TechnicalDetails summary={`${persona.name} technical details`}>
                         {/* Owner decision #19: the container no longer defaults to mono -- these
                             two raw values are marked .pc-technical individually so they keep
                             rendering in the mono face. */}
                         <p>
-                          Transaction: <span className="pc-technical">{lane.txHash}</span>
-                        </p>
-                        <p>
                           Allocation: <span className="pc-technical">{lane.allocationId}</span>
                         </p>
+                        {agentAddress && (
+                          <p>
+                            Agent: <span className="pc-technical">{agentAddress}</span>
+                          </p>
+                        )}
+                        {lane.txHash && (
+                          <p>
+                            Transaction: <span className="pc-technical">{lane.txHash}</span>
+                          </p>
+                        )}
                       </TechnicalDetails>
                     )}
                   </div>
                   {!isBridge &&
+                    identity.showAction &&
                     lane.recoveryEligible &&
                     (() => {
                       const control = recoveryControl(
@@ -870,7 +1038,7 @@ export function StartStage({
       {receipt && (
         <StrategyReceipt
           receipt={effectiveReceipt}
-          runId={runId}
+          runId={runId || plan.runId}
           onViewMoney={onViewMoney}
           onMakeAnotherDeposit={onMakeAnotherDeposit}
           onViewCrew={onViewCrew}

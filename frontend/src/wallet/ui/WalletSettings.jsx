@@ -22,10 +22,10 @@
 //
 // The revoke description below also does not claim universal key destruction (VF Wallet Task 7's
 // `POST /mandate/revoke`, relayer/src/httpRouter.mjs's REVOKE_NOTE constant): the relayer deletes
-// only its OWN copy of the session key and says so explicitly -- the stellarOwner<->kernelAddress
-// binding is an application/relayer association, not a cryptographic one, so if a copy of the key
-// exists elsewhere the on-chain expiry timestamp remains the real worst-case bound, not an
-// assumption that the key is gone from existence. Restating that "revoke destroys the key
+// only its OWN copy of the session key and says so explicitly -- the owner-to-session association
+// is an application/relayer binding, not a cryptographic one, so if a copy of the key exists
+// elsewhere the on-chain expiry timestamp remains the real worst-case bound, not an assumption
+// that the key is gone from existence. Restating that "revoke destroys the key
 // everywhere" here would be a claim this extension (and, per Task 7's own design, the relayer
 // itself) cannot back up.
 import { WalletShell } from './WalletShell.jsx'
@@ -41,7 +41,7 @@ const NAV_TABS = [
 // README.md's own live-app link (the same origin extension/vite.config.extension.js defaults
 // VF_API_BASE to) -- not a new constant invented for this task, the app's one canonical web
 // origin.
-const VF_WEB_APP_URL = 'https://vibing-farmer.pages.dev'
+const VF_WEB_APP_URL = 'https://vibing-farmer.pages.dev/settings?tab=wallet#base-mandate'
 
 export function WalletSettings({
   account,
@@ -95,8 +95,8 @@ export function WalletSettings({
         <p className="pc-field-help">
           Setting up, checking the status of, and revoking a Base testnet mandate all happen in the
           Vibing Farmer web app, not here. This extension has no synced copy of that status and no
-          working revoke control for it -- it has no direct line to the web app&rsquo;s storage or
-          to the relayer that actually holds the mandate. Leaving this extension open or closed does
+          working revoke control for it; it has no direct line to the web app&rsquo;s storage or to
+          the relayer that actually holds the mandate. Leaving this extension open or closed does
           not create or revoke anything on its own.
         </p>
         <p className="pc-field-help">
@@ -120,14 +120,8 @@ export function WalletSettings({
             `.pc-button`) with `min-height: var(--pc-touch-target)` gives the link a real 44px tap
             area while keeping `white-space` at its normal default -- the text still wraps freely
             at 320px, so the overflow this link was originally written to dodge does not return. */}
-        <a
-          className="pc-field-help"
-          href={VF_WEB_APP_URL}
-          target="_blank"
-          rel="noreferrer"
-          style={{ display: 'flex', alignItems: 'center', minHeight: 'var(--pc-touch-target)' }}
-        >
-          Manage Base testnet in Vibing Farmer
+        <a className="pc-external-link" href={VF_WEB_APP_URL} target="_blank" rel="noreferrer">
+          Manage Base mandate on the web app
         </a>
       </div>
 
@@ -138,7 +132,7 @@ export function WalletSettings({
       <HonestyLabels scope="global" />
 
       <p className="pc-field-help">
-        Vibing Farmer — Stellar testnet proof of concept. Not audited. Not for real funds.
+        Vibing Farmer, Stellar testnet proof of concept. Not audited. Not for real funds.
       </p>
 
       {children}

@@ -1,86 +1,221 @@
 // frontend/src/components/crew/CrewActivity.jsx
-// Task 9 (Pocket Crew design alignment). Two stacked, read-only feeds: the keeper's own
-// compound/rebalance history, and the crew's decision log (Task 8's selectCrewDecisions.js).
-//
-// Keeper row field mapping is mirrored from the RETIRED `components/console/KeeperZone.jsx`
-// (reference only -- nothing is imported from `components/console/*`, D-28.3), and verified
-// against the real producer in app.jsx:1104-1133: each `keeperEvents` row is
-// `{id, kind:'compound_executed'|'rebalance_executed', totalGainUsdc?, pricePerShare?, fromLabel?,
-// toLabel?, amountUsdc?, txHash, timestamp}`. `keeper` (classifyKeeperAutomation's output) is a
-// SEPARATE prop (CrewRoute's stat strip) -- this component never reads it.
-//
-// Decision rows are rendered generically over whatever selectCrewDecisions.js returns
-// ({id, tone, title, detail, time}) -- which production events map into that log is still under
-// review (Task 8's own header comment), so nothing here assumes a specific event name is present.
-function shortHash(hash) {
-  return hash ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : ''
+// Read-only keeper and decision projections for Pocket Crew. The component consumes the
+// already-decoded keeperEvents and selectCrewDecisions output; it never records activity or
+// invents a missing ledger event.
+import { useEffect, useRef, useState } from 'react'
+
+function textValue(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
 }
 
-// Small local equivalent of the retired console/consoleUtils.js's agoText -- redeclared here
-// rather than imported (that module lives under the retired components/console/* tree).
-function agoText(timestamp, now) {
-  if (!Number.isFinite(timestamp)) return ''
-  const seconds = Math.max(0, Math.floor((now - timestamp) / 1000))
-  if (seconds < 60) return `${seconds}s ago`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} min ago`
-  return `${Math.floor(minutes / 60)} hr ago`
+function canonicalDecimal(value) {
+  if (typeof value !== 'string' || value.trim() !== value) return null
+  return /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value) ? value : null
+}
+
+function canonicalHash(value) {
+  if (typeof value !== 'string' || value.trim() !== value) return ''
+  return /^(?:0x)?[A-Fa-f0-9]{16,128}$/.test(value) ? value : ''
+}
+
+function shortHash(hash) {
+  const value = textValue(hash)
+  return value ? `${value.slice(0, 8)}…${value.slice(-6)}` : ''
+}
+
+function closedAtMs(value) {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
 }
 
 function keeperRowText(event) {
-  if (event.kind === 'compound_executed') return `Compounded, +${event.totalGainUsdc} USDC`
-  if (event.kind === 'rebalance_executed')
+  if (event.kind === 'compound_executed') {
+    return `Compounded, +${event.totalGainUsdc} USDC`
+  }
+
+  if (event.kind === 'rebalance_executed') {
     return `Rebalanced, ${event.fromLabel} to ${event.toLabel}, ${event.amountUsdc} USDC`
-  return 'Keeper activity'
+  }
+
+  return ''
+}
+
+function normalizeKeeperEvents(events) {
+  if (!Array.isArray(events)) return []
+  return events
+    .map((event) => {
+      if (
+        !event ||
+        typeof event !== 'object' ||
+        (typeof event.id !== 'string' && typeof event.id !== 'number')
+      ) {
+        return null
+      }
+      const id = String(event.id)
+      const txHash = canonicalHash(event.txHash)
+      const closedAt = closedAtMs(event.closedAt)
+      if (!txHash || closedAt == null) return null
+      if (event.kind === 'compound_executed') {
+        const totalGainUsdc = canonicalDecimal(event.totalGainUsdc)
+        return totalGainUsdc
+          ? { id, kind: event.kind, totalGainUsdc, txHash, closedAt: event.closedAt }
+          : null
+      }
+      if (event.kind === 'rebalance_executed') {
+        const amountUsdc = canonicalDecimal(event.amountUsdc)
+        const fromLabel = textValue(event.fromLabel)
+        const toLabel = textValue(event.toLabel)
+        return amountUsdc && fromLabel && toLabel
+          ? {
+              id,
+              kind: event.kind,
+              amountUsdc,
+              fromLabel,
+              toLabel,
+              txHash,
+              closedAt: event.closedAt,
+            }
+          : null
+      }
+      return null
+    })
+    .filter(Boolean)
+}
+
+function normalizeDecisions(decisions) {
+  if (!Array.isArray(decisions)) return []
+  return decisions
+    .filter(
+      (row) =>
+        row && typeof row === 'object' && (typeof row.id === 'string' || typeof row.id === 'number')
+    )
+    .map((row) => {
+      const title = textValue(row.title)
+      const time = textValue(row.time)
+      const tone = ['kept', 'watch', 'rejected'].includes(row.tone) ? row.tone : 'unknown'
+      // A fully incomplete selector row remains visible as an honest neutral placeholder. A
+      // titled row without its technical time is not source-complete, so it is omitted instead
+      // of implying that the decision was actually logged.
+      if (!title && !time) {
+        return { id: String(row.id), tone, title: 'Decision unavailable', detail: '', time: '' }
+      }
+      if (!time) return null
+      return {
+        id: String(row.id),
+        tone,
+        title: title || 'Decision unavailable',
+        detail: textValue(row.detail),
+        time,
+      }
+    })
+    .filter(Boolean)
+}
+
+function evidenceTime(value) {
+  const closed = closedAtMs(value)
+  return closed == null ? '' : new Date(closed).toISOString()
 }
 
 export function CrewActivity({ keeperEvents = [], decisions = [] }) {
-  const now = Date.now()
+  const keeperRows = normalizeKeeperEvents(keeperEvents)
+  const decisionRows = normalizeDecisions(decisions)
+  const seenIdsRef = useRef(null)
+  const [liveStatus, setLiveStatus] = useState('')
+
+  useEffect(() => {
+    const currentKeeperIds = new Set(keeperRows.map((event) => event.id))
+    const currentDecisionIds = new Set(
+      decisionRows.filter((row) => row.time !== '').map((row) => row.id)
+    )
+    const previousIds = seenIdsRef.current
+    if (previousIds) {
+      const addedKeeper = [...currentKeeperIds].filter((id) => !previousIds.keepers.has(id)).length
+      const addedDecisions = [...currentDecisionIds].filter(
+        (id) => !previousIds.decisions.has(id)
+      ).length
+      const messages = []
+      if (addedKeeper > 0) {
+        messages.push(
+          `${addedKeeper} new keeper activity ${addedKeeper === 1 ? 'item' : 'items'} logged.`
+        )
+      }
+      if (addedDecisions > 0) {
+        messages.push(
+          `${addedDecisions} new decision ${addedDecisions === 1 ? 'item' : 'items'} logged.`
+        )
+      }
+      if (messages.length) setLiveStatus(messages.join(' '))
+    }
+    seenIdsRef.current = { keepers: currentKeeperIds, decisions: currentDecisionIds }
+  }, [keeperRows, decisionRows])
+
   return (
     <div className="pc-crew-activity">
+      {liveStatus ? (
+        <p className="pc-crew-activity-live" role="status" aria-live="polite">
+          {liveStatus}
+        </p>
+      ) : null}
+
       <section aria-labelledby="crew-keeper-activity-heading">
         <h2 id="crew-keeper-activity-heading" className="pc-crew-stat-label">
           Keeper activity
         </h2>
-        {keeperEvents.length === 0 ? (
+        {keeperRows.length === 0 ? (
           <p className="pc-crew-empty-note">No keeper activity yet on this device.</p>
         ) : (
           <ul className="pc-crew-keeper-list">
-            {keeperEvents.map((event) => (
-              <li key={event.id} className="pc-crew-keeper-row">
-                <span>{keeperRowText(event)}</span>
-                <span className="pc-crew-keeper-time">
-                  {shortHash(event.txHash)}
-                  {event.txHash ? ', ' : ''}
-                  {agoText(event.timestamp, now)}
-                </span>
-              </li>
-            ))}
+            {keeperRows.map((event) => {
+              const hash = shortHash(event.txHash)
+              const closed = evidenceTime(event.closedAt)
+              return (
+                <li key={event.id} className="pc-crew-keeper-row">
+                  <span>{keeperRowText(event)}</span>
+                  <span className="pc-crew-keeper-time">
+                    {hash ? <span>{hash}</span> : null}
+                    {closed ? (
+                      <span>
+                        <span>Ledger closed </span>
+                        <span>{closed}</span>
+                      </span>
+                    ) : null}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
         )}
       </section>
 
       <section aria-labelledby="crew-decision-log-heading">
-        {/* Final-review fix, M6: "Every decision, written down" is a completeness claim this
-            selector cannot honour -- selectCrewDecisions.js drops every non-council AgentFailed
-            (a worker that failed to deposit the user's money never appears here), and a
-            genuinely-approved council verdict can render as a neutral "Crew update" after the
-            allowlist. Nothing shown is false, but "Every" is. */}
         <h2 id="crew-decision-log-heading" className="pc-crew-stat-label">
           Decisions we logged
         </h2>
-        {decisions.length === 0 ? (
+        {decisionRows.length === 0 ? (
           <p className="pc-crew-empty-note">No decisions logged yet.</p>
         ) : (
           <ul className="pc-crew-decision-list">
-            {decisions.map((row) => (
+            {decisionRows.map((row) => (
               <li key={row.id} className="pc-crew-decision-row" data-tone={row.tone}>
                 <span className="pc-crew-decision-dot" aria-hidden="true" />
                 <div>
                   <p className="pc-crew-decision-title">{row.title}</p>
-                  {row.detail && <p className="pc-crew-decision-detail">{row.detail}</p>}
+                  {row.detail ? <p className="pc-crew-decision-detail">{row.detail}</p> : null}
                 </div>
-                <span className="pc-crew-decision-time">{row.time}</span>
+                <span className="pc-crew-decision-tone">
+                  {row.tone === 'kept'
+                    ? 'Kept'
+                    : row.tone === 'watch'
+                      ? 'Watch'
+                      : row.tone === 'rejected'
+                        ? 'Rejected'
+                        : 'Status unavailable'}
+                </span>
+                {row.time ? <span className="pc-crew-decision-time">{row.time}</span> : null}
               </li>
             ))}
           </ul>

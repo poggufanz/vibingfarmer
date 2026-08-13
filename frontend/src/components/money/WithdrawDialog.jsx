@@ -19,7 +19,8 @@
 // allowlist. A pool disabled after deposit therefore remains sweepable; the preview names the
 // known target set it was given without reviving the obsolete "disabled pools are skipped" copy.
 import { useMemo, useState } from 'react'
-import { Dialog } from '../pocket/Primitives.jsx'
+import { Dialog, VenueTruth } from '../pocket/Primitives.jsx'
+import { NetworkRoute } from '../pocket/NetworkIdentity.jsx'
 import {
   planFullExit,
   planPartialExit,
@@ -29,13 +30,39 @@ import {
 } from '../../money/ownerActions.js'
 import { formatAssetUnits, parseAssetUnits } from '../../money/assetUnits.js'
 
+const BASE_USDC_DECIMALS = 6
+
 // Same convention as AgentTeam.jsx/PositionList.jsx/StrategyReceipt.jsx: each sibling surface
 // keeps its own tiny copy of these display-only helpers rather than sharing a module across
 // unrelated route trees.
 function shortAddr(address) {
   return typeof address === 'string' && address.length > 12
     ? `${address.slice(0, 4)}…${address.slice(-4)}`
-    : (address ?? '-')
+    : (address ?? 'Unavailable')
+}
+
+// ownerActions owns the business vocabulary, including legacy separator punctuation. This
+// presentation boundary keeps money copy readable without exposing visible dash separators.
+function safeMoneyCopy(value) {
+  return typeof value === 'string' ? value.replace(/\s*(?:--|—|–)\s*/g, '. ') : value
+}
+
+// Task 6 presentation boundary. Money rows may originate in business code as BigInts, but the
+// Foundation primitives only receive the exact `{ token, units, decimals }` DTO. A malformed row
+// is unknown, never a zero balance or a partially summed total.
+function canonicalAmount(amount, fallbackDecimals = null) {
+  if (!amount || typeof amount !== 'object' || Array.isArray(amount)) return null
+  const token = typeof amount.token === 'string' && amount.token.trim() ? amount.token : null
+  const decimals = amount.decimals ?? fallbackDecimals
+  if (!token || !Number.isInteger(decimals) || decimals < 0 || decimals > 38) return null
+  let units
+  try {
+    units = typeof amount.units === 'bigint' ? amount.units.toString() : amount.units
+  } catch {
+    return null
+  }
+  if (typeof units !== 'string' || !/^\d+$/.test(units)) return null
+  return { token, units, decimals }
 }
 
 function unitsToDisplay(units, decimals) {
@@ -53,9 +80,41 @@ function unitsToDisplay(units, decimals) {
 // on this section). Now imported from there; this file keeps no local copy.
 
 function amountLine(amount) {
-  if (!amount?.units) return 'Unavailable'
-  const value = unitsToDisplay(amount.units, amount.decimals ?? 7)
-  return value == null ? 'Unavailable' : `${value} ${amount.token || 'USDC'}`
+  const normalized = canonicalAmount(amount)
+  if (!normalized || normalized.units === '') return 'Unavailable'
+  const value = unitsToDisplay(normalized.units, normalized.decimals)
+  return value == null ? 'Unavailable' : `${value} ${normalized.token}`
+}
+
+function formatBasePositionAmount(position) {
+  // Base positions come from the pinned Base USDC reader. Its source-owned wire shape omits both
+  // token and decimals because this reader is fixed to Circle USDC (6 decimals). That omission is
+  // explicit here, not a generic fallback: once a producer supplies a decimals field it must be
+  // exactly 6, and malformed precision never gets silently treated as a six-decimal value.
+  if (!position || typeof position !== 'object' || Array.isArray(position)) return 'Unavailable'
+  const hasExplicitToken = Object.prototype.hasOwnProperty.call(position, 'token')
+  const hasExplicitDecimals = Object.prototype.hasOwnProperty.call(position, 'decimals')
+  const token = hasExplicitToken ? position.token : 'USDC'
+  const decimals = hasExplicitDecimals ? position?.decimals : BASE_USDC_DECIMALS
+  if (
+    typeof position.pool !== 'string' ||
+    !position.pool.trim() ||
+    decimals !== BASE_USDC_DECIMALS ||
+    (hasExplicitToken && token !== 'USDC')
+  ) {
+    return 'Unavailable'
+  }
+  const amount = canonicalAmount(
+    {
+      token,
+      units: position?.assets,
+      decimals,
+    },
+    BASE_USDC_DECIMALS
+  )
+  if (!amount) return 'Unavailable'
+  const value = unitsToDisplay(amount.units, amount.decimals)
+  return value == null ? 'Unavailable' : `${value} ${amount.token}`
 }
 
 // Stellar-vault leg only (custody.js's own precedence: per-leg breakdown first, whole-agent
@@ -75,7 +134,7 @@ function partialReasonMessage(plan) {
   if (!plan) return null
   if (plan.reason === 'invalid-amount') return 'Enter an amount greater than zero.'
   if (plan.reason === 'balance-unavailable')
-    return "This agent's vault balance could not be confirmed -- try again, or use full exit."
+    return "This agent's vault balance could not be confirmed. Try again, or use full exit."
   if (plan.reason === 'exceeds-max') {
     const max = plan.maxAmount
       ? unitsToDisplay(plan.maxAmount.units, plan.maxAmount.decimals)
@@ -83,7 +142,7 @@ function partialReasonMessage(plan) {
     const token = plan.maxAmount?.token || 'USDC'
     return `Exceeds this agent's confirmed balance${max != null ? ` (${max} ${token})` : ''}.`
   }
-  return plan.message || null
+  return safeMoneyCopy(plan.message) || null
 }
 
 function inputReasonMessage(parsed, decimals, availableAmount) {
@@ -102,6 +161,38 @@ function inputReasonMessage(parsed, decimals, availableAmount) {
   return null
 }
 
+function sourceProofIsCurrent(row) {
+  if (!row || typeof row !== 'object') return false
+  const rowAmount = canonicalAmount(row.amount)
+  if (!rowAmount) return false
+  const freshnessValues = [
+    row.freshness,
+    row.amountFreshness,
+    row.amountState,
+    row.moneyState,
+    row.amount?.state,
+  ]
+  if (freshnessValues.some((state) => state && !['current', 'known'].includes(state))) return false
+  for (const leg of [row.vaultShares, row.idleToken]) {
+    if (
+      !leg ||
+      typeof leg !== 'object' ||
+      leg.state !== 'known' ||
+      !Number.isFinite(leg.checkedAt) ||
+      leg.checkedAt <= 0 ||
+      !canonicalAmount(leg.amount) ||
+      leg.amount.token !== rowAmount.token ||
+      leg.amount.decimals !== rowAmount.decimals
+    ) {
+      return false
+    }
+  }
+  if (row.checkedAt !== undefined && (!Number.isFinite(row.checkedAt) || row.checkedAt <= 0)) {
+    return false
+  }
+  return true
+}
+
 export function WithdrawDialog({
   open,
   onClose,
@@ -118,9 +209,27 @@ export function WithdrawDialog({
   const [mode, setMode] = useState('full')
   const [chosenAddress, setChosenAddress] = useState(null)
   const [amountInput, setAmountInput] = useState('')
-  const effectiveMode = mode === 'base' && !basePlan?.available ? 'full' : mode
-  const hasBaseHistory = (basePlan?.positions?.length ?? 0) > 0
-  const baseUnavailable = hasBaseHistory && !basePlan?.available
+  const basePositions = Array.isArray(basePlan?.positions) ? basePlan.positions : []
+  const hasBaseHistory = basePositions.length > 0
+  const basePositionSetValid = (() => {
+    if (!hasBaseHistory) return false
+    const pools = new Set()
+    for (const position of basePositions) {
+      if (formatBasePositionAmount(position) === 'Unavailable') return false
+      const pool = position.pool.trim()
+      if (pools.has(pool)) return false
+      pools.add(pool)
+    }
+    return true
+  })()
+  const baseUnavailable = hasBaseHistory && basePlan?.available !== true
+  const baseDataUnavailable = hasBaseHistory && !basePositionSetValid
+  const baseUnavailableReason = baseUnavailable
+    ? basePlan?.unavailableReason
+    : baseDataUnavailable
+      ? 'Base position data could not be verified. Withdrawal is disabled until every position is read again.'
+      : null
+  const effectiveMode = mode === 'base' && baseUnavailable ? 'full' : mode
 
   const fullPlan = useMemo(
     () =>
@@ -144,27 +253,29 @@ export function WithdrawDialog({
     ? { ...chosenAgentRaw, ...(discoveryByAddress.get(chosenAgentRaw.address) ?? {}) }
     : null
   const availableAmount = chosenAgent ? stellarVaultAvailable(chosenAgent) : null
-  const decimals = availableAmount?.decimals ?? 7
+  const canonicalAvailable = canonicalAmount(availableAmount)
+  const decimals = canonicalAvailable?.decimals ?? 7
   const exactAvailableUnits = (() => {
-    if (availableAmount?.units == null) return null
+    if (!canonicalAvailable) return null
     try {
-      return BigInt(availableAmount.units)
+      return BigInt(canonicalAvailable.units)
     } catch {
       return null
     }
   })()
-  const parsedAmount = chosenAgent
-    ? parseAssetUnits(amountInput, decimals, {
-        ...(exactAvailableUnits != null ? { availableUnits: exactAvailableUnits } : {}),
-      })
-    : null
+  const parsedAmount =
+    chosenAgent && canonicalAvailable
+      ? parseAssetUnits(amountInput, decimals, {
+          ...(exactAvailableUnits != null ? { availableUnits: exactAvailableUnits } : {}),
+        })
+      : null
 
   const partialPlan =
     chosenAgent && parsedAmount?.ok && account
       ? planPartialExit({
           agent: chosenAgent,
           amount: {
-            token: availableAmount?.token || 'USDC',
+            token: canonicalAvailable.token,
             units: parsedAmount.units.toString(),
             decimals,
           },
@@ -194,29 +305,35 @@ export function WithdrawDialog({
   const allAmountsKnown =
     targetRows.length > 0 &&
     targetRows.every((row) => {
-      const units = row?.amount?.units
-      if (typeof units !== 'string' || !units.trim()) return false
+      const normalized = canonicalAmount(row?.amount)
+      if (!normalized || !normalized.units.trim() || !sourceProofIsCurrent(row)) return false
       try {
-        BigInt(units)
-        return true
+        return BigInt(normalized.units) >= 0n
       } catch {
         return false
       }
     })
-  // Fix loop 1 (M2): decimals must be read from the target rows' own amounts, never a hardcoded
-  // assumption -- correct for every 7-decimal SAC today, silently wrong (by orders of magnitude)
-  // the moment a non-SAC token appears. Rows disagreeing on decimals is itself a "can't trust this
-  // total" case, same as a missing/unparseable amount -- demote to null rather than guess.
-  const knownDecimals = allAmountsKnown
-    ? targetRows.reduce((decimals, row) => {
-        const d = row.amount.decimals ?? 7
-        return decimals == null || decimals === d ? d : NaN
-      }, null)
-    : null
-  const knownTotal =
-    allAmountsKnown && Number.isFinite(knownDecimals)
-      ? targetRows.reduce((sum, row) => sum + BigInt(row.amount.units), 0n)
+  // A full exit is one canonical asset total. Rows disagreeing on token or decimals are themselves
+  // proof failure, even when every individual units string parses cleanly.
+  const normalizedTargetAmounts = allAmountsKnown
+    ? targetRows.map((row) => canonicalAmount(row.amount))
+    : []
+  const firstTargetAmount = normalizedTargetAmounts[0]
+  const knownDecimals =
+    firstTargetAmount &&
+    normalizedTargetAmounts.every(({ decimals }) => decimals === firstTargetAmount.decimals)
+      ? firstTargetAmount.decimals
       : null
+  const knownToken =
+    firstTargetAmount &&
+    normalizedTargetAmounts.every(({ token }) => token === firstTargetAmount.token)
+      ? firstTargetAmount.token
+      : null
+  const knownTotal =
+    allAmountsKnown && Number.isFinite(knownDecimals) && knownToken
+      ? normalizedTargetAmounts.reduce((sum, amount) => sum + BigInt(amount.units), 0n)
+      : null
+  const fullExitReady = Boolean(fullPlan?.ok && knownTotal != null)
 
   return (
     <Dialog
@@ -226,7 +343,7 @@ export function WithdrawDialog({
       className="pc-money-dialog"
       open={open}
       title="Withdraw"
-      description="Review exactly what this withdraws before you confirm — nothing moves until you do."
+      description="Review exactly what this withdraws before you confirm. Nothing moves until you do."
       onClose={closeIfSafe}
       actions={
         <>
@@ -242,40 +359,45 @@ export function WithdrawDialog({
             <button
               type="button"
               className="pc-button pc-button--primary"
-              disabled={pending || !fullPlan?.ok}
+              disabled={pending || !fullExitReady || typeof onConfirmFull !== 'function'}
               onClick={() => onConfirmFull?.(fullPlan)}
             >
-              {pending ? 'Withdrawing…' : fullPlan?.label || 'Exit all'}
+              {pending ? 'Withdrawing...' : fullPlan?.label || 'Exit all'}
             </button>
           )}
           {effectiveMode === 'partial' && partialPlan?.mode === 'fallback-full-exit' && (
             <button
               type="button"
               className="pc-button pc-button--primary"
-              disabled={pending || !fullPlan?.ok}
+              disabled={pending || !fullExitReady || typeof onConfirmFull !== 'function'}
               onClick={() => onConfirmFull?.(fullPlan)}
             >
-              {pending ? 'Withdrawing…' : 'Use full exit instead'}
+              {pending ? 'Withdrawing...' : 'Use full exit instead'}
             </button>
           )}
           {effectiveMode === 'partial' && partialPlan?.ok && partialPlan.mode === 'partial' && (
             <button
               type="button"
               className="pc-button pc-button--primary"
-              disabled={pending}
+              disabled={pending || typeof onConfirmPartial !== 'function'}
               onClick={() => onConfirmPartial?.(partialPlan)}
             >
-              {pending ? 'Withdrawing…' : 'Withdraw this amount'}
+              {pending ? 'Withdrawing...' : 'Withdraw this amount'}
             </button>
           )}
           {effectiveMode === 'base' && (
             <button
               type="button"
               className="pc-button pc-button--danger"
-              disabled={pending}
+              disabled={
+                pending ||
+                !basePositionSetValid ||
+                basePlan?.available !== true ||
+                typeof onConfirmBase !== 'function'
+              }
               onClick={() => onConfirmBase?.()}
             >
-              {pending ? 'Withdrawing…' : 'Withdraw everything from Base'}
+              {pending ? 'Withdrawing...' : 'Withdraw everything from Base'}
             </button>
           )}
         </>
@@ -285,6 +407,8 @@ export function WithdrawDialog({
         <button
           type="button"
           role="tab"
+          id="withdraw-tab-full"
+          aria-controls="withdraw-panel-full"
           aria-selected={effectiveMode === 'full'}
           disabled={pending}
           onClick={() => setMode('full')}
@@ -294,6 +418,8 @@ export function WithdrawDialog({
         <button
           type="button"
           role="tab"
+          id="withdraw-tab-partial"
+          aria-controls="withdraw-panel-partial"
           aria-selected={effectiveMode === 'partial'}
           disabled={pending}
           onClick={() => setMode('partial')}
@@ -304,8 +430,10 @@ export function WithdrawDialog({
           <button
             type="button"
             role="tab"
+            id="withdraw-tab-base"
+            aria-controls="withdraw-panel-base"
             aria-selected={effectiveMode === 'base'}
-            aria-describedby={baseUnavailable ? 'withdraw-base-unavailable' : undefined}
+            aria-describedby={baseUnavailableReason ? 'withdraw-base-unavailable' : undefined}
             disabled={pending || baseUnavailable}
             onClick={() => {
               if (!baseUnavailable) setMode('base')
@@ -316,60 +444,80 @@ export function WithdrawDialog({
         )}
       </div>
 
-      {baseUnavailable && basePlan?.unavailableReason && (
+      {baseUnavailableReason && (
         <p id="withdraw-base-unavailable" role="status">
-          {basePlan.unavailableReason}
+          {safeMoneyCopy(baseUnavailableReason)}
         </p>
       )}
 
       {effectiveMode === 'full' && (
-        <div>
+        <div
+          id="withdraw-panel-full"
+          role="tabpanel"
+          aria-labelledby="withdraw-tab-full"
+          hidden={effectiveMode !== 'full'}
+        >
           {!fullPlan && (
             <p>Full exit details will be available once agent discovery finishes loading.</p>
           )}
-          {fullPlan && !fullPlan.ok && <p>{fullPlan.limitation}</p>}
+          {fullPlan && !fullPlan.ok && <p>{safeMoneyCopy(fullPlan.limitation)}</p>}
           {fullPlan?.ok && (
             <>
-              <p>{feeModelCopy(fullPlan.model)}</p>
-              <p>{confirmationsCopy(fullPlan.expectedConfirmations)}</p>
-              {fullPlan.limitation && <p>{fullPlan.limitation}</p>}
+              <p>{safeMoneyCopy(feeModelCopy(fullPlan.model))}</p>
+              <p>{safeMoneyCopy(confirmationsCopy(fullPlan.expectedConfirmations))}</p>
+              {fullPlan.limitation && <p>{safeMoneyCopy(fullPlan.limitation)}</p>}
               <p>
                 Known amount across every target agent:{' '}
                 {knownTotal != null
-                  ? `${unitsToDisplay(knownTotal.toString(), knownDecimals)} USDC`
+                  ? `${unitsToDisplay(knownTotal.toString(), knownDecimals)} ${knownToken}`
                   : 'Unavailable'}
                 . Sent to {shortAddr(account?.address)}.
+              </p>
+              <p>
+                Revoke/stop access is not withdrawal. It only stops future access; use withdraw to
+                return money.
               </p>
               <ul aria-label="Agents in this exit">
                 {fullPlan.targets.map((t) => (
                   <li key={t.address}>
-                    {shortAddr(t.address)} — {targetStateLabel(t.state)}
+                    {shortAddr(t.address)}: {targetStateLabel(t.state)}
                   </li>
                 ))}
               </ul>
               <p>
                 If part of this fails partway, we never assume the rest is done or the position is
-                zero — we recheck the real chain balance before calling it complete, and the parts
+                zero. We recheck the real chain balance before calling it complete, and the parts
                 that already succeeded stay succeeded.
               </p>
             </>
           )}
           {progress && (
             <p role="status" aria-live="polite">
-              Sweeping agent {progress.index + 1} of {progress.total}. Confirm in your wallet…
+              Sweeping agent {progress.index + 1} of {progress.total}. Confirm in your wallet.
             </p>
           )}
         </div>
       )}
+      {effectiveMode !== 'full' && (
+        <div id="withdraw-panel-full" role="tabpanel" aria-labelledby="withdraw-tab-full" hidden />
+      )}
 
       {effectiveMode === 'partial' && (
-        <div>
+        <div
+          id="withdraw-panel-partial"
+          role="tabpanel"
+          aria-labelledby="withdraw-tab-partial"
+          hidden={effectiveMode !== 'partial'}
+        >
           <p>Withdraw an exact amount from one agent. The rest keeps farming.</p>
           <div role="radiogroup" aria-label="Choose agent">
             {agents.length === 0 && <p>No agents available for partial withdraw.</p>}
             {agents.map((agent, i) => {
               const avail = stellarVaultAvailable(agent)
-              const display = avail ? unitsToDisplay(avail.units, avail.decimals ?? 7) : null
+              const canonicalAvail = canonicalAmount(avail)
+              const display = canonicalAvail
+                ? unitsToDisplay(canonicalAvail.units, canonicalAvail.decimals)
+                : null
               return (
                 <label key={agent.address}>
                   <input
@@ -382,10 +530,8 @@ export function WithdrawDialog({
                       setAmountInput('')
                     }}
                   />
-                  {shortAddr(agent.address)} (agent {i + 1}) --{' '}
-                  {display != null
-                    ? `${display} ${avail?.token || 'USDC'} available`
-                    : 'Unavailable'}
+                  {shortAddr(agent.address)} (agent {i + 1}):{' '}
+                  {display != null ? `${display} ${canonicalAvail.token} available` : 'Unavailable'}
                 </label>
               )
             })}
@@ -402,13 +548,15 @@ export function WithdrawDialog({
                 value={amountInput}
                 onChange={(e) => setAmountInput(e.target.value)}
               />
-              {account && <p>{feeModelCopy(account.kind)}</p>}
+              {account && <p>{safeMoneyCopy(feeModelCopy(account.kind))}</p>}
               <p>Sent to {shortAddr(account?.address)}.</p>
               {inputReasonMessage(parsedAmount, decimals, availableAmount) && (
                 <p>{inputReasonMessage(parsedAmount, decimals, availableAmount)}</p>
               )}
               {partialPlan && !partialPlan.ok && <p>{partialReasonMessage(partialPlan)}</p>}
-              {partialPlan?.mode === 'fallback-full-exit' && <p>{partialPlan.message}</p>}
+              {partialPlan?.mode === 'fallback-full-exit' && (
+                <p>{safeMoneyCopy(partialPlan.message)}</p>
+              )}
               {partialPlan?.ok && partialPlan.mode === 'partial' && (
                 <p>
                   You receive {amountLine(partialPlan.amount)} from{' '}
@@ -423,28 +571,56 @@ export function WithdrawDialog({
           )}
         </div>
       )}
+      {effectiveMode !== 'partial' && (
+        <div
+          id="withdraw-panel-partial"
+          role="tabpanel"
+          aria-labelledby="withdraw-tab-partial"
+          hidden
+        />
+      )}
 
       {effectiveMode === 'base' && (
-        <div>
+        <div
+          id="withdraw-panel-base"
+          role="tabpanel"
+          aria-labelledby="withdraw-tab-base"
+          hidden={effectiveMode !== 'base'}
+        >
           <p>
-            This always exits every known Base position in one signature — a partial Base withdrawal
-            isn't available yet.
+            This exits every known Base position in one signature. A partial Base withdrawal is not
+            available yet.
           </p>
           <ul aria-label="Known Base positions">
-            {(basePlan?.positions || []).map((p) => (
-              <li key={p.pool}>
-                {p.poolName || shortAddr(p.pool)} —{' '}
-                {p.assets != null ? `${(Number(p.assets) / 1e6).toFixed(2)} USDC` : 'Unavailable'}
+            {basePositions.map((p, index) => (
+              <li key={`${p?.pool || 'base-position'}-${index}`}>
+                {p?.poolName || shortAddr(p?.pool)}: {formatBasePositionAmount(p)}
               </li>
             ))}
           </ul>
           <p>
             The owner can disable a pool for new deposits after you deposited. This exit uses the
-            router's known-pool record, so a disabled pool remains sweepable; disabling new deposits
+            router's known-pool record, so a disabled pool remains sweepable. Disabling new deposits
             does not strand or silently zero the position.
           </p>
-          <p>Base network fee sponsored by relay.</p>
+          <VenueTruth kind="base-proxy" />
+          <NetworkRoute
+            context={{
+              sourceNetworkId: 'base-sepolia',
+              destinationNetworkId: 'stellar-testnet',
+              custodyNetworkId: 'base-sepolia',
+              transitState: 'none',
+            }}
+            compact
+          />
+          <p>
+            Base network fee sponsored by relay. This does not confirm that money moved until
+            receipt and reconciliation evidence arrive.
+          </p>
         </div>
+      )}
+      {hasBaseHistory && effectiveMode !== 'base' && (
+        <div id="withdraw-panel-base" role="tabpanel" aria-labelledby="withdraw-tab-base" hidden />
       )}
     </Dialog>
   )

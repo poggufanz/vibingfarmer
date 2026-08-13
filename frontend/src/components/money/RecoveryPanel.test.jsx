@@ -21,9 +21,13 @@ function amt(units, decimals = 7) {
   return { token: 'USDC', units: String(units), decimals }
 }
 
+const FULL_AGENT_ADDRESS = 'CAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRDB3V'
+const CHECKSUM_INVALID_C = `${FULL_AGENT_ADDRESS.slice(0, -1)}A`
+
 describe('RecoveryPanel — submission-unknown: reconciliation before any retry', () => {
   it('offers no generic retry before status has been checked, and Check status is offered', () => {
     const onRetry = vi.fn()
+    const onCheckStatus = vi.fn()
     render(
       <RecoveryPanel
         open
@@ -31,10 +35,11 @@ describe('RecoveryPanel — submission-unknown: reconciliation before any retry'
         submission={{ outcome: 'unknown', message: 'Relay lost the submission.', hash: 'TXHASH1' }}
         reconciled={null}
         onRetry={onRetry}
+        onCheckStatus={onCheckStatus}
       />
     )
     expect(screen.getByText(/could not confirm whether this went through/i)).toBeTruthy()
-    expect(screen.getByText(/relay lost the submission/i)).toBeTruthy()
+    expect(screen.getByText(/submission result is unavailable/i)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /^retry$/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /submit again/i })).toBeNull()
     expect(onRetry).not.toHaveBeenCalled()
@@ -101,7 +106,7 @@ describe('RecoveryPanel — stranded at the Base bridge agent (baseLeg.js failur
       <RecoveryPanel
         open
         onClose={() => {}}
-        strandedBridge={{ pulled: true, bridgeAgentAddress: 'CBRIDGEAGENT1', stage: 'burn' }}
+        strandedBridge={{ pulled: true, bridgeAgentAddress: FULL_AGENT_ADDRESS, stage: 'burn' }}
         onRecoverViaFullExit={onRecoverViaFullExit}
       />
     )
@@ -109,7 +114,7 @@ describe('RecoveryPanel — stranded at the Base bridge agent (baseLeg.js failur
     expect(screen.getByText(/money never left stellar/i)).toBeTruthy()
     expect(screen.getByText(/not lost/i)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /recover via full exit/i }))
-    expect(onRecoverViaFullExit).toHaveBeenCalledWith('CBRIDGEAGENT1')
+    expect(onRecoverViaFullExit).toHaveBeenCalledWith(FULL_AGENT_ADDRESS)
   })
 
   it('a burn failure that never pulled funds (pulled: false/absent) is NOT shown as stranded', () => {
@@ -117,7 +122,7 @@ describe('RecoveryPanel — stranded at the Base bridge agent (baseLeg.js failur
       <RecoveryPanel
         open
         onClose={() => {}}
-        strandedBridge={{ pulled: false, bridgeAgentAddress: 'CBRIDGEAGENT1' }}
+        strandedBridge={{ pulled: false, bridgeAgentAddress: FULL_AGENT_ADDRESS }}
         location="owner"
       />
     )
@@ -126,15 +131,35 @@ describe('RecoveryPanel — stranded at the Base bridge agent (baseLeg.js failur
     expect(screen.queryByText(/stuck at the base bridge agent/i)).toBeNull()
     expect(screen.getByText(/already back in your wallet/i)).toBeTruthy()
   })
+
+  it.each(['false', 0, 1, {}, null])(
+    'does not treat non-boolean pulled evidence (%s) as proof of stranded funds',
+    (pulled) => {
+      const onRecoverViaFullExit = vi.fn()
+      render(
+        <RecoveryPanel
+          open
+          onClose={() => {}}
+          strandedBridge={{ pulled, bridgeAgentAddress: FULL_AGENT_ADDRESS }}
+          location="unknown"
+          onRecoverViaFullExit={onRecoverViaFullExit}
+        />
+      )
+      expect(screen.queryByText(/stuck at the base bridge agent/i)).toBeNull()
+      expect(screen.queryByRole('button', { name: /recover via full exit/i })).toBeNull()
+      expect(onRecoverViaFullExit).not.toHaveBeenCalled()
+    }
+  )
 })
 
 describe('RecoveryPanel — plain custody.js location narratives, never a guessed location', () => {
-  it('stellar-vault: no action needed, real confirmed amount shown', () => {
+  it('stellar-vault: no action needed, real confirmed amount shown without an unsupported yield claim', () => {
     render(
       <RecoveryPanel open onClose={() => {}} location="stellar-vault" amount={amt(25_0000000n)} />
     )
-    expect(screen.getByText(/still in the vault, earning yield/i)).toBeTruthy()
+    expect(screen.getByText(/still in the vault/i)).toBeTruthy()
     expect(screen.getByText(/no action is needed/i)).toBeTruthy()
+    expect(screen.queryByText(/earning yield/i)).toBeNull()
     expect(screen.getByText(/25.*USDC/)).toBeTruthy()
   })
 
@@ -145,12 +170,12 @@ describe('RecoveryPanel — plain custody.js location narratives, never a guesse
         open
         onClose={() => {}}
         location="agent"
-        agentAddress="CAGENT9"
+        agentAddress={FULL_AGENT_ADDRESS}
         onRecoverViaFullExit={onRecoverViaFullExit}
       />
     )
     fireEvent.click(screen.getByRole('button', { name: /recover via full exit/i }))
-    expect(onRecoverViaFullExit).toHaveBeenCalledWith('CAGENT9')
+    expect(onRecoverViaFullExit).toHaveBeenCalledWith(FULL_AGENT_ADDRESS)
   })
 
   it('in-transit: no destructive action is offered at all -- bridging honestly has none', () => {
@@ -215,6 +240,115 @@ describe('RecoveryPanel — Escape-safe while pending, close alongside any offer
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+})
+
+describe('RecoveryPanel — Task 6 proof, handler, precision, and privacy gates', () => {
+  it('does not expose an agent recovery action for an unverified short identity', () => {
+    const onRecoverViaFullExit = vi.fn()
+    render(
+      <RecoveryPanel
+        open
+        onClose={() => {}}
+        location="agent"
+        agentAddress="CAGENT9"
+        onRecoverViaFullExit={onRecoverViaFullExit}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /recover via full exit/i })).toBeNull()
+    expect(screen.getByText(/agent identity unavailable/i)).toBeTruthy()
+    expect(onRecoverViaFullExit).not.toHaveBeenCalled()
+  })
+
+  it('does not treat a full G identity as a recoverable agent C identity', () => {
+    const onRecoverViaFullExit = vi.fn()
+    render(
+      <RecoveryPanel
+        open
+        onClose={() => {}}
+        location="agent"
+        agentAddress={`G${'A'.repeat(55)}`}
+        onRecoverViaFullExit={onRecoverViaFullExit}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /recover via full exit/i })).toBeNull()
+    expect(screen.getByText(/agent identity unavailable/i)).toBeTruthy()
+    expect(onRecoverViaFullExit).not.toHaveBeenCalled()
+  })
+
+  it('does not expose recovery for a full-length C identity with an invalid checksum', () => {
+    const onRecoverViaFullExit = vi.fn()
+    render(
+      <RecoveryPanel
+        open
+        onClose={() => {}}
+        location="agent"
+        agentAddress={CHECKSUM_INVALID_C}
+        onRecoverViaFullExit={onRecoverViaFullExit}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /recover via full exit/i })).toBeNull()
+    expect(screen.getByText(/agent identity unavailable/i)).toBeTruthy()
+    expect(onRecoverViaFullExit).not.toHaveBeenCalled()
+  })
+
+  it('renders a canonical high-precision amount through MoneyFigure, never a numeric value prop', () => {
+    render(
+      <RecoveryPanel open onClose={() => {}} location="owner" amount={amt('9007199254740993')} />
+    )
+    expect(screen.getByText(/900,719,925\.4740993 usdc/i)).toBeTruthy()
+    expect(screen.queryByText(/^unavailable$/i)).toBeNull()
+  })
+
+  it('only offers check and retry when their corresponding handlers and proof exist', () => {
+    const submission = { outcome: 'unknown', message: 'Relay lost the submission.' }
+    const noHandlers = render(
+      <RecoveryPanel open onClose={() => {}} submission={submission} reconciled="not-landed" />
+    )
+    expect(screen.queryByRole('button', { name: /check status/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /submit again/i })).toBeNull()
+    noHandlers.unmount()
+
+    const onCheckStatus = vi.fn()
+    const onRetry = vi.fn()
+    render(
+      <RecoveryPanel
+        open
+        onClose={() => {}}
+        submission={submission}
+        reconciled="not-landed"
+        onCheckStatus={onCheckStatus}
+        onRetry={onRetry}
+      />
+    )
+    expect(screen.getByRole('button', { name: /check status/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /submit again/i })).toBeTruthy()
+  })
+
+  it('does not put poisoned private/capability error text in the DOM', () => {
+    render(
+      <RecoveryPanel
+        open
+        onClose={() => {}}
+        submission={{
+          outcome: 'unknown',
+          message: 'session key secret capability 0xabcdef0123456789abcdef0123456789',
+        }}
+        onCheckStatus={() => {}}
+      />
+    )
+    expect(document.body.textContent).not.toMatch(/session key|capability|0xabcdef/i)
+    expect(screen.getByText(/fresh status read proves it did not land/i)).toBeTruthy()
+  })
+
+  it.each(['stellar-vault', 'agent', 'in-transit', 'base-proxy', 'owner'])(
+    'keeps the source-backed %s location branch present',
+    (location) => {
+      const props = { open: true, onClose: () => {}, location }
+      if (location === 'agent') props.agentAddress = FULL_AGENT_ADDRESS
+      render(<RecoveryPanel {...props} />)
+      expect(screen.getByRole('dialog')).toBeTruthy()
+    }
+  )
 })
 
 describe('RecoveryPanel — accessibility', () => {
@@ -412,8 +546,8 @@ describe('RecoveryPanel — 320px footer-control containment guard, all three su
 // really renders, in both directions.
 //
 // #26 ported the contract's dialog block (contract :668-701) into my-money.css so the money
-// dialogs get 480px / --pc-overlay / --pc-radius-dominant / --pc-space-8 instead of Foundation's
-// 448px approximation, and #27 raised their layer above style.css's legacy overlays. Both were
+// dialogs get 480px / --pc-overlay / --pc-radius-dominant / --pc-space-8 and #27 raised their
+// layer above style.css's legacy overlays. Both were
 // keyed off `.pc-my-money-route`, a class only MyMoneyRoute's own root div carries -- so both
 // landed only on AgentTeam's in-route recovery dialog and MISSED all three route-level dialogs.
 // The scope is now the dialog's own `pc-money-dialog` class, so it travels with the component
@@ -426,7 +560,7 @@ describe('RecoveryPanel — 320px footer-control containment guard, all three su
 // is the class the component itself renders.
 // ---------------------------------------------------------------------------------------------
 describe('money dialog geometry — the real (unwrapped) tree, both directions', () => {
-  it('a money dialog gets the contract 480px/32px/1000 geometry; a non-money Foundation dialog keeps 448px/24px', async () => {
+  it('a money dialog gets the contract 480px/32px/1000 geometry; Foundation keeps its approved 480px/24px geometry', async () => {
     const money = render(
       <RecoveryPanel
         open
@@ -475,8 +609,12 @@ describe('money dialog geometry — the real (unwrapped) tree, both directions',
       // not actually reaching this element.
       expect(moneyGeometry.overlayZIndex, 'money dialog overlay z-index').toBe('1000')
 
-      expect(foundationGeometry.panelWidth, 'non-money dialog panel width (28rem)').toBe(448)
-      expect(foundationGeometry.panelPaddingTop, 'non-money dialog panel padding (1.5rem)').toBe(24)
+      expect(foundationGeometry.panelWidth, 'Foundation dialog panel width (approved 480px)').toBe(
+        480
+      )
+      expect(foundationGeometry.panelPaddingTop, 'Foundation dialog panel padding (1.5rem)').toBe(
+        24
+      )
     } finally {
       await browser.close()
     }

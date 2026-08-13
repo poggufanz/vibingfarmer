@@ -9,6 +9,13 @@
 
 import { useEffect, useState } from 'react'
 import { getStrategies } from '../history.js'
+import { SOROBAN_DECIMALS } from '../stellar/config.js'
+import { readTotalAssets } from '../stellar/vaultReads.js'
+import { NETWORK_IDS } from '../design/networks.js'
+import { formatCoreAmount, normalizeCoreAmount } from '../core/coreRouteAdapters.js'
+import { toExplorerPresentation } from '../secondary/secondaryRouteAdapters.js'
+import { StatusNotice, TechnicalDetails } from './pocket/Primitives.jsx'
+import { NetworkRoute } from './pocket/NetworkIdentity.jsx'
 import {
   EXTERNAL_PROTOCOL_COUNT,
   FIRST_PARTY_DEPLOYMENT_COUNT,
@@ -17,6 +24,7 @@ import {
   STELLAR_STATIC_DEPLOYMENTS,
 } from '../stellar/deploymentFacts.js'
 import NavBar from './NavBar.jsx'
+import './ExplorerPage.css'
 
 /* ----------------------------- constants ----------------------------- */
 
@@ -24,6 +32,13 @@ const STELLAR_EXPERT = 'https://stellar.expert/explorer/testnet/contract/'
 const ACTIVE_VAULT_ADDRESS = STELLAR_STATIC_DEPLOYMENTS.find(
   ({ id }) => id === 'autofarm-vault'
 ).address
+const DECIMALS_DIV = 10 ** SOROBAN_DECIMALS
+
+async function fetchTotalDeposits() {
+  const assets = await readTotalAssets()
+  if (assets == null) return null
+  return Number(assets) / DECIMALS_DIV
+}
 
 const SECURITY = [
   'Funding Router grants limit the total budget and expiry',
@@ -95,14 +110,62 @@ function ContractCard({ contract, copied, onCopy }) {
   )
 }
 
-function StatBlock({ label, value, loading }) {
+function StatBlock({ label, value, loading, factView, factKey }) {
+  const state = factView?.fact?.state
   return (
-    <div className="ex-stat">
+    <div
+      className="ex-stat"
+      data-fact-key={factKey}
+      data-fact-state={state || undefined}
+      data-fact-value={value == null ? 'null' : String(value)}
+    >
       <div className="ex-stat__value">
         {loading ? <span className="ex-skeleton" aria-hidden="true" /> : value}
       </div>
       <div className="ex-stat__label">{label}</div>
     </div>
+  )
+}
+
+function readAmount(value) {
+  if (value == null) return null
+  try {
+    return normalizeCoreAmount(value)
+  } catch {
+    return null
+  }
+}
+
+function factForPrimitive(view) {
+  if (!view?.fact) return null
+  return {
+    ...view.fact,
+    consequence: view.notice?.consequence ?? view.fact.consequence,
+    safeNextAction: view.notice?.nextAction ?? view.fact.safeNextAction,
+  }
+}
+
+function ExplorerFactStatus({ factView, title, factKey, includeDetails = true }) {
+  const fact = factForPrimitive(factView)
+  if (!fact) return null
+  const unavailableCopy = factView.notice?.consequence && (
+    <div className="ex-notice-copy" role="note">
+      <p>{factView.notice.consequence}</p>
+      {factView.notice.nextAction && <p>{factView.notice.nextAction}</p>}
+    </div>
+  )
+
+  return (
+    <section
+      className="ex-evidence"
+      aria-label={title}
+      data-fact-key={factKey}
+      data-fact-state={fact.state}
+    >
+      <StatusNotice fact={fact} title={title} />
+      {fact.state === 'unavailable' && unavailableCopy}
+      {includeDetails && <TechnicalDetails summary="Technical details" fact={fact} open />}
+    </section>
   )
 }
 
@@ -119,10 +182,12 @@ function hashHex(v) {
 
 const TX_BASE = 'https://stellar.expert/explorer/testnet/tx/'
 
-function AttestationsTable({ strategies }) {
+function AttestationsTable({ strategies, initialOnchain = [] }) {
   // On-chain strategy_attested events — the public, immutable proof. Polled best-effort;
   // the localStorage rows below stay as a fallback so the table is never empty pre-attest.
-  const [onchain, setOnchain] = useState([])
+  const [onchain, setOnchain] = useState(() =>
+    Array.isArray(initialOnchain) ? initialOnchain : []
+  )
   useEffect(() => {
     let alive = true
     ;(async () => {
@@ -189,9 +254,26 @@ function AttestationsTable({ strategies }) {
 
 /* ------------------------------ page ------------------------------ */
 
-export default function ExplorerPage() {
+export default function ExplorerPage({ explorerRead } = {}) {
   const [copied, setCopied] = useState(null)
+  const [totalDeposits, setTotalDeposits] = useState(undefined)
   const [strategies] = useState(() => getStrategies().slice(0, 5))
+  const attestationCount = getStrategies().length
+
+  useEffect(() => {
+    if (explorerRead != null) return undefined
+    let alive = true
+    fetchTotalDeposits()
+      .then((value) => {
+        if (alive) setTotalDeposits(value)
+      })
+      .catch(() => {
+        if (alive) setTotalDeposits(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [explorerRead])
 
   const copy = (address) => {
     navigator.clipboard
@@ -203,9 +285,71 @@ export default function ExplorerPage() {
       .catch(() => {})
   }
 
+  const loadingDeposits = totalDeposits === undefined
+  const fallbackState = loadingDeposits ? 'loading' : 'unavailable'
+  const fallbackRead = {
+    fact: {
+      state: fallbackState,
+      value: null,
+      source: 'Soroban RPC',
+      checkedAt: null,
+      staleAfterMs: null,
+    },
+    facts: {
+      totalAssets: {
+        state: fallbackState,
+        value: null,
+        source: 'Soroban RPC',
+        checkedAt: null,
+        staleAfterMs: null,
+      },
+    },
+    totalDeposits,
+    strategies,
+  }
+  const settledRead = explorerRead ?? fallbackRead
+  const presentation = toExplorerPresentation(settledRead)
+  const factViews = presentation.facts || {}
+  const totalAssetsView = factViews.totalAssets || factViews.tvl || factViews.rpc
+  const totalAssetsStatView = totalAssetsView || presentation
+  const directTotalAssets = readAmount(explorerRead?.totalAssets ?? explorerRead?.amount)
+  const totalAssetsState = totalAssetsView?.fact?.state || presentation.fact.state
+  const totalAssetsValue = totalAssetsView
+    ? totalAssetsView.value
+    : ['loading', 'error', 'unavailable'].includes(totalAssetsState)
+      ? null
+      : (directTotalAssets ?? presentation.value)
+  const hasInjectedRead = explorerRead != null
+  const depositsLabel = hasInjectedRead
+    ? totalAssetsValue
+      ? formatCoreAmount(totalAssetsValue)
+      : 'Not available'
+    : totalDeposits == null
+      ? 'Not available'
+      : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} USDC`
+  const depositsLoading = hasInjectedRead ? totalAssetsState === 'loading' : loadingDeposits
+  const displayedStrategies = Array.isArray(explorerRead?.strategies)
+    ? explorerRead.strategies
+    : strategies
+  const attestationView =
+    factViews.attestations || factViews.attestation || factViews.strategyAttestations
+  const attestationState = attestationView?.fact?.state
+  const effectiveAttestationState =
+    attestationState || (hasInjectedRead ? presentation.fact.state : null)
+  const attestationUnavailable = ['error', 'unavailable', 'partial'].includes(
+    effectiveAttestationState
+  )
+  const attestationLoading = effectiveAttestationState === 'loading'
+  const displayedAttestationCount = hasInjectedRead
+    ? attestationUnavailable
+      ? 'Not available'
+      : String(displayedStrategies.length)
+    : attestationCount > 0
+      ? `${attestationCount}`
+      : 'Not available'
+  const initialOnchain = Array.isArray(explorerRead?.onchain) ? explorerRead.onchain : []
   return (
     <div className="ex-page">
-      <ExplorerStyle />
       <NavBar />
 
       <main className="ex-main">
@@ -213,15 +357,24 @@ export default function ExplorerPage() {
         <header className="ex-header">
           <div className="ex-header__top">
             <h1 className="ex-title">Explorer</h1>
-            <span className="ex-net">
-              <span className="ex-net__dot" /> Stellar testnet. Live.
-            </span>
+            <NetworkRoute
+              compact
+              context={{
+                hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+                sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+                destinationNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+                custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+                transitState: 'none',
+              }}
+            />
           </div>
           <p className="ex-lede">
             8 static Stellar testnet addresses: 6 Vibing Farmer deployments and 2 external protocol
             contracts. Agent accounts are created dynamically per run.
           </p>
         </header>
+
+        <ExplorerFactStatus factView={presentation} title="Explorer read" factKey="explorer" />
 
         {/* ---------- contracts ---------- */}
         <section className="ex-section" aria-labelledby="ex-contracts">
@@ -235,7 +388,7 @@ export default function ExplorerPage() {
           </div>
         </section>
 
-        {/* ---------- live stats ---------- */}
+        {/* ---------- read stats ---------- */}
         <section className="ex-section" aria-labelledby="ex-stats">
           <div className="ex-section__head">
             <h2 id="ex-stats" className="ex-section__title">
@@ -248,6 +401,20 @@ export default function ExplorerPage() {
             <StatBlock label="VF deployments" value={FIRST_PARTY_DEPLOYMENT_COUNT} />
             <StatBlock label="Protocol contracts" value={EXTERNAL_PROTOCOL_COUNT} />
             <StatBlock label="Dynamic agents" value="N per run" />
+            <StatBlock
+              label="Vault TVL"
+              value={depositsLabel}
+              loading={depositsLoading}
+              factView={totalAssetsStatView}
+              factKey="totalAssets"
+            />
+            <StatBlock
+              label="Strategy Attestations"
+              value={displayedAttestationCount}
+              loading={attestationLoading}
+              factView={attestationView || (hasInjectedRead ? presentation : undefined)}
+              factKey="attestations"
+            />
           </div>
         </section>
 
@@ -260,7 +427,15 @@ export default function ExplorerPage() {
             Recent strategy hashes (SHA-256, off-chain verifiable; re-derivable from the strategy
             JSON):
           </p>
-          <AttestationsTable strategies={strategies} />
+          {attestationView && attestationState !== 'current' && (
+            <ExplorerFactStatus
+              factView={attestationView}
+              title="Attestation read"
+              factKey="attestations"
+              includeDetails={false}
+            />
+          )}
+          <AttestationsTable strategies={displayedStrategies} initialOnchain={initialOnchain} />
           <a
             className="ex-extlink ex-extlink--block"
             href={`${STELLAR_EXPERT}${ACTIVE_VAULT_ADDRESS}`}
@@ -320,7 +495,6 @@ export default function ExplorerPage() {
     </div>
   )
 }
-
 /* ------------------------------ styles ------------------------------ */
 
 function ExplorerStyle() {

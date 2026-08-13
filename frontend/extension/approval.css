@@ -9,8 +9,8 @@
  * never re-derived, never approximated. A locked value here must never change without owner
  * approval; if this file and the contract ever disagree, the contract wins.
  *
- * Consent and signing screens use MOTION_INTENSITY 1-2 (contract DIALS): no entry animation, no
- * gradient/glow/shimmer/pulse anywhere below. Both approve.html and ceremony.html mark their
+ * Consent and signing screens use MOTION_INTENSITY 1-2 (contract DIALS): no entry animation or
+ * decorative glow/shimmer/pulse anywhere below. Both approve.html and ceremony.html mark their
  * root [data-pocket-critical], which this file hard-disables animation on -- on the root AND its
  * descendants. The descendant half is load-bearing: the contract's own rule (contract:782-788) is
  * element-scoped, so marking a root never stopped a CHILD animating. WalletShell.jsx:23-28 resolved
@@ -20,13 +20,11 @@
  * the guarantee can live. Do not re-narrow it to the bare selector.
  *
  * No @layer: approve.html and ceremony.html each load this file as their only stylesheet and
- * never inject a second one at runtime -- unlike popup.jsx, which still renders a whole separate
- * legacy system inside popup.html (out of scope here; see wallet.css's header) -- so there is no
- * cascade here to arbitrate.
+ * never inject a second one at runtime, so there is no cascade here to arbitrate.
  *
  * VF Wallet Task 13 -- ceremonyView.js (ceremony.html's renderer, the internal-action sibling of
  * approvalView.js below) reuses .pc-wallet-consequence, .pc-wallet-origin, .pc-wallet-account-chip,
- * .pc-network-badge, .pc-field-help, and .pc-technical UNCHANGED -- no new selector was needed
+ * .pc-network-badge, .pc-field-help, and .pc-technical UNCHANGED -- no new content selector was needed
  * (verified in ceremonyView.test.js: the real-Chromium 320px sweep, the WCAG AA contrast walk
  * inside .pc-wallet-consequence, the mono-only-on-.pc-technical check, and the no-entry-animation
  * check all pass against ceremony.html's states with zero ceremony-specific overrides). This means
@@ -198,6 +196,13 @@ body {
 body {
   display: flex;
   justify-content: center;
+}
+
+/* ceremony.html opens as a full browser tab (background.js's tabs.create), not a fixed popup.
+   Keep vertical centering in the local stylesheet so the document has no inline style authority. */
+body.ceremony-page {
+  min-height: 100vh;
+  align-items: center;
 }
 
 h1,
@@ -492,7 +497,7 @@ pre,
 
 .pc-wallet-approval-actions {
   display: grid;
-  grid-template-columns: 1fr 1.35fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--pc-space-3);
 }
 
@@ -570,6 +575,20 @@ pre,
   }
 }
 
+/* Explicit fixture hook; production approval/ceremony pages still honor the media query above.
+   The visual entry sets data-motion from the query string, avoiding a timing-dependent OS
+   preference while keeping content, focus order, and enabled actions identical. */
+:root[data-motion='reduced'],
+:root[data-motion='reduced'] *,
+:root[data-motion='reduced'] *::before,
+:root[data-motion='reduced'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+  scroll-behavior: auto !important;
+}
+
 /* --- approve.html: VF Wallet Task 12 additions, rendered by approvalView.js. Every declaration
    below is built from tokens already defined above (spacing/radius/color/type scale) -- none is a
    new hex/radius/one-off value, the same convention WalletShell.jsx documents for its own
@@ -585,6 +604,16 @@ pre,
   background: var(--pc-workspace);
   color: var(--pc-muted);
   font-size: var(--pc-type-label);
+}
+
+.pc-wallet-network {
+  display: grid;
+  gap: var(--pc-space-1);
+  min-width: 0;
+}
+
+.pc-wallet-network .pc-technical {
+  overflow-wrap: anywhere;
 }
 
 .pc-wallet-account-chip .pc-technical {
@@ -715,6 +744,10 @@ pre,
   color: var(--pc-ink);
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.pc-technical-wrap--hidden {
+  display: none;
 }
 
 /* --- approve.html + ceremony.html: live status line. Never a color-only cue -- always text. --- */

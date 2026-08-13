@@ -1,5 +1,34 @@
 import { useState } from 'react'
 import { ApproveOverlay } from '../ApproveOverlay.jsx'
+import { formatTokenUnits } from '../../../design/pocket-crew-foundation.js'
+
+function formatPreviewAmount(operation) {
+  const amount = operation?.amount
+  const candidate =
+    amount && typeof amount === 'object'
+      ? amount
+      : operation?.units !== undefined
+        ? { token: operation.asset || 'XLM', units: operation.units, decimals: operation.decimals }
+        : null
+  if (candidate) {
+    try {
+      if (
+        typeof candidate.token === 'string' &&
+        typeof candidate.units === 'string' &&
+        /^[0-9]+$/.test(candidate.units) &&
+        Number.isInteger(candidate.decimals) &&
+        candidate.decimals >= 0
+      ) {
+        return `${formatTokenUnits(candidate.units, candidate.decimals)} ${candidate.token}`
+      }
+    } catch {
+      return 'Unavailable'
+    }
+  }
+  if (typeof amount === 'string' && amount.trim()) return amount
+  if (typeof amount === 'number' && Number.isFinite(amount)) return String(amount)
+  return 'Unavailable'
+}
 
 // VF Wallet Task 10, Step 2 -- action availability is model-specific, not a blanket "every
 // account can do everything." Standard (G) Send has an existing, tested submit path (this file's
@@ -47,7 +76,7 @@ export default function SendScreen({
 
   if (!supported) {
     return (
-      <div data-testid="send-screen-unsupported">
+      <div className="pc-send-unsupported" data-testid="send-screen-unsupported">
         <p className="pc-field-help">
           Send is not available yet for this account type. Use Receive to get funds instead.
         </p>
@@ -106,11 +135,13 @@ export default function SendScreen({
         onClick={() => {
           if (!validate()) return
           setReviewed({ to, amount, memo })
-          onPreview({ from, to, asset: 'XLM', amount, memo })
+          onPreview?.({ from, to, asset: 'XLM', amount, memo })
         }}
       >
         {busy ? 'Building…' : 'Review transaction'}
       </button>
+
+      {error && <p className="pc-field-error">{error}</p>}
 
       {preview && (
         <div className="pc-support" data-testid="send-confirm-card">
@@ -120,17 +151,19 @@ export default function SendScreen({
               display; without .pc-address-full it forces .pc-wallet-main's shared implicit grid
               column (and every row sharing it, header and nav included) past 320/360px, exactly
               the mechanism WalletShell.jsx's own .pc-address-full comment documents. */}
-          <p className="pc-technical pc-address-full">To: {preview.confirm.ops[0]?.destination}</p>
-          <p className="pc-technical">Asset: {preview.confirm.ops[0]?.asset}</p>
-          <p className="pc-technical">Amount: {preview.confirm.ops[0]?.amount}</p>
-          <p className="pc-technical">Memo: {preview.confirm.memo || 'None'}</p>
-          <p className="pc-technical">Fee: {preview.confirm.fee} stroops</p>
+          <p className="pc-technical pc-address-full">
+            To: {preview.confirm?.ops?.[0]?.destination ?? 'Unavailable'}
+          </p>
+          <p className="pc-technical">Asset: {preview.confirm?.ops?.[0]?.asset ?? 'Unavailable'}</p>
+          <p className="pc-technical">Amount: {formatPreviewAmount(preview.confirm?.ops?.[0])}</p>
+          <p className="pc-technical">Memo: {preview.confirm?.memo || 'None'}</p>
+          <p className="pc-technical">Fee: {preview.confirm?.fee ?? 'Unavailable'} stroops</p>
           {preview.vault?.hit && (
             <>
               <ApproveOverlay
                 verdict={preview.vault}
                 onApprove={() => {
-                  if (!stale) onConfirm({ from, to, asset: 'XLM', amount, memo })
+                  if (!stale) onConfirm?.({ from, to, asset: 'XLM', amount, memo })
                 }}
                 onReject={() => {}}
               />
@@ -140,7 +173,6 @@ export default function SendScreen({
               </p>
             </>
           )}
-          {error && <p className="pc-field-error">{error}</p>}
           {stale && (
             <p className="pc-field-help">Inputs changed. Select Review transaction again.</p>
           )}
@@ -148,7 +180,7 @@ export default function SendScreen({
             type="button"
             className="pc-button pc-button--primary"
             disabled={busy || stale}
-            onClick={() => onConfirm({ from, to, asset: 'XLM', amount, memo })}
+            onClick={() => onConfirm?.({ from, to, asset: 'XLM', amount, memo })}
           >
             {busy ? 'Sending…' : 'Confirm and send'}
           </button>

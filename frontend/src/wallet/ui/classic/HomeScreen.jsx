@@ -13,14 +13,86 @@
 // genuinely-confirmed zero; an incomplete portfolio total is prefixed `~` and paired with an
 // adjacent note, never presented as if it were exact.
 import { useState } from 'react'
+import { formatTokenUnits } from '../../../design/pocket-crew-foundation.js'
 import { TokenIcon, tokenName } from './tokenIcons.jsx'
 
+const FACT_STATES = new Set([
+  'loading',
+  'current',
+  'confirmed',
+  'stale',
+  'partial',
+  'empty',
+  'error',
+  'unknown',
+  'unavailable',
+])
+
 function formatUsd(value) {
-  return `$${value.toFixed(2)}`
+  if (typeof value === 'number') return Number.isFinite(value) ? `$${value.toFixed(2)}` : null
+  if (typeof value !== 'string' || !/^\d+(?:\.\d+)?$/.test(value)) return null
+
+  const [whole, fraction = ''] = value.split('.')
+  return `$${whole}.${fraction.padEnd(2, '0').slice(0, 2)}`
+}
+
+function isTokenAmount(value) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof value.token === 'string' &&
+    (typeof value.units === 'string' || typeof value.units === 'bigint') &&
+    Number.isInteger(value.decimals) &&
+    value.decimals >= 0
+  )
+}
+
+function formatTokenAmount(amount, fallbackToken = 'Token') {
+  if (!isTokenAmount(amount)) return null
+  try {
+    return `${formatTokenUnits(amount.units, amount.decimals)} ${amount.token || fallbackToken}`
+  } catch {
+    return null
+  }
+}
+
+function formatRowBalance(row) {
+  const amount =
+    row?.amount ??
+    (row?.units !== undefined
+      ? { token: row.code || row.asset || 'Token', units: row.units, decimals: row.decimals }
+      : null)
+  const exact = formatTokenAmount(amount, row?.code || row?.asset)
+  if (exact) return exact
+  if (typeof row?.balance === 'string' && row.balance.trim()) return row.balance
+  if (typeof row?.balance === 'number' && Number.isFinite(row.balance)) return String(row.balance)
+  return 'Unavailable'
+}
+
+function portfolioState(portfolio) {
+  if (portfolio == null) return 'unavailable'
+  const requested = portfolio.state ?? portfolio.fact?.state
+  if (typeof requested === 'string' && FACT_STATES.has(requested)) return requested
+  if (portfolio.complete === false) return 'partial'
+  return 'current'
+}
+
+function totalText(portfolio, state) {
+  if (state === 'loading') return 'Loading'
+  if (state === 'empty') return 'No balance yet'
+  if (['error', 'unknown', 'unavailable'].includes(state)) return 'Unavailable'
+
+  const exact = formatTokenAmount(portfolio?.amount ?? portfolio?.totalAmount)
+  if (exact) return exact
+
+  const formatted = formatUsd(portfolio?.total)
+  if (!formatted) return 'Unavailable'
+  return state === 'partial' || portfolio?.complete === false ? `~${formatted}` : formatted
 }
 
 export default function HomeScreen({
   publicKey,
+  accountKind,
   portfolio,
   unfunded,
   onFund,
@@ -38,22 +110,19 @@ export default function HomeScreen({
     setTimeout(() => setCopied(false), 1500)
   }
 
-  const totalText =
-    portfolio == null
-      ? 'Unavailable'
-      : portfolio.complete
-        ? formatUsd(portfolio.total)
-        : `~${formatUsd(portfolio.total)}`
+  const state = portfolioState(portfolio)
+  const displayedTotal = totalText(portfolio, state)
 
   return (
     <div data-testid="home-screen">
-      <div className="pc-wallet-balance" data-pocket-money>
-        {totalText}
+      <div className="pc-wallet-balance pc-money-figure" data-pocket-money data-fact-state={state}>
+        {displayedTotal}
       </div>
-      {portfolio == null && (
-        <p className="pc-field-help">Balance data is temporarily unavailable.</p>
+      {['error', 'unknown', 'unavailable'].includes(state) && (
+        <p className="pc-field-help">Balance data could not be read right now.</p>
       )}
-      {portfolio != null && !portfolio.complete && (
+      {state === 'loading' && <p className="pc-field-help">Checking balance data…</p>}
+      {(state === 'partial' || (portfolio != null && !portfolio.complete)) && (
         <p className="pc-field-help">Some prices unavailable — total is approximate.</p>
       )}
 
@@ -69,30 +138,40 @@ export default function HomeScreen({
       {unfunded && (
         <div className="pc-field">
           <p className="pc-field-help">This testnet account is not funded yet.</p>
-          <button
-            type="button"
-            className="pc-button pc-button--secondary"
-            disabled={busy}
-            onClick={onFund}
-          >
-            Fund via Friendbot
-          </button>
+          {onFund && (
+            <button
+              type="button"
+              className="pc-button pc-button--secondary"
+              disabled={busy}
+              onClick={onFund}
+            >
+              Fund via Friendbot
+            </button>
+          )}
         </div>
       )}
 
       <div className="pc-wallet-actions">
-        <button type="button" className="pc-button pc-button--primary" onClick={onSend}>
-          Send
-        </button>
-        <button type="button" className="pc-button pc-button--secondary" onClick={onReceive}>
-          Receive
-        </button>
+        {onSend && (
+          <button type="button" className="pc-button pc-button--primary" onClick={onSend}>
+            Send
+          </button>
+        )}
+        {onReceive && (
+          <button type="button" className="pc-button pc-button--secondary" onClick={onReceive}>
+            Receive
+          </button>
+        )}
         {onAddAsset && (
           <button type="button" className="pc-button pc-button--secondary" onClick={onAddAsset}>
             Add asset
           </button>
         )}
       </div>
+
+      {accountKind === 'C' && !onSend && (
+        <p className="pc-field-help">Send is not available yet for this account type.</p>
+      )}
 
       {onGetUsdc && (
         <button
@@ -106,17 +185,17 @@ export default function HomeScreen({
       )}
 
       <ul className="pc-asset-list">
-        {(portfolio?.rows ?? []).map((r) => (
+        {(Array.isArray(portfolio?.rows) ? portfolio.rows : []).map((r) => (
           <li key={r.asset} className="pc-row">
-            <TokenIcon asset={r.asset} code={r.code} />
+            <TokenIcon asset={r.asset} code={r.code || r.asset || '??'} />
             <div>
-              <div>{r.code}</div>
+              <div>{r.code || r.asset || 'Token'}</div>
               <div className="pc-field-help">{tokenName(r.asset)}</div>
             </div>
             <div>
-              <div className="pc-technical">{r.balance}</div>
+              <div className="pc-technical">{formatRowBalance(r)}</div>
               <div className="pc-field-help">
-                {r.usd == null ? 'Unavailable' : formatUsd(r.usd)}
+                {r.usd == null || !formatUsd(r.usd) ? 'Unavailable' : formatUsd(r.usd)}
               </div>
             </div>
           </li>

@@ -2,7 +2,6 @@
 // Operations Console — Tier D. Grid shell + zone composition. All data via props;
 // app.jsx state machine untouched. One shared 1s clock feeds every countdown.
 import { useEffect, useMemo, useState } from 'react'
-import './../../console.css'
 import CommandStrip from './CommandStrip.jsx'
 import SwarmZone from './SwarmZone.jsx'
 import CouncilZone from './CouncilZone.jsx'

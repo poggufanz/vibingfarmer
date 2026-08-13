@@ -238,6 +238,21 @@ function failedAllocation(
   }
 }
 
+function receiptProvenAllocation(
+  allocationId,
+  { token = TOKEN_ADDR, decimals = 7, units = '1000000000' } = {}
+) {
+  return {
+    ...succeededAllocation(allocationId, token, decimals, units),
+    custody: {
+      location: token === BRIDGE_TOKEN_ADDR ? 'base-proxy' : 'stellar-vault',
+      confirmed: true,
+      checkedAt: NOW,
+      source: 'receipt',
+    },
+  }
+}
+
 // Task 7 (Start polish) -- a small default-props helper this suite did not already have (every
 // test above builds its own fully-explicit <StartStage> render, deliberate for those since each
 // pins one exact fixture combination). Defaults mirror the same PLAN_TWO_DEPOSITS/PERMISSION_FRESH/
@@ -255,20 +270,36 @@ describe('Start polish', () => {
     const lanes = container.querySelectorAll('.pc-agent-lane')
     expect(within(lanes[0]).getByText('Sprout')).toBeTruthy()
     expect(within(lanes[1]).getByText('Clover')).toBeTruthy()
-    expect(
-      within(lanes[0]).getByRole('img', { name: 'Sprout agent, planned' }).getAttribute('src')
-    ).toBe('/brand/agents/sprout.svg')
-    expect(
-      within(lanes[1]).getByRole('img', { name: 'Clover agent, planned' }).getAttribute('src')
-    ).toBe('/brand/agents/clover.svg')
+    expect(lanes[0].querySelector('.pc-start-agent-avatar').getAttribute('src')).toBe(
+      '/brand/agents/sprout.svg'
+    )
+    expect(lanes[1].querySelector('.pc-start-agent-avatar').getAttribute('src')).toBe(
+      '/brand/agents/clover.svg'
+    )
+    expect(within(lanes[0]).getByRole('img', { name: 'Planned agent, Active' })).toBeTruthy()
+    expect(within(lanes[1]).getByRole('img', { name: 'Planned agent, Active' })).toBeTruthy()
     expect(container.textContent).not.toMatch(/Pepper|Juniper|Basil/)
   })
 
   it('uses the newest current-run address evidence and keeps a reuse mismatch address-bound', () => {
     const events = [
-      evt('reuse-confirmed', { runId: 'run-1', agentAddresses: [AGENT_2, AGENT_1] }),
+      evt('reuse-confirmed', {
+        runId: 'run-1',
+        agentAddresses: [AGENT_2, AGENT_1],
+        allocations: [
+          { allocationId: 'run-1:deposit:0', agentAddress: AGENT_2 },
+          { allocationId: 'run-1:deposit:1', agentAddress: AGENT_1 },
+        ],
+      }),
       evt('reuse-confirmed', { runId: 'other-run', agentAddresses: [AGENT_2, AGENT_1] }),
-      evt('reuse-confirmed', { runId: 'run-1', agentAddresses: [AGENT_1, AGENT_2] }),
+      evt('reuse-confirmed', {
+        runId: 'run-1',
+        agentAddresses: [AGENT_1, AGENT_2],
+        allocations: [
+          { allocationId: 'run-1:deposit:0', agentAddress: AGENT_1 },
+          { allocationId: 'run-1:deposit:1', agentAddress: AGENT_2 },
+        ],
+      }),
     ]
     const { container } = renderStartStage({
       permission: PERMISSION_REUSE,
@@ -282,28 +313,37 @@ describe('Start polish', () => {
     expect(firstLane.getAttribute('data-agent-address')).toBe(AGENT_1)
     expect(within(firstLane).getByText('Mochi')).toBeTruthy()
     expect(within(firstLane).queryByText('Sprout')).toBeNull()
-    expect(within(firstLane).getByRole('img', { name: 'Mochi agent' }).getAttribute('src')).toBe(
+    expect(firstLane.querySelector('.pc-start-agent-avatar').getAttribute('src')).toBe(
       '/brand/agents/mochi.svg'
     )
+    expect(within(firstLane).getByRole('img', { name: 'Existing agent, Active' })).toBeTruthy()
   })
 
   it('shows the planned persona as syncing for a fresh bound address with no indexed persona', () => {
     const { container } = renderStartStage({
-      events: [evt('grant-confirmed', { runId: 'run-1', agentAddresses: [AGENT_1, AGENT_2] })],
+      events: [
+        evt('grant-confirmed', {
+          runId: 'run-1',
+          agentAddresses: [AGENT_1, AGENT_2],
+          allocations: [
+            { allocationId: 'run-1:deposit:0', agentAddress: AGENT_1 },
+            { allocationId: 'run-1:deposit:1', agentAddress: AGENT_2 },
+          ],
+        }),
+      ],
       personaByAddress: {},
     })
     const firstLane = container.querySelector('.pc-agent-lane')
     expect(firstLane.getAttribute('data-agent-address')).toBe(AGENT_1)
     expect(within(firstLane).getByText('Sprout')).toBeTruthy()
     expect(within(firstLane).getByText('Crew assignment syncing.')).toBeTruthy()
-    expect(
-      within(firstLane)
-        .getByRole('img', { name: 'Sprout agent, assignment syncing' })
-        .getAttribute('src')
-    ).toBe('/brand/agents/sprout.svg')
+    expect(firstLane.querySelector('.pc-start-agent-avatar').getAttribute('src')).toBe(
+      '/brand/agents/sprout.svg'
+    )
+    expect(within(firstLane).getByRole('img', { name: 'Deployed agent, Active' })).toBeTruthy()
   })
 
-  it('rejects a malformed confirmation vector and falls back to a settled receipt vector', () => {
+  it('rejects malformed confirmation vectors and does not invent a settled receipt identity', () => {
     const receiptFixture = receiptFor({
       allocations: [succeededAllocation('run-1:deposit:0'), succeededAllocation('run-1:deposit:1')],
     })
@@ -315,8 +355,8 @@ describe('Start polish', () => {
       },
     })
     const firstLane = container.querySelector('.pc-agent-lane')
-    expect(firstLane.getAttribute('data-agent-address')).toBe(AGENT_1)
-    expect(within(firstLane).getByText('Mochi')).toBeTruthy()
+    expect(firstLane.getAttribute('data-agent-address')).toBeNull()
+    expect(within(firstLane).getByText('Agent identity unavailable')).toBeTruthy()
   })
 
   it('renders the safety rail', () => {
@@ -353,12 +393,12 @@ describe('Start polish', () => {
     const caps = container.querySelectorAll('.pc-lane-cap')
     expect(caps).toHaveLength(PLAN_TWO_DEPOSITS.agents.length)
     for (const cap of caps) {
-      expect(cap.textContent).toBe('100.00 USDC')
+      expect(cap.textContent).toBe('100 USDC')
     }
     expect(container.textContent).not.toContain(TOKEN_ADDR)
   })
 
-  it('formats a non-divisible per-agent split to 2dp, never the raw float (F1 regression)', () => {
+  it('preserves each canonical non-divisible per-agent cap without float reconstruction', () => {
     // M7 (fix round 1 review, load-bearing for F1): the original fixture's round 100-per-agent
     // split passed identically whether the cap were formatted or raw, so it could never have caught
     // F1's defect. 100 USDC split three ways is 333333334/333333333/333333333 base units (7dp) --
@@ -373,28 +413,87 @@ describe('Start polish', () => {
           ...PLAN_TWO_DEPOSITS.agents[0],
           allocationId: 'run-3:deposit:0',
           allocation: amount(TOKEN_ADDR, '333333334'),
+          cap: amount(TOKEN_ADDR, '333333334'),
         },
         {
           ...PLAN_TWO_DEPOSITS.agents[0],
           allocationId: 'run-3:deposit:1',
           allocation: amount(TOKEN_ADDR, '333333333'),
+          cap: amount(TOKEN_ADDR, '333333333'),
         },
         {
           ...PLAN_TWO_DEPOSITS.agents[0],
           allocationId: 'run-3:deposit:2',
           allocation: amount(TOKEN_ADDR, '333333333'),
+          cap: amount(TOKEN_ADDR, '333333333'),
         },
       ],
     }
     const { container } = renderStartStage({ plan })
     const caps = [...container.querySelectorAll('.pc-lane-cap')].map((c) => c.textContent)
-    expect(caps).toEqual(['33.33 USDC', '33.33 USDC', '33.34 USDC'])
+    expect(caps).toEqual(['33.3333334 USDC', '33.3333333 USDC', '33.3333333 USDC'])
   })
 
-  it('renders a formatted cap on the bridge lane too (the parent total, never a child figure)', () => {
+  it('renders the canonical cap on the bridge lane too (the parent total, never a child figure)', () => {
     const { container } = renderStartStage({ plan: PLAN_WITH_BRIDGE })
     const caps = [...container.querySelectorAll('.pc-lane-cap')].map((c) => c.textContent)
-    expect(caps).toEqual(['100.00 USDC', '100.00 Circle USDC'])
+    expect(caps).toEqual(['100 USDC', '100 Circle USDC'])
+  })
+
+  it('preserves canonical cap units beyond Number precision', () => {
+    const units = '9007199254740993'
+    const plan = {
+      ...PLAN_TWO_DEPOSITS,
+      amount: amount(TOKEN_ADDR, units),
+      agents: [
+        {
+          ...PLAN_TWO_DEPOSITS.agents[0],
+          allocationId: 'run-1:deposit:0',
+          allocation: amount(TOKEN_ADDR, units),
+          cap: amount(TOKEN_ADDR, units),
+        },
+      ],
+    }
+    const { container } = renderStartStage({
+      plan,
+      permission: { ...PERMISSION_FRESH, agentAddresses: [AGENT_1] },
+    })
+    expect(container.querySelector('.pc-lane-cap').textContent).toBe('900719925.4740993 USDC')
+  })
+
+  it('keeps persona art decorative while AgentMark remains the accessible lane identity', () => {
+    const { container } = renderStartStage()
+    const lane = container.querySelector('.pc-agent-lane')
+    const persona = lane.querySelector('.pc-start-agent-avatar')
+    expect(persona.getAttribute('alt')).toBe('')
+    expect(persona.getAttribute('aria-hidden')).toBe('true')
+    expect(within(lane).getByRole('img', { name: 'Planned agent, Active' })).toBeTruthy()
+  })
+
+  it('keeps confirmed addresses bound to allocation identity when the reviewed plan order is reversed', () => {
+    const plan = {
+      ...PLAN_TWO_DEPOSITS,
+      agents: [...PLAN_TWO_DEPOSITS.agents].reverse(),
+    }
+    const { container } = renderStartStage({
+      plan,
+      events: [
+        evt('grant-confirmed', {
+          runId: 'run-1',
+          agentAddresses: [AGENT_2, AGENT_1],
+          allocations: [
+            { allocationId: 'run-1:deposit:1', agentAddress: AGENT_2 },
+            { allocationId: 'run-1:deposit:0', agentAddress: AGENT_1 },
+          ],
+        }),
+      ],
+    })
+    const lanes = [...container.querySelectorAll('.pc-agent-lane')]
+    expect(lanes.map((lane) => lane.getAttribute('data-agent-address'))).toEqual([AGENT_2, AGENT_1])
+    expect(lanes.map((lane) => lane.getAttribute('data-agent-kind'))).toEqual([
+      'deposit',
+      'deposit',
+    ])
   })
 })
 
@@ -521,6 +620,400 @@ describe('StartStage -- queue order is visible and not simultaneous', () => {
   })
 })
 
+describe('Task 4 -- event-backed lane progress', () => {
+  it('renders only the pinned 0/22/66/100 milestones from matching events', () => {
+    const cases = [
+      {
+        allocationId: 'run-1:deposit:0',
+        events: [evt('worker-queued', { allocationId: 'run-1:deposit:0', queueIndex: 0 })],
+        expected: 0,
+      },
+      {
+        allocationId: 'run-1:deposit:0',
+        events: [
+          evt('worker-queued', { allocationId: 'run-1:deposit:0', queueIndex: 0 }),
+          evt('worker-started', { allocationId: 'run-1:deposit:0', queueIndex: 0 }),
+        ],
+        expected: 22,
+      },
+      {
+        allocationId: 'run-1:deposit:0',
+        events: depositQueuedThenStarted('run-1:deposit:0', 'agent-0', 0),
+        expected: 66,
+      },
+      {
+        allocationId: 'run-1:deposit:0',
+        events: [
+          ...depositQueuedThenStarted('run-1:deposit:0', 'agent-0', 0),
+          depositCompleted('run-1:deposit:0', 'agent-0'),
+        ],
+        expected: 100,
+      },
+    ]
+
+    for (const { events, expected } of cases) {
+      const { container } = render(
+        <StartStage plan={PLAN_TWO_DEPOSITS} permission={PERMISSION_FRESH} events={events} />
+      )
+      const lane = container.querySelector('.pc-agent-lane')
+      const progress = lane?.querySelector('.pc-agent-lane-progress')
+      expect(lane?.getAttribute('data-lane-phase')).toBe(
+        expected === 0
+          ? 'queued'
+          : expected === 22
+            ? 'moving'
+            : expected === 66
+              ? 'depositing'
+              : 'working'
+      )
+      expect(progress?.getAttribute('aria-valuenow')).toBe(String(expected))
+      expect(progress?.getAttribute('data-progress')).toBe(String(expected))
+      cleanup()
+    }
+  })
+
+  it('does not paint a percentage for an unknown or failed lane', () => {
+    const { container } = render(
+      <StartStage
+        plan={PLAN_TWO_DEPOSITS}
+        permission={PERMISSION_FRESH}
+        events={[depositFailed('run-1:deposit:0', 'agent-0')]}
+      />
+    )
+    const failed = container.querySelector('[data-lane-phase="failed"]')
+    const untouched = container.querySelector('[data-lane-phase="creating"]')
+    expect(failed?.querySelector('.pc-agent-lane-progress')).toBeNull()
+    expect(untouched?.querySelector('.pc-agent-lane-progress')).toBeNull()
+  })
+
+  it('keeps progress bound to allocationId when lane order changes', () => {
+    const plan = { ...PLAN_TWO_DEPOSITS, agents: [...PLAN_TWO_DEPOSITS.agents].reverse() }
+    const events = depositQueuedThenStarted('run-1:deposit:0', 'agent-0', 1)
+    const { container } = render(
+      <StartStage plan={plan} permission={PERMISSION_FRESH} events={events} />
+    )
+    const lanes = [...container.querySelectorAll('.pc-agent-lane')]
+    expect(lanes.map((lane) => lane.getAttribute('data-lane-phase'))).toEqual([
+      'creating',
+      'depositing',
+    ])
+    expect(
+      lanes.map((lane) =>
+        lane.querySelector('.pc-agent-lane-progress')?.getAttribute('data-progress')
+      )
+    ).toEqual([undefined, '66'])
+  })
+
+  it('keeps the canonical discrete width rules and has no width interpolation', () => {
+    const css = fs.readFileSync(path.resolve(here, './strategy.css'), 'utf8')
+    const progressStart = css.indexOf('.pc-agent-lane-progress {')
+    const progressCss = css.slice(
+      progressStart,
+      css.indexOf('.pc-dominant--owned {', progressStart)
+    )
+    expect(progressCss).not.toMatch(/(?:15|30|50|70|85)%/)
+    expect(progressCss).not.toMatch(/transition:\s*width/i)
+    expect(progressCss).toMatch(/data-progress=['"]0['"][^}]*width:\s*0%/s)
+    expect(progressCss).toMatch(/data-progress=['"]22['"][^}]*width:\s*22%/s)
+    expect(progressCss).toMatch(/data-progress=['"]66['"][^}]*width:\s*66%/s)
+    expect(progressCss).toMatch(/data-progress=['"]100['"][^}]*width:\s*100%/s)
+  })
+})
+
+describe('Task 4 -- allocation-bound identity and custody truth', () => {
+  it('renders planned, deployed, and reused rows only from their own evidence', () => {
+    const planned = renderStartStage()
+    expect(planned.container.querySelectorAll('[data-identity-state="available"]')).toHaveLength(2)
+    cleanup()
+
+    const deployedEvents = [
+      evt('grant-confirmed', {
+        runId: 'run-1',
+        agentAddresses: [AGENT_2, AGENT_1],
+      }),
+      evt('worker-queued', {
+        runId: 'run-1',
+        allocationId: 'run-1:deposit:0',
+        agent: AGENT_1,
+        queueIndex: 0,
+      }),
+      evt('worker-queued', {
+        runId: 'run-1',
+        allocationId: 'run-1:deposit:1',
+        agent: AGENT_2,
+        queueIndex: 1,
+      }),
+    ]
+    const deployed = renderStartStage({ events: deployedEvents })
+    const deployedLanes = [...deployed.container.querySelectorAll('.pc-agent-lane')]
+    expect(deployedLanes.map((lane) => lane.getAttribute('data-agent-address'))).toEqual([
+      AGENT_1,
+      AGENT_2,
+    ])
+    expect(
+      deployedLanes.every((lane) => lane.querySelector('[data-identity-state="available"]'))
+    ).toBe(true)
+    cleanup()
+
+    const reused = renderStartStage({
+      permission: PERMISSION_REUSE,
+      events: [
+        evt('worker-queued', {
+          runId: 'run-1',
+          allocationId: 'run-1:deposit:0',
+          agent: AGENT_2,
+          queueIndex: 0,
+        }),
+        evt('worker-queued', {
+          runId: 'run-1',
+          allocationId: 'run-1:deposit:1',
+          agent: AGENT_1,
+          queueIndex: 1,
+        }),
+      ],
+    })
+    expect(
+      [...reused.container.querySelectorAll('.pc-agent-lane')].map((lane) =>
+        lane.getAttribute('data-agent-address')
+      )
+    ).toEqual([AGENT_2, AGENT_1])
+  })
+
+  it('fails closed for missing deployed/reused identity without hiding a healthy sibling', () => {
+    const { container } = renderStartStage({
+      permission: PERMISSION_REUSE,
+      events: [
+        evt('worker-queued', {
+          runId: 'run-1',
+          allocationId: 'run-1:deposit:0',
+          agent: AGENT_1,
+          queueIndex: 0,
+        }),
+      ],
+      recoveryByAllocation: {
+        'run-1:deposit:1': { action: 'deposit' },
+      },
+    })
+    const lanes = [...container.querySelectorAll('.pc-agent-lane')]
+    const healthy = lanes.find((lane) => lane.getAttribute('data-agent-address') === AGENT_1)
+    const unavailable = lanes.find((lane) => lane.getAttribute('data-lane-phase') === 'pending')
+    expect(healthy).toBeTruthy()
+    expect(unavailable).toBeTruthy()
+    expect(within(unavailable).getByText('Agent identity unavailable')).toBeTruthy()
+    expect(unavailable.querySelector('.pc-agent-mark')).toBeNull()
+    expect(unavailable.querySelector('.pc-start-agent-avatar')).toBeNull()
+    expect(unavailable.querySelector('.pc-lane-cap')).toBeNull()
+    expect(unavailable.querySelector('button')).toBeNull()
+    expect(within(healthy).getByText('100 USDC')).toBeTruthy()
+  })
+
+  it('uses the exact Base custody-only disclosure and never renders APY', () => {
+    const { container } = render(
+      <StartStage plan={PLAN_WITH_BRIDGE} permission={PERMISSION_FRESH} events={[]} />
+    )
+    expect(container.textContent).toContain('Base Sepolia proxy. Custody only. No protocol yield.')
+    expect(container.textContent).not.toMatch(/APY/i)
+  })
+
+  it('does not present a worker key-setup address as the deployed agent identity', () => {
+    const genericKeySetup = evt('step', {
+      step: 'key-setup',
+      status: 'done',
+      address: 'GSESSIONKEYONLY',
+      agentId: 'worker-0',
+      allocationId: 'run-1:deposit:0',
+    })
+    const { container, rerender } = renderStartStage({
+      events: [
+        evt('grant-confirmed', { runId: 'run-1', agentAddresses: [AGENT_1, AGENT_2] }),
+        genericKeySetup,
+      ],
+    })
+    const lane = container.querySelector('.pc-agent-lane')
+    expect(lane.getAttribute('data-agent-address')).toBeNull()
+    expect(within(lane).getByText('Agent identity unavailable')).toBeTruthy()
+    expect(within(lane).queryByText('GSESSIONKEYONLY')).toBeNull()
+
+    rerender(
+      <StartStage
+        plan={PLAN_TWO_DEPOSITS}
+        permission={PERMISSION_FRESH}
+        events={[
+          evt('grant-confirmed', { runId: 'run-1', agentAddresses: [AGENT_1, AGENT_2] }),
+          genericKeySetup,
+          evt('worker-queued', {
+            runId: 'run-1',
+            allocationId: 'run-1:deposit:0',
+            agent: AGENT_1,
+            agentId: 'worker-0',
+            queueIndex: 0,
+          }),
+        ]}
+      />
+    )
+    expect(container.querySelector('.pc-agent-lane').getAttribute('data-agent-address')).toBe(
+      AGENT_1
+    )
+  })
+
+  it.each([
+    ['creating', []],
+    ['queued', [evt('worker-queued', { allocationId: 'run-1:deposit:0', queueIndex: 0 })]],
+    [
+      'moving',
+      [
+        evt('worker-queued', { allocationId: 'run-1:deposit:0', queueIndex: 0 }),
+        evt('worker-started', { allocationId: 'run-1:deposit:0', queueIndex: 0 }),
+      ],
+    ],
+    ['depositing', depositQueuedThenStarted('run-1:deposit:0', 'agent-0', 0)],
+  ])('keeps pending Stellar custody unsettled for the %s lane phase', (_phase, events) => {
+    const { container } = renderStartStage({ events })
+    const lane = container.querySelector('.pc-agent-lane')
+    const route = lane.querySelector('.network-route')
+    expect(route.getAttribute('data-transit')).toBe('unknown')
+    expect(within(route).getByText('Bridge status unknown')).toBeTruthy()
+    expect(within(route).queryByText('Settled on Stellar testnet')).toBeNull()
+  })
+
+  it('does not call an unconfirmed Base location arrived or proxy custody', () => {
+    const receipt = receiptFor({
+      runId: 'run-2',
+      planFingerprint: '0xplan2',
+      allocations: [
+        {
+          allocationId: 'run-2:bridge:aave-v3',
+          amount: { token: 'USDC', units: '600000', decimals: 6 },
+          networkContext: {},
+          executionStatus: 'succeeded',
+          custody: {
+            location: 'base-proxy',
+            confirmed: false,
+            checkedAt: NOW,
+            source: 'receipt',
+          },
+          txHash: '0xbase-a',
+          error: null,
+          evidence: {},
+        },
+        {
+          allocationId: 'run-2:bridge:moonwell',
+          amount: { token: 'USDC', units: '400000', decimals: 6 },
+          networkContext: {},
+          executionStatus: 'succeeded',
+          custody: {
+            location: 'base-proxy',
+            confirmed: false,
+            checkedAt: NOW,
+            source: 'receipt',
+          },
+          txHash: '0xbase-b',
+          error: null,
+          evidence: {},
+        },
+      ],
+    })
+    const { container } = render(
+      <StartStage
+        plan={PLAN_WITH_BRIDGE}
+        permission={PERMISSION_FRESH}
+        events={[]}
+        receipt={receipt}
+        runId="run-2"
+      />
+    )
+    const bridgeLane = container.querySelector('[data-agent-kind="bridge"]')
+    expect(bridgeLane.getAttribute('data-lane-phase')).toBe('in-transit')
+    expect(within(bridgeLane).getByText('In transit')).toBeTruthy()
+    expect(within(bridgeLane).queryByText('Proxy custody')).toBeNull()
+    expect(within(bridgeLane).queryByText(/Arrived on Base Sepolia/)).toBeNull()
+  })
+
+  it('does not promote a succeeded receipt to Working without its matching completion event', () => {
+    const receipt = receiptFor({
+      allocations: [
+        receiptProvenAllocation('run-1:deposit:0'),
+        receiptProvenAllocation('run-1:deposit:1'),
+      ],
+    })
+    const { container } = render(
+      <StartStage
+        plan={PLAN_TWO_DEPOSITS}
+        permission={PERMISSION_FRESH}
+        events={[]}
+        receipt={receipt}
+        runId="run-1"
+      />
+    )
+    expect(container.querySelectorAll('[data-lane-phase="creating"]')).toHaveLength(2)
+    expect(screen.queryByText('Working')).toBeNull()
+  })
+
+  it('does not manufacture 100% bridge progress from proven custody without farm-completed', () => {
+    const receipt = receiptFor({
+      runId: 'run-2',
+      planFingerprint: '0xplan2',
+      allocations: [
+        {
+          allocationId: 'run-2:bridge:aave-v3',
+          amount: { token: 'USDC', units: '600000', decimals: 6 },
+          networkContext: {
+            executionNetwork: 'stellar-testnet',
+            destinationNetwork: 'base-sepolia',
+            currentCustodyNetwork: 'base-sepolia',
+            transit: false,
+          },
+          executionStatus: 'succeeded',
+          custody: {
+            location: 'base-proxy',
+            confirmed: true,
+            checkedAt: NOW,
+            source: 'receipt',
+          },
+          txHash: '0xbase-a',
+          error: null,
+          evidence: {},
+        },
+        {
+          allocationId: 'run-2:bridge:moonwell',
+          amount: { token: 'USDC', units: '400000', decimals: 6 },
+          networkContext: {
+            executionNetwork: 'stellar-testnet',
+            destinationNetwork: 'base-sepolia',
+            currentCustodyNetwork: 'base-sepolia',
+            transit: false,
+          },
+          executionStatus: 'succeeded',
+          custody: {
+            location: 'base-proxy',
+            confirmed: true,
+            checkedAt: NOW,
+            source: 'receipt',
+          },
+          txHash: '0xbase-b',
+          error: null,
+          evidence: {},
+        },
+      ],
+    })
+    const { container } = render(
+      <StartStage
+        plan={PLAN_WITH_BRIDGE}
+        permission={PERMISSION_FRESH}
+        events={[
+          evt('farm-burn-started', {}),
+          evt('farm-burn-confirmed', {}),
+          evt('farm-relay-dispatched', {}),
+        ]}
+        receipt={receipt}
+        runId="run-2"
+      />
+    )
+    const bridgeLane = container.querySelector('[data-agent-kind="bridge"]')
+    expect(bridgeLane.querySelector('.pc-agent-lane-progress')).toBeNull()
+  })
+})
+
 describe('StartStage -- successful siblings remain confirmed when one fails', () => {
   it('agent 0 completes, agent 1 fails afterward -- agent 0 stays Working', () => {
     const events = [
@@ -542,8 +1035,9 @@ describe('StartStage -- successful siblings remain confirmed when one fails', ()
       <StartStage
         plan={PLAN_TWO_DEPOSITS}
         permission={PERMISSION_FRESH}
-        events={[]}
+        events={[depositCompleted('run-1:deposit:0', 'agent-0')]}
         receipt={receipt}
+        runId="run-1"
       />
     )
     expect(screen.getByText('Working')).toBeTruthy()
@@ -730,8 +1224,10 @@ describe('StartStage -- evidence-selected recovery actions', () => {
       />
     )
 
-    expect(screen.getAllByText('Working')).toHaveLength(2)
-    expect(screen.queryByText('Failed')).toBeNull()
+    // The durable recovery receipt is reflected in the receipt below, but it cannot manufacture a
+    // live lane milestone. Without a matching worker completion event, the lane stays at its
+    // received failure phase while the old error/action disappear from the recovered projection.
+    expect(screen.getByText('Failed')).toBeTruthy()
     expect(screen.queryByText(oldError)).toBeNull()
     expect(screen.getAllByText(recoveredHash)).toHaveLength(2)
     expect(screen.getByText(/custody: stellar-vault, 100 USDC \(receipt-confirmed\)/i)).toBeTruthy()
@@ -742,7 +1238,11 @@ describe('StartStage -- evidence-selected recovery actions', () => {
 describe('StartStage -- bridge lane: one mark, all Base child destinations, correct network route/custody', () => {
   it('shows one persistent crew avatar for the bridge leg and lists every child destination inside it', () => {
     render(<StartStage plan={PLAN_WITH_BRIDGE} permission={PERMISSION_FRESH} events={[]} />)
-    expect(screen.getAllByRole('img', { name: 'Clover agent, planned' })).toHaveLength(1)
+    const bridgeLane = document.querySelector('[data-agent-kind="bridge"]')
+    expect(bridgeLane.querySelector('.pc-start-agent-avatar').getAttribute('src')).toBe(
+      '/brand/agents/clover.svg'
+    )
+    expect(within(bridgeLane).getByRole('img', { name: 'Planned agent, Active' })).toBeTruthy()
     expect(screen.getByText(/aave-v3/)).toBeTruthy()
     expect(screen.getByText(/moonwell/)).toBeTruthy()
   })
@@ -863,7 +1363,9 @@ describe('StartStage -- bridge lane: one mark, all Base child destinations, corr
         onRecoverAllocation={onRecoverAllocation}
       />
     )
-    expect(screen.getByText('Failed')).toBeTruthy() // the bridge lane's own aggregate phase label
+    expect(document.querySelector('[data-agent-kind="bridge"] .pc-lane-phase').textContent).toBe(
+      'Failed'
+    ) // the bridge lane's own aggregate phase label
     expect(screen.getByText('Recovery available')).toBeTruthy() // moonwell held in the bridge agent
     const blocked = screen.getByRole('button', { name: 'Manual review' })
     expect(blocked.disabled).toBe(true)
@@ -1060,7 +1562,12 @@ describe('StartStage -- bridge lane: one mark, all Base child destinations, corr
         transit: false,
       },
       executionStatus: 'succeeded',
-      custody: { location: 'base-proxy', confirmed: true, checkedAt: NOW },
+      custody: {
+        location: 'base-proxy',
+        confirmed: true,
+        checkedAt: NOW,
+        source: 'receipt',
+      },
       txHash: `0x${'aa'.repeat(32)}`,
       error: null,
       evidence: {},

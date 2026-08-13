@@ -1,0 +1,457 @@
+/* CAP-19: conditional developer tooling, using the shared Pocket Crew tokens. */
+.twk-panel {
+  position: fixed;
+  inset: auto var(--pc-space-4) var(--pc-space-4) auto;
+  z-index: var(--pc-z-popover);
+  display: flex;
+  flex-direction: column;
+  inline-size: min(280px, calc(100vw - (2 * var(--pc-space-4))));
+  max-inline-size: calc(100vw - (2 * var(--pc-space-4)));
+  max-block-size: calc(100dvh - (2 * var(--pc-space-4)));
+  transform: scale(var(--dc-inv-zoom));
+  transform-origin: bottom right;
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+  font: var(--pc-type-technical) / var(--pc-leading-body) var(--pc-font-body);
+}
+
+.twk-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+  padding: var(--pc-space-3) var(--pc-space-2) var(--pc-space-3) var(--pc-space-4);
+  cursor: move;
+  user-select: none;
+}
+
+.twk-hd h2 {
+  min-width: 0;
+  margin: 0;
+  color: var(--pc-ink);
+  font: 650 var(--pc-type-body-small) / 1.2 var(--pc-font-body);
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.twk-x {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: var(--pc-touch-target);
+  min-height: var(--pc-touch-target);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--pc-radius-control);
+  background: transparent;
+  color: var(--pc-muted);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.twk-x:hover {
+  border-color: var(--pc-line);
+  background: var(--pc-canvas);
+  color: var(--pc-ink);
+}
+
+.twk-body {
+  display: flex;
+  min-block-size: 0;
+  flex-direction: column;
+  gap: var(--pc-space-3);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--pc-space-1) var(--pc-space-4) var(--pc-space-4);
+  scrollbar-color: var(--pc-line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.twk-body::-webkit-scrollbar {
+  inline-size: var(--pc-space-2);
+}
+
+.twk-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.twk-body::-webkit-scrollbar-thumb {
+  border: var(--pc-space-1) solid transparent;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-line-strong);
+  background-clip: content-box;
+}
+
+.twk-row {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--pc-space-2);
+}
+
+.twk-row-h {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-2) var(--pc-space-3);
+}
+
+.twk-lbl {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pc-space-2);
+  color: var(--pc-muted);
+  overflow-wrap: anywhere;
+}
+
+.twk-lbl > span:first-child {
+  font-weight: 550;
+}
+
+.twk-val {
+  color: var(--pc-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.twk-sect {
+  padding-block-start: var(--pc-space-3);
+  color: var(--pc-faint);
+  font-size: var(--pc-type-technical);
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.twk-sect:first-child {
+  padding-block-start: 0;
+}
+
+.twk-field,
+.twk-num {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: var(--pc-control-height);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-canvas);
+  color: var(--pc-ink);
+  font: inherit;
+  outline: none;
+}
+
+.twk-field {
+  appearance: none;
+  inline-size: 100%;
+  padding: 0 var(--pc-space-3);
+}
+
+.twk-field:focus {
+  border-color: var(--pc-focus);
+  background: var(--pc-workspace);
+}
+
+select.twk-field {
+  appearance: auto;
+  padding-inline-end: var(--pc-space-6);
+}
+
+.twk-slider {
+  inline-size: 100%;
+  min-height: var(--pc-touch-target);
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-line);
+  accent-color: var(--pc-harvest);
+  outline: none;
+}
+
+.twk-slider::-webkit-slider-thumb {
+  inline-size: var(--pc-space-4);
+  block-size: var(--pc-space-4);
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--pc-field);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-harvest);
+  cursor: pointer;
+}
+
+.twk-slider::-moz-range-thumb {
+  inline-size: var(--pc-space-4);
+  block-size: var(--pc-space-4);
+  border: 1px solid var(--pc-field);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-harvest);
+  cursor: pointer;
+}
+
+.twk-seg {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  padding: var(--pc-space-1);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-canvas);
+  user-select: none;
+}
+
+.twk-seg-thumb {
+  position: absolute;
+  inset-block: var(--pc-space-1);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-harvest);
+  pointer-events: none;
+  transition:
+    inset-inline-start var(--pc-duration-fast) var(--pc-ease-standard),
+    inline-size var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.twk-seg.dragging .twk-seg-thumb {
+  transition: none;
+}
+
+.twk-seg button {
+  position: relative;
+  z-index: var(--pc-z-sticky);
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--pc-touch-target);
+  padding: var(--pc-space-2) var(--pc-space-3);
+  border: 0;
+  border-radius: var(--pc-radius-control);
+  background: transparent;
+  color: var(--pc-ink);
+  font: inherit;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.twk-seg button[aria-checked='true'] {
+  color: var(--pc-harvest-ink);
+}
+
+.twk-toggle {
+  flex: none;
+  position: relative;
+  inline-size: var(--pc-space-8);
+  block-size: var(--pc-space-4);
+  min-width: var(--pc-touch-target);
+  min-height: var(--pc-touch-target);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-line-strong);
+  cursor: pointer;
+  transition: background-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.twk-toggle[data-on='1'] {
+  background: var(--pc-harvest);
+}
+
+.twk-toggle i {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: var(--pc-space-1);
+  inline-size: var(--pc-space-3);
+  block-size: var(--pc-space-3);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-rice);
+  transform: translateY(-50%);
+  transition: transform var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.twk-toggle[data-on='1'] i {
+  transform: translate(calc(var(--pc-space-4) + var(--pc-space-1)), -50%);
+}
+
+.twk-num {
+  display: flex;
+  align-items: center;
+  padding-inline-start: var(--pc-space-2);
+}
+
+.twk-num-lbl {
+  flex: none;
+  padding-inline-end: var(--pc-space-2);
+  color: var(--pc-muted);
+  cursor: ew-resize;
+  user-select: none;
+}
+
+.twk-num input {
+  flex: 1;
+  min-width: 0;
+  block-size: 100%;
+  padding: 0 var(--pc-space-2) 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--pc-ink);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+
+.twk-num input::-webkit-inner-spin-button,
+.twk-num input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.twk-num-unit {
+  padding-inline-end: var(--pc-space-2);
+  color: var(--pc-faint);
+}
+
+.twk-btn {
+  min-height: var(--pc-control-height);
+  padding: 0 var(--pc-space-4);
+  border: 1px solid var(--pc-line-strong);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.twk-btn:hover {
+  border-color: var(--pc-focus);
+}
+
+.twk-btn.secondary {
+  background: transparent;
+  color: var(--pc-ink);
+}
+
+.twk-btn.secondary:hover {
+  background: var(--pc-canvas);
+}
+
+.twk-swatch {
+  flex-shrink: 0;
+  inline-size: 56px;
+  min-height: var(--pc-touch-target);
+  padding: 0;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: transparent;
+  cursor: pointer;
+}
+
+.twk-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.twk-swatch::-webkit-color-swatch,
+.twk-swatch::-moz-color-swatch {
+  border: 0;
+  border-radius: var(--pc-radius-control);
+}
+
+.twk-chips {
+  display: flex;
+  min-width: 0;
+  gap: var(--pc-space-2);
+}
+
+.twk-chip {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--pc-touch-target);
+  padding: 0;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.twk-chip:hover {
+  transform: translateY(-1px);
+}
+
+.twk-chip[data-on='1'] {
+  outline: 2px solid var(--pc-focus);
+  outline-offset: -2px;
+}
+
+.twk-chip > span {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  display: flex;
+  width: 34%;
+  flex-direction: column;
+  border-inline-start: 1px solid color-mix(in srgb, var(--pc-field) 20%, transparent);
+}
+
+.twk-chip > span > i {
+  flex: 1;
+  border-block-start: 1px solid color-mix(in srgb, var(--pc-field) 20%, transparent);
+}
+
+.twk-chip > span > i:first-child {
+  border-block-start: 0;
+}
+
+.twk-chip svg {
+  position: absolute;
+  inset-block-start: var(--pc-space-2);
+  inset-inline-start: var(--pc-space-2);
+  inline-size: var(--pc-space-4);
+  block-size: var(--pc-space-4);
+  color: var(--pc-rice);
+}
+
+.twk-chip .twk-check--light {
+  color: var(--pc-field);
+}
+
+.twk-panel :where(button, input, select, textarea):focus-visible {
+  outline: 3px solid var(--pc-focus);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--pc-focus-contrast);
+}
+
+@media (max-width: 360px) {
+  .twk-panel {
+    inset-inline-end: var(--pc-space-4);
+    inset-block-end: var(--pc-space-4);
+  }
+
+  .twk-body {
+    padding-inline: var(--pc-space-3);
+  }
+
+  .twk-row-h {
+    align-items: flex-start;
+  }
+
+  .twk-row-h > .twk-lbl {
+    flex: 1 1 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .twk-panel,
+  .twk-panel * {
+    animation: none;
+    transition: none;
+  }
+}

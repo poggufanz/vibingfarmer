@@ -15,23 +15,25 @@ afterEach(() => {
 describe('BrandLockup', () => {
   it('full variant shows the visible wordmark as real DOM text and a decorative mark', () => {
     const { container } = render(<BrandLockup variant="full" />)
-    expect(screen.getByText('Vibing Farmer')).toBeTruthy()
+    expect(screen.getByText('vibing / farmer')).toBeTruthy()
     const img = container.querySelector('img')
     expect(img.getAttribute('alt')).toBe('')
+    expect(container.firstElementChild.dataset.variant).toBe('full')
+    expect(container.firstElementChild.dataset.tone).toBe('auto')
   })
 
   it('compact variant carries the accessible name on the mark itself (no visible wordmark text)', () => {
     render(<BrandLockup variant="compact" />)
-    expect(screen.getByRole('img', { name: 'Vibing Farmer' })).toBeTruthy()
-    expect(screen.queryByText('Vibing Farmer')).toBeNull()
+    expect(screen.getByRole('img', { name: 'vibing / farmer' })).toBeTruthy()
+    expect(screen.queryByText('vibing / farmer')).toBeNull()
   })
 
   it('full and compact each expose exactly one accessible name for the lockup', () => {
     const full = render(<BrandLockup variant="full" />)
-    expect(screen.getAllByText('Vibing Farmer')).toHaveLength(1)
+    expect(screen.getAllByText('vibing / farmer')).toHaveLength(1)
     full.unmount()
     render(<BrandLockup variant="compact" />)
-    expect(screen.getAllByRole('img', { name: 'Vibing Farmer' })).toHaveLength(1)
+    expect(screen.getAllByRole('img', { name: 'vibing / farmer' })).toHaveLength(1)
   })
 
   it('defaults to the forest mark when no theme is set', () => {
@@ -47,6 +49,7 @@ describe('BrandLockup', () => {
     expect(container.querySelector('img').getAttribute('src')).toBe(
       '/brand/vibing-farmer-mark-day.svg'
     )
+    expect(container.firstElementChild.dataset.tone).toBe('auto')
   })
 
   it('an explicit tone overrides the DOM theme', () => {
@@ -63,6 +66,33 @@ describe('BrandLockup', () => {
     expect(container.querySelector('img').getAttribute('src')).toBe(
       '/brand/vibing-farmer-mark-mono.svg'
     )
+    expect(container.firstElementChild.dataset.tone).toBe('mono')
+  })
+
+  it.each([
+    ['null', null],
+    ['object', {}],
+    ['string', 'not-a-manifest'],
+  ])(
+    'rejects an explicitly supplied malformed non-array asset manifest (%s)',
+    (_label, manifest) => {
+      expect(() => render(<BrandLockup assetManifest={manifest} />)).toThrow(
+        /Foundation asset manifest must be an array/
+      )
+    }
+  )
+
+  it('keeps the official mark path on every variant/tone combination', () => {
+    for (const variant of ['full', 'compact']) {
+      for (const tone of ['forest', 'day-field', 'mono']) {
+        const { container, unmount } = render(<BrandLockup variant={variant} tone={tone} />)
+        const src = container.querySelector('img').getAttribute('src')
+        expect(src).toMatch(/^\/brand\/vibing-farmer-mark-(forest|day|mono)\.svg$/)
+        expect(container.firstElementChild.dataset.variant).toBe(variant)
+        expect(container.firstElementChild.dataset.tone).toBe(tone)
+        unmount()
+      }
+    }
   })
 
   it('has zero axe violations (full)', async () => {

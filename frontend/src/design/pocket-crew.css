@@ -80,9 +80,9 @@
   --ok: #f2f5ef;
   --focus-ring: #dff56c;
   --focus-ring-contrast: #17251f;
-  --shadow-sm: 0 1px 2px rgb(7 15 11 / 24%);
-  --shadow-md: 0 8px 20px rgb(7 15 11 / 22%);
-  --shadow-lg: 0 18px 44px rgb(7 15 11 / 28%);
+  --shadow-sm: var(--pc-shadow-support);
+  --shadow-md: var(--pc-shadow-support);
+  --shadow-lg: var(--pc-shadow-dominant);
   --line: #8c9b93;
   --eco-accent: #dff56c;
 
@@ -161,9 +161,9 @@
   --ok: #17251f;
   --focus-ring: #17251f;
   --focus-ring-contrast: #f2f5ef;
-  --shadow-sm: 0 1px 2px rgb(23 37 31 / 12%);
-  --shadow-md: 0 8px 20px rgb(23 37 31 / 14%);
-  --shadow-lg: 0 18px 44px rgb(23 37 31 / 18%);
+  --shadow-sm: var(--pc-shadow-support);
+  --shadow-md: var(--pc-shadow-support);
+  --shadow-lg: var(--pc-shadow-dominant);
   --line: #5f6c65;
   --eco-accent: #dff56c;
 
@@ -209,6 +209,7 @@
 
   /* Shell and route geometry. */
   --pc-sidebar-width: 248px;
+  --pc-sidebar-compact-width: 80px;
   --pc-topbar-height: 64px;
   --pc-shell-max: 1240px;
   --pc-route-gutter: clamp(20px, 4vw, 48px);
@@ -266,28 +267,28 @@
 }
 
 :root {
-  --pc-radius-sm: 12px;
-  --pc-radius-md: 16px;
-  --pc-radius-lg: 24px;
-  --radius-sm: 12px;
-  --radius-md: 16px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
-  --font-display: 'Geist Variable', 'Geist', system-ui, sans-serif;
-  --font-body: 'Geist Variable', 'Geist', system-ui, sans-serif;
-  --font-sans: 'Geist Variable', 'Geist', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
-  --mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
+  --pc-radius-sm: var(--pc-radius-control);
+  --pc-radius-md: var(--pc-radius-support);
+  --pc-radius-lg: var(--pc-radius-dominant);
+  --radius-sm: var(--pc-radius-control);
+  --radius-md: var(--pc-radius-support);
+  --radius-lg: var(--pc-radius-support);
+  --radius-xl: var(--pc-radius-dominant);
+  --font-display: var(--pc-font-display);
+  --font-body: var(--pc-font-body);
+  --font-sans: var(--pc-font-body);
+  --font-mono: var(--pc-font-mono);
+  --mono: var(--pc-font-mono);
   /* Legacy script consumers become Geist. Newsreader is scoped to .pc-wordmark. */
-  --font-script: 'Geist Variable', 'Geist', system-ui, sans-serif;
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --font-script: var(--pc-font-body);
+  --ease-out: var(--pc-ease-out);
 }
 
 [data-density='compact'] {
-  --radius-sm: 12px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 16px;
+  --radius-sm: var(--pc-radius-control);
+  --radius-md: var(--pc-radius-control);
+  --radius-lg: var(--pc-radius-support);
+  --radius-xl: var(--pc-radius-support);
 }
 
 html,
@@ -493,14 +494,15 @@ body {
 }
 
 .pc-money {
-  font-family: var(--font-mono);
+  font-family: var(--pc-font-body);
   font-variant-numeric: tabular-nums;
 }
 
 .pc-money--loading,
 .pc-money--empty,
 .pc-money--error,
-.pc-money--unknown {
+.pc-money--unknown,
+.pc-money--unavailable {
   font-family: var(--font-body);
   color: var(--pc-muted);
   font-variant-numeric: normal;
@@ -510,26 +512,24 @@ body {
   color: var(--pc-danger);
 }
 
-.pc-money-stale-flag {
+.pc-money-stale-flag,
+.pc-money-freshness {
   color: var(--pc-muted);
   font-family: var(--font-body);
   font-size: 0.85em;
 }
 
 .pc-money-freshness {
-  color: var(--pc-muted);
-  font-family: var(--font-body);
-  font-size: 0.85em;
   margin-left: 0.35em;
 }
 
 .pc-status-notice {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
-  border-radius: var(--pc-radius-md);
+  gap: var(--pc-space-3);
+  border-radius: var(--pc-radius-support);
   border: 1px solid var(--border);
-  padding: 0.75rem 1rem;
+  padding: var(--pc-space-3) var(--pc-space-4);
 }
 
 .pc-status-notice--danger {
@@ -548,6 +548,18 @@ body {
 .pc-status-notice-title {
   font-weight: 600;
   margin: 0 0 0.15rem;
+}
+
+.pc-status-notice-label,
+.pc-status-notice-consequence,
+.pc-status-notice-next-action,
+.pc-status-notice-source,
+.pc-status-notice-freshness {
+  margin: var(--pc-space-1) 0 0;
+}
+
+.pc-status-notice-label {
+  font-weight: 600;
 }
 
 /* Task 10 (IA remap): the "session resumed" banner app.jsx renders directly (not owned by any
@@ -592,9 +604,9 @@ body {
 }
 
 .pc-technical-details {
-  border-radius: var(--pc-radius-sm);
+  border-radius: var(--pc-radius-control);
   border: 1px solid var(--border);
-  padding: 0.5rem 0.75rem;
+  padding: var(--pc-space-2) var(--pc-space-3);
 }
 
 /* Owner decision #19: a disclosure's own caption ("Technical details", "Agent 1 instructions") is
@@ -621,6 +633,87 @@ body {
   margin-top: 0.5rem;
 }
 
+.pc-technical-details-fact,
+.pc-venue-truth-freshness {
+  display: grid;
+  gap: var(--pc-space-2);
+  margin: 0 0 0.75rem;
+}
+
+.pc-technical-details-fact > div,
+.pc-venue-truth-freshness > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--pc-space-3);
+}
+
+.pc-technical-details-fact dt,
+.pc-venue-truth-freshness dt {
+  color: var(--pc-muted);
+}
+
+.pc-technical-details-fact dd,
+.pc-venue-truth-freshness dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Network identity is a shared primitive. The 7px network gap is the documented NetworkBadge
+ * optical exception; route fact rows remain on the 4px spacing grid. */
+.network-badge {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.network-badge-label,
+.network-route > p,
+.network-route-facts > span,
+.network-route-status > span,
+.network-route-host-note {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.network-route {
+  display: grid;
+  min-width: 0;
+  gap: var(--pc-space-2);
+}
+
+.network-route-path {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.network-route-arrow {
+  display: inline-flex;
+  flex: none;
+}
+
+.network-route-facts {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--pc-space-1) var(--pc-space-2);
+  margin: 0;
+}
+
+.network-route-status {
+  display: grid;
+  min-width: 0;
+  gap: var(--pc-space-1);
+  margin: 0;
+}
+
+.network-route-host-note {
+  margin: 0;
+}
+
 /* Foundation-wide technical/raw-value face (owner decision #19). Previously only declared inside
  * the VF Wallet extension's own component-scoped stylesheet (WalletShell.jsx) -- this is the same
  * rule at the shared layer, so any `.pc-technical`-marked span/code/pre in the main app (Strategy,
@@ -640,6 +733,12 @@ pre,
 .pc-venue-truth-apy {
   color: var(--pc-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.pc-venue-truth-apy-source,
+.pc-venue-truth-apy-freshness {
+  font-family: var(--font-body);
+  font-size: 0.85em;
 }
 
 /* One dominant surface per stage: a single workspace-tinted panel, never a repeated card grid. */
@@ -675,19 +774,27 @@ pre,
   gap: 0.75rem;
 }
 
+/* Mixed migration layer bridge. The live legacy modal and skill-drawer selectors still ship from
+   style.css at 99/100, above Foundation's documented Overlay (80). Keep those surfaces above
+   ordinary content but below a Foundation Dialog without inventing a second z-index scale. */
+.modal-backdrop,
+.skill-drawer-overlay,
+.skill-drawer {
+  z-index: var(--pc-z-popover);
+}
+
 /* Dialog: a full-viewport overlay (position: fixed + inset: 0) sits above everything else and is
    the only thing that can receive pointer events while open -- that alone is what stops
    background interaction; mode only swaps the panel's own layout below. */
 .pc-dialog {
   position: fixed;
   inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgb(7 15 11 / 55%);
+  z-index: var(--pc-z-overlay);
+  display: grid;
+  place-items: center;
+  padding: var(--pc-space-6);
+  background: var(--pc-overlay);
   border: none;
-  padding: 1rem;
   max-width: none;
   max-height: none;
   width: 100%;
@@ -696,14 +803,30 @@ pre,
 }
 
 .pc-dialog-panel {
+  position: relative;
+  z-index: var(--pc-z-dialog);
+  width: min(100%, 480px);
+  max-height: min(760px, calc(100dvh - 32px));
+  overflow: auto;
+  border-radius: var(--pc-radius-dominant);
   background: var(--pc-workspace);
   color: var(--pc-ink);
-  border-radius: var(--pc-radius-lg);
-  padding: 1.5rem;
-  width: 100%;
-  max-width: 28rem;
-  max-height: calc(100vh - 2rem);
-  overflow-y: auto;
+  padding: var(--pc-space-6);
+}
+
+/* Document zoom keeps `dvh` in the layout viewport while scaling the painted panel. Bound the
+   default and explicitly centered modes to the fixed overlay's percentage box as a second
+   expression of the same contract. At normal zoom the percentage is identical to the locked
+   viewport cap; under 200% zoom it keeps the panel's actual scrollport inside the visual viewport.
+   The extra class specificity also wins over the legacy `.pc-money-dialog` compatibility sheet
+   rules, which are loaded after this foundation stylesheet. */
+.pc-dialog.pc-dialog--auto .pc-dialog-panel,
+.pc-dialog.pc-dialog--dialog .pc-dialog-panel {
+  max-height: min(760px, calc(100dvh - var(--pc-space-8)), calc(100% - var(--pc-space-8)));
+}
+
+.pc-dialog.pc-dialog--sheet .pc-dialog-panel {
+  max-height: min(88dvh, 88%);
 }
 
 .pc-dialog-title {
@@ -731,9 +854,11 @@ pre,
 }
 
 .pc-dialog--sheet .pc-dialog-panel {
-  max-width: none;
-  border-radius: var(--pc-radius-lg) var(--pc-radius-lg) 0 0;
-  max-height: 85vh;
+  width: 100%;
+  max-height: 88dvh;
+  border-radius: var(--pc-radius-dominant) var(--pc-radius-dominant) 0 0;
+  margin-bottom: 0;
+  padding-bottom: calc(var(--pc-space-6) + env(safe-area-inset-bottom));
 }
 
 @media (max-width: 767px) {
@@ -743,9 +868,315 @@ pre,
   }
 
   .pc-dialog--auto .pc-dialog-panel {
-    max-width: none;
-    border-radius: var(--pc-radius-lg) var(--pc-radius-lg) 0 0;
-    max-height: 85vh;
+    width: 100%;
+    max-height: 88dvh;
+    border-radius: var(--pc-radius-dominant) var(--pc-radius-dominant) 0 0;
+    margin-bottom: 0;
+    padding-bottom: calc(var(--pc-space-6) + env(safe-area-inset-bottom));
+  }
+
+  .pc-dialog.pc-dialog--auto .pc-dialog-panel {
+    max-height: min(88dvh, 88%);
+  }
+
+  /* Every Foundation dialog shares one narrow-screen action contract. The mode-qualified
+     selector keeps this override ahead of route compatibility sheets (for example the legacy
+     `.pc-money-dialog .pc-dialog-actions` rule) while leaving the desktop flex row untouched. A
+     zero intrinsic minimum is required because `.pc-button` deliberately uses `max-content` on
+     wide surfaces; without it, a long action label can widen the grid track and paint left of the
+     visible panel at document zoom. */
+  .pc-dialog .pc-dialog-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--pc-space-3);
+  }
+
+  .pc-dialog .pc-dialog-actions .pc-button {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   CAP-01 Foundation atlas. This is fixture-only composition CSS; it uses the same shell, type,
+   spacing, shape, control, layer, motion, and safe-area tokens as Pocket Crew surfaces.
+   ------------------------------------------------------------------------------------------- */
+
+.pc-foundation-atlas {
+  display: grid;
+  grid-template-columns: var(--pc-sidebar-width) minmax(0, 1fr);
+  min-height: 100dvh;
+  overflow-x: clip;
+  background: var(--pc-canvas);
+  color: var(--pc-ink);
+}
+
+.pc-foundation-atlas-sidebar {
+  display: flex;
+  grid-column: 1;
+  grid-row: 1 / -1;
+  width: var(--pc-sidebar-width);
+  min-width: var(--pc-sidebar-width);
+  flex-direction: column;
+  gap: var(--pc-space-8);
+  padding: var(--pc-space-6) var(--pc-space-4);
+  background: var(--pc-field);
+  color: var(--pc-rice);
+}
+
+.pc-foundation-atlas-sidebar nav {
+  display: grid;
+  gap: var(--pc-space-2);
+}
+
+.pc-foundation-atlas-sidebar a {
+  display: flex;
+  min-height: var(--pc-touch-target);
+  align-items: center;
+  color: inherit;
+  padding-inline: var(--pc-space-3);
+  border-radius: var(--pc-radius-control);
+  text-decoration: none;
+}
+
+.pc-foundation-atlas-sidebar a:hover,
+.pc-foundation-atlas-sidebar a:focus-visible {
+  background: var(--pc-grove);
+}
+
+.pc-foundation-atlas-shell {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1 / -1;
+  grid-template-rows: var(--pc-topbar-height) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.pc-foundation-atlas-topbar {
+  display: flex;
+  min-height: var(--pc-topbar-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-4);
+  padding: 0 var(--pc-space-6);
+  border-bottom: 1px solid var(--pc-line);
+  background: var(--pc-workspace);
+}
+
+.pc-foundation-atlas-topbar-status {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-foundation-atlas-content {
+  display: grid;
+  gap: var(--pc-route-gap);
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  min-width: 0;
+  margin-inline: auto;
+  padding: var(--pc-route-gutter);
+  padding-bottom: calc(var(--pc-space-20) + env(safe-area-inset-bottom));
+}
+
+.pc-foundation-atlas-section {
+  display: grid;
+  gap: var(--pc-space-4);
+  min-width: 0;
+  padding: var(--pc-dominant-padding);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background: var(--pc-workspace);
+}
+
+.pc-foundation-atlas-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pc-space-4);
+}
+
+.pc-foundation-atlas-section-header h2 {
+  margin: 0;
+  font-size: var(--pc-type-section);
+  line-height: var(--pc-leading-title);
+}
+
+.pc-foundation-atlas-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--pc-space-4);
+  min-width: 0;
+}
+
+.pc-foundation-atlas-stack,
+.pc-foundation-atlas-network-states,
+.pc-foundation-atlas-money-list,
+.pc-foundation-atlas-display-list {
+  display: grid;
+  gap: var(--pc-space-4);
+  min-width: 0;
+}
+
+.pc-foundation-atlas-network-badges {
+  align-items: center;
+}
+
+.pc-foundation-atlas-network-state {
+  min-width: 0;
+  padding: var(--pc-space-4);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+}
+
+.pc-foundation-atlas-network-state h3 {
+  margin: 0 0 var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 600;
+}
+
+.pc-foundation-atlas-agent-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--pc-space-3);
+  min-height: var(--pc-touch-target);
+}
+
+.pc-foundation-atlas-agent-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pc-foundation-atlas-money-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+}
+
+.pc-foundation-atlas-long-value {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pc-foundation-atlas-clock {
+  margin: var(--pc-space-4) 0 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-foundation-atlas-control {
+  min-width: var(--pc-touch-target);
+  min-height: var(--pc-touch-target);
+  padding: var(--pc-space-2) var(--pc-space-4);
+  border: 1px solid var(--pc-ink);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.pc-foundation-atlas-control:hover {
+  background: var(--pc-owned);
+}
+
+.pc-foundation-atlas-skip-link {
+  position: fixed;
+  z-index: var(--pc-z-skip-link);
+  top: var(--pc-space-2);
+  left: var(--pc-space-2);
+  transform: translateY(-200%);
+  padding: var(--pc-space-2) var(--pc-space-3);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-foundation-atlas-skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .pc-foundation-atlas {
+    grid-template-columns: var(--pc-sidebar-compact-width) minmax(0, 1fr);
+  }
+
+  .pc-foundation-atlas-sidebar {
+    width: var(--pc-sidebar-compact-width);
+    min-width: var(--pc-sidebar-compact-width);
+    align-items: center;
+    padding-inline: var(--pc-space-2);
+  }
+
+  .pc-foundation-atlas-sidebar nav a {
+    justify-content: center;
+    padding-inline: var(--pc-space-2);
+  }
+}
+
+@media (max-width: 767px) {
+  .pc-foundation-atlas {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .pc-foundation-atlas-sidebar {
+    grid-column: 1;
+    grid-row: 1;
+    width: auto;
+    min-width: 0;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pc-space-3);
+    padding: var(--pc-space-3) var(--pc-space-4);
+  }
+
+  .pc-foundation-atlas-sidebar nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--pc-space-1);
+  }
+
+  .pc-foundation-atlas-sidebar a {
+    min-height: var(--pc-touch-target);
+    padding-inline: var(--pc-space-2);
+  }
+
+  .pc-foundation-atlas-shell {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .pc-foundation-atlas-topbar {
+    min-height: var(--pc-topbar-height);
+    padding-inline: var(--pc-space-4);
+  }
+
+  .pc-foundation-atlas-topbar .pc-brand-lockup--full {
+    min-width: 0;
+  }
+
+  .pc-foundation-atlas-topbar-status {
+    max-width: 40%;
+    text-align: right;
+  }
+
+  .pc-foundation-atlas-content {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--pc-route-gap);
+    padding-inline: var(--pc-route-gutter);
+  }
+
+  .pc-foundation-atlas-section {
+    padding: var(--pc-dominant-padding);
+  }
+
+  .pc-foundation-atlas-grid,
+  .pc-foundation-atlas-money-list {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -826,19 +1257,20 @@ pre,
 
 .pc-skip-link:focus {
   position: fixed;
-  top: 12px;
-  left: 12px;
-  z-index: 2000;
+  top: var(--pc-space-3);
+  left: var(--pc-space-3);
+  z-index: var(--pc-z-skip-link);
   width: auto;
   height: auto;
   margin: 0;
-  padding: 10px 16px;
+  padding: var(--pc-space-2) var(--pc-space-4);
   overflow: visible;
   clip: auto;
   white-space: normal;
   background: var(--pc-harvest);
   color: var(--pc-harvest-ink);
-  border-radius: var(--pc-radius-sm);
+  border-radius: var(--pc-radius-control);
+  transition: opacity var(--pc-duration-fast) var(--pc-ease-standard);
   font-weight: 600;
 }
 
@@ -928,6 +1360,230 @@ pre,
    (outline/box-shadow) and danger colors (color/border-color) are declared elsewhere and stay more
    specific, so disabling the sweep never erases that state feedback.
    ------------------------------------------------------------------------------------------- */
+[data-theme] .btn-primary,
+[data-theme] .btn-ghost,
+[data-theme] .btn-chip,
+[data-theme] .mandate-revoke {
+  animation: none !important;
+  background-image: none !important;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Foundation Task 7 -- shared shell geometry. This is the late-loaded owner for the app shell;
+   style.css keeps only legacy component structure and no longer sets shell widths or breakpoints.
+   --------------------------------------------------------------------------------------------- */
+[data-pocket-shell] {
+  display: grid;
+  grid-template-columns: var(--pc-sidebar-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  gap: 0;
+  overflow: hidden;
+  background: var(--pc-canvas);
+}
+
+[data-pocket-shell].sb-minimized {
+  grid-template-columns: var(--pc-sidebar-compact-width) minmax(0, 1fr);
+}
+
+[data-pocket-sidebar] {
+  grid-column: 1;
+  grid-row: 1;
+  width: var(--pc-sidebar-width);
+  min-width: var(--pc-sidebar-width);
+  min-height: 100dvh;
+  box-sizing: border-box;
+  padding: var(--pc-space-6) var(--pc-space-4);
+  gap: var(--pc-space-2);
+  transition: width var(--pc-duration-base) var(--pc-ease-standard);
+}
+
+[data-pocket-shell].sb-minimized [data-pocket-sidebar] {
+  width: var(--pc-sidebar-compact-width);
+  min-width: var(--pc-sidebar-compact-width);
+}
+
+[data-pocket-sidebar] .sb-item {
+  min-width: var(--pc-touch-target);
+  min-height: var(--pc-touch-target);
+  height: var(--pc-touch-target);
+  border-radius: var(--pc-radius-control);
+}
+
+[data-pocket-main] {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+[data-pocket-topbar] {
+  min-height: var(--pc-topbar-height);
+  height: var(--pc-topbar-height);
+  box-sizing: border-box;
+  padding: 0 var(--pc-route-gutter);
+  transition: background-color var(--pc-duration-base) var(--pc-ease-standard);
+}
+
+[data-pocket-topbar] .icon-btn,
+[data-pocket-topbar] .header-wallet-trigger {
+  min-width: var(--pc-touch-target);
+  min-height: var(--pc-touch-target);
+}
+
+[data-pocket-topbar] .icon-btn {
+  width: var(--pc-touch-target);
+  height: var(--pc-touch-target);
+}
+
+@media (min-width: 1024px) {
+  [data-pocket-shell] {
+    grid-template-columns: var(--pc-sidebar-width) minmax(0, 1fr);
+  }
+
+  [data-pocket-shell].sb-minimized {
+    grid-template-columns: var(--pc-sidebar-compact-width) minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  [data-pocket-shell] {
+    grid-template-columns: var(--pc-sidebar-compact-width) minmax(0, 1fr);
+  }
+
+  [data-pocket-sidebar],
+  [data-pocket-shell].sb-minimized [data-pocket-sidebar] {
+    width: var(--pc-sidebar-compact-width);
+    min-width: var(--pc-sidebar-compact-width);
+  }
+
+  [data-pocket-sidebar] .sb-label,
+  [data-pocket-sidebar] .sb-badge,
+  [data-pocket-sidebar] .sb-logo-text {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+
+  [data-pocket-shell] .pc-route-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  [data-pocket-shell] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+
+  [data-pocket-shell].sb-minimized {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  [data-pocket-main] {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  [data-pocket-sidebar],
+  [data-pocket-shell].sb-minimized [data-pocket-sidebar] {
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
+    min-width: 0;
+    min-height: var(--pc-touch-target);
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-around;
+    padding: var(--pc-space-2) var(--pc-space-2);
+    gap: var(--pc-space-1);
+    border-top: 1px solid var(--pc-line);
+    border-right: 0;
+    overflow: visible;
+    transition: none;
+  }
+
+  [data-pocket-sidebar] .sb-logo,
+  [data-pocket-sidebar] .sb-spacer,
+  [data-pocket-sidebar] .sb-toggle {
+    display: none;
+  }
+
+  [data-pocket-sidebar] .sb-item,
+  [data-pocket-shell].sb-extended [data-pocket-sidebar] .sb-item {
+    flex: 1 1 0;
+    max-width: 64px;
+    min-width: 0;
+    min-height: var(--pc-touch-target);
+    height: var(--pc-touch-target);
+    padding: var(--pc-space-1) var(--pc-space-1);
+    flex-direction: column;
+    justify-content: center;
+    border-radius: var(--pc-radius-control);
+  }
+
+  [data-pocket-sidebar] .sb-label {
+    display: block;
+    max-width: 100%;
+    margin-left: 0;
+    margin-top: var(--pc-space-1);
+    opacity: 1;
+    transform: none;
+    font-size: 8.5px;
+    line-height: 1.15;
+    letter-spacing: 0;
+    white-space: normal;
+    text-align: center;
+  }
+
+  [data-pocket-sidebar] .sb-badge {
+    display: none;
+  }
+
+  [data-pocket-topbar] {
+    padding-inline: var(--pc-space-4);
+    gap: var(--pc-space-2);
+  }
+
+  [data-pocket-topbar] .topbar-meta,
+  [data-pocket-topbar] .pc-brand-wordmark,
+  [data-pocket-topbar] .header-wallet-address,
+  [data-pocket-topbar] .header-wallet-dot {
+    display: none;
+  }
+
+  [data-pocket-topbar] .topbar-left,
+  [data-pocket-topbar] .topbar-right {
+    gap: var(--pc-space-2);
+  }
+
+  [data-pocket-topbar] .topbar-left {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  [data-pocket-topbar] .network-badge {
+    white-space: nowrap;
+  }
+
+  [data-pocket-topbar] .header-wallet-trigger {
+    width: var(--pc-touch-target);
+    justify-content: center;
+    padding: 0;
+  }
+
+  [data-pocket-main] .pc-route {
+    padding-bottom: calc(var(--pc-space-20) + env(safe-area-inset-bottom));
+  }
+}
+
+/* Keep the shared no-gradient compatibility reset last in the cascade, after shell media rules. */
 [data-theme] .btn-primary,
 [data-theme] .btn-ghost,
 [data-theme] .btn-chip,

@@ -93,6 +93,58 @@ describe('AgentTeam — real stable identity, never list index', () => {
   })
 })
 
+describe('AgentTeam — missing deployed identity fails closed', () => {
+  it('hides mark, money, cap, and actions when the deployed address is unavailable', () => {
+    render(
+      <AgentTeam
+        agents={[
+          {
+            address: '',
+            amount: { token: 'USDC', units: '9007199254740993', decimals: 7 },
+            scope: { state: 'known', value: { revoked: false, expiry: 0 } },
+            executionStatus: 'succeeded',
+            problems: [],
+          },
+        ]}
+        discovery={{ agents: [{ address: '', cap: '1000000000' }] }}
+        collectionState="current"
+      />
+    )
+    expect(screen.getByText('Agent identity unavailable')).toBeTruthy()
+    expect(screen.queryByText(/Cap:/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Cancel|Recover|Withdraw/ })).toBeNull()
+  })
+
+  it('keeps a missing-identity sibling visible without changing healthy address identity', () => {
+    render(
+      <AgentTeam
+        agents={[
+          healthyAgent('CAGENT2'),
+          {
+            address: '',
+            amount: amt('9007199254740993'),
+            scope: { state: 'known', value: { revoked: false, expiry: 0 } },
+            executionStatus: 'succeeded',
+            problems: [],
+          },
+          healthyAgent('CAGENT1'),
+        ]}
+        problemAgents={[]}
+        collectionState="current"
+      />
+    )
+    expect(screen.getByText('Agent identity unavailable')).toBeTruthy()
+    expect(
+      screen.getByRole('link', { name: 'Agent account CAGENT1 on Stellar Expert' })
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('link', { name: 'Agent account CAGENT2 on Stellar Expert' })
+    ).toBeTruthy()
+    expect(document.querySelectorAll('.pc-agent-mark')).toHaveLength(2)
+    expect(screen.queryByText(/900719925/)).toBeNull()
+  })
+})
+
 describe('AgentTeam — Cap and Expiry', () => {
   // My Money Task 13 Part B item 6: `discovery` is now the real source of `cap` (carried through
   // ownerDiscovery.js's addCandidate from RouterDeployedEvent). This test no longer supplies
@@ -113,6 +165,18 @@ describe('AgentTeam — Cap and Expiry', () => {
       <AgentTeam agents={[healthyAgent('CAGENT1')]} problemAgents={[]} discovery={discovery} />
     )
     expect(screen.getByText('Cap: 500 USDC')).toBeTruthy()
+  })
+
+  it('keeps an unsafe-integer-sized cap exact instead of coercing through Number', () => {
+    const discovery = {
+      status: 'complete',
+      agents: [{ address: 'CAGENT1', cap: '9007199254740993' }],
+    }
+    render(
+      <AgentTeam agents={[healthyAgent('CAGENT1')]} problemAgents={[]} discovery={discovery} />
+    )
+    expect(screen.getByText('Cap: 900719925.4740993 USDC')).toBeTruthy()
+    expect(screen.queryByText('Cap: 900719925.4740992 USDC')).toBeNull()
   })
 
   // Mutation guard: a truthy check (`if (cap)`) instead of `cap != null` would collapse a genuine
@@ -206,7 +270,7 @@ describe('AgentTeam — revoked-funded rows stay visible as Needs recovery', () 
     expect(screen.getByText(/Owner withdrawal is always allowed/)).toBeTruthy()
   })
 
-  it('fires onRecoverAgent with the target address on confirm', () => {
+  it('does not offer an unproven full-exit confirmation when discovery and account are absent', () => {
     const onRecoverAgent = vi.fn()
     render(
       <AgentTeam
@@ -216,8 +280,13 @@ describe('AgentTeam — revoked-funded rows stay visible as Needs recovery', () 
       />
     )
     fireEvent.click(screen.getByRole('button', { name: 'Recover funds' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Exit all' }))
-    expect(onRecoverAgent).toHaveBeenCalledWith('CREVOKED1', null)
+    expect(
+      screen.getByText(
+        'Recovery coverage is unavailable. We cannot confirm an account-wide exit yet.'
+      )
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Exit all' })).toBeNull()
+    expect(onRecoverAgent).not.toHaveBeenCalled()
   })
 
   it('shows a real planFullExit preview once discovery and account are supplied, including the partial-sweep limitation (I2)', () => {
@@ -259,6 +328,33 @@ describe('AgentTeam — revoked-funded rows stay visible as Needs recovery', () 
       'CREVOKED1',
       expect.objectContaining({ kind: 'full-exit', known: false })
     )
+  })
+
+  it('partial discovery with a funded known agent and an unreadable row never offers an unproven account-wide exit', () => {
+    const discovery = {
+      status: 'partial',
+      agents: [
+        { address: 'CREVOKED1', scopeReadStatus: 'ok', revoked: true, expiry: 0 },
+        { address: 'CUNREADABLE', scopeReadStatus: 'unavailable', revoked: null, expiry: null },
+      ],
+    }
+    render(
+      <AgentTeam
+        agents={[revokedFundedAgent('CREVOKED1')]}
+        problemAgents={['CREVOKED1']}
+        discovery={discovery}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Recover funds' }))
+
+    expect(screen.getByText('CREVOKED1')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Recovery coverage is unavailable. We cannot confirm an account-wide exit yet.'
+      )
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Exit all' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Exit known agents' })).toBeNull()
   })
 })
 

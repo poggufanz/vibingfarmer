@@ -49,7 +49,124 @@ export const CEREMONY_STATE = Object.freeze({
   NOT_SUBMITTED: 'not-submitted',
   REJECTED: 'rejected',
   FAILED: 'failed',
+  UNKNOWN: 'unknown',
 })
+
+const GENERIC_SIGN_ACTIONS = new Set(['signTransaction', 'signAuthEntry'])
+
+function presentText(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function normalizedStatus(value) {
+  return typeof value === 'string' ? value.trim().toUpperCase() : ''
+}
+
+function parseNonNegativeBigInt(value) {
+  if (typeof value === 'bigint') return value >= 0n ? value : null
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value < 0) return null
+    try {
+      return BigInt(value)
+    } catch {
+      return null
+    }
+  }
+  if (typeof value !== 'string' || !/^\d+$/.test(value.trim())) return null
+  try {
+    return BigInt(value.trim())
+  } catch {
+    return null
+  }
+}
+
+function isGenericSignAction(action) {
+  return GENERIC_SIGN_ACTIONS.has(action)
+}
+
+function resultState({ ok, action, status, hash, accountSnapshotStale, error: resultError }) {
+  const statusValue = normalizedStatus(status)
+  const hasHash = Boolean(presentText(hash))
+
+  // A post-delivery account switch means the receipt is not safe to present as a result for the
+  // currently selected account. Keep a real hash for investigation, but fail closed on the state
+  // and share projection. A pre-submit NOT_SUBMITTED result remains explicit below.
+  if (statusValue === 'NOT_SUBMITTED') return CEREMONY_STATE.NOT_SUBMITTED
+  if (accountSnapshotStale) return CEREMONY_STATE.UNKNOWN
+  if (ok === false) {
+    if (typeof resultError === 'string' && /not submitted/i.test(resultError)) {
+      return CEREMONY_STATE.NOT_SUBMITTED
+    }
+    if (['REJECTED', 'CANCELLED'].includes(statusValue)) return CEREMONY_STATE.REJECTED
+    return CEREMONY_STATE.FAILED
+  }
+
+  // Generic signing returns a signed artifact to its caller; it never owns a submission or a
+  // confirmation hash, even if a transport happens to attach status-shaped metadata.
+  if (isGenericSignAction(action)) {
+    if (statusValue === 'FAILED' || statusValue === 'ERROR') return CEREMONY_STATE.FAILED
+    if (statusValue === 'REJECTED' || statusValue === 'CANCELLED') {
+      return CEREMONY_STATE.REJECTED
+    }
+    return CEREMONY_STATE.SIGNED
+  }
+
+  if (statusValue === 'SUCCESS' && hasHash) return CEREMONY_STATE.CONFIRMED
+  if (statusValue === 'PENDING' && hasHash) return CEREMONY_STATE.SUBMITTED
+  if (['CHECKING', 'CHECKING_STATUS'].includes(statusValue)) {
+    return CEREMONY_STATE.CHECKING_STATUS
+  }
+  if (statusValue === 'SIGNED') return CEREMONY_STATE.SIGNED
+  if (statusValue === 'FAILED' || statusValue === 'ERROR') return CEREMONY_STATE.FAILED
+  if (['REJECTED', 'CANCELLED'].includes(statusValue)) return CEREMONY_STATE.REJECTED
+  return CEREMONY_STATE.UNKNOWN
+}
+
+function resultShares({ action, status, hash, sharesBefore, sharesAfter }, state) {
+  if (action !== 'deposit' || state !== CEREMONY_STATE.CONFIRMED) return null
+  if (normalizedStatus(status) !== 'SUCCESS' || !presentText(hash)) return null
+  const before = parseNonNegativeBigInt(sharesBefore)
+  const after = parseNonNegativeBigInt(sharesAfter)
+  if (before === null || after === null || after < before) return null
+  return (after - before).toString()
+}
+
+/**
+ * Project an existing ceremony result into presentation-only state. This does not read a ledger,
+ * revalidate a request, submit, sign, or infer a hash. A successful status without a non-empty
+ * hash is deliberately UNKNOWN, and shares are only exposed for a confirmed deposit with both
+ * authoritative share reads. Generic signing is SIGNED because this ceremony returns an artifact
+ * to its caller rather than submitting it.
+ *
+ * @param {{ok?:boolean, action?:string, status?:string, hash?:string,
+ *   accountSnapshotStale?:boolean, sharesBefore?:string|number|bigint,
+ *   sharesAfter?:string|number|bigint, error?:string}} result
+ * @returns {{state:string, statusText:string, hash:string|null, shares:string|null}}
+ */
+export function ceremonyResultModel(result = {}) {
+  const input = result && typeof result === 'object' ? result : {}
+  const state = resultState(input)
+  const hash = presentText(input.hash)
+  const shares = resultShares(input, state)
+  let statusText
+
+  if (input.accountSnapshotStale && state === CEREMONY_STATE.UNKNOWN) {
+    statusText = 'Status unknown: the active account or request changed; verify the transaction.'
+  } else if (state === CEREMONY_STATE.NOT_SUBMITTED) {
+    const detail = presentText(input.error)
+    statusText = detail
+      ? `Nothing moved: ${detail}`
+      : 'Nothing moved: the request was not submitted.'
+  } else if (state === CEREMONY_STATE.SIGNED && isGenericSignAction(input.action)) {
+    statusText = 'Signed and returned'
+  } else if (state === CEREMONY_STATE.FAILED && presentText(input.error)) {
+    statusText = `Failed: ${presentText(input.error)}`
+  } else {
+    statusText = ceremonyStatusText(state, { shares })
+  }
+
+  return Object.freeze({ state, statusText, hash, shares })
+}
 
 /** Formal copy for a ceremony state. `detail` overrides the default text for NOT_SUBMITTED (the
  *  actual reason nothing was delivered) and FAILED (the actual error message) without inventing a
@@ -66,17 +183,19 @@ export function ceremonyStatusText(state, { detail, shares } = {}) {
     case CEREMONY_STATE.SIGNED:
       return 'Signed'
     case CEREMONY_STATE.SUBMITTED:
-      return 'Submitted — awaiting confirmation'
+      return 'Submitted: awaiting confirmation'
     case CEREMONY_STATE.CHECKING_STATUS:
       return 'Checking status'
     case CEREMONY_STATE.CONFIRMED:
-      return shares != null ? `Confirmed — minted ${shares} shares` : 'Confirmed'
+      return shares != null ? `Confirmed: minted ${shares} shares` : 'Confirmed'
     case CEREMONY_STATE.NOT_SUBMITTED:
       return detail || 'Not submitted'
     case CEREMONY_STATE.REJECTED:
       return 'Rejected'
     case CEREMONY_STATE.FAILED:
       return detail ? `Failed: ${detail}` : 'Failed'
+    case CEREMONY_STATE.UNKNOWN:
+      return 'Unknown'
     default:
       return 'Unknown'
   }
@@ -105,7 +224,7 @@ export function partsToText(value) {
 }
 
 function safeShortAddr(address) {
-  return address ? shortAddr(address) : 'unknown'
+  return address ? shortAddr(address) : 'Unknown'
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -115,8 +234,22 @@ function originSection() {
   return { kind: 'origin', origin: INTERNAL_ORIGIN_LABEL, internal: true }
 }
 
-function accountSection(address) {
-  return { kind: 'account', accountType: 'Passkey', address: safeShortAddr(address) }
+function accountTypeLabel(kind, address) {
+  const normalized =
+    kind === 'classic' || kind === 'G'
+      ? 'G'
+      : kind === 'passkey' || kind === 'C'
+        ? 'C'
+        : address?.[0]
+  return normalized === 'G' ? 'Standard' : normalized === 'C' ? 'Passkey' : 'Unknown'
+}
+
+function accountSection(address, kind) {
+  return {
+    kind: 'account',
+    accountType: accountTypeLabel(kind, address),
+    address: safeShortAddr(address),
+  }
 }
 
 function networkSection() {
@@ -128,12 +261,25 @@ function networkSection() {
 // is true for every action/state this module ever renders.
 const AUTO_CLOSE_NOTE = 'This tab closes automatically when done.'
 
-function stateSection({ submissionState, detail, shares }) {
+function stateSection({ action, submissionState, detail, shares, hash, status, resultStatusText }) {
+  const authoritative =
+    submissionState === CEREMONY_STATE.CONFIRMED &&
+    normalizedStatus(status) === 'SUCCESS' &&
+    Boolean(presentText(hash))
+  const safeShares = authoritative ? shares : null
   return {
     kind: 'state',
     submissionState,
     note: AUTO_CLOSE_NOTE,
-    statusText: ceremonyStatusText(submissionState, { detail, shares }),
+    status: status || null,
+    hash: presentText(hash),
+    shares: safeShares,
+    authoritative,
+    statusText:
+      resultStatusText ||
+      (action && isGenericSignAction(action) && submissionState === CEREMONY_STATE.SIGNED
+        ? 'Signed and returned'
+        : ceremonyStatusText(submissionState, { detail, shares: safeShares })),
   }
 }
 
@@ -145,16 +291,29 @@ function stateSection({ submissionState, detail, shares }) {
  *  only toBaseMandateView's STATUS-INDEPENDENT copy fields (primaryCopy/perCallCap/durationDays),
  *  which are the exact seven-day / 10,000-USDC per-call, non-cumulative scope text, computed
  *  identically regardless of mandate status. */
-function buildBaseMandateSection() {
+function buildBaseMandateSection(destination = null) {
   const mv = toBaseMandateView({
     mandate: null,
     stellarOwner: null,
     kernelAddress: null,
     relayerOrigin: null,
   })
+  // The signing network is always Stellar testnet, and the user-facing route is the stable
+  // custody handoff label. The decoder's routeLabel remains source evidence for the transport
+  // line; it must not replace the concise route identity with a second hand-authored route.
+  const route = BASE_ROUTE_LABEL
+  const sourceRoute = presentText(destination?.routeLabel)
+  const knownCctp = destination?.classification === 'known-cctp-messenger'
+  const transport = knownCctp || sourceRoute?.includes('Circle CCTP') ? 'Circle CCTP' : null
+  const custodyDisclosure =
+    destination?.venueLabel ||
+    (knownCctp ? 'Base Sepolia proxy. Custody only. No protocol yield.' : null)
   return {
     kind: 'base-mandate',
-    route: BASE_ROUTE_LABEL,
+    route,
+    sourceRoute,
+    transport,
+    custodyDisclosure,
     statements: [mv.primaryCopy],
     perCallCapUsdc: mv.perCallCap.usdc,
     nonCumulative: mv.perCallCap.nonCumulative,
@@ -167,7 +326,7 @@ function buildBaseMandateSection() {
 // USDC SAC) -- there is no "unknown decimals" branch to model, unlike approvalView.js's grant
 // budgets (which can carry any token). Only the unit label ('USDC') is an addr() segment.
 function amountParts(units) {
-  return [plain(`${toDisplay(units)} `), addr('USDC')]
+  return [plain(`${units == null ? 'Unknown' : toDisplay(units)} `), addr('USDC')]
 }
 
 /** Consequence section per action -- never a claim beyond what the action actually does.
@@ -181,11 +340,8 @@ function buildConsequence(action, { amountUnits, decodedSummary }) {
     return {
       kind: 'consequence',
       statements: [
-        [
-          plain('Deposit '),
-          ...amountParts(amountUnits),
-          plain(` into ${VAULT_ROUTE_LABEL}. Approve with Face ID to continue.`),
-        ],
+        [plain('Deposit '), ...amountParts(amountUnits), plain(` into ${VAULT_ROUTE_LABEL}.`)],
+        [plain('Approve with Face ID to continue.')],
       ],
     }
   }
@@ -194,11 +350,9 @@ function buildConsequence(action, { amountUnits, decodedSummary }) {
       kind: 'consequence',
       statements: [
         [
-          plain('Enable deposits: approve an allowance of up to '),
+          plain('Approve an allowance of up to '),
           ...amountParts(amountUnits),
-          plain(
-            ` so ${VAULT_ROUTE_LABEL} can pull funds on your behalf. This does not move funds by itself.`
-          ),
+          plain(` for ${VAULT_ROUTE_LABEL}; allowance only; this does not move funds by itself.`),
         ],
       ],
     }
@@ -214,14 +368,14 @@ function buildConsequence(action, { amountUnits, decodedSummary }) {
   // signTransaction / signAuthEntry -- the generic, decode-whatever-was-handed-in path. Never
   // submitted by this ceremony (see ceremony.js's post-signing snapshot revalidation).
   const summary = decodedSummary
-  const tail = ' This ceremony only signs — it never submits or moves funds itself.'
+  const tail = ' This ceremony only signs; it never submits or moves funds itself.'
   if (!summary) {
     return {
       kind: 'consequence',
       statements: [
         [
           plain(
-            'This asks you to sign a request. VF Wallet cannot state a guaranteed spending ceiling for this request — review the technical details below before continuing.'
+            'This asks you to sign a request. VF Wallet cannot state a guaranteed spending ceiling for this request: review the technical details below before continuing.'
           ),
           plain(tail),
         ],
@@ -264,18 +418,29 @@ function technicalRaw(action, params, decodedSummary) {
  * @param {{action:string, params:object}} request -- ceremony.js's own action + raw params
  *   (never anything a page/DOM could inject beyond what ceremony.js's snapshot revalidation
  *   already checked -- see that file's header).
- * @param {{address:string|null, amountUnits?:bigint|null, decodedSummary?:object|null,
- *   submissionState?:string, detail?:string, shares?:string|number|null}} ctx
+ * @param {{address:string|null, kind?:string, amountUnits?:bigint|null, decodedSummary?:object|null,
+ *   submissionState?:string, detail?:string, status?:string, hash?:string,
+ *   shares?:string|number|null, ok?:boolean, accountSnapshotStale?:boolean,
+ *   sharesBefore?:string|number|bigint, sharesAfter?:string|number|bigint,
+ *   result?:object}} ctx
  */
 export function buildCeremonyView(request, ctx = {}) {
   const { action, params = {} } = request
   const {
     address,
+    kind,
     amountUnits = null,
     decodedSummary = null,
     submissionState = CEREMONY_STATE.PREPARING,
     detail,
+    status,
+    hash = null,
     shares = null,
+    ok,
+    accountSnapshotStale = false,
+    sharesBefore,
+    sharesAfter,
+    result = null,
   } = ctx
 
   if (!address) {
@@ -288,18 +453,47 @@ export function buildCeremonyView(request, ctx = {}) {
     }
   }
 
+  const resultInput =
+    result ||
+    (ok !== undefined || status !== undefined || hash !== null || accountSnapshotStale
+      ? {
+          ok,
+          action,
+          status,
+          hash,
+          accountSnapshotStale,
+          sharesBefore,
+          sharesAfter,
+          error: detail,
+        }
+      : null)
+  const resultModel = resultInput ? ceremonyResultModel(resultInput) : null
+  const effectiveSubmissionState = resultModel?.state || submissionState
+  const effectiveStatus = resultModel ? resultInput?.status : status
+  const effectiveHash = resultModel ? resultModel.hash : hash
+  const effectiveShares = resultModel ? resultModel.shares : shares
   const consequence = buildConsequence(action, { amountUnits, decodedSummary })
   const bridgeAgent = decodedSummary?.grant?.agents?.find((a) => a.kind === 'bridge') ?? null
 
-  const sections = [consequence, originSection(), accountSection(address), networkSection()]
-  if (bridgeAgent) sections.push(buildBaseMandateSection())
-  sections.push(stateSection({ submissionState, detail, shares }))
+  const sections = [consequence, originSection(), accountSection(address, kind), networkSection()]
+  if (bridgeAgent) sections.push(buildBaseMandateSection(bridgeAgent.destination))
+  sections.push(
+    stateSection({
+      action,
+      submissionState: effectiveSubmissionState,
+      detail: detail || resultInput?.error,
+      shares: effectiveShares,
+      hash: effectiveHash,
+      status: effectiveStatus,
+      resultStatusText: resultModel?.statusText,
+    })
+  )
   sections.push({ kind: 'technical', raw: technicalRaw(action, params, decodedSummary) })
 
   return {
     variant: 'ceremony',
     title: 'Passkey ceremony',
-    submissionState,
+    submissionState: effectiveSubmissionState,
     sections,
   }
 }
@@ -372,7 +566,13 @@ function renderConsequence(section) {
 function renderBaseMandate(section) {
   const box = h('div', { className: 'pc-wallet-origin' })
   box.append(h('p', { className: 'pc-field-help', text: section.route }))
+  if (section.transport) {
+    box.append(h('p', { className: 'pc-field-help', text: section.transport }))
+  }
   for (const statement of section.statements) box.append(h('p', { text: statement }))
+  if (section.custodyDisclosure) {
+    box.append(h('p', { className: 'pc-field-help', text: section.custodyDisclosure }))
+  }
   box.append(
     h('p', {
       className: 'pc-field-help',
@@ -386,17 +586,25 @@ function renderState(section) {
   const wrap = h('div', { className: 'pc-wallet-state' })
   if (section.note)
     wrap.append(h('p', { attrs: { id: 'note' }, className: 'pc-field-help', text: section.note }))
+  const safeShares = section.authoritative ? section.shares : null
+  const statusText =
+    section.submissionState === CEREMONY_STATE.CONFIRMED
+      ? ceremonyStatusText(CEREMONY_STATE.CONFIRMED, { shares: safeShares })
+      : section.statusText || ceremonyStatusText(section.submissionState)
   wrap.append(
     h('p', {
       attrs: { id: 'status', role: 'status', 'aria-live': 'polite' },
-      text: section.statusText,
+      text: statusText,
     })
   )
   return wrap
 }
 
 function renderTechnical(section) {
-  const wrap = h('div', { attrs: { id: 'raw-wrap' } })
+  const wrap = h('div', {
+    className: section.raw ? 'pc-technical-wrap' : 'pc-technical-wrap pc-technical-wrap--hidden',
+    attrs: { id: 'raw-wrap' },
+  })
   const details = h('details', { attrs: { id: 'raw-details' } })
   details.append(h('summary', { text: 'Technical details' }))
   details.append(

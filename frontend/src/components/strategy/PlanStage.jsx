@@ -13,24 +13,15 @@
 import { useEffect, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import {
-  Dialog,
-  MoneyFigure,
-  StatusNotice,
-  TechnicalDetails,
-  VenueTruth,
-} from '../pocket/Primitives.jsx'
+import { Dialog, StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
+import { AgentMark } from '../pocket/AgentMark.jsx'
 import { NetworkBadge, NetworkRoute, RouteArrowMark } from '../pocket/NetworkIdentity.jsx'
 import {
   RISK_PROFILES,
+  buildAmountDisplayMap,
   expandAgentSlots,
   normalizeStrategyPlan,
-  buildStrategyViewModel,
-  roundCentsBigInt,
-  formatCents,
-  buildAmountDisplayMap,
 } from '../../strategy/planModel.js'
-import { venueYield } from '../../strategy/venueTruth.js'
 import {
   validateAmountInput,
   validateExecutionAllocations,
@@ -39,6 +30,13 @@ import { needsBaseMandateSetup } from '../../mergeFlowHelpers.js'
 import { hashStrategy } from '../../attestation.js'
 import { SOROBAN_DECIMALS, SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
 import { personaForOrdinal } from '../../crew/personas.js'
+import { parseAssetUnits } from '../../money/assetUnits.js'
+import {
+  formatCoreAmount,
+  normalizeCoreAmount,
+  toAgentIdentityView,
+  toLiveVenueView,
+} from '../../core/coreRouteAdapters.js'
 
 gsap.registerPlugin(useGSAP)
 
@@ -98,77 +96,149 @@ function formatExpiry(expirySeconds, nowMs = Date.now()) {
   return { relative, absolute }
 }
 
-// Task 4 (Pocket Crew design alignment) -- adapts a plain JS dollars number (the typed amount
-// before a plan exists, or a computed 30-day yield estimate) into the exact same 2dp string
-// `formatCents` already produces for every other money row in this file (Cap/allocation via
-// buildAmountDisplayMap below). Not a second money formatter: the rounding/sign/2dp logic stays
-// 100% formatCents; this only converts a float-dollars input into the cents BigInt it expects.
-//
-// Fix loop 1 -- Important 1 (review finding): a `value` that is itself finite (e.g. amountNumber,
-// already past PlanStage's own `Number.isFinite` collapse-to-0 guard at its call site) can still
-// overflow to Infinity once multiplied by 100 here (Number.MAX_VALUE / 100 ~= 1.8e306) --
-// `BigInt(Infinity)` throws, and this file's own comment documents there is no error boundary
-// anywhere in the app, so that throw would blank the whole Plan stage on render. Guards the
-// PRODUCT, not just the input -- fix loop 2 found `formatShare` below had the exact same class of
-// gap at a LOWER threshold (its own comment used to call its input guard sufficient; it wasn't,
-// see that function's own updated comment), so "mirrors an existing safe precedent" was never an
-// accurate description of what existed here -- this guard and formatShare's are siblings fixed
-// together, not one copying an already-correct other. An amount this large has no real
-// vault/grant behind it anyway, so collapsing to the same 0 sentinel the amount field's own
-// Number.isFinite guard already uses for unusable input (PlanStage's `amountNumber`, above) is
-// consistent, not a second invented number.
-function formatDollarNumber(value) {
-  const cents = Math.round(value * 100)
-  return formatCents(Number.isFinite(cents) ? BigInt(cents) : 0n)
+function parseTypedAmount(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null
+  const parsed = parseAssetUnits(value.trim(), SOROBAN_DECIMALS)
+  if (!parsed.ok) return null
+  try {
+    return normalizeDisplayAmount({
+      token: 'USDC',
+      units: parsed.units.toString(),
+      decimals: SOROBAN_DECIMALS,
+    })
+  } catch {
+    return null
+  }
 }
 
-// Task 4 -- sums a GROUP of real plan agents' allocation units (BigInt, exact) and rounds ONCE,
-// the same order buildAmountDisplayMap already uses for a single agent's cap/allocation. Summing
-// already-rounded PER-AGENT strings instead would reproduce the exact "off by one base unit"
-// defect Task 3's review caught (see formatShare's doc comment above) -- this sums the real units
-// first. Returns the honest '0.00' for an empty group (e.g. a bridge-only plan has no deposit
-// agents) rather than a null/undefined placeholder.
-function sumAllocationCents(agents) {
-  if (!agents.length) return '0.00'
-  const totalUnits = agents.reduce((s, a) => s + BigInt(a.allocation.units), 0n)
-  return formatCents(roundCentsBigInt(totalUnits, agents[0].allocation.decimals))
+// Task 3 (Pocket Crew design alignment): run the real expandAgentSlots split (the same one a
+// generation call makes) against the canonical typed amount. No display number is widened before
+// the exact split or formatting boundary.
+function formatShare(amount, risk) {
+  if (!amount) return ''
+  try {
+    if (BigInt(amount.units) <= 0n) return ''
+    const agents = expandAgentSlots({
+      risk,
+      stellarUnits: BigInt(amount.units),
+      stellarDecimals: amount.decimals,
+    })
+    if (!agents.length) return ''
+    const display = safeAmountDisplayMap(agents, 'allocation')[agents[0].allocationId]
+    return display ? `${display} ${tokenSymbol(agents[0].allocation.token)}` : ''
+  } catch {
+    return ''
+  }
 }
 
-// Task 3 (Pocket Crew design alignment), fix loop 1 -- Important 1/2 (review findings): runs the
-// real expandAgentSlots split (the same one a real generation call makes) instead of a hand-rolled
-// uniform division -- splitEven puts its remainder on the EARLIEST slot, so a floor-only split was
-// systematically 1 base unit low on slot 0, which silently flips the rendered cents whenever
-// floor(total/k) lands 1 unit under a rounding boundary. The `Number.isFinite`/`<= 0` check below
-// only ever guarded the INPUT (the amount field is free text -- "1e999" parses to `Infinity`, and
-// this collapses that to an empty share rather than reaching a formatter at all).
-//
-// Fix loop 2 (Task 4 review, carried item): that input guard was NOT sufficient on its own, and
-// this comment previously implied it was -- a `amountNumber` that is itself finite still overflows
-// the multiply below (`amountNumber * 10 ** SOROBAN_DECIMALS`, SOROBAN_DECIMALS = 7) once
-// `amountNumber` exceeds roughly `Number.MAX_VALUE / 1e7 ~= 1.8e301` -- a LOWER threshold than
-// `formatDollarNumber`'s own `1.8e306` (100x multiplier vs. 1e7x here), and reachable the same way:
-// type e.g. `1e307` and pick a comfort tier, which renders this crew line and calls formatShare
-// with no error boundary anywhere in the app. Guards the PRODUCT too now, same fix as
-// formatDollarNumber above, returning the same empty-share fallback this function already uses for
-// bad input -- not a second invented fallback shape.
-function formatShare(amountNumber, risk) {
-  if (!Number.isFinite(amountNumber) || amountNumber <= 0) return ''
-  const stellarUnitsNumber = Math.round(amountNumber * 10 ** SOROBAN_DECIMALS)
-  if (!Number.isFinite(stellarUnitsNumber)) return ''
-  const agents = expandAgentSlots({
-    risk,
-    stellarUnits: BigInt(stellarUnitsNumber),
-    stellarDecimals: SOROBAN_DECIMALS,
-  })
-  return agents.length
-    ? `${buildAmountDisplayMap(agents, 'allocation')[agents[0].allocationId]} USDC`
-    : ''
+function safeAmountDisplayMap(rows, amountKey) {
+  if (!Array.isArray(rows) || rows.length === 0) return {}
+  try {
+    // Keep the rounding remainder inside one asset. A mixed-token plan must never let a cents
+    // remainder from one contract change the displayed amount for another contract.
+    const groups = new Map()
+    for (const row of rows) {
+      const amount = row?.[amountKey]
+      const groupKey = `${row?.kind ?? ''}:${amount?.token ?? ''}:${amount?.decimals ?? ''}`
+      const group = groups.get(groupKey) || []
+      group.push(row)
+      groups.set(groupKey, group)
+    }
+    return [...groups.values()].reduce(
+      (all, group) => Object.assign(all, buildAmountDisplayMap(group, amountKey)),
+      {}
+    )
+  } catch {
+    return {}
+  }
+}
+
+function decimalRational(value) {
+  const text = String(value)
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text)
+  if (!match) return null
+  const [, sign, whole, fraction = ''] = match
+  const numerator = BigInt(`${whole}${fraction}` || '0') * (sign ? -1n : 1n)
+  return { numerator, denominator: 10n ** BigInt(fraction.length) }
+}
+
+function formatYieldEstimate(amount, apy) {
+  if (!amount || !Number.isFinite(apy)) return null
+  try {
+    const rate = decimalRational(apy)
+    if (!rate) return null
+    const amountUnits = BigInt(amount.units)
+    const denominator = rate.denominator * 365n * 10n ** BigInt(amount.decimals)
+    const numerator = amountUnits * rate.numerator * 30n
+    const negative = numerator < 0n
+    const absolute = negative ? -numerator : numerator
+    const cents = (absolute + denominator / 2n) / denominator
+    const estimateAmount = normalizeCoreAmount({
+      token: tokenSymbol(amount.token),
+      units: cents.toString(),
+      decimals: 2,
+    })
+    return `${negative ? '-' : ''}${formatCoreAmount(estimateAmount)}`
+  } catch {
+    return null
+  }
 }
 
 function tokenSymbol(token) {
   return token === 'USDC' || token === SOROBAN_TOKEN_ADDRESS || token === STELLAR_USDC_SAC
     ? 'USDC'
     : token
+}
+
+function normalizeDisplayAmount(amount) {
+  return normalizeCoreAmount({ ...amount, token: tokenSymbol(amount.token) })
+}
+
+function formatCanonicalAmount(amount) {
+  try {
+    return formatCoreAmount(normalizeDisplayAmount(amount))
+  } catch {
+    return 'Amount unavailable'
+  }
+}
+
+function PlannedAmount({ amount, freshness, className = '', display }) {
+  let formatted = null
+  try {
+    if (amount) {
+      formatted = formatCoreAmount(normalizeDisplayAmount(amount))
+    }
+  } catch {
+    formatted = null
+  }
+  return (
+    <span
+      className={`pc-planned-amount${className ? ` ${className}` : ''}`}
+      data-amount-state="planned"
+    >
+      <span className="pc-proof-label">Planned</span>
+      {display || formatted ? (
+        <span className="pc-money pc-money--planned" data-freshness={freshness || undefined}>
+          {display ? `${display} ${tokenSymbol(amount?.token)}` : formatted}
+          {freshness && <span className="pc-money-freshness">{freshness}</span>}
+        </span>
+      ) : (
+        <span className="pc-money pc-money--unavailable">Amount unavailable</span>
+      )}
+    </span>
+  )
+}
+
+function sumCanonicalAmount(agents, fallback) {
+  try {
+    const first = normalizeDisplayAmount(agents.length ? agents[0].allocation : fallback)
+    const units = agents.length
+      ? agents.reduce((total, agent) => total + BigInt(agent.allocation.units), 0n)
+      : 0n
+    return normalizeCoreAmount({ ...first, units: units.toString() })
+  } catch {
+    return null
+  }
 }
 
 // Fix loop 1 -- I2 (review finding): the domain has three source states
@@ -286,30 +356,29 @@ export function PlanStage({
   )
 
   const canSubmit = amountValue.trim() !== '' && Boolean(risk) && phase !== 'generating'
-  // Task 3 -- the crew line's own display-only number; never fed back into submissionRef/
-  // validateAmountInput (the real submit path parses amountValue as an exact decimal string, see
-  // handleSubmit below -- this Number() coercion never reaches a grant/burn amount). Fix loop 1 --
-  // Important 2 (review finding): the amount field is free text ("1e999" parses to `Infinity`,
-  // exceeding the double max) -- collapsed to 0 here, at the one place this value is derived, so
-  // neither this component's own `amountNumber > 0` check below nor formatShare's guard has to
-  // separately guess whether a caller already sanitized it.
-  const rawAmountNumber = Number(amountValue)
-  const amountNumber = Number.isFinite(rawAmountNumber) ? rawAmountNumber : 0
-  const viewModel = plan ? buildStrategyViewModel({ plan, stellarVenue }) : null
+  const typedAmount = parseTypedAmount(amountValue)
+  const crewShare = typedAmount ? formatShare(typedAmount, risk) : ''
   const executionCheck = plan ? validateExecutionAllocations({ plan, vaultTotalShares }) : null
   const canAccept = phase === 'ready' && !planInvalidated && executionCheck?.ok === true
-  const stellarYield = venueYield(stellarVenue)
+  const stellarYield = toLiveVenueView(stellarVenue)
+  const stellarVenueApy =
+    stellarYield.state === 'live'
+      ? {
+          state: 'live',
+          value: stellarYield.apy,
+          source: stellarYield.source,
+          freshness: stellarYield.checkedAt,
+        }
+      : undefined
   // Items 3/6/8 (owner report): computed once per render, looked up per row/once for the hoisted
   // summary -- never recomputed per call site. `depositAgents`/`planExpiry` back the hoisted
   // network+expiry+yield summary (every agent from one generation shares the same expiry --
   // expandAgentSlots applies a single `expiry` value to every agent it creates in one call).
-  const capDisplay = plan ? buildAmountDisplayMap(plan.agents, 'cap') : null
-  // I-2 (reviewer finding): the per-row MoneyFigure ("33.333 USDC") stacked its own unrounded 3dp
-  // on top of Cap's now-correct 2dp, and the three allocations summed to 99.999 against the
-  // header's 100 USDC -- the owner's "format every displayed amount to 2 decimals" was only half
-  // applied. Same map-building treatment, keyed off `allocation` instead of `cap`.
-  const allocationDisplay = plan ? buildAmountDisplayMap(plan.agents, 'allocation') : null
   const depositAgents = plan ? plan.agents.filter((a) => a.kind === 'deposit') : []
+  // Build the exact 2dp display maps once from canonical units.  These maps are presentation-only:
+  // the bigint units above remain the grant scope and are never replaced by rounded cents.
+  const allocationDisplay = plan ? safeAmountDisplayMap(plan.agents, 'allocation') : null
+  const capDisplay = plan ? safeAmountDisplayMap(plan.agents, 'cap') : null
   const planExpiry = plan?.agents[0] ? formatExpiry(plan.agents[0].expiry) : null
 
   // Task 4 -- the aside's live "plan so far" summary. Before a plan exists this reflects the
@@ -317,25 +386,19 @@ export function PlanStage({
   // number than what Accept plan would sign) -- same fail-closed discipline as C2's amount
   // reconciliation above.
   const bridgeAgent = plan ? plan.agents.find((a) => a.kind === 'bridge') : null
-  const deployedText = plan
-    ? `${sumAllocationCents(depositAgents)} ${tokenSymbol(depositAgents[0]?.allocation.token ?? plan.amount.token)}`
-    : `${formatDollarNumber(amountNumber)} USDC`
+  const plannedAmount = plan ? sumCanonicalAmount(depositAgents, plan.amount) : typedAmount
   // Fix loop 1 -- Important 3 (review finding): the Blend/Stellar APY may only be applied to
   // money actually going to Blend. Before a plan exists the split isn't known yet, so the typed
-  // amount is the best available estimate; once a plan DOES exist, `viewModel` (built above) has
-  // the real per-agent decimal totals -- summing only the 'deposit' (Stellar) agents excludes any
-  // Base-bound bridge leg, which this component has no APY claim for at all. Using the full plan
-  // total here (as the brief's literal formula did) overstated the estimate by exactly the
-  // bridged share every time -- the same "never invent a number" constraint that gates whether
-  // this row renders at all also governs what it computes.
-  const estimateAmount = viewModel
-    ? viewModel.agents.filter((a) => a.kind === 'deposit').reduce((s, a) => s + a.allocation, 0)
-    : amountNumber
-  // Never invented: only a fresh nested live yield from the actual execution venue may drive this
-  // estimate. Flat catalog/DeFiLlama APY is reference data, not evidence for Autofarm-to-Blend.
+  // amount is the best available estimate; once a plan DOES exist, `plannedAmount` contains the
+  // real canonical totals -- summing only the 'deposit' (Stellar) agents excludes any Base-bound
+  // bridge leg, which this component has no APY claim for at all. Using the full plan total here
+  // would overstate the estimate by exactly the bridged share every time.
+  // Never invented: only compute when the source-owned venue adapter returned a live APY and the
+  // canonical Stellar deposit amount is known. The estimate uses exact rational arithmetic for the
+  // source APY and amount units, then rounds only the final display cents.
   const estimate30d =
-    stellarYield.state === 'live' && estimateAmount > 0
-      ? `${formatDollarNumber(estimateAmount * (stellarYield.apy / 100) * (30 / 365))} USDC`
+    stellarYield.state === 'live' && plannedAmount && BigInt(plannedAmount.units) > 0n
+      ? formatYieldEstimate(plannedAmount, stellarYield.apy)
       : null
 
   async function runGeneration(generate) {
@@ -544,7 +607,12 @@ export function PlanStage({
               <p className="pc-crew-line">
                 {RISK_PROFILES[risk].targetSlots} crew member
                 {RISK_PROFILES[risk].targetSlots > 1 ? 's' : ''}
-                {amountNumber > 0 && ` · each handles about ${formatShare(amountNumber, risk)}`}
+                {crewShare && (
+                  <>
+                    {' · '}
+                    <span className="pc-proof-label">Planned</span> each handles about {crewShare}
+                  </>
+                )}
               </p>
             )}
 
@@ -614,7 +682,7 @@ export function PlanStage({
         {phase === 'ready' && plan && (
           <div>
             {/* Fix loop N -- item 1 (owner report): the source badge, the optional Retry-live-check
-                button, and the plan total MoneyFigure were three bare inline siblings with no
+                button, and the plan total amount were three bare inline siblings with no
                 separating container -- concatenating as "Live AI + live market checks100 USDC"
                 with zero CSS gap between them. A scoped flex row (not a locked contract selector),
                 consistent spacing regardless of which of the three children are present. */}
@@ -630,12 +698,7 @@ export function PlanStage({
                 </button>
               )}
 
-              <MoneyFigure
-                state="current"
-                value={viewModel.total}
-                currency={tokenSymbol(plan.amount.token)}
-                freshness={sourceFreshness(plan.sourceState)}
-              />
+              <PlannedAmount amount={plan.amount} freshness={sourceFreshness(plan.sourceState)} />
             </div>
 
             {planInvalidated && (
@@ -676,63 +739,69 @@ export function PlanStage({
                     <span className="pc-field-help"> ({planExpiry.absolute})</span>
                   )}
                 </p>
-                {depositAgents.length > 0 && stellarYield.state === 'live' && (
-                  <p>{stellarYield.apy}% APY</p>
-                )}
               </div>
             )}
 
             {depositAgents.length > 0 && stellarYield.state !== 'live' && (
-              <p className="pc-plan-yield-note">Yield unavailable</p>
+              <p className="pc-plan-yield-note">APY Unavailable</p>
             )}
 
             <ul className="pc-allocation-list">
-              {viewModel.agents.map((agent, i) => {
-                const isBridge = agent.kind === 'bridge'
-                const planAgent = plan.agents[i]
+              {plan.agents.map((planAgent, i) => {
+                const isBridge = planAgent.kind === 'bridge'
                 const persona = personaForOrdinal(i)
+                const plannedIdentity = toAgentIdentityView({
+                  phase: 'planned',
+                  allocationId: planAgent.allocationId,
+                  runId: plan.runId,
+                  source: 'reviewed-plan',
+                })
                 return (
                   <li
                     key={planAgent.allocationId}
                     className="pc-allocation-row"
-                    data-agent-kind={agent.kind}
+                    data-agent-kind={planAgent.kind}
+                    data-allocation-id={planAgent.allocationId}
                   >
                     {/* Item 5 (owner report): at least 36px (was the AgentMark default of 32,
                         measured as reading "nearly invisible" in a real browser), pinned to the
                         row's own start (see strategy.css) so it lines up with the crew-name line
                         that now leads each row's content instead of centering against the whole,
                         much taller, multi-line row. */}
+                    <AgentMark identity={plannedIdentity} state="planned" size={44} label="agent" />
                     <img
                       className="pc-plan-agent-avatar pc-crew-avatar"
                       src={persona.avatar}
-                      alt={`${persona.name} agent, planned`}
+                      alt=""
+                      aria-hidden="true"
                       width="44"
                       height="44"
                     />
                     <div>
                       <p className="pc-worker-name">{persona.name}</p>
                       {isBridge && <NetworkRoute context={BRIDGE_NETWORK_CONTEXT} />}
-                      <MoneyFigure
-                        state="current"
-                        value={allocationDisplay[agent.id]}
-                        currency={tokenSymbol(planAgent.allocation.token)}
+                      <PlannedAmount
+                        amount={planAgent.allocation}
+                        display={allocationDisplay?.[planAgent.allocationId]}
                       />
-                      <p>
-                        {/* Fix loop 1 -- I8 (review finding): the grant scope bound the user
-                            approves is `plan.agents[].cap`, never the display allocation --
-                            today they happen to be equal, but the moment they diverge (a
-                            headroom cap, a rounded bridge cap) this must still state the real
-                            cap, not the allocation. Item 3 (owner report): capDisplay is a
-                            DISPLAY-only 2dp rounding of that same real cap (buildAmountDisplayMap
-                            above), never a different number. */}
-                        Cap {capDisplay[agent.id]} {tokenSymbol(planAgent.cap.token)}
+                      <p className="pc-plan-cap" data-amount-state="planned">
+                        <span className="pc-proof-label">Planned</span>
+                        <span>
+                          Cap{' '}
+                          {capDisplay?.[planAgent.allocationId]
+                            ? `${capDisplay[planAgent.allocationId]} ${tokenSymbol(planAgent.cap.token)}`
+                            : formatCanonicalAmount(planAgent.cap)}
+                        </span>
                       </p>
                       {isBridge && (
                         <ul>
-                          {agent.children.map((child) => (
-                            <li key={child.allocationId}>
-                              {child.proxyTarget || child.destination}: {child.allocation}{' '}
-                              {tokenSymbol(planAgent.cap.token)}
+                          {planAgent.children.map((child) => (
+                            <li key={child.allocationId} data-amount-state="planned">
+                              <span className="pc-proof-label">Planned</span>{' '}
+                              <span>
+                                {child.proxyTarget || child.destination}:{' '}
+                                {formatCanonicalAmount(child.allocation)}
+                              </span>
                             </li>
                           ))}
                         </ul>
@@ -741,15 +810,19 @@ export function PlanStage({
                           the crew name shown right above it, not the internal "Worker N, ..."
                           label -- a screen-reader user hears the same identity a sighted user
                           sees. Scoped to this component's own local JSX only; the shared
-                          `agent.name` field from planModel.js/buildStrategyViewModel is
-                          untouched, so StartStage/StrategyReceipt's own displays are unaffected. */}
+                          upstream `agent.name` field is untouched, so StartStage/StrategyReceipt's own
+                          displays are unaffected. */}
                       <TechnicalDetails summary={`${persona.name} instructions`}>
                         <textarea
-                          className="pc-instruction-input"
+                          className="pc-plan-textarea"
+                          rows={4}
                           aria-label={`${persona.name} instructions`}
-                          value={instructions[agent.id] ?? ''}
+                          value={instructions[planAgent.allocationId] ?? ''}
                           onChange={(e) =>
-                            setInstructions((prev) => ({ ...prev, [agent.id]: e.target.value }))
+                            setInstructions((prev) => ({
+                              ...prev,
+                              [planAgent.allocationId]: e.target.value,
+                            }))
                           }
                         />
                       </TechnicalDetails>
@@ -805,15 +878,17 @@ export function PlanStage({
           <ul className="pc-fact-rows">
             <li className="pc-fact-row">
               <span className="pc-fact-dot pc-fact-dot--harvest" aria-hidden="true" />
-              <span>Deployed to Blend v2</span>
-              <span className="pc-fact-value">{deployedText}</span>
+              <span>Planned for Autofarm Vault → Blend Capital v2</span>
+              <span className="pc-fact-value">
+                <PlannedAmount amount={plannedAmount} />
+              </span>
             </li>
             {bridgeAgent && (
               <li className="pc-fact-row">
                 <span className="pc-fact-dot" aria-hidden="true" />
-                <span>Sent to Base</span>
+                <span>Planned for Base Sepolia</span>
                 <span className="pc-fact-value">
-                  {sumAllocationCents([bridgeAgent])} {tokenSymbol(bridgeAgent.allocation.token)}
+                  <PlannedAmount amount={bridgeAgent.allocation} />
                 </span>
               </li>
             )}
@@ -824,12 +899,17 @@ export function PlanStage({
                 <span className="pc-fact-value">{RISK_PROFILES[risk].targetSlots}</span>
               </li>
             )}
-            {/* `estimate30d` is already null unless the venue has fresh nested live evidence. */}
+            {/* Fix loop 1 -- minor (review finding): `estimate30d` above is already `null` exactly
+                when this row shouldn't render (same source-backed adapter guard, computed once) --
+                repeating the APY/amount condition here would be a second copy that could silently
+                drift out of sync with the one that actually gates the value. */}
             {estimate30d && (
               <li className="pc-fact-row">
                 <span className="pc-fact-dot" aria-hidden="true" />
                 <span>Estimated in 30 days</span>
-                <span className="pc-fact-value">+{estimate30d}</span>
+                <span className="pc-fact-value" data-amount-state="planned">
+                  <span className="pc-proof-label">Planned</span> +{estimate30d}
+                </span>
               </li>
             )}
             <li className="pc-fact-row">
@@ -838,11 +918,19 @@ export function PlanStage({
               <span className="pc-fact-value">Sponsored by fee-bump relay</span>
             </li>
           </ul>
+          {plan && (
+            <p className="pc-plan-isolation">
+              {plan.agents.length === 3
+                ? 'Three separate agent accounts, each with its own limit.'
+                : `${plan.agents.length} separate agent account${plan.agents.length === 1 ? '' : 's'}, each with its own limit.`}
+            </p>
+          )}
           <p className="pc-provenance">
             <span>Stellar testnet</span>
             <RouteArrowMark px={14} />
             <span>Blend Capital v2</span>
           </p>
+          <p className="pc-plan-route">Agent account → Autofarm Vault → Blend Capital v2</p>
         </div>
 
         <section className="pc-vault-advisor" aria-labelledby="vault-advisor-heading">
@@ -889,7 +977,7 @@ export function PlanStage({
               </div>
               <div className="pc-stellar-truth-route">
                 <p className="pc-stellar-truth-label">Verified yield route</p>
-                <VenueTruth kind="live" venue={stellarVenue?.name} />
+                <VenueTruth kind="stellar-live" venue={stellarVenue?.name} apy={stellarVenueApy} />
               </div>
             </div>
           </div>

@@ -25,7 +25,7 @@
 import { useRef } from 'react'
 import './my-money.css'
 import { usePocketTransition } from '../../design/usePocketTransition.js'
-import { MoneyHero } from './MoneyHero.jsx'
+import { MoneyHero, toMoneyFactView } from './MoneyHero.jsx'
 import { PositionList } from './PositionList.jsx'
 import { AgentTeam } from './AgentTeam.jsx'
 import { VaultProtection } from './VaultProtection.jsx'
@@ -34,8 +34,15 @@ import { TechnicalMoneyDetails } from './TechnicalMoneyDetails.jsx'
 import { formatAssetUnits } from '../../money/assetUnits.js'
 
 function basePositionAmount(position) {
+  const rawUnits = position?.assets
+  const units = typeof rawUnits === 'bigint' ? rawUnits.toString() : rawUnits
+  if (typeof units !== 'string' || !/^\d+$/.test(units)) return 'Balance unavailable'
+  const decimals =
+    Number.isInteger(position?.decimals) && position.decimals >= 0 ? position.decimals : 6
+  const token =
+    typeof position?.token === 'string' && position.token.trim() ? position.token : 'USDC'
   try {
-    return `${formatAssetUnits(position?.assets, 6)} USDC`
+    return `${formatAssetUnits(units, decimals)} ${token}`
   } catch {
     return 'Balance unavailable'
   }
@@ -58,6 +65,7 @@ export function MyMoneyRoute({
   baseUnavailableReason = null,
   baseActionError = null,
   basePlan = null,
+  nowMs,
 }) {
   // 2026-08-02 polish (motion pass): one restrained section entrance (the shared
   // usePocketTransition treatment StartStage already uses -- 0.32s power3.out, y:8, stagger
@@ -66,17 +74,24 @@ export function MyMoneyRoute({
   // a re-render. Sections opt in via their own root `data-pocket-enter` attributes.
   const stackRef = useRef(null)
   usePocketTransition(stackRef, model?.state ?? 'unknown')
+  const factView = toMoneyFactView(model)
 
   return (
     <div className="pc-route pc-my-money-route">
       <div className="pc-route-stack" ref={stackRef}>
         <h1>My money</h1>
 
-        <MoneyHero model={model} onAction={onAction} actionPending={actionPending} />
+        <MoneyHero
+          model={model}
+          factView={factView}
+          onAction={onAction}
+          actionPending={actionPending}
+        />
         <PositionList
           agents={agents}
           unattributed={model?.unattributed}
           collectionState={model?.state}
+          factView={factView}
         />
         <AgentTeam
           agents={agents}
@@ -85,6 +100,7 @@ export function MyMoneyRoute({
           account={account}
           onRecoverAgent={onRecoverAgent}
           collectionState={model?.state}
+          presentationNow={nowMs}
         />
         <VaultProtection protection={model?.protection} />
         <HowMoneyWorks
@@ -94,7 +110,7 @@ export function MyMoneyRoute({
           yieldInfo={model?.yield}
           venue={venue}
         />
-        <TechnicalMoneyDetails model={model} agents={agents} />
+        <TechnicalMoneyDetails model={model} factView={factView} agents={agents} />
 
         {(basePlan?.positions?.length ?? 0) > 0 && (
           <section
@@ -132,34 +148,36 @@ export function MyMoneyRoute({
           <header>
             <h2 id="recover-base-heading">Recover a Base account</h2>
           </header>
-          <p>
-            {(basePlan?.positions?.length ?? 0) > 0
-              ? 'Historical Base balances stay visible here. Recovery remains a separate owner action.'
-              : 'Settled USDC on Base from a previous device or browser? Check for it here — this device has no local Base record yet.'}
-          </p>
-          {!baseActionsAvailable && baseUnavailableReason && (
-            <p id="recover-base-unavailable" role="status">
-              {baseUnavailableReason}
+          <div>
+            <p>
+              {(basePlan?.positions?.length ?? 0) > 0
+                ? 'Historical Base balances stay visible here. Recovery remains a separate owner action.'
+                : 'Settled USDC on Base from a previous device or browser? Check for it here. This device has no local Base record yet.'}
             </p>
-          )}
-          {baseActionError && baseActionError !== baseUnavailableReason && (
-            <p role="alert">{baseActionError}</p>
-          )}
-          <button
-            type="button"
-            className="pc-button pc-button--secondary"
-            disabled={actionPending || !baseActionsAvailable}
-            aria-describedby={
-              !baseActionsAvailable && baseUnavailableReason
-                ? 'recover-base-unavailable'
-                : undefined
-            }
-            onClick={() => {
-              if (baseActionsAvailable) onRecoverBase?.()
-            }}
-          >
-            Recover Base account
-          </button>
+            {!baseActionsAvailable && baseUnavailableReason && (
+              <p id="recover-base-unavailable" role="status">
+                {baseUnavailableReason}
+              </p>
+            )}
+            {baseActionError && baseActionError !== baseUnavailableReason && (
+              <p role="alert">{baseActionError}</p>
+            )}
+            <button
+              type="button"
+              className="pc-button pc-button--secondary"
+              disabled={actionPending || !baseActionsAvailable}
+              aria-describedby={
+                !baseActionsAvailable && baseUnavailableReason
+                  ? 'recover-base-unavailable'
+                  : undefined
+              }
+              onClick={() => {
+                if (baseActionsAvailable) onRecoverBase?.()
+              }}
+            >
+              Recover Base account
+            </button>
+          </div>
         </section>
       </div>
     </div>

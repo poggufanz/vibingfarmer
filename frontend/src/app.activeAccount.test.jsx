@@ -765,7 +765,7 @@ describe('active account application state', () => {
     )
 
     await waitFor(() => expect(mountedHarness.crewRouteProps).not.toBeNull())
-    await waitFor(() => expect(mountedHarness.crewRouteProps?.crew?.productiveAgentCount).toBe(2))
+    await waitFor(() => expect(mountedHarness.crewRouteProps?.crew?.productiveAgentCount).toBe(1))
     const projectedCrew = mountedHarness.crewRouteProps.crew
     expect(projectedCrew.personas).toHaveLength(3)
     expect(projectedCrew.personas[0].children.map((row) => row.agent.address)).toEqual([

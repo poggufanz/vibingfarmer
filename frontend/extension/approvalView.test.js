@@ -15,7 +15,7 @@ import {
   STELLAR_TESTNET_LABEL,
   partsToText,
 } from './approvalView.js'
-import { SOROBAN_AUTOFARM_VAULT_ADDRESS } from '../src/stellar/config.js'
+import { NETWORK_PASSPHRASE, SOROBAN_AUTOFARM_VAULT_ADDRESS } from '../src/stellar/config.js'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -153,6 +153,25 @@ describe('buildApprovalView — connect ordering (brief Step 1, connection conse
     expect(v.sections.find((s) => s.kind === 'account').accountType).toBe('Standard')
   })
 
+  it('normalizes ActiveAccountV1 G/C kinds at the display boundary without changing account identity', () => {
+    const standard = buildApprovalView(
+      { method: 'getAddress', params: {}, origin: ORIGIN },
+      { address: 'GACTIVE', kind: 'G' }
+    )
+    const passkey = buildApprovalView(
+      { method: 'getAddress', params: {}, origin: ORIGIN },
+      { address: 'CACTIVE', kind: 'C' }
+    )
+    expect(standard.sections.find((s) => s.kind === 'account')).toMatchObject({
+      accountType: 'Standard',
+      address: 'GACTIVE',
+    })
+    expect(passkey.sections.find((s) => s.kind === 'account')).toMatchObject({
+      accountType: 'Passkey',
+      address: 'CACTIVE',
+    })
+  })
+
   it('shows the literal "Stellar testnet" copy, not the SDK TESTNET label', () => {
     const v = buildApprovalView(
       { method: 'getAddress', params: {}, origin: ORIGIN },
@@ -161,6 +180,7 @@ describe('buildApprovalView — connect ordering (brief Step 1, connection conse
     expect(v.sections.find((s) => s.kind === 'network')).toEqual({
       kind: 'network',
       label: 'Stellar testnet',
+      passphrase: NETWORK_PASSPHRASE,
     })
     expect(STELLAR_TESTNET_LABEL).toBe('Stellar testnet')
   })
@@ -223,6 +243,59 @@ describe('buildApprovalView — sign ordering (brief Step 1, transaction approva
     expect(vAuth.raw).toBe('RAWENTRY')
   })
 
+  it('keeps Stellar testnet as the signing network when a decoded grant contains a Base route', () => {
+    const view = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'XDR' }, origin: ORIGIN },
+      {
+        address: ADDRESS,
+        kind: 'classic',
+        unlocked: true,
+        summary: {
+          grant: {
+            kind: 'funding-router-grant',
+            budgets: [],
+            expiryLedger: 42,
+            agents: [
+              {
+                index: 0,
+                kind: 'bridge',
+                capPerPeriod: { token: 'CTOKEN', units: 1n, decimals: null },
+                periodDurationSeconds: 3600,
+                destination: {
+                  classification: 'known-cctp-messenger',
+                  routeLabel: 'Base Sepolia proxy. Custody only. No protocol yield.',
+                  targetAddress: 'CMESSENGER',
+                },
+              },
+            ],
+          },
+        },
+      }
+    )
+    const network = view.sections.find((section) => section.kind === 'network')
+    expect(network).toEqual({
+      kind: 'network',
+      label: 'Stellar testnet',
+      passphrase: NETWORK_PASSPHRASE,
+    })
+    expect(view.sections.find((section) => section.kind === 'decoded')).toBeTruthy()
+    expect(view.sections.map((section) => section.kind)).toEqual([
+      'consequence',
+      'origin',
+      'account',
+      'network',
+      'state',
+      'decoded',
+      'technical',
+    ])
+    const decodedText = view.sections
+      .find((section) => section.kind === 'decoded')
+      .rows.map(([, value]) => partsToText(value))
+      .join(' ')
+    expect(decodedText).toContain('Base Sepolia proxy. Custody only. No protocol yield.')
+    expect(decodedText).not.toContain('Base Sepolia signing network')
+  })
+
   it('classic + locked → needsPassword true and the state section carries a password field flag', () => {
     const v = buildApprovalView(
       { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
@@ -238,6 +311,21 @@ describe('buildApprovalView — sign ordering (brief Step 1, transaction approva
       { address: 'GCLASSIC', kind: 'classic', unlocked: true }
     )
     expect(v.needsPassword).toBe(false)
+  })
+
+  it('active-account G/C kinds preserve the signer-specific presentation prompt', () => {
+    const standard = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      { address: 'GACTIVE', kind: 'G', unlocked: false }
+    )
+    const passkey = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      { address: 'CACTIVE', kind: 'C', unlocked: false }
+    )
+    expect(standard.needsPassword).toBe(true)
+    expect(standard.note).toMatch(/wallet password/i)
+    expect(passkey.needsPassword).toBe(false)
+    expect(passkey.note).toMatch(/passkey|Face ID/i)
   })
 
   it('passkey → note asks for Face ID, classic → note asks for wallet password', () => {
@@ -463,8 +551,7 @@ describe('buildApprovalView — Step 2: render decoded grant truth', () => {
     // The very next row is the nested Base-proxy child, marked nested:true.
     const child = rows[bridgeIdx + 1]
     expect(child[0]).toBe('')
-    expect(partsToText(child[1])).toMatch(/Base-side proxy/)
-    expect(partsToText(child[1])).toMatch(/no live protocol yield/i)
+    expect(partsToText(child[1])).toBe('Base Sepolia proxy. Custody only. No protocol yield.')
     expect(child[2]).toEqual({ nested: true })
     // A deposit-only grant (no bridge agent) never carries this bullet at all.
     const decodedNoBridge = buildApprovalView(
@@ -522,7 +609,7 @@ describe('buildApprovalView — Step 2: render decoded grant truth', () => {
     expect(partsToText(agentRow[1])).not.toMatch(/0\.0987654/)
   })
 
-  it('a missing/unknown destination address renders as the word "unknown", never a blank/coerced-empty cell', () => {
+  it('a missing/unknown destination address renders as the word "Unknown", never a blank/coerced-empty cell', () => {
     const noTarget = {
       ...singleTokenGrant,
       agents: [
@@ -538,8 +625,35 @@ describe('buildApprovalView — Step 2: render decoded grant truth', () => {
     )
     const decoded = v.sections.find((s) => s.kind === 'decoded')
     const agentRow = decoded.rows.find(([k]) => k === 'Agent #0')
-    expect(partsToText(agentRow[1])).toContain('unlabeled destination unknown')
-    expect(partsToText(agentRow[1])).not.toMatch(/unlabeled destination\s*$/) // never a trailing blank
+    expect(partsToText(agentRow[1])).toContain('Unknown destination')
+    expect(partsToText(agentRow[1])).toContain('Unknown')
+    expect(partsToText(agentRow[1])).not.toMatch(/Unknown destination; raw target\s*$/) // never a trailing blank
+  })
+
+  it('keeps an unknown target explicitly Unknown and exposes raw destination proof', () => {
+    const unknownTarget = {
+      ...singleTokenGrant,
+      agents: [
+        {
+          ...singleTokenGrant.agents[0],
+          destination: {
+            classification: 'unknown',
+            routeLabel: null,
+            targetAddress: 'CUNKNOWNTARGETRAWPROOF',
+          },
+        },
+      ],
+    }
+    const view = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'RAW-XDR' }, origin: ORIGIN },
+      { address: 'CACCT', summary: grantSummary(unknownTarget) }
+    )
+    const decoded = view.sections.find((section) => section.kind === 'decoded')
+    const text = decoded.rows.map(([, value]) => partsToText(value)).join(' ')
+    expect(text).toContain('Unknown destination')
+    expect(text).toContain('Raw destination proof')
+    expect(text).toContain('CUNKNOWNTARGETRAWPROOF')
+    expect(view.sections.find((section) => section.kind === 'technical').raw).toBe('RAW-XDR')
   })
 })
 
@@ -634,12 +748,12 @@ describe('buildApprovalView — item 5: mono is marked ONLY on address/hash segm
     const agentRow = decoded.rows.find(([k]) => k === 'Agent #0')
     const technical = addrSegments(agentRow[1]).map((p) => p.text)
     // Two addr segments: the cap's token address, and the destination's fallback address --
-    // the LAST one is the destination fallback, and it must be the word "unknown", never blank.
-    expect(technical.at(-1)).toBe('unknown')
+    // the LAST one is the destination fallback, and it must be the word "Unknown", never blank.
+    expect(technical.at(-1)).toBe('Unknown')
     const plainText = plainSegments(agentRow[1])
       .map((p) => p.text)
       .join('')
-    expect(plainText).toContain('unlabeled destination')
+    expect(plainText).toContain('Unknown destination')
   })
 
   it('the raw args fallback (undecoded, fail-closed) is marked technical -- it is a raw dump by design, not prose', () => {
@@ -724,6 +838,13 @@ describe('submissionStatusText — Step 4: nine distinct named states', () => {
   it('gives every state its own distinct label', () => {
     const labels = Object.values(SUBMISSION_STATE).map((s) => submissionStatusText(s))
     expect(new Set(labels).size).toBe(labels.length) // all distinct
+  })
+
+  it('uses the exact colon-separated submitted status copy', () => {
+    expect(submissionStatusText(SUBMISSION_STATE.SUBMITTED)).toBe(
+      'Submitted: awaiting confirmation'
+    )
+    expect(submissionStatusText(SUBMISSION_STATE.SUBMITTED)).not.toMatch(/[—–-]/)
   })
 
   it('SIGNED_RETURNED names the origin, never claims a completed deposit/grant', () => {
@@ -889,6 +1010,19 @@ describe('renderApprovalView — DOM order matches the view.sections order exact
     expect(root.querySelector('#title').textContent).toBe('Request blocked')
     expect(root.querySelector('table')).toBeNull()
     expect(root.querySelector('#origin')).toBeNull() // nothing verified to show
+  })
+
+  it('renders the technical signing passphrase without changing the human network label', () => {
+    const view = buildApprovalView(
+      { method: 'getAddress', params: {}, origin: ORIGIN },
+      { address: ADDRESS, kind: 'C' }
+    )
+    const root = document.createElement('main')
+    renderApprovalView(root, view)
+    expect(root.querySelector('.pc-network-badge').textContent).toBe('Stellar testnet')
+    expect(root.querySelector('[data-testid="network-passphrase"]').textContent).toBe(
+      NETWORK_PASSPHRASE
+    )
   })
 })
 

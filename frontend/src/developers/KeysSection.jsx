@@ -1,6 +1,52 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { listKeys, createKey, revokeKey } from './portalClient.js'
 import CodeBlock from './CodeBlock.jsx'
+import { toDevelopersPresentation } from '../secondary/secondaryRouteAdapters.js'
+import { Dialog, StatusNotice, TechnicalDetails } from '../components/pocket/Primitives.jsx'
+import { NetworkRoute } from '../components/pocket/NetworkIdentity.jsx'
+import { NETWORK_IDS } from '../design/networks.js'
+import './Developers.css'
+import '../components/SecondaryDialogs.css'
+
+const SOURCE = 'Portal API'
+const STALE_AFTER_MS = 120000
+
+const NETWORK_CONTEXT = Object.freeze({
+  hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  destinationNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+  transitState: 'none',
+})
+
+const factFor = (state, value = null, overrides = {}) => ({
+  state,
+  value,
+  source: SOURCE,
+  checkedAt: new Date().toISOString(),
+  staleAfterMs: STALE_AFTER_MS,
+  ...overrides,
+})
+
+const sourceOf = (read) => {
+  if (!read || typeof read !== 'object') return {}
+  if (read.readResult && typeof read.readResult === 'object') return read.readResult
+  return read
+}
+
+const readInputOf = ({ developersRead, keysRead, read }) =>
+  developersRead ?? keysRead ?? read ?? null
+
+const keysFrom = (read) => {
+  const source = sourceOf(read)
+  return Array.isArray(source.keys) ? source.keys : []
+}
+
+const factForPrimitive = (view) => ({
+  ...view.fact,
+  consequence: view.notice?.consequence ?? view.fact.consequence,
+  safeNextAction: view.notice?.nextAction ?? view.fact.safeNextAction,
+})
 
 // Scope contract — same rows for docs (pre-auth) and permission picker (create form).
 const SCOPE_INFO = [
@@ -56,8 +102,9 @@ function curlSnippet(key) {
   -H "Authorization: Bearer ${key || 'vf_test_…'}"`
 }
 
-export default function KeysSection({ session }) {
-  const [keys, setKeys] = useState([])
+export default function KeysSection({ session, developersRead, keysRead, read, previousRead }) {
+  const injectedRead = readInputOf({ developersRead, keysRead, read })
+  const [keys, setKeys] = useState(() => keysFrom(injectedRead))
   const [listFilter, setListFilter] = useState('all') // all | test | live
 
   // Create form (Stripe-style: create → reveal once)
@@ -68,33 +115,66 @@ export default function KeysSection({ session }) {
   const [creating, setCreating] = useState(false)
 
   // Reveal-once secret (industry standard: never recoverable)
-  const [freshKey, setFreshKey] = useState(null) // { id, key, hint }
-  const [copied, setCopied] = useState(false)
-  const [savedAck, setSavedAck] = useState(false)
-  const [snippetCopied, setSnippetCopied] = useState(false)
+  // The full secret is held only by this one-time view model. It is never merged into the list
+  // response, URL, fixture, or technical details model.
+  const [oneTimeSecret, setOneTimeSecret] = useState(null) // { key, acknowledged, copied, error }
 
   // Revoke confirmation
   const [revokeTarget, setRevokeTarget] = useState(null) // key row
   const [revoking, setRevoking] = useState(false)
 
   const [error, setError] = useState('')
+  const createInitialFocusRef = useRef(null)
+  const secretInitialFocusRef = useRef(null)
+  const revokeInitialFocusRef = useRef(null)
+  const [settledRead, setSettledRead] = useState(() => ({
+    fact: factFor('loading', null, { checkedAt: null }),
+    facts: { keys: factFor('loading', null, { checkedAt: null }) },
+  }))
 
   useEffect(() => {
+    if (injectedRead) return undefined
     let on = true
     listKeys(session.jwt)
-      .then((k) => on && setKeys(k))
-      .catch((e) => on && setError(e.message))
+      .then((k) => {
+        if (!on || injectedRead) return
+        setKeys(k)
+        setSettledRead({
+          fact: factFor('current'),
+          facts: { keys: factFor('current') },
+          keys: k,
+        })
+      })
+      .catch((e) => {
+        if (!on || injectedRead) return
+        setError(e.message)
+        setSettledRead({
+          fact: factFor('error', null, { error: e.message }),
+          facts: { keys: factFor('error') },
+        })
+      })
     return () => {
       on = false
     }
-  }, [session.jwt])
+  }, [session.jwt, injectedRead])
+
+  const source = sourceOf(injectedRead ?? settledRead)
+  const presentation = toDevelopersPresentation(
+    injectedRead ?? settledRead,
+    injectedRead?.previousRead ?? previousRead
+  )
+  const view = presentation.facts?.keys || presentation
+  const fact = view.fact
+  const statusFact = factForPrimitive(view)
+  const displayedKeys = keys
+  const visibleError = injectedRead ? source.error || '' : error
 
   const filteredKeys = useMemo(() => {
-    if (listFilter === 'all') return keys
-    return keys.filter((k) => envFromHint(k.key_hint) === listFilter)
-  }, [keys, listFilter])
+    if (listFilter === 'all') return displayedKeys
+    return displayedKeys.filter((k) => envFromHint(k.key_hint) === listFilter)
+  }, [displayedKeys, listFilter])
 
-  const activeCount = keys.filter((k) => k.enabled).length
+  const activeCount = displayedKeys.filter((k) => k.enabled).length
 
   function openCreate() {
     setError('')
@@ -122,11 +202,19 @@ export default function KeysSection({ session }) {
         expiresAt,
       })
       setShowCreate(false)
-      setFreshKey(out)
-      setCopied(false)
-      setSavedAck(false)
-      setSnippetCopied(false)
-      setKeys(await listKeys(session.jwt))
+      setOneTimeSecret({
+        key: typeof out?.key === 'string' ? out.key : '',
+        acknowledged: false,
+        copied: false,
+        error: '',
+      })
+      const nextKeys = await listKeys(session.jwt)
+      setKeys(nextKeys)
+      setSettledRead({
+        fact: factFor('current'),
+        facts: { keys: factFor('current') },
+        keys: nextKeys,
+      })
     } catch (e) {
       setError(e.message)
     } finally {
@@ -141,7 +229,13 @@ export default function KeysSection({ session }) {
       setError('')
       await revokeKey(session.jwt, revokeTarget.id)
       setRevokeTarget(null)
-      setKeys(await listKeys(session.jwt))
+      const nextKeys = await listKeys(session.jwt)
+      setKeys(nextKeys)
+      setSettledRead({
+        fact: factFor('current'),
+        facts: { keys: factFor('current') },
+        keys: nextKeys,
+      })
     } catch (e) {
       setError(e.message)
     } finally {
@@ -153,28 +247,36 @@ export default function KeysSection({ session }) {
     setScopes((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]))
   }
 
-  function onCopyKey() {
-    if (!freshKey?.key) return
-    navigator.clipboard?.writeText(freshKey.key).catch(() => {})
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1600)
+  async function onCopyKey() {
+    if (!oneTimeSecret?.key) return
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(oneTimeSecret.key)
+      setOneTimeSecret((current) => (current ? { ...current, copied: true, error: '' } : current))
+    } catch {
+      setOneTimeSecret((current) =>
+        current
+          ? {
+              ...current,
+              copied: false,
+              error: 'Could not copy the key. Select it and copy manually.',
+            }
+          : current
+      )
+    }
   }
 
-  function onCopySnippet() {
-    if (!freshKey?.key) return
-    navigator.clipboard?.writeText(curlSnippet(freshKey.key)).catch(() => {})
-    setSnippetCopied(true)
-    setTimeout(() => setSnippetCopied(false), 1600)
-  }
-
-  function closeFreshKey() {
-    if (!savedAck) return
-    setFreshKey(null)
-    setSavedAck(false)
+  function closeOneTimeSecret() {
+    if (!oneTimeSecret?.acknowledged) return
+    setOneTimeSecret(null)
   }
 
   return (
-    <div className="card">
+    <div
+      className="card developers-section"
+      data-fact-state={fact.state}
+      aria-busy={fact.state === 'loading' ? 'true' : undefined}
+    >
       <div className="eyebrow">
         <span>Developers</span>
         <span>API keys</span>
@@ -182,22 +284,36 @@ export default function KeysSection({ session }) {
         <span>{`SEP-10 ${shortAddr(session.address)}`}</span>
       </div>
 
-      <h1 className="h-display">API keys</h1>
+      <h1 className="h-display" data-route-heading>
+        API keys
+      </h1>
+      <NetworkRoute compact context={NETWORK_CONTEXT} />
       <p className="lede">
         Authenticate with a Stellar wallet, create scoped secret keys, and call strategy, risk scan,
         and sponsored deposit relay endpoints. Server-side provider credentials stay on VF. You
         receive one <span className="mono">vf_</span> key, shown <b>once</b> when created.
       </p>
 
-      {error && (
+      {visibleError && (
         <p
           role="alert"
           className="mono"
           style={{ marginTop: 18, fontSize: 12, color: 'var(--danger)' }}
         >
-          {error}
+          {visibleError}
         </p>
       )}
+
+      <section className="developers-evidence" aria-label="API keys read">
+        <StatusNotice fact={statusFact} title="API keys read" />
+        {fact.state === 'unavailable' && presentation.notice?.consequence && (
+          <div className="developers-notice-copy" role="note">
+            <p>{presentation.notice.consequence}</p>
+            {presentation.notice.nextAction && <p>{presentation.notice.nextAction}</p>}
+          </div>
+        )}
+        <TechnicalDetails summary="Technical details" fact={statusFact} open />
+      </section>
 
       {/* Header: count + create (Stripe-style primary CTA) */}
       <div
@@ -207,7 +323,7 @@ export default function KeysSection({ session }) {
         <div>
           <span style={sectionTitle}>Your keys</span>
           <p className="mono faint" style={{ marginTop: 6, fontSize: 11.5 }}>
-            Active: {activeCount}. Total: {keys.length}.
+            Active: {activeCount}. Total: {displayedKeys.length}.
           </p>
         </div>
         <button className="btn btn-primary" type="button" onClick={openCreate}>
@@ -259,11 +375,11 @@ export default function KeysSection({ session }) {
           }}
         >
           <p className="mono" style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            {keys.length === 0
+            {displayedKeys.length === 0
               ? 'No keys yet. Create a restricted secret key to call the API.'
               : `No ${listFilter} keys.`}
           </p>
-          {keys.length === 0 && (
+          {displayedKeys.length === 0 && (
             <button
               className="btn btn-primary"
               type="button"
@@ -371,292 +487,226 @@ export default function KeysSection({ session }) {
       </div>
 
       {/* Create key dialog */}
-      {showCreate && (
-        <div className="modal-backdrop" onClick={closeCreate}>
-          <div
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Create secret key"
-            style={{ maxWidth: 520 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-eyebrow">API keys: New secret</div>
-            <div className="modal-title">Create secret key</div>
-            <div className="modal-scroll-content">
-              <span style={sectionTitle}>Environment</span>
-              <div
-                role="radiogroup"
-                aria-label="Environment"
-                className="risk-row"
-                style={{ marginTop: 10, gridTemplateColumns: 'repeat(2, 1fr)' }}
+      <Dialog
+        open={showCreate}
+        title="Create secret key"
+        description="Choose the environment, least-privilege permissions, and expiration."
+        onClose={closeCreate}
+        initialFocusRef={createInitialFocusRef}
+        className="secondary-dialog secondary-dialog--wide"
+        actions={
+          <>
+            <button
+              className="btn btn-primary"
+              type="button"
+              onClick={onCreate}
+              disabled={scopes.length === 0 || creating}
+            >
+              {creating ? 'Creating…' : 'Create key'}
+            </button>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={closeCreate}
+              disabled={creating}
+            >
+              Cancel
+            </button>
+          </>
+        }
+      >
+        <div className="secondary-dialog-eyebrow">API keys: New secret</div>
+        {creating && (
+          <div className="secondary-dialog-error" aria-live="polite">
+            <StatusNotice state="info" title="Creating key">
+              Waiting for the Portal API.
+            </StatusNotice>
+          </div>
+        )}
+        {error && (
+          <div className="secondary-dialog-error" aria-live="assertive">
+            <StatusNotice state="danger" title="Could not create key">
+              {error}
+            </StatusNotice>
+          </div>
+        )}
+        <div className="secondary-dialog-fieldset">
+          <span className="section-title">Environment</span>
+          <div role="radiogroup" aria-label="Environment" className="secondary-dialog-option-grid">
+            {['test', 'live'].map((e) => (
+              <button
+                key={e}
+                ref={e === 'test' ? createInitialFocusRef : undefined}
+                type="button"
+                role="radio"
+                aria-checked={env === e}
+                className={`risk-opt${env === e ? ' selected' : ''}`}
+                onClick={() => setEnv(e)}
               >
-                {['test', 'live'].map((e) => (
-                  <button
-                    key={e}
-                    type="button"
-                    role="radio"
-                    aria-checked={env === e}
-                    className={`risk-opt${env === e ? ' selected' : ''}`}
-                    onClick={() => setEnv(e)}
-                  >
-                    <span className="risk-opt-label">{e === 'test' ? 'Test' : 'Live'}</span>
-                    <span className="risk-opt-sub">
-                      {e === 'test' ? 'vf_test_ (sandbox)' : 'vf_live_ (production)'}
-                    </span>
-                  </button>
-                ))}
-              </div>
+                <span className="risk-opt-label">{e === 'test' ? 'Test' : 'Live'}</span>
+                <span className="risk-opt-sub">
+                  {e === 'test' ? 'vf_test_ (sandbox)' : 'vf_live_ (production)'}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
 
-              <div style={{ marginTop: 22 }}>
-                <span style={sectionTitle}>Permissions</span>
-                <p className="foot-note" style={{ marginTop: 6, marginBottom: 10 }}>
-                  Restrict scopes so a leaked key cannot call more than it needs.
-                </p>
-                <div className="perm-doc">
-                  {SCOPE_INFO.map((s, i) => {
-                    const on = scopes.includes(s.id)
-                    return (
-                      <button
-                        key={s.id}
-                        type="button"
-                        aria-pressed={on}
-                        onClick={() => toggleScope(s.id)}
-                        className="perm-doc-row"
-                        style={{
-                          width: '100%',
-                          textAlign: 'left',
-                          background: on ? 'var(--bg-elev-2)' : 'transparent',
-                          border: 'none',
-                          borderBottom:
-                            i === SCOPE_INFO.length - 1 ? 'none' : '1px solid var(--border)',
-                          cursor: 'pointer',
-                          font: 'inherit',
-                          color: 'inherit',
-                        }}
-                      >
-                        <span
-                          className="perm-doc-k"
-                          style={{ color: on ? 'var(--text)' : undefined }}
-                        >
-                          {s.id}
-                        </span>
-                        <span
-                          className="perm-doc-v"
-                          style={{ color: on ? undefined : 'var(--text-faint)' }}
-                        >
-                          {s.endpoints}
-                          <span className="annot">{s.note}</span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              <div style={{ marginTop: 22 }}>
-                <span style={sectionTitle}>Expiration</span>
-                <div
-                  role="radiogroup"
-                  aria-label="Expiration"
-                  className="flex gap-2"
-                  style={{ marginTop: 10, flexWrap: 'wrap' }}
+        <div className="secondary-dialog-fieldset">
+          <span className="section-title">Permissions</span>
+          <p className="foot-note">
+            Restrict scopes so a leaked key cannot call more than it needs.
+          </p>
+          <div className="perm-doc secondary-dialog-scope-list">
+            {SCOPE_INFO.map((s, i) => {
+              const on = scopes.includes(s.id)
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleScope(s.id)}
+                  className="perm-doc-row"
+                  data-selected={on ? 'true' : 'false'}
                 >
-                  {EXPIRY_OPTIONS.map((o) => (
-                    <button
-                      key={o.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={expiry === o.id}
-                      className="btn btn-ghost"
-                      style={{
-                        fontSize: 12,
-                        padding: '6px 12px',
-                        background: expiry === o.id ? 'var(--bg-elev-2)' : undefined,
-                        borderColor: expiry === o.id ? 'var(--border-strong)' : undefined,
-                      }}
-                      onClick={() => setExpiry(o.id)}
-                    >
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <p className="foot-note" style={{ marginTop: 18 }}>
-                Rate limit: <b>60 requests per minute</b>. The secret is shown once and can be
-                revoked anytime.
-              </p>
-            </div>
-
-            <div className="modal-actions">
-              <button
-                className="btn btn-primary"
-                type="button"
-                onClick={onCreate}
-                disabled={scopes.length === 0 || creating}
-              >
-                {creating ? 'Creating…' : 'Create key'}
-              </button>
-              <button
-                className="btn btn-ghost"
-                type="button"
-                onClick={closeCreate}
-                disabled={creating}
-              >
-                Cancel
-              </button>
-            </div>
+                  <span className="perm-doc-k">{s.id}</span>
+                  <span className="perm-doc-v">
+                    {s.endpoints}
+                    <span className="annot">{s.note}</span>
+                  </span>
+                  {i === SCOPE_INFO.length - 1 && <span aria-hidden="true" />}
+                </button>
+              )
+            })}
           </div>
         </div>
-      )}
 
-      {/* Reveal-once secret (Stripe / GitHub pattern) */}
-      {freshKey && (
-        <div className="modal-backdrop">
-          <div
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="New API key"
-            style={{ maxWidth: 520 }}
-            onClick={(e) => e.stopPropagation()}
+        <div className="secondary-dialog-fieldset">
+          <span className="section-title">Expiration</span>
+          <div role="radiogroup" aria-label="Expiration" className="secondary-dialog-options">
+            {EXPIRY_OPTIONS.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                role="radio"
+                aria-checked={expiry === o.id}
+                className={`btn btn-ghost${expiry === o.id ? ' selected' : ''}`}
+                onClick={() => setExpiry(o.id)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <p className="foot-note secondary-dialog-note">
+          Rate limit: <b>60 requests per minute</b>. The secret is shown once and can be revoked
+          anytime.
+        </p>
+      </Dialog>
+
+      {/* Reveal-once secret. The key is rendered only in this acknowledged one-time view. */}
+      <Dialog
+        open={Boolean(oneTimeSecret)}
+        title="Save this secret key"
+        description="This key is available once. Save it before closing this dialog."
+        onClose={closeOneTimeSecret}
+        initialFocusRef={secretInitialFocusRef}
+        className="secondary-dialog secondary-dialog--wide"
+        actions={
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={closeOneTimeSecret}
+            disabled={!oneTimeSecret?.acknowledged}
           >
-            <div className="modal-eyebrow">API key: Shown once</div>
-            <div className="modal-title">Save this secret key</div>
-
-            <div
-              style={{
-                borderLeft: '2px solid var(--warn)',
-                background: 'var(--bg-elev)',
-                padding: '12px 14px',
-                marginBottom: 16,
-                fontSize: 12.5,
-                color: 'var(--text-muted)',
-                lineHeight: 1.45,
-              }}
-            >
-              This is the only time the full key is available. We store only its hash. If you lose
-              the key, create a new one and revoke the old one.
-            </div>
-
-            <div
-              className="mono tnum"
-              style={{
-                background: 'var(--bg-elev)',
-                border: '1px solid var(--border-strong)',
-                borderRadius: 'var(--radius-md)',
-                padding: '14px 16px',
-                fontSize: 13,
-                wordBreak: 'break-all',
-                userSelect: 'all',
-              }}
-            >
-              {freshKey.key}
-            </div>
-
-            <div className="flex gap-2" style={{ marginTop: 12 }}>
-              <button className="btn btn-primary" type="button" onClick={onCopyKey}>
-                {copied ? 'Copied' : 'Copy key'}
-              </button>
-              <button className="btn btn-ghost" type="button" onClick={onCopySnippet}>
-                {snippetCopied ? 'Snippet copied' : 'Copy curl'}
-              </button>
-            </div>
-
-            <pre
-              className="mono"
-              style={{
-                marginTop: 16,
-                background: 'var(--bg-elev)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-md)',
-                padding: '12px 14px',
-                fontSize: 11.5,
-                lineHeight: 1.5,
-                overflowX: 'auto',
-                color: 'var(--text-muted)',
-              }}
-            >
-              {curlSnippet(freshKey.key)}
-            </pre>
-
-            <label
-              className="flex gap-2"
-              style={{
-                marginTop: 18,
-                alignItems: 'flex-start',
-                cursor: 'pointer',
-                fontSize: 13,
-                color: 'var(--text-muted)',
-                lineHeight: 1.4,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={savedAck}
-                onChange={(e) => setSavedAck(e.target.checked)}
-                style={{ marginTop: 3 }}
-              />
-              <span>I have saved this key in a password manager or secrets vault.</span>
-            </label>
-
-            <div className="modal-actions">
-              <button
-                className="btn btn-primary"
-                type="button"
-                onClick={closeFreshKey}
-                disabled={!savedAck}
-              >
-                Done
-              </button>
-            </div>
+            Done
+          </button>
+        }
+      >
+        <div className="secondary-dialog-eyebrow">API key: Shown once</div>
+        <p className="secondary-dialog-secret-note">
+          This is the only time the full key is available. Save it before closing; it cannot be
+          recovered later.
+        </p>
+        {oneTimeSecret?.error && (
+          <div className="secondary-dialog-error" aria-live="assertive">
+            <StatusNotice state="danger" title="Copy failed">
+              {oneTimeSecret.error}
+            </StatusNotice>
           </div>
+        )}
+        <div className="secondary-dialog-secret mono tnum">{oneTimeSecret?.key}</div>
+        <div className="secondary-dialog-secret-actions">
+          <button className="btn btn-primary" type="button" onClick={onCopyKey}>
+            {oneTimeSecret?.copied ? 'Copied' : 'Copy key'}
+          </button>
         </div>
-      )}
+        <label className="secondary-dialog-secret-ack">
+          <input
+            ref={secretInitialFocusRef}
+            type="checkbox"
+            checked={Boolean(oneTimeSecret?.acknowledged)}
+            onChange={(e) =>
+              setOneTimeSecret((current) =>
+                current ? { ...current, acknowledged: e.target.checked } : current
+              )
+            }
+          />
+          <span>I have saved this key in a password manager or secrets vault.</span>
+        </label>
+      </Dialog>
 
       {/* Revoke confirmation */}
-      {revokeTarget && (
-        <div className="modal-backdrop" onClick={() => !revoking && setRevokeTarget(null)}>
-          <div
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Revoke API key"
-            style={{ maxWidth: 420 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-eyebrow">Revoke: Irreversible</div>
-            <div className="modal-title">Revoke this key?</div>
-            <p style={{ fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-              Requests using{' '}
-              <span className="mono" style={{ color: 'var(--text)' }}>
-                {revokeTarget.key_hint}
-              </span>{' '}
-              will fail immediately. Create a replacement first if you need zero downtime.
-            </p>
-            <div className="modal-actions">
-              <button
-                className="btn btn-primary"
-                type="button"
-                style={{ background: 'var(--danger)', color: 'var(--pc-danger-ink)' }}
-                onClick={onConfirmRevoke}
-                disabled={revoking}
-              >
-                {revoking ? 'Revoking…' : 'Revoke key'}
-              </button>
-              <button
-                className="btn btn-ghost"
-                type="button"
-                onClick={() => setRevokeTarget(null)}
-                disabled={revoking}
-              >
-                Cancel
-              </button>
-            </div>
+      <Dialog
+        open={Boolean(revokeTarget)}
+        title="Revoke API key"
+        description="Requests using this key will fail immediately. Create a replacement first if you need zero downtime."
+        onClose={() => !revoking && setRevokeTarget(null)}
+        initialFocusRef={revokeInitialFocusRef}
+        className="secondary-dialog secondary-dialog--compact"
+        actions={
+          <>
+            <button
+              className="btn btn-primary"
+              type="button"
+              onClick={onConfirmRevoke}
+              disabled={revoking}
+            >
+              {revoking ? 'Revoking…' : 'Revoke key'}
+            </button>
+            <button
+              ref={revokeInitialFocusRef}
+              className="btn btn-ghost"
+              type="button"
+              onClick={() => setRevokeTarget(null)}
+              disabled={revoking}
+            >
+              Cancel
+            </button>
+          </>
+        }
+      >
+        <div className="secondary-dialog-eyebrow">Revoke: Irreversible</div>
+        {revoking && (
+          <div className="secondary-dialog-error" aria-live="polite">
+            <StatusNotice state="info" title="Revoking key">
+              Waiting for the Portal API.
+            </StatusNotice>
           </div>
-        </div>
-      )}
+        )}
+        {error && (
+          <div className="secondary-dialog-error" aria-live="assertive">
+            <StatusNotice state="danger" title="Could not revoke key">
+              {error}
+            </StatusNotice>
+          </div>
+        )}
+        <p className="secondary-dialog-copy">
+          Revoke this key? Requests using <span className="mono">{revokeTarget?.key_hint}</span>{' '}
+          will fail immediately. This action cannot be undone.
+        </p>
+      </Dialog>
     </div>
   )
 }

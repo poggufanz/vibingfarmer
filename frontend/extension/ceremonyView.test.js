@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest'
 import {
   buildCeremonyView,
   renderCeremonyView,
+  ceremonyResultModel,
   ceremonyStatusText,
   CEREMONY_STATE,
   partsToText,
@@ -30,6 +31,7 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url))
 
 const ADDRESS = 'CDLVXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXK3QP'
+const STANDARD_ADDRESS = 'GDVFWALLETSTANDARDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXK3QP'
 
 describe('buildCeremonyView — fail-closed, no address', () => {
   it('never renders a ceremony surface when no address is resolvable — no-wallet variant', () => {
@@ -251,7 +253,7 @@ describe('ceremonyStatusText — Step 3: distinct labels for signed/submitted/co
 
   it('CONFIRMED includes the shares figure only when supplied; SUBMITTED/CHECKING_STATUS never claim a shares figure', () => {
     expect(ceremonyStatusText(CEREMONY_STATE.CONFIRMED, { shares: '5' })).toBe(
-      'Confirmed — minted 5 shares'
+      'Confirmed: minted 5 shares'
     )
     expect(ceremonyStatusText(CEREMONY_STATE.CONFIRMED)).toBe('Confirmed')
     expect(ceremonyStatusText(CEREMONY_STATE.SUBMITTED)).not.toMatch(/shares|minted/i)
@@ -280,6 +282,265 @@ describe('ceremonyStatusText — Step 3: distinct labels for signed/submitted/co
     const submitted = ceremonyStatusText(CEREMONY_STATE.SUBMITTED)
     const confirmed = ceremonyStatusText(CEREMONY_STATE.CONFIRMED)
     expect(new Set([signed, submitted, confirmed]).size).toBe(3)
+  })
+})
+
+describe('ceremonyResultModel — authoritative result truth', () => {
+  it('never confirms a result without successful status and hash', () => {
+    expect(
+      ceremonyResultModel({ ok: true, action: 'deposit', status: 'PENDING', hash: 'h' }).state
+    ).toBe(CEREMONY_STATE.SUBMITTED)
+    expect(ceremonyResultModel({ ok: true, action: 'deposit', status: 'SUCCESS' }).state).toBe(
+      CEREMONY_STATE.UNKNOWN
+    )
+    expect(ceremonyResultModel({ ok: false, status: 'NOT_SUBMITTED' }).statusText).toMatch(
+      /nothing moved|not submitted/i
+    )
+  })
+
+  it('suppresses shares unless the authoritative result is confirmed', () => {
+    expect(
+      ceremonyResultModel({
+        ok: true,
+        action: 'deposit',
+        status: 'PENDING',
+        hash: 'h',
+        sharesBefore: '2',
+        sharesAfter: '7',
+      }).shares
+    ).toBeNull()
+    expect(
+      ceremonyResultModel({
+        ok: true,
+        action: 'deposit',
+        status: 'SUCCESS',
+        hash: 'h',
+        sharesBefore: '2',
+        sharesAfter: '7',
+      }).shares
+    ).toBe('5')
+    expect(
+      ceremonyResultModel({
+        ok: true,
+        action: 'deposit',
+        status: 'SUCCESS',
+        sharesBefore: '2',
+        sharesAfter: '7',
+      }).shares
+    ).toBeNull()
+  })
+
+  it('keeps generic signing as signed/returned and never as submitted', () => {
+    expect(ceremonyResultModel({ ok: true, action: 'signTransaction' }).state).toBe(
+      CEREMONY_STATE.SIGNED
+    )
+    expect(ceremonyResultModel({ ok: true, action: 'signTransaction' }).statusText).toMatch(
+      /signed( and returned)?/i
+    )
+    expect(
+      ceremonyResultModel({ ok: true, action: 'signTransaction', status: 'SUCCESS', hash: 'h' })
+        .state
+    ).toBe(CEREMONY_STATE.SIGNED)
+  })
+
+  it('projects a supplied result through buildCeremonyView without recomputing transaction facts', () => {
+    const view = buildCeremonyView(
+      { action: 'deposit', params: {} },
+      {
+        address: ADDRESS,
+        result: {
+          ok: true,
+          action: 'deposit',
+          status: 'SUCCESS',
+          hash: 'confirmed-hash',
+          sharesBefore: '2',
+          sharesAfter: '7',
+        },
+      }
+    )
+    const state = view.sections.find((section) => section.kind === 'state')
+    expect(state.submissionState).toBe(CEREMONY_STATE.CONFIRMED)
+    expect(state.hash).toBe('confirmed-hash')
+    expect(state.shares).toBe('5')
+    const root = document.createElement('main')
+    renderCeremonyView(root, view)
+    expect(root.querySelector('#status').textContent).toBe('Confirmed: minted 5 shares')
+  })
+
+  it('accepts the read-only result fields at the view boundary without weakening evidence checks', () => {
+    const view = buildCeremonyView(
+      { action: 'deposit', params: {} },
+      {
+        address: ADDRESS,
+        ok: true,
+        status: 'SUCCESS',
+        hash: 'confirmed-hash',
+        sharesBefore: '2',
+        sharesAfter: '7',
+      }
+    )
+    const state = view.sections.find((section) => section.kind === 'state')
+    expect(state.submissionState).toBe(CEREMONY_STATE.CONFIRMED)
+    expect(state.shares).toBe('5')
+  })
+
+  it('marks a stale account result unavailable without showing a false share delta', () => {
+    const model = ceremonyResultModel({
+      ok: true,
+      action: 'deposit',
+      status: 'SUCCESS',
+      hash: 'h',
+      accountSnapshotStale: true,
+      sharesBefore: '2',
+      sharesAfter: '7',
+    })
+    expect(model.state).toBe(CEREMONY_STATE.UNKNOWN)
+    expect(model.shares).toBeNull()
+    expect(model.statusText).toMatch(/account|unknown|verify/i)
+  })
+
+  it('maps the existing stale-sign error wording to not submitted', () => {
+    const model = ceremonyResultModel({
+      ok: false,
+      action: 'signTransaction',
+      error: 'not submitted: active account changed',
+    })
+    expect(model.state).toBe(CEREMONY_STATE.NOT_SUBMITTED)
+    expect(model.statusText).toMatch(/nothing moved|not submitted/i)
+  })
+})
+
+describe('buildCeremonyView — account, raw facts, and exact waiting presentation', () => {
+  it('distinguishes Standard/G and Passkey/C account chips', () => {
+    const standard = buildCeremonyView(
+      { action: 'connect', params: {} },
+      { address: STANDARD_ADDRESS, kind: 'G' }
+    )
+    const passkey = buildCeremonyView(
+      { action: 'connect', params: {} },
+      { address: ADDRESS, kind: 'C' }
+    )
+    expect(standard.sections.find((s) => s.kind === 'account').accountType).toBe('Standard')
+    expect(passkey.sections.find((s) => s.kind === 'account').accountType).toBe('Passkey')
+  })
+
+  it('keeps raw XDR/auth-entry facts technical and visible', () => {
+    const tx = buildCeremonyView(
+      { action: 'signTransaction', params: { xdr: 'RAW-XDR' } },
+      { address: ADDRESS }
+    )
+    const auth = buildCeremonyView(
+      { action: 'signAuthEntry', params: { authEntry: 'RAW-AUTH-ENTRY' } },
+      { address: ADDRESS }
+    )
+    expect(tx.sections.find((s) => s.kind === 'technical').raw).toBe('RAW-XDR')
+    expect(auth.sections.find((s) => s.kind === 'technical').raw).toBe('RAW-AUTH-ENTRY')
+    const root = document.createElement('main')
+    renderCeremonyView(root, tx)
+    expect(root.querySelector('#raw').textContent).toBe('RAW-XDR')
+    expect(root.querySelector('#raw').classList.contains('pc-technical')).toBe(true)
+  })
+
+  it('renders the passkey waiting state and Stellar testnet label before signing', () => {
+    const view = buildCeremonyView(
+      { action: 'deposit', params: {} },
+      {
+        address: ADDRESS,
+        amountUnits: 15_000_000n,
+        submissionState: CEREMONY_STATE.WAITING_PASSKEY,
+      }
+    )
+    const root = document.createElement('main')
+    renderCeremonyView(root, view)
+    expect(root.querySelector('.pc-network-badge').textContent).toBe(STELLAR_TESTNET_LABEL)
+    expect(root.querySelector('#status').textContent).toBe('Waiting for Face ID')
+  })
+})
+
+describe('buildCeremonyView — action consequence and Base CCTP disclosure', () => {
+  it('uses the exact consequence copy for every internal action', () => {
+    const cases = [
+      ['deposit', 'Deposit 1.5 USDC into Autofarm Vault to Blend Capital v2'],
+      ['approve', 'allowance only; this does not move funds by itself'],
+      ['connect', 'No funds move and no allowance changes'],
+      ['signTransaction', 'This ceremony only signs; it never submits or moves funds itself'],
+    ]
+    for (const [action, expected] of cases) {
+      const view = buildCeremonyView(
+        { action, params: {} },
+        {
+          address: ADDRESS,
+          amountUnits: 15_000_000n,
+          decodedSummary: null,
+        }
+      )
+      const consequence = view.sections.find((section) => section.kind === 'consequence')
+      expect(consequence.statements.map(partsToText).join(' ')).toContain(expected)
+    }
+  })
+
+  it('surfaces the exact CCTP custody disclosure and canonical Base mandate bounds', () => {
+    const view = buildCeremonyView(
+      { action: 'signTransaction', params: { xdr: 'X' } },
+      {
+        address: ADDRESS,
+        decodedSummary: {
+          fn: 'grant',
+          grant: {
+            agents: [
+              {
+                kind: 'bridge',
+                destination: {
+                  classification: 'known-cctp-messenger',
+                  routeLabel: 'Stellar testnet to Circle CCTP to Base Sepolia',
+                  venueLabel: null,
+                },
+              },
+            ],
+          },
+        },
+      }
+    )
+    const mandate = view.sections.find((section) => section.kind === 'base-mandate')
+    expect(mandate.route).toBe(BASE_ROUTE_LABEL)
+    expect(mandate.sourceRoute).toBe('Stellar testnet to Circle CCTP to Base Sepolia')
+    expect(mandate.transport).toBe('Circle CCTP')
+    expect(mandate.custodyDisclosure).toBe('Base Sepolia proxy. Custody only. No protocol yield.')
+    const root = document.createElement('main')
+    renderCeremonyView(root, view)
+    const text = root.textContent
+    expect(text).toContain('Stellar testnet to Base Sepolia')
+    expect(text).toContain('Circle CCTP')
+    expect(text).toContain('Base Sepolia proxy. Custody only. No protocol yield.')
+    expect(text).toContain('10,000 USDC')
+    expect(text).toMatch(/not cumulative/i)
+    expect(text).toMatch(/7 days/i)
+    expect(text).toMatch(/while this smart account has funds/i)
+    expect(text).toMatch(/cannot withdraw/i)
+  })
+
+  it('does not render minted shares for a confirmed-looking view without hash evidence', () => {
+    const view = buildCeremonyView(
+      { action: 'deposit', params: {} },
+      {
+        address: ADDRESS,
+        submissionState: CEREMONY_STATE.CONFIRMED,
+        status: 'SUCCESS',
+        shares: '5',
+      }
+    )
+    const root = document.createElement('main')
+    renderCeremonyView(root, view)
+    expect(root.textContent).not.toMatch(/minted 5 shares/i)
+  })
+})
+
+describe('ceremony.html static presentation contract', () => {
+  it('uses local approval.css and has no inline body style', () => {
+    const html = readFileSync(path.resolve(here, './ceremony.html'), 'utf8')
+    expect(html).toMatch(/<link[^>]+href=["']\.\/approval\.css["']/i)
+    expect(html).toMatch(/<body[^>]+class=["'][^"']*ceremony-page[^"']*["']/i)
+    expect(html).not.toMatch(/<style[\s>]/i)
   })
 })
 
@@ -419,6 +680,8 @@ const CEREMONY_STATES = [
         address: ADDRESS,
         amountUnits: 15_000_000n,
         submissionState: CEREMONY_STATE.CONFIRMED,
+        status: 'SUCCESS',
+        hash: 'confirmed-hash',
         shares: '5',
       },
     ],

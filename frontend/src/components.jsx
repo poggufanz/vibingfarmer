@@ -187,7 +187,12 @@ const Sidebar = ({ extended, onToggle, agentCount = 0 }) => {
   ]
 
   return (
-    <nav className="sidebar" aria-label="Primary navigation">
+    <nav
+      className="sidebar"
+      aria-label="Primary navigation"
+      data-pocket-sidebar
+      data-pocket-primary-nav
+    >
       <div className="sb-logo">
         <BrandLockup variant="compact" className="sb-logo-mark" />
         <span className="sb-logo-text">Vibing Farmer</span>
@@ -249,7 +254,7 @@ const TopBar = ({
   const sessionActive = walletPhase === 'upgraded'
 
   return (
-    <header className="topbar">
+    <header className="topbar" data-pocket-topbar>
       <div className="topbar-left">
         <BrandLockup variant="full" />
         <NetworkBadge networkId={NETWORK_IDS.STELLAR_TESTNET} />

@@ -228,6 +228,8 @@ function reuseDecisionRaw(over = {}) {
     confirmationCount: 0,
     grantReceiptFingerprint: '0xreceipt1',
     allowanceExpiryProof: {
+      gapFree: true,
+      noLaterMutation: true,
       latestLedger: 1000,
       approvals: [{ amount: { token: TOKEN_ADDR, units: '900000000' } }],
     },
@@ -405,11 +407,24 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     const lanes = screen.getByRole('list', { name: 'Reviewed crew permissions' })
     expect(lanes.classList.contains('pc-agent-lanes--review')).toBe(true)
     expect(within(lanes).getByText('Sprout')).toBeTruthy()
-    expect(
-      within(lanes).getByRole('img', { name: 'Sprout agent, planned' }).getAttribute('src')
-    ).toBe('/brand/agents/sprout.svg')
+    expect(lanes.querySelector('.pc-protect-agent-avatar').getAttribute('src')).toBe(
+      '/brand/agents/sprout.svg'
+    )
+    expect(within(lanes).getByRole('img', { name: 'Planned agent, Planned' })).toBeTruthy()
     expect(within(lanes).getByText(/Cap per period: 100\.00 USDC/)).toBeTruthy()
     expect(within(lanes).queryByText(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)).toBeNull()
+  })
+
+  it('keeps reviewed persona art decorative while AgentMark is the accessible identity', async () => {
+    render(<ProtectStage {...baseProps()} />)
+    await checkPermission()
+
+    const lanes = screen.getByRole('list', { name: 'Reviewed crew permissions' })
+    const lane = lanes.querySelector('.pc-agent-lane')
+    const persona = lane.querySelector('.pc-protect-agent-avatar')
+    expect(persona.getAttribute('alt')).toBe('')
+    expect(persona.getAttribute('aria-hidden')).toBe('true')
+    expect(within(lane).getByRole('img', { name: 'Planned agent, Planned' })).toBeTruthy()
   })
 
   it('shows one confirmation, the intended amount, headroom, nominal exposure, duration, and per-agent facts', async () => {
@@ -514,22 +529,10 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     expect(friendlySurface.textContent).not.toContain(TOKEN_ADDR)
   })
 
-  // Fix round 1, Important 2 (reviewer finding); STRENGTHENED in fix round 2 (reviewer finding,
-  // still open): `\bC[A-Z2-7]{55}\b` fails to match when the address abuts another WORD character
-  // in the concatenated `textContent` (e.g. straight after "ledger 1409000", the preceding "0" is
-  // itself a word character, so no boundary exists). Round 1 dropped the boundaries but still read
-  // `.match(RE)?.[0]` -- the FIRST match only -- so the reviewer proved this could not catch a
-  // SECOND, genuinely new leak sitting next to the already-expected one: injecting
-  // `reviewed.target` (a real contract, `VAULT_ADDR`) into the V3 execution row stayed GREEN,
-  // because the first match was still the already-expected `agentAddress`. Global regex, collect
-  // the FULL match set via `.match(RE)`, assert it equals the exact expected set (sorted, so
-  // ordering in the DOM can't matter) -- not "a match is present"/"the first match is X". This
-  // reveals a REAL, PRE-EXISTING leak in both V2 and V3 -- Soroban agent accounts ARE contracts
-  // (56 chars, starts with `C`), not the G-account this file's own header comment assumed --
-  // reported here and in the task report as an explicit, tracked, expected entry, not hidden by
-  // loosening the regex back or by silently wrapping it in `.pc-technical` (a product call outside
-  // this fix's scope).
-  it('C1 extended, Important 2: the V2 and V3 reuse states leak EXACTLY the documented agentAddress and nothing else outside a technical disclosure', async () => {
+  // C1 extended, Important 2: a reused Soroban agent C-address is a technical contract fact, not
+  // a friendly wallet identity. It stays visible in an expanded technical disclosure (and wraps
+  // at narrow widths), while the friendly clone contains no raw contract address.
+  it('C1 extended, Important 2: the V2 and V3 reuse states keep agentAddress only in technical disclosure', async () => {
     const NO_BOUNDARY_CONTRACT_RE = /C[A-Z2-7]{55}/g
     const matchesIn = (node) => (node.textContent.match(NO_BOUNDARY_CONTRACT_RE) || []).sort()
 
@@ -540,8 +543,9 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     await checkPermission()
     const v2Friendly = v2Container.cloneNode(true)
     v2Friendly.querySelectorAll('.pc-technical-details, .pc-technical').forEach((el) => el.remove())
-    expect(matchesIn(v2Friendly)).toEqual([AGENT_1])
+    expect(matchesIn(v2Friendly)).toEqual([])
     expect(v2Friendly.textContent).not.toContain(TOKEN_ADDR)
+    expect(v2Container.querySelector('.pc-technical-details')?.textContent).toContain(AGENT_1)
     unmountV2()
 
     const v3Decision = reuseDecisionV3Raw()
@@ -551,8 +555,13 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     await checkPermission()
     const v3Friendly = v3Container.cloneNode(true)
     v3Friendly.querySelectorAll('.pc-technical-details, .pc-technical').forEach((el) => el.remove())
-    expect(matchesIn(v3Friendly)).toEqual([v3Decision.executions[0].agentAddress])
+    expect(matchesIn(v3Friendly)).toEqual([])
     expect(v3Friendly.textContent).not.toContain(TOKEN_ADDR)
+    expect(
+      Array.from(v3Container.querySelectorAll('.pc-technical-details')).some((details) =>
+        details.textContent.includes(v3Decision.executions[0].agentAddress)
+      )
+    ).toBe(true)
   })
 
   it('I3: "Cap per period" and "Worst case" label from EACH agent\'s own reviewed cap token, never plan.amount.token', async () => {
@@ -616,9 +625,32 @@ describe('ProtectStage — reuse review content', () => {
     expect(boundRow).toBeTruthy()
     expect(within(boundRow).getByText('Mochi')).toBeTruthy()
     expect(within(boundRow).queryByText('Sprout')).toBeNull()
-    expect(within(boundRow).getByRole('img', { name: 'Mochi agent' }).getAttribute('src')).toBe(
-      '/brand/agents/mochi.svg'
+    const persona = boundRow.querySelector('.pc-protect-agent-avatar')
+    expect(persona.getAttribute('src')).toBe('/brand/agents/mochi.svg')
+    expect(persona.getAttribute('alt')).toBe('')
+    expect(persona.getAttribute('aria-hidden')).toBe('true')
+    const mark = within(boundRow).getByRole('img', { name: 'Existing agent, Existing' })
+    expect(mark.getAttribute('data-identity-phase')).toBe('reused')
+    expect(mark.getAttribute('data-identity-key')).toBe(AGENT_1)
+  })
+
+  it('preserves reused headroom units beyond Number precision', async () => {
+    const units = '9007199254740993'
+    const onRetryPreflight = vi.fn().mockResolvedValue(
+      reuseDecisionRaw({
+        agents: [
+          { ...reuseDecisionRaw().agents[0], headroom: { token: TOKEN_ADDR, units, decimals: 7 } },
+        ],
+      })
     )
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    expect(screen.getByText(`Headroom: 900719925.4740993 USDC`)).toBeTruthy()
+    const perAgentRow = Array.from(document.querySelectorAll('.pc-ceiling-rows li')).find((li) =>
+      li.textContent.startsWith('Per crew member')
+    )
+    expect(perAgentRow.textContent).toBe('Per crew member900719925.47 USDC cap')
   })
 
   it('shows 0 wallet confirmations and the exact reused agents/headroom/expiry', async () => {
@@ -637,7 +669,10 @@ describe('ProtectStage — reuse review content', () => {
     // the `.pc-support` branch (plus the F2 human-date test above); this line is this file's only
     // coverage of the `.pc-protect-limit` (reuse) branch actually rendering it too.
     expect(screen.getByText('Stops working')).toBeTruthy()
-    expect(screen.getByText('Cancel any time')).toBeTruthy()
+    expect(screen.getByText(/Stops future access/)).toBeTruthy()
+    expect(screen.getByText('Withdrawal is separate')).toBeTruthy()
+    expect(screen.queryByText('Cancel any time')).toBeNull()
+    expect(screen.queryByText('1 signature')).toBeNull()
   })
 
   it('never renders the secret execution credential reference', async () => {
@@ -738,6 +773,8 @@ describe('ProtectStage — Task 5 chunk C: V3 reuse review (executions, four fig
     render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
     await checkPermission()
 
+    expect(screen.getByText('Existing permission: Available')).toBeTruthy()
+    expect(screen.getByText('Confirmation count: 0.')).toBeTruthy()
     expect(document.querySelector('.pc-ceiling-total-label').textContent).toBe('Cumulative ceiling')
     expect(document.querySelector('.pc-ceiling-total-amount').textContent).toBe('200 USDC')
 
@@ -762,8 +799,6 @@ describe('ProtectStage — Task 5 chunk C: V3 reuse review (executions, four fig
     await checkPermission()
 
     expect(screen.getByText(AGENT_1)).toBeTruthy()
-    // buildAmountDisplayMap formats to 2dp (Task 7's precedent, reused here rather than
-    // re-implementing rounding) -- see F2's tests above for the same "100.00", not "100", figure.
     expect(screen.getByText(/Moves 100\.00 USDC/)).toBeTruthy()
   })
 
@@ -883,6 +918,70 @@ describe('ProtectStage — Task 5 chunk C: V3 reuse review (executions, four fig
     expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
   })
 
+  it.each([
+    ['agent address', { agentAddress: undefined }],
+    ['blank agent address', { agentAddress: '   ' }],
+    ['execution ID', { executionId: undefined }],
+    ['scope ID', { scopeId: undefined }],
+  ])('a V3 execution missing its %s cannot show reuse', async (_label, patch) => {
+    const badReuse = reuseDecisionV3Raw({
+      executions: [{ ...reuseDecisionV3Raw().executions[0], ...patch }],
+    })
+    const onRetryPreflight = vi.fn().mockResolvedValue(badReuse)
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Check again' })
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+    expect(screen.queryByText(/Confirmation count: 0/)).toBeNull()
+  })
+
+  it.each([
+    ['noncanonical amount units', { amountUnits: '12.5' }],
+    ['missing amount units', { amountUnits: undefined }],
+    ['mismatched execution scope', { scopeId: 'other-scope' }],
+  ])('a V3 execution with %s cannot show reuse', async (_label, patch) => {
+    const badReuse = reuseDecisionV3Raw({
+      executions: [{ ...reuseDecisionV3Raw().executions[0], ...patch }],
+    })
+    const onRetryPreflight = vi.fn().mockResolvedValue(badReuse)
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Check again' })
+    expect(screen.getByText(/Existing permission: Unavailable/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+    expect(screen.queryByText(/Confirmation count: 0/)).toBeNull()
+  })
+
+  it.each([
+    ['missing confirmation count', { confirmationCount: undefined }],
+    ['nonzero confirmation count', { confirmationCount: 1 }],
+  ])('a V3 decision with %s cannot show reuse', async (_label, over) => {
+    const badReuse = reuseDecisionV3Raw(over)
+    const onRetryPreflight = vi.fn().mockResolvedValue(badReuse)
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Check again' })
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+    expect(screen.queryByText(/Confirmation count: 0/)).toBeNull()
+    expect(screen.getByText(/Existing permission: Unavailable/)).toBeTruthy()
+  })
+
+  it.each([
+    ['missing permission ID', { permissionId: undefined }],
+    ['blank permission ID', { permissionId: '   ' }],
+    ['missing scope ID', { scopeId: undefined }],
+    ['blank scope ID', { scopeId: '   ' }],
+    ['missing checked-at timestamp', { checkedAt: undefined }],
+  ])('a V3 decision with %s cannot show reuse', async (_label, over) => {
+    const badReuse = reuseDecisionV3Raw(over)
+    const onRetryPreflight = vi.fn().mockResolvedValue(badReuse)
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Check again' })
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+    expect(screen.queryByText(/Confirmation count: 0/)).toBeNull()
+  })
+
   // Fix round 2 (reviewer finding, new Important): the canonical-units guard on
   // `mandateCeilingUnits`/`confirmedSpentUnits`/`remainingHeadroomUnits` shipped with no test that
   // could fail -- round 1's report credited it to "the same `if` chain" as the reviewedBudgets
@@ -971,13 +1070,24 @@ describe('ProtectStage — Task 5 chunk C: dormancy -- the live V2 surface rende
 })
 
 describe('ProtectStage — Base always shows fresh + the full mandate trust disclosure', () => {
+  const BASE_KERNEL = '0x0000000000000000000000000000000000000aa1'
   const baseMandateView = {
     status: 'ready',
     ready: true,
+    primaryCopy:
+      'For 7 days, the relayer-held key may repeatedly approve and deposit up to 10,000 USDC per call into allowlisted Base Sepolia custody proxies, while this smart account has funds. It cannot withdraw.',
+    durationDays: 7,
+    perCallCap: { usdc: '10,000', cumulative: false, nonCumulative: true },
+    repeatedCalls: true,
+    allowedActions: ['Circle USDC approve', 'YieldRouter deposit'],
     destination: 'allowlisted Base Sepolia custody proxies',
+    kernelAddress: BASE_KERNEL,
+    validUntilSeconds: NOW + 7 * 86400,
+    evidence: { stellarOwner: OWNER },
     technicalDisclosure: 'The relayer holds the session key. Binding ID: bind-1.',
     renewalCopy: 'Renew the mandate before its expiry to continue using Base testnet.',
-    revokeCopy: 'Deleting or revoking the VF relayer copy does not invalidate another copied key.',
+    revokeCopy:
+      'Deleting or revoking the VF relayer copy does not invalidate another copied key before the on-chain timestamp policy expires.',
     outageCopy:
       'If the relayer has an outage, Base is unavailable until its health check succeeds.',
   }
@@ -999,6 +1109,214 @@ describe('ProtectStage — Base always shows fresh + the full mandate trust disc
     await checkPermission()
     expect(screen.getByText(/This needs 1 wallet confirmation/)).toBeTruthy() // fresh, never reuse
     expect(screen.getByText(baseMandateView.technicalDisclosure)).toBeTruthy()
+  })
+
+  it('renders the source-backed setup boundary before the passive mandate-manager link', () => {
+    render(<ProtectStage {...baseProps({ plan: PLAN_WITH_BRIDGE, baseMandateView })} />)
+
+    expect(screen.getByText(baseMandateView.primaryCopy)).toBeTruthy()
+    expect(screen.getByText(OWNER)).toBeTruthy()
+    expect(screen.getByText(BASE_KERNEL)).toBeTruthy()
+    expect(screen.getByText(/Relayer-held session key/i)).toBeTruthy()
+    expect(screen.getByText(/Circle USDC approve.*YieldRouter deposit/i)).toBeTruthy()
+    expect(screen.getByText('10,000 USDC per call, non-cumulative')).toBeTruthy()
+    expect(screen.getAllByText('7 days').length).toBeGreaterThan(0)
+    expect(screen.getByText(/while this smart account has funds/i)).toBeTruthy()
+    expect(screen.getByText(/It cannot withdraw/i)).toBeTruthy()
+    expect(screen.getByText(baseMandateView.renewalCopy)).toBeTruthy()
+    expect(screen.getByText(baseMandateView.revokeCopy)).toBeTruthy()
+    expect(screen.getByText(baseMandateView.outageCopy)).toBeTruthy()
+    expect(screen.getByText('Base Sepolia proxy. Custody only. No protocol yield.')).toBeTruthy()
+
+    const managerLink = screen.getByRole('link', { name: /Base mandate settings/i })
+    expect(managerLink.getAttribute('href')).toBe('/settings?tab=wallet#base-mandate')
+    expect(managerLink.getAttribute('data-action')).toBeNull()
+  })
+
+  it('fails closed for an unavailable mandate and does not render stale capabilities', () => {
+    render(
+      <ProtectStage
+        {...baseProps({
+          plan: PLAN_WITH_BRIDGE,
+          baseMandateView: {
+            ...baseMandateView,
+            status: 'unavailable',
+            ready: false,
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByText('Base mandate details are unavailable right now.')).toBeTruthy()
+    expect(screen.queryByText(baseMandateView.primaryCopy)).toBeNull()
+    expect(screen.queryByText(/10,000 USDC per call/i)).toBeNull()
+    expect(screen.getByText('Base Sepolia proxy. Custody only. No protocol yield.')).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Base mandate settings/i })).toBeTruthy()
+  })
+
+  it('fails closed when a ready mandate omits required source fields', () => {
+    render(
+      <ProtectStage
+        {...baseProps({
+          plan: PLAN_WITH_BRIDGE,
+          baseMandateView: {
+            ...baseMandateView,
+            evidence: {},
+            allowedActions: [],
+            durationDays: null,
+            kernelAddress: null,
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByText('Base mandate details are unavailable right now.')).toBeTruthy()
+    expect(screen.queryByText(baseMandateView.primaryCopy)).toBeNull()
+    expect(screen.queryByText(BASE_KERNEL)).toBeNull()
+    expect(screen.queryByText('Relayer-held session key')).toBeNull()
+    expect(screen.getByText('Base Sepolia proxy. Custody only. No protocol yield.')).toBeTruthy()
+  })
+
+  it('allowlists the public Base view and never renders secret or capability-shaped fields', () => {
+    const secretSentinels = [
+      'BASE-CAPABILITY-SENTINEL',
+      'BASE-PRIVATE-KEY-SENTINEL',
+      'BASE-SESSION-PRIVATE-KEY-SENTINEL',
+    ]
+    render(
+      <ProtectStage
+        {...baseProps({
+          plan: PLAN_WITH_BRIDGE,
+          baseMandateView: {
+            ...baseMandateView,
+            capability: secretSentinels[0],
+            privateKey: secretSentinels[1],
+            sessionPrivateKey: secretSentinels[2],
+            evidence: {
+              ...baseMandateView.evidence,
+              capability: secretSentinels[0],
+              privateKey: secretSentinels[1],
+              sessionPrivateKey: secretSentinels[2],
+            },
+          },
+        })}
+      />
+    )
+
+    for (const sentinel of secretSentinels) {
+      expect(document.body.textContent).not.toContain(sentinel)
+    }
+    expect(screen.getByText(baseMandateView.primaryCopy)).toBeTruthy()
+  })
+
+  it('fails closed when ready evidence expands the approved action or destination boundary', () => {
+    render(
+      <ProtectStage
+        {...baseProps({
+          plan: PLAN_WITH_BRIDGE,
+          baseMandateView: {
+            ...baseMandateView,
+            allowedActions: ['Circle USDC approve', 'YieldRouter deposit', 'YieldRouter withdraw'],
+            destination: 'untrusted Base pool',
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByText('Base mandate details are unavailable right now.')).toBeTruthy()
+    expect(screen.queryByText(/YieldRouter withdraw/)).toBeNull()
+    expect(screen.queryByText('untrusted Base pool')).toBeNull()
+  })
+})
+
+describe('ProtectStage — permission presentation stays source-backed', () => {
+  it('uses the decision mode and source confirmation count without unsafe fallback copy', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(freshDecisionRaw({ confirmationCount: 2 }))
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    expect(screen.getByText(/This needs 2 wallet confirmations/)).toBeTruthy()
+    expect(screen.getByText(/Stops future access/)).toBeTruthy()
+    expect(screen.getByText('Withdrawal is separate')).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/Cancel any time|forever|\beverything\b/i)
+    expect(screen.queryByText('1 signature')).toBeNull()
+  })
+
+  it('does not invent zero-confirmation reuse when source proof is unavailable', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(
+      reuseDecisionRaw({
+        grantReceiptFingerprint: null,
+        allowanceExpiryProof: null,
+      })
+    )
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Check again' })
+
+    expect(screen.queryByText(/0 wallet confirmations/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+  })
+
+  it('does not offer a fresh authorization action when the source count is unavailable', async () => {
+    const onRetryPreflight = vi
+      .fn()
+      .mockResolvedValue(freshDecisionRaw({ confirmationCount: null }))
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Check again' })
+
+    expect(screen.queryByRole('button', { name: 'Authorize with wallet' })).toBeNull()
+    expect(screen.queryByText(/This needs \d+ wallet confirmation/)).toBeNull()
+  })
+
+  it.each([
+    ['rejected', { mode: 'rejected', confirmationCount: 1 }],
+    ['unknown', { mode: 'unrecognized', confirmationCount: 0 }],
+  ])('renders a resolved %s decision as unavailable with no action', async (_label, over) => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(freshDecisionRaw(over))
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Check again' })
+
+    expect(screen.getByText('Permission unavailable: Unavailable')).toBeTruthy()
+    expect(screen.getAllByText('Permission details are unavailable.').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: 'Authorize with wallet' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+    expect(screen.queryByText(/wallet confirmation/)).toBeNull()
+  })
+
+  it('keeps the source count and mode visible after a rejected fresh request', async () => {
+    const onRequestGrant = vi.fn().mockRejectedValue(new Error('User declined access'))
+    render(<ProtectStage {...baseProps({ onRequestGrant })} />)
+    await checkPermission()
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
+    await screen.findByText('Nothing moved')
+
+    expect(screen.getByText(/This needs 1 wallet confirmation/)).toBeTruthy()
+    expect(screen.queryByText('0 wallet confirmations')).toBeNull()
+  })
+
+  it('maps poisoned dependency errors to fixed failure copy', async () => {
+    const poisoned = 'CAPABILITY_PRIVATE_KEY_SENTINEL_AUTHORIZATION'
+    const onRequestGrant = vi.fn().mockRejectedValue(new Error(poisoned))
+    render(<ProtectStage {...baseProps({ onRequestGrant })} />)
+    await checkPermission()
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
+    await screen.findByText('Nothing moved')
+
+    expect(document.body.textContent).not.toContain(poisoned)
+    expect(screen.getByText('The wallet request did not complete. Nothing moved.')).toBeTruthy()
+  })
+
+  it('announces the source-backed permission status in a polite live region', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(freshDecisionRaw({ confirmationCount: 2 }))
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    const announcement = document.querySelector(
+      '[aria-live="polite"][data-testid="protect-live-region"]'
+    )
+    expect(announcement?.textContent).toContain('Fresh grant: 2 wallet confirmations required.')
   })
 })
 
@@ -1221,14 +1539,12 @@ describe('ProtectStage — keyboard operability and long values', () => {
     }
     render(<ProtectStage {...baseProps({ plan: bigPlan, onRetryPreflight })} />)
     await checkPermission()
-    // MoneyFigure formats via Number.prototype.toLocaleString(), which defaults to 3 fraction
-    // digits (verified directly: (12345678.9012345).toLocaleString() === '12,345,678.901') --
-    // this only proves the huge value renders and is not silently dropped/crashed, not that every
-    // digit survives (MoneyFigure's own rounding is Foundation's concern, not this stage's).
+    // Foundation MoneyFigure groups the integer portion while preserving the canonical decimal
+    // string exactly, so this proves the huge value is not silently rounded, dropped, or crashed.
     // Scoped: the ceiling card's own total-amount line renders this SAME string (it mirrors
     // plan.amount by design), which would otherwise make an unscoped query ambiguous.
     const confirmationBlock = screen.getByText(/This needs 1 wallet confirmation/).parentElement
-    expect(within(confirmationBlock).getByText('12,345,678.901 USDC')).toBeTruthy()
+    expect(within(confirmationBlock).getByText('12,345,678.9012345 USDC')).toBeTruthy()
   })
 
   // Fix round 1, Minor 3 (reviewer finding): the three V3 headline figures use the SAME
@@ -1248,7 +1564,7 @@ describe('ProtectStage — keyboard operability and long values', () => {
     render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
     await checkPermission()
     expect(document.querySelector('.pc-ceiling-total-amount').textContent).toBe(
-      '12,345,678.901 USDC'
+      '12345678.9012345 USDC'
     )
   })
 
@@ -1320,13 +1636,8 @@ describe('ProtectStage — F1: ceiling row separator visible on both surface pol
   })
 })
 
-// Final-review fix, F2: `perAgentText` used to be a raw `unitsToDisplay` float division, with no
-// 2dp formatting -- a 100 USDC / 3-agent split at 7 decimals rendered "33.3333334 USDC" here while
-// PlanStage/StartStage both show "33.33 USDC" for the SAME agent via planModel.js's
-// `buildAmountDisplayMap`/`formatCents`/`roundCentsBigInt`. Reused those SAME exported helpers
-// (Task 7's precedent) rather than re-implementing rounding.
-describe("ProtectStage — F2: the ceiling card's per-agent cap matches Plan/Start's 2dp figure", () => {
-  it('rounds a non-divisible split to 2dp, the same figure buildAmountDisplayMap gives Plan/Start for the identical agent', async () => {
+describe('ProtectStage — exact canonical per-agent amounts', () => {
+  it('preserves a non-divisible reviewed cap without reconstructing a rounded display amount', async () => {
     // The exact repro from the review: 100 USDC split 3 ways at 7 decimals leaves one agent with
     // 333333334 units (33.3333334 USDC raw).
     const onRetryPreflight = vi.fn().mockResolvedValue(
@@ -1343,10 +1654,9 @@ describe("ProtectStage — F2: the ceiling card's per-agent cap matches Plan/Sta
       li.textContent.startsWith('Per crew member')
     )
     expect(perAgentRow.textContent).toBe('Per crew member33.33 USDC cap')
-    expect(perAgentRow.textContent).not.toMatch(/33\.3333334/)
   })
 
-  it('formats the reuse-mode headroom cap to 2dp the same way', async () => {
+  it('preserves the reuse-mode headroom cap exactly', async () => {
     const onRetryPreflight = vi.fn().mockResolvedValue(
       reuseDecisionRaw({
         agents: [
@@ -1562,7 +1872,7 @@ describe('ProtectStage — 320px real layout guard', () => {
     expect(scrollWidth).toBe(320)
   }, 20000)
 
-  it('G: the reuse review renders a full 56-char contract address as plain (always-visible) text with no horizontal overflow at 320px', async () => {
+  it('G: the reuse review renders a full 56-char Soroban C-account in technical disclosure with no horizontal overflow at 320px', async () => {
     const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionRaw())
     const { container } = render(
       <div className="pc-route">
@@ -1573,6 +1883,9 @@ describe('ProtectStage — 320px real layout guard', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
     await screen.findByRole('button', { name: 'Continue' })
+
+    expect(screen.getByText(/Soroban C-account/)).toBeTruthy()
+    expect(screen.getByText(AGENT_1)).toBeTruthy()
 
     const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
     expect(scrollWidth).toBe(320)

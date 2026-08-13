@@ -67,10 +67,12 @@ export const NETWORK_CREDITS = Object.freeze([STELLAR_META, BASE_META])
  * }}
  */
 export function getNetworkMeta(networkId) {
-  return NETWORK_META_BY_ID[networkId] || UNKNOWN_META
+  return Object.prototype.hasOwnProperty.call(NETWORK_META_BY_ID, networkId)
+    ? NETWORK_META_BY_ID[networkId]
+    : UNKNOWN_META
 }
 
-const TRANSIT_STATES = Object.freeze([
+export const NETWORK_TRANSIT_STATES = Object.freeze([
   'none',
   'source',
   'burning',
@@ -80,7 +82,20 @@ const TRANSIT_STATES = Object.freeze([
   'failed',
   'unknown',
 ])
-const TRANSIT_STATE_SET = new Set(TRANSIT_STATES)
+const TRANSIT_STATE_SET = new Set(NETWORK_TRANSIT_STATES)
+
+// Presentation labels stay beside the canonical route states so every route variant can expose
+// the same evidence-backed status without inventing a second vocabulary in a component.
+export const NETWORK_TRANSIT_STATUS = Object.freeze({
+  none: 'Settled',
+  source: 'Awaiting bridge',
+  burning: 'In transit',
+  attesting: 'In transit',
+  minting: 'In transit',
+  arrived: 'Arrived',
+  failed: 'Failed',
+  unknown: 'Unavailable',
+})
 
 // A non-empty string network id is kept as-is even when unrecognized (see UNKNOWN_META above) --
 // only null/undefined/non-string/blank collapse to null, meaning "no network in this role".
@@ -93,6 +108,59 @@ const toNetworkId = (value) => {
 const toTransitState = (value, fallback) =>
   typeof value === 'string' && TRANSIT_STATE_SET.has(value) ? value : fallback
 
+const NETWORK_CONTEXT_KEYS = Object.freeze([
+  'hostNetworkId',
+  'sourceNetworkId',
+  'destinationNetworkId',
+  'custodyNetworkId',
+  'transitState',
+])
+
+// Read only own data descriptors in one snapshot. Direct property reads would invoke an
+// inherited or own getter, and `in` would treat prototype claims as evidence. A revoked or
+// adversarial proxy can also throw while descriptors are collected; returning null lets callers
+// use the all-unknown shape instead of leaking that error into a money-facing surface.
+function ownDataSnapshot(value, keys = []) {
+  if (!value || typeof value !== 'object') return null
+
+  let descriptors
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value)
+  } catch {
+    return null
+  }
+
+  const values = Object.create(null)
+  const accessorKeys = new Set()
+  for (const key of keys) {
+    const descriptor = descriptors[key]
+    if (!descriptor) continue
+    if (Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+      values[key] = descriptor.value
+    } else {
+      accessorKeys.add(key)
+    }
+  }
+
+  return { values, accessorKeys }
+}
+
+const EMPTY_CONTEXT = Object.freeze({
+  hostNetworkId: null,
+  sourceNetworkId: null,
+  destinationNetworkId: null,
+  custodyNetworkId: null,
+  transitState: 'none',
+})
+
+const UNAVAILABLE_CONTEXT = Object.freeze({
+  hostNetworkId: null,
+  sourceNetworkId: null,
+  destinationNetworkId: null,
+  custodyNetworkId: null,
+  transitState: 'unknown',
+})
+
 /**
  * Sanitizes an arbitrary object into the canonical NetworkContext shape:
  * `{ hostNetworkId, sourceNetworkId, destinationNetworkId, custodyNetworkId, transitState }`.
@@ -102,14 +170,24 @@ const toTransitState = (value, fallback) =>
  * corrected back onto the source (falling back to host, then null).
  */
 export function normalizeNetworkContext(context) {
-  const raw = context && typeof context === 'object' ? context : {}
+  if (!context || typeof context !== 'object') return EMPTY_CONTEXT
+  const snapshot = ownDataSnapshot(context, NETWORK_CONTEXT_KEYS)
+  if (!snapshot) return UNAVAILABLE_CONTEXT
+
+  const raw = snapshot.values
   const hostNetworkId = toNetworkId(raw.hostNetworkId)
   const sourceNetworkId = toNetworkId(raw.sourceNetworkId)
   const destinationNetworkId = toNetworkId(raw.destinationNetworkId)
   // A context that never mentions transitState at all describes a plain, non-bridge item (no
   // transit modeled) -- 'none'. One that mentions it with a garbage value is actively lying or
   // broken, which is exactly what the visible 'unknown' state is for.
-  const transitState = toTransitState(raw.transitState, 'transitState' in raw ? 'unknown' : 'none')
+  const transitState = toTransitState(
+    raw.transitState,
+    snapshot.accessorKeys.has('transitState') ||
+      Object.prototype.hasOwnProperty.call(raw, 'transitState')
+      ? 'unknown'
+      : 'none'
+  )
   let custodyNetworkId = toNetworkId(raw.custodyNetworkId)
 
   const claimsDestinationEarly =
@@ -144,7 +222,8 @@ const CHAIN_ALIASES = Object.freeze({
 // silently disappearing.
 const resolveChainId = (value) => {
   if (typeof value !== 'string' || value.trim() === '') return null
-  return CHAIN_ALIASES[value.toLowerCase()] ?? value
+  const alias = value.toLowerCase()
+  return Object.prototype.hasOwnProperty.call(CHAIN_ALIASES, alias) ? CHAIN_ALIASES[alias] : value
 }
 
 /**
@@ -160,11 +239,37 @@ const resolveChainId = (value) => {
  * @returns {ReturnType<typeof normalizeNetworkContext>}
  */
 export function networkContextForAllocation(allocation) {
-  const a = allocation && typeof allocation === 'object' ? allocation : {}
+  if (!allocation || typeof allocation !== 'object') {
+    return normalizeNetworkContext({ hostNetworkId: NETWORK_IDS.STELLAR_TESTNET })
+  }
+  const allocationSnapshot = ownDataSnapshot(allocation, ['chain', 'hostChain', 'bridge'])
+  if (!allocationSnapshot) return UNAVAILABLE_CONTEXT
+
+  // An explicit accessor is malformed input. Ignore the allocation rather than allowing a
+  // different field (for example `chain: 'base'`) to turn an unreadable bridge claim into a
+  // settled Base position.
+  if (allocationSnapshot.accessorKeys.size > 0) return UNAVAILABLE_CONTEXT
+
+  const a = allocationSnapshot.values
   const destinationNetworkId = resolveChainId(a.chain)
   const hostNetworkId = resolveChainId(a.hostChain) ?? NETWORK_IDS.STELLAR_TESTNET
-  const isBridging = Boolean(a.bridge) && typeof a.bridge === 'object'
-  const transitState = isBridging ? toTransitState(a.bridge.status, 'unknown') : 'none'
+  const bridge = a.bridge
+  const hasOwnBridgeData = Object.prototype.hasOwnProperty.call(a, 'bridge')
+  const isBridging = Boolean(bridge) && typeof bridge === 'object'
+
+  // A known or future destination that differs from its host is a cross-network claim. It must
+  // carry an own bridge data descriptor; otherwise inherited metadata (or an omitted bridge)
+  // could turn an unreadable Stellar-hosted transfer into settled destination custody. Same-chain
+  // resident positions remain valid without bridge evidence (including Base host -> Base).
+  const destinationDiffersHost =
+    destinationNetworkId !== null &&
+    hostNetworkId !== null &&
+    destinationNetworkId !== hostNetworkId
+  if (destinationDiffersHost && (!hasOwnBridgeData || !isBridging)) return UNAVAILABLE_CONTEXT
+
+  const bridgeSnapshot = isBridging ? ownDataSnapshot(bridge, ['status']) : null
+  if (isBridging && !bridgeSnapshot) return UNAVAILABLE_CONTEXT
+  const transitState = isBridging ? toTransitState(bridgeSnapshot.values.status, 'unknown') : 'none'
   const sourceNetworkId = isBridging ? hostNetworkId : destinationNetworkId
   // Only an actually-arrived job may claim the destination holds the funds; every other transit
   // state (including a bridging allocation with no reported status at all) keeps custody on the

@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { MoneyHero } from './MoneyHero.jsx'
@@ -37,9 +37,9 @@ function baseModel(overrides = {}) {
     problemAgentCount: 0,
     freshness: 'current',
     checkedAt: NOW,
-    confirmedLedger: null,
-    confirmedBlock: null,
-    source: null,
+    confirmedLedger: '12345',
+    confirmedBlock: '67890',
+    source: 'soroban-rpc',
     problemAgents: [],
     protection: {
       state: 'armed',
@@ -111,6 +111,45 @@ describe('MoneyHero — heading and never-a-coerced-zero', () => {
     render(<MoneyHero model={model} />)
     expect(screen.getByText('(stale)')).toBeTruthy()
   })
+
+  it('keeps an unsafe-integer-sized canonical amount exact in the hero figure', () => {
+    const units = '9007199254740993'
+    const checkedAt = NOW
+    const model = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: { status: 'complete', agents: [] },
+      money: {
+        status: 'complete',
+        confirmedTotal: { state: 'known', amount: amt(units, 7) },
+        yield: { state: 'unavailable', apy: null },
+        earned: { state: 'unavailable', amount: null },
+        custodyBreakdown: { 'stellar-vault': units },
+        unattributed: {},
+        executionBreakdown: {},
+        agentCount: 0,
+        problemAgentCount: 0,
+        agents: [],
+        checkedAt,
+        confirmedLedger: '12345',
+        confirmedBlock: '67890',
+        source: 'soroban-rpc',
+      },
+      now: checkedAt + 1_000,
+    })
+    expect(model.state).toBe('current')
+    render(<MoneyHero model={model} />)
+    expect(screen.getByText('900,719,925.4740993 USDC')).toBeTruthy()
+    expect(screen.queryByText('900719925.4740992 USDC')).toBeNull()
+  })
+
+  it('fails closed when a money model carries a malformed checkedAt timestamp', () => {
+    const model = baseModel({ checkedAt: 'not-a-timestamp', freshness: 'current' })
+    render(<MoneyHero model={model} />)
+    const hero = screen.getByRole('region', { name: 'Your money' })
+    expect(within(hero).getByText('Unavailable')).toBeTruthy()
+    expect(hero.querySelector('.pc-money--current')).toBeNull()
+    expect(hero.querySelector('.pc-money--stale')).toBeNull()
+  })
 })
 
 // Fix loop 2, I1: `model.state === 'stale'` alone is not the same claim as `model.freshness ===
@@ -138,9 +177,9 @@ describe('MoneyHero — I1 (fix loop 2): staleness comes from the real freshness
       problemAgentCount: 0,
       agents: [],
       checkedAt: NOW - THIRTY_DAYS_MS,
-      confirmedLedger: null,
-      confirmedBlock: null,
-      source: null,
+      confirmedLedger: '12345',
+      confirmedBlock: '67890',
+      source: 'soroban-rpc',
       ...overrides,
     }
   }
@@ -219,7 +258,19 @@ describe('MoneyHero — earned/APY only with valid evidence', () => {
   })
 
   it('shows the APY line only once yield is genuinely live', () => {
-    render(<MoneyHero model={baseModel({ yield: { state: 'live', apy: 8.2 } })} />)
+    render(
+      <MoneyHero
+        model={baseModel({
+          yield: {
+            state: 'live',
+            apy: 8.2,
+            asOf: '2026-08-10T23:59:00.000Z',
+            source: 'defillama',
+            checkedAt: '2026-08-11T00:00:00.000Z',
+          },
+        })}
+      />
+    )
     expect(screen.getByText('Earning 8.2% APY')).toBeTruthy()
   })
 
@@ -227,10 +278,21 @@ describe('MoneyHero — earned/APY only with valid evidence', () => {
     const model = baseModel({
       state: 'stale',
       freshness: 'stale',
-      yield: { state: 'live', apy: 8.2 },
+      yield: {
+        state: 'live',
+        apy: 8.2,
+        asOf: '2026-08-10T23:59:00.000Z',
+        source: 'defillama',
+        checkedAt: '2026-08-11T00:00:00.000Z',
+      },
     })
     render(<MoneyHero model={model} />)
     expect(screen.getByText('Earning 8.2% APY (stale)')).toBeTruthy()
+  })
+
+  it('fails closed when a flat live yield omits nested source metadata', () => {
+    render(<MoneyHero model={baseModel({ yield: { state: 'live', apy: 8.2 } })} />)
+    expect(screen.queryByText(/APY/)).toBeNull()
   })
 
   it("never shows an Earned line while earned evidence is unavailable (today's real production shape)", () => {

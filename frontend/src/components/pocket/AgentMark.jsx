@@ -7,6 +7,7 @@
 // exactly the kind of quiet-but-wrong behavior this mark exists to avoid (Design Spec §6.6: "one
 // crew mark always means one actually deployed account").
 import { THEME_IDS, currentDomTheme } from '../../design/theme.js'
+import { resolveAgentIdentity } from '../../design/pocket-crew-foundation.js'
 
 // Fixed crew palette -- CSS custom properties so each swatch stays theme-correct (forest/day)
 // without this component needing its own theme detection; see pocket-crew.css.
@@ -34,15 +35,6 @@ const INK_LIGHT = '#F2F5EF'
 const CREW_INK_BY_THEME = Object.freeze({
   [THEME_IDS.FOREST]: [INK_DARK, INK_DARK, INK_DARK, INK_DARK, INK_DARK, INK_DARK],
   [THEME_IDS.DAY_FIELD]: [INK_DARK, INK_LIGHT, INK_DARK, INK_LIGHT, INK_DARK, INK_LIGHT],
-})
-
-const STATE_LABEL = Object.freeze({
-  planned: 'Planned',
-  existing: 'Existing',
-  active: 'Active',
-  confirmed: 'Confirmed',
-  failed: 'Failed',
-  idle: 'Idle',
 })
 
 // State is dual-coded (text glyph + color); no state relies on color alone. `colorKey` groups
@@ -100,33 +92,101 @@ const BODY_D =
   'M16 4C10.477 4 6 8.477 6 14V20C6 25.523 10.477 30 16 30C21.523 30 26 25.523 26 20V14C26 8.477 21.523 4 16 4Z'
 const TAIL_D = 'M9 25L9 30L4 28Z'
 
+function identityInput(identity) {
+  // Existing My Money rows pass their authoritative address string. Keep that caller contract
+  // working while routing structured identities through the phase-aware Task 3 adapter. New rows
+  // should pass the structured form so deployed/reused proof is explicit at the presentation
+  // boundary.
+  if (typeof identity === 'string') {
+    const address = identity.trim()
+    if (!address) return {}
+    return {
+      phase: 'deployed',
+      verifiedAddress: address,
+      verified: true,
+      source: 'owner-discovery',
+    }
+  }
+  if (!identity || typeof identity !== 'object') return {}
+  return {
+    phase: identity.phase,
+    runId: identity.runId,
+    allocationId:
+      identity.allocationId || (identity.phase === 'planned' ? identity.key : undefined),
+    verifiedAddress: identity.verifiedAddress || identity.address,
+    verified: identity.verified,
+    source: identity.source,
+    state: identity.state,
+  }
+}
+
+function resolveIdentity(identity) {
+  return resolveAgentIdentity(identityInput(identity))
+}
+
+function labelForIdentity(identity) {
+  if (identity.phase === 'planned') return 'Planned'
+  if (identity.phase === 'deployed') return 'Deployed'
+  if (identity.phase === 'reused') return 'Existing'
+  return 'Agent identity unavailable'
+}
+
+function stateLabelFor(state) {
+  const labels = {
+    planned: 'Planned',
+    creating: 'Creating',
+    queued: 'Queued',
+    ready: 'Ready',
+    moving: 'Moving',
+    depositing: 'Depositing',
+    bridging: 'Bridging',
+    'in-transit': 'In transit',
+    working: 'Working',
+    active: 'Active',
+    confirmed: 'Confirmed',
+    existing: 'Existing',
+    deployed: 'Deployed',
+    reused: 'Reused',
+    failed: 'Failed',
+    idle: 'Idle',
+  }
+  return Object.prototype.hasOwnProperty.call(labels, state) ? labels[state] : 'Unknown'
+}
+
 export function AgentMark({ identity, state = 'planned', size = 32, label, className = '' }) {
-  const hasIdentity = typeof identity === 'string' && identity.trim() !== ''
-  if (!hasIdentity) {
-    const message =
-      'AgentMark: `identity` is required (the agent address or run seed) and must never fall ' +
-      'back to a list index -- list position is not a stable identity.'
-    // Loud in development so a missing identity is caught before it ships; production renders a
-    // visibly neutral fallback (never crashes the surrounding UI over a decorative mark).
-    if (import.meta.env.DEV) throw new Error(message)
-    // eslint-disable-next-line no-console
-    console.error(message)
+  const resolved = resolveIdentity(identity)
+  const identityLabel = labelForIdentity(resolved)
+  if (resolved.status !== 'available') {
+    return (
+      <span
+        className={`pc-agent-mark-unavailable${className ? ` ${className}` : ''}`}
+        role="status"
+        aria-label="Agent identity unavailable"
+        data-identity-state="unavailable"
+      >
+        Agent identity unavailable
+      </span>
+    )
   }
 
+  const identityKey = resolved.key
   const px = VALID_SIZES.has(size) ? size : 32
   const theme = currentDomTheme()
-  const fillIndex = hasIdentity ? hashIdentity(identity) % CREW_PALETTE.length : 0
-  const fill = hasIdentity ? CREW_PALETTE[fillIndex] : 'var(--pc-disabled)'
-  // The fallback (missing-identity) fill isn't a registered crew swatch -- INK_DARK is a safe,
-  // reasonable default for that rare, dev-already-warned-about path rather than a formally
-  // verified pairing.
-  const fillInk = hasIdentity ? CREW_INK_BY_THEME[theme][fillIndex] : INK_DARK
+  const fillIndex = hashIdentity(identityKey) % CREW_PALETTE.length
+  const fill = CREW_PALETTE[fillIndex]
+  const fillInk = CREW_INK_BY_THEME[theme][fillIndex]
 
-  const stateLabel = STATE_LABEL[state] || state
-  const colorKey = STATE_COLOR_KEY[state] || 'idle'
+  // A structured deployed/reused identity carries its phase as the real identity label. The
+  // execution `state` remains caller-owned and is never derived from persona or row position.
+  const executionState =
+    state === 'planned' && resolved.state !== 'planned' ? resolved.state : state
+  const stateLabel = stateLabelFor(executionState)
+  const colorKey = Object.prototype.hasOwnProperty.call(STATE_COLOR_KEY, executionState)
+    ? STATE_COLOR_KEY[executionState]
+    : 'idle'
   const badgeFill = STATE_BADGE_VAR[colorKey]
   const badgeInk = STATE_INK_BY_THEME[theme][colorKey]
-  const ariaLabel = `${label ? `${label} agent` : 'Agent'}, ${stateLabel}`
+  const ariaLabel = `${identityLabel}${label ? ` ${label}` : ''}, ${stateLabel}`
 
   return (
     <svg
@@ -135,7 +195,12 @@ export function AgentMark({ identity, state = 'planned', size = 32, label, class
       width={px}
       height={px}
       viewBox="0 0 32 32"
-      data-state={state}
+      data-state={executionState}
+      data-identity-state="available"
+      data-identity-phase={resolved.phase}
+      data-identity-source={resolved.source}
+      data-identity-key={identityKey}
+      data-verified={resolved.verified ? 'true' : 'false'}
       className={`pc-agent-mark pc-agent-mark--${px}${className ? ` ${className}` : ''}`}
     >
       <path d={BODY_D} fill={fill} />

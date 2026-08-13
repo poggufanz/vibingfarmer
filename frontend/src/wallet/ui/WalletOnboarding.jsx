@@ -32,12 +32,16 @@ const HEADING = {
   'standard-backup': 'Save your recovery phrase',
   'standard-unlock': 'Unlock your wallet',
   'passkey-choose': 'Create or connect a Passkey wallet',
+  'passkey-error': 'Create or connect a Passkey wallet',
   'passkey-creating': 'Setting up your wallet',
+  'passkey-create': 'Setting up your wallet',
 }
 
 export function WalletOnboarding(props) {
   const { view, status = null, account = null } = props
   const heading = HEADING[view] ?? ''
+  const isPasskeyChoice = view === 'passkey-choose' || view === 'passkey-error'
+  const isPasskeyCreating = view === 'passkey-creating' || view === 'passkey-create'
 
   if (view === 'select-account') {
     return (
@@ -110,19 +114,22 @@ export function WalletOnboarding(props) {
     )
   }
 
-  if (view === 'passkey-choose') {
+  if (isPasskeyChoice) {
     return (
       <WalletShell heading={heading} onBack={props.onBack} status={status} account={account}>
         <p className="pc-route-intro">
-          Unlock with your device or password-manager passkey — Face ID, fingerprint, Windows Hello,
-          or a synced passkey — instead of a password. This creates a smart contract account on
-          Stellar testnet (its address starts with C) controlled by that passkey.
+          Use a WebAuthn passkey from your device or password-manager passkey — Face ID,
+          fingerprint, Windows Hello, or a synced passkey — instead of a password. This creates a
+          smart contract account on Stellar testnet (its address starts with C) controlled by that
+          passkey.
         </p>
         <p className="pc-route-intro">
           Honest limit: if you ever lose access to every device holding this passkey, this wallet
           cannot be recovered unless you set up additional recovery first.
         </p>
-        {props.passkeyError && <p className="pc-field-error">{props.passkeyError}</p>}
+        {(props.passkeyError || props.error) && (
+          <p className="pc-field-error">{props.passkeyError || props.error}</p>
+        )}
         <button
           type="button"
           className="pc-button pc-button--primary"
@@ -137,20 +144,20 @@ export function WalletOnboarding(props) {
         >
           Connect an existing wallet
         </button>
-        <HonestyLabels scope="global" />
+        <HonestyLabels scope="recovery" />
       </WalletShell>
     )
   }
 
-  if (view === 'passkey-creating') {
+  if (isPasskeyCreating) {
     return (
       <WalletShell
         heading={heading}
-        status={status ?? { tone: 'info', message: 'Approve the passkey prompt if asked.' }}
+        status={status ?? { tone: 'info', message: 'Waiting for your device confirmation' }}
         account={account}
         critical
       >
-        <p className="pc-route-intro">Creating the passkey and funding it on Stellar testnet.</p>
+        <p className="pc-route-intro">Confirm the passkey prompt on your device to continue.</p>
       </WalletShell>
     )
   }

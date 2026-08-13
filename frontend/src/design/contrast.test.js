@@ -32,6 +32,8 @@ const EXPECTED_REQUIREMENTS = [
   ['day.harvestInk/harvest', '#17251F', '#DFF56C', 4.5],
   ['day.danger/canvas', '#A8403C', '#E9EEE8', 4.5],
   ['day.danger/workspace', '#A8403C', '#F7F9F5', 4.5],
+  ['day.dangerBoundary/workspace', '#A8403C', '#F7F9F5', 3],
+  ['day.dangerOnLight/owned', '#A8403C', '#F2F5EF', 4.5],
   ['day.danger/owned', '#A8403C', '#F2F5EF', 4.5],
   ['day.dangerInk/danger', '#F2F5EF', '#A8403C', 4.5],
   ['day.disabled/canvas', '#5F6C65', '#E9EEE8', 4.5],

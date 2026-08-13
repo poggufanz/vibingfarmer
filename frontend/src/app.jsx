@@ -1248,6 +1248,28 @@ export function buildPersonaByAddress(moneyDiscovery) {
   return Object.freeze(Object.fromEntries(assigned))
 }
 
+// Presentation-only clock for expiry/countdown labels. It is intentionally separate from money
+// reads and the canonical model clock: stale source evidence must never become "now", while the
+// UI still needs an independently advancing wall clock to describe elapsed permission state.
+export function startPresentationClock({
+  setNow,
+  readNow = () => Date.now(),
+  schedule = setInterval,
+  cancel = clearInterval,
+  intervalMs = 1000,
+} = {}) {
+  let active = true
+  const timer = schedule(() => {
+    if (!active) return
+    const next = readNow()
+    if (Number.isFinite(next)) setNow(next)
+  }, intervalMs)
+  return () => {
+    active = false
+    cancel(timer)
+  }
+}
+
 /* ---------- App ---------- */
 const App = () => {
   const devMode = isDevMode()
@@ -2710,6 +2732,8 @@ const App = () => {
   // signing itself stays inside stellar/exit.js, stellar/revoke.js, stellar/partialWithdraw.js
   // (wallet-kit popup / relayer ceremony), which this controller only calls, never inspects.
   const [moneyModel, setMoneyModel] = useS(() => buildMyMoneyModel({ owner: null }))
+  const [presentationNowMs, setPresentationNowMs] = useS(() => Date.now())
+  useE(() => startPresentationClock({ setNow: setPresentationNowMs }), [])
   // moneyDiscovery is declared earlier in this component now (My Money Task 13 Part B item 5's
   // positionsAgents needs it before this block runs) -- see that declaration's own comment.
   const [moneyRead, setMoneyRead] = useS(null) // readOwnerMoney-derived MoneySnapshot (buildMoneySnapshot)
@@ -4665,10 +4689,10 @@ const App = () => {
   const moneyStopAccessAgent =
     moneyRead?.agents?.find((a) => a.address === moneyStopAccessAddress) ?? null
   return (
-    <div className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'}`}>
+    <div className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'}`} data-pocket-shell>
       <SkipLink />
       <Sidebar extended={sbExtended} onToggle={toggleSb} agentCount={crew.activeCount} />
-      <main id="main-content" className="main" tabIndex={-1}>
+      <main id="main-content" className="main" tabIndex={-1} data-pocket-main data-route-heading>
         <RouteFocus pathname={location.pathname} />
         <TopBar
           onReset={handleAgain}
@@ -4728,6 +4752,7 @@ const App = () => {
                   baseUnavailableReason={BASE_CROSS_CHAIN_UNAVAILABLE_REASON}
                   baseActionError={baseWithdrawError}
                   basePlan={moneyBasePlan}
+                  nowMs={presentationNowMs}
                 />
               </>
             }
@@ -4799,6 +4824,12 @@ const App = () => {
                   onDisconnect={handleDisconnect}
                   onRevoke={handleRevoke}
                   addLog={addLog}
+                  mandateView={baseView.mandateView}
+                  connected={baseView.connected}
+                  busy={settingUpBaseMandate}
+                  error={baseMandateError}
+                  onSetup={onSetupBase}
+                  onRefresh={() => refreshBaseView(activeAccount)}
                 />
               </div>
             }

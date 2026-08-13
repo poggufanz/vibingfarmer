@@ -5,7 +5,6 @@
 // follows). Key-generation wiring (createClassicWallet via controller.js's doCreate) is
 // untouched -- only the markup changed.
 import { useState } from 'react'
-import { HonestyLabels } from '../HonestyLabels.jsx'
 
 export default function CreateScreen({ onCreate, onGoImport, busy, error }) {
   const [label, setLabel] = useState('Main')
@@ -18,7 +17,6 @@ export default function CreateScreen({ onCreate, onGoImport, busy, error }) {
     <div className="pc-standard-form" data-testid="standard-create">
       <h2>Set a password</h2>
       <p className="pc-route-intro">This password encrypts your keys on this device only.</p>
-      <HonestyLabels scope="global" />
       <div className="pc-field">
         <label htmlFor="wallet-label">Label</label>
         <input
