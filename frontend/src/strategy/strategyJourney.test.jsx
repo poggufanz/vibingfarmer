@@ -339,7 +339,19 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
           allocationId: 'run-1:deposit:0',
           amount: { token: SOROBAN_TOKEN_ADDRESS, units: '1000000000', decimals: 7 },
           executionStatus: 'succeeded',
-          custody: { location: 'stellar-vault', confirmed: true, checkedAt: Date.now() },
+          custody: {
+            location: 'stellar-vault',
+            confirmed: true,
+            source: 'receipt',
+            checkedAt: Date.now(),
+          },
+          networkContext: {
+            executionNetwork: 'stellar-testnet',
+            sourceNetwork: 'stellar-testnet',
+            destinationNetwork: 'stellar-testnet',
+            currentCustodyNetwork: 'stellar-testnet',
+            transit: 'none',
+          },
           txHash: '0xdeadbeef',
           error: null,
         },
@@ -661,7 +673,19 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
           allocationId: 'a',
           amount: { token: SOROBAN_TOKEN_ADDRESS, units: '1000000000', decimals: 7 },
           executionStatus: 'succeeded',
-          custody: { location: 'stellar-vault', confirmed: true, checkedAt: Date.now() },
+          custody: {
+            location: 'stellar-vault',
+            confirmed: true,
+            source: 'receipt',
+            checkedAt: Date.now(),
+          },
+          networkContext: {
+            executionNetwork: 'stellar-testnet',
+            sourceNetwork: 'stellar-testnet',
+            destinationNetwork: 'stellar-testnet',
+            currentCustodyNetwork: 'stellar-testnet',
+            transit: 'none',
+          },
           txHash: '0xok',
           error: null,
         },
@@ -676,7 +700,7 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
       ],
     })
     await waitFor(() => expect(screen.getByText('Some agents did not complete')).toBeTruthy())
-    expect(screen.getAllByText(/Deposited/).length).toBe(2) // one per token group (USDC, Circle USDC)
+    expect(screen.getAllByText(/Deposited/)).toHaveLength(1) // only the succeeded Stellar allocation
     expect(screen.getByText(/Held:/)).toBeTruthy()
   })
 
@@ -731,7 +755,11 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
         }}
       />
     )
-    await waitFor(() => expect(screen.getByText(/Stellar Testnet/i)).toBeTruthy())
+    await waitFor(() =>
+      expect(
+        document.querySelector('.pc-agent-lane .network-badge[data-network="stellar-testnet"]')
+      ).toBeTruthy()
+    )
   })
 
   it('J17 (real event contract): the exact verbatim orchestrator/worker event names/shapes StartStage.jsx documents drive a fresh deposit run to isReceiptComplete', async () => {
@@ -968,6 +996,12 @@ describe('Strategy journey — shared crew persona identity', () => {
     ref.current.feedEvent('reuse-confirmed', {
       runId: 'run-1',
       agentAddresses: ['CAGENT1'],
+      allocations: [
+        {
+          allocationId: 'run-1:deposit:0',
+          agentAddress: 'CAGENT1',
+        },
+      ],
     })
     await waitFor(() => expect(ref.current.getState().moment).toBe('start'))
     const startRow = screen.getByText('CAGENT1').closest('[data-agent-address]')

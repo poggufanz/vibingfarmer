@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { test } from 'node:test'
+import { test as nodeTest } from 'node:test'
 
 import { WEB_PRODUCTION_FILES, runWebCheck, scanWebSource } from './check-pocket-crew-web.mjs'
+
+const test = process.env.VITEST_WORKER_ID ? (await import('vitest')).test : nodeTest
 
 const codes = (source, path = 'src/example.css') =>
   scanWebSource(source, path).map((finding) => finding.code)
@@ -66,10 +68,9 @@ test('allows named state-bearing progress animation but still rejects ambient in
     [],
     'the live progress spinner is semantic state feedback'
   )
-  assert.deepEqual(
-    codes('.ambient-sweep { animation: ambient-sweep 1s ease infinite; }'),
-    ['INFINITE_ANIMATION']
-  )
+  assert.deepEqual(codes('.ambient-sweep { animation: ambient-sweep 1s ease infinite; }'), [
+    'INFINITE_ANIMATION',
+  ])
   assert.deepEqual(
     codes('.loop-rail.sleeping .loop-stage { animation: breathe 6s ease infinite; }'),
     [],
