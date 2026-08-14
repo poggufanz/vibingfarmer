@@ -19,7 +19,7 @@
 // `custodyBreakdown` is checked FIRST for exactly that reason.
 import { MoneyFigure, VenueTruth } from '../pocket/Primitives.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
-import { AgentMark } from '../pocket/AgentMark.jsx'
+import { AgentPersonaAvatar } from '../pocket/AgentPersonaAvatar.jsx'
 import {
   normalizeCoreAmount,
   toBaseCustodyTruth,
@@ -27,6 +27,7 @@ import {
   toFactView,
   toFreshnessView,
 } from '../../core/coreRouteAdapters.js'
+import { presentationPersonaForAddress } from '../../crew/personas.js'
 
 // The one real Stellar execution destination this product ever has (strategy/venueTruth.js:19,
 // frontend/src/config.js:37 -- identical literal, verified against both). Declared locally rather
@@ -243,6 +244,7 @@ export function PositionList({
   unattributed = {},
   collectionState = null,
   factView = null,
+  personaByAddress = null,
 }) {
   let unavailableOccurrence = 0
   const rows = agents
@@ -275,90 +277,99 @@ export function PositionList({
       <div>
         {rows.length === 0 && idleRows.length === 0 && <p>{emptyCopy}</p>}
         <ul className="pc-position-list">
-          {rows.map((row) => (
-            <li
-              key={row.unavailable ? row.key : row.address}
-              data-row-key={row.unavailable ? row.key : undefined}
-              className="pc-position-row"
-            >
-              {row.unavailable ? (
-                <div>
-                  <AgentMark identity={row.identity} state="idle" />
-                </div>
-              ) : (
-                <>
-                  <NetworkBadge networkId="stellar-testnet" />
+          {rows.map((row) => {
+            const persona = presentationPersonaForAddress(personaByAddress, row.address)
+            return (
+              <li
+                key={row.unavailable ? row.key : row.address}
+                data-row-key={row.unavailable ? row.key : undefined}
+                className="pc-position-row"
+              >
+                {row.unavailable ? (
                   <div>
-                    <AgentMark identity={row.identity} state="confirmed" />
-                    {row.stellarLeg ? (
-                      <>
-                        <p>{row.stellarLeg.label}</p>
-                        {(() => {
-                          const display = presentationAmount(row.stellarLeg.amount, factView)
-                          return (
-                            <MoneyFigure
-                              state={display.state}
-                              amount={display.amount}
-                              freshness={display.freshness}
-                            />
-                          )
-                        })()}
-                      </>
-                    ) : (
-                      <p>Bridging via {shortAddress(row.address)}</p>
-                    )}
+                    <AgentPersonaAvatar identity={row.identity} persona={null} state="idle" />
                   </div>
-                  <span>{shortAddress(row.address)}</span>
+                ) : (
+                  <>
+                    <NetworkBadge networkId="stellar-testnet" />
+                    <div className="pc-position-main">
+                      <AgentPersonaAvatar
+                        identity={row.identity}
+                        persona={persona}
+                        state="confirmed"
+                      />
+                      <div>
+                        {row.stellarLeg ? (
+                          <>
+                            <p>{row.stellarLeg.label}</p>
+                            {(() => {
+                              const display = presentationAmount(row.stellarLeg.amount, factView)
+                              return (
+                                <MoneyFigure
+                                  state={display.state}
+                                  amount={display.amount}
+                                  freshness={display.freshness}
+                                />
+                              )
+                            })()}
+                          </>
+                        ) : (
+                          <p>Bridging via {shortAddress(row.address)}</p>
+                        )}
+                      </div>
+                    </div>
+                    <span>{shortAddress(row.address)}</span>
 
-                  {row.childLegs.length > 0 && (
-                    <ul className="pc-position-row-children">
-                      {row.childLegs.map((leg) => (
-                        <li key={leg.key}>
-                          {leg.kind === 'base-settled' ? (
-                            <>
-                              <NetworkBadge networkId="base-sepolia" />
-                              <VenueTruth
-                                kind={baseTruth.yield.state === 'none' ? 'base-proxy' : 'unknown'}
-                                venue={baseTruth.destination}
+                    {row.childLegs.length > 0 && (
+                      <ul className="pc-position-row-children">
+                        {row.childLegs.map((leg) => (
+                          <li key={leg.key}>
+                            {leg.kind === 'base-settled' ? (
+                              <>
+                                <NetworkBadge networkId="base-sepolia" />
+                                <VenueTruth
+                                  kind={baseTruth.yield.state === 'none' ? 'base-proxy' : 'unknown'}
+                                  venue={baseTruth.destination}
+                                />
+                              </>
+                            ) : (
+                              <NetworkRoute
+                                context={{
+                                  hostNetworkId: 'stellar-testnet',
+                                  sourceNetworkId: 'stellar-testnet',
+                                  destinationNetworkId: 'base-sepolia',
+                                  custodyNetworkId: 'stellar-testnet',
+                                  transitState: 'unknown',
+                                }}
                               />
-                            </>
-                          ) : (
-                            <NetworkRoute
-                              context={{
-                                hostNetworkId: 'stellar-testnet',
-                                sourceNetworkId: 'stellar-testnet',
-                                destinationNetworkId: 'base-sepolia',
-                                custodyNetworkId: 'stellar-testnet',
-                                transitState: 'unknown',
-                              }}
-                            />
-                          )}
-                          {leg.identityLabel && (
-                            <p className="pc-position-leg-identity">{leg.identityLabel}</p>
-                          )}
-                          {(() => {
-                            const display = presentationAmount(leg.amount, factView)
-                            return (
-                              <MoneyFigure
-                                state={display.state}
-                                amount={display.amount}
-                                freshness={display.freshness}
-                              />
-                            )
-                          })()}
-                          {leg.coverageReason && (
-                            <p className="pc-money pc-money--unknown">
-                              {COVERAGE_REASON_COPY[leg.coverageReason] ?? leg.coverageReason}
-                            </p>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              )}
-            </li>
-          ))}
+                            )}
+                            {leg.identityLabel && (
+                              <p className="pc-position-leg-identity">{leg.identityLabel}</p>
+                            )}
+                            {(() => {
+                              const display = presentationAmount(leg.amount, factView)
+                              return (
+                                <MoneyFigure
+                                  state={display.state}
+                                  amount={display.amount}
+                                  freshness={display.freshness}
+                                />
+                              )
+                            })()}
+                            {leg.coverageReason && (
+                              <p className="pc-money pc-money--unknown">
+                                {COVERAGE_REASON_COPY[leg.coverageReason] ?? leg.coverageReason}
+                              </p>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </li>
+            )
+          })}
 
           {idleRows.map((row) => (
             <li key={row.kernelAddress} className="pc-position-row">

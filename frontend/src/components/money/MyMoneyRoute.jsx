@@ -51,6 +51,7 @@ function basePositionAmount(position) {
 export function MyMoneyRoute({
   model,
   agents = [],
+  personaByAddress = null,
   discovery = null,
   account = null,
   keeper,
@@ -92,6 +93,7 @@ export function MyMoneyRoute({
           unattributed={model?.unattributed}
           collectionState={model?.state}
           factView={factView}
+          personaByAddress={personaByAddress}
         />
         <AgentTeam
           agents={agents}
@@ -101,6 +103,7 @@ export function MyMoneyRoute({
           onRecoverAgent={onRecoverAgent}
           collectionState={model?.state}
           presentationNow={nowMs}
+          personaByAddress={personaByAddress}
         />
         <VaultProtection protection={model?.protection} />
         <HowMoneyWorks

@@ -4,6 +4,7 @@ import {
   CREW_PERSONAS,
   legacyPersonaSlot,
   personaForOrdinal,
+  presentationPersonaForAddress,
 } from './personas.js'
 
 const ADDRESS_A = 'CAUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSS3Y4'
@@ -34,6 +35,20 @@ describe('personaForOrdinal', () => {
       expect(personaForOrdinal(ordinal)).toBeNull()
     }
   )
+})
+
+describe('presentationPersonaForAddress', () => {
+  it('prefers the exact discovered assignment', () => {
+    expect(presentationPersonaForAddress({ [ADDRESS_A]: CREW_PERSONAS[1] }, ADDRESS_A)).toBe(
+      CREW_PERSONAS[1]
+    )
+  })
+
+  it('uses a stable legacy avatar for an older verified account', () => {
+    expect(presentationPersonaForAddress(null, ADDRESS_A)).toBe(CREW_PERSONAS[2])
+    expect(presentationPersonaForAddress(null, ADDRESS_A)).toBe(CREW_PERSONAS[2])
+    expect(presentationPersonaForAddress(null, '')).toBeNull()
+  })
 })
 
 describe('assignCrewPersona', () => {
