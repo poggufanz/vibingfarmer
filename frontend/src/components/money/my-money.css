@@ -329,6 +329,38 @@
   border-bottom: 1px solid var(--pc-line);
 }
 
+.pc-money-agent-avatar {
+  display: block;
+  width: 48px;
+  height: 48px;
+  flex: none;
+}
+
+.pc-position-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--pc-space-4);
+  align-items: center;
+  min-width: 0;
+}
+
+.pc-agent-team-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2) var(--pc-space-3);
+  align-items: center;
+}
+
+.pc-agent-team-heading strong {
+  color: var(--pc-ink);
+}
+
+.pc-crew-summary-note {
+  margin: 0 0 var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+}
+
 /* This route's own addition (not a contract selector): a bridge agent's Stellar-hosted position
  * row hosts nested Base custody rows for each of its settled/in-transit legs (Step 3: "its Base
  * children are separate nested rows"). `grid-column: 1 / -1` puts the nested list on its own full-

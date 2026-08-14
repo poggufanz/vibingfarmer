@@ -303,6 +303,17 @@ describe('PositionList — Stellar vault destination and network truth', () => {
     expect(screen.getByText('Stellar testnet')).toBeTruthy()
   })
 
+  it('uses the assigned branded persona icon for the position owner', () => {
+    render(
+      <PositionList
+        agents={[stellarVaultAgent('CAGENT1')]}
+        personaByAddress={{ CAGENT1: { id: 'clover' } }}
+      />
+    )
+    const avatar = screen.getByRole('img', { name: /Clover agent/ })
+    expect(avatar.getAttribute('src')).toBe('/brand/agents/clover.svg')
+  })
+
   it('renders the real position amount, not a placeholder', () => {
     render(<PositionList agents={[stellarVaultAgent('CAGENT1', 250_0000000n)]} />)
     expect(screen.getByText(/250/)).toBeTruthy()
