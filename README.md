@@ -6,12 +6,12 @@
 
 **Live app:** [vibing-farmer.pages.dev](https://vibing-farmer.pages.dev) · [VF Wallet extension](https://github.com/poggufanz/vibingfarmer/releases/latest/download/vibingfarmer-extension.zip) · Stellar testnet
 
-<div align="center">
+<!-- <div align="center">
   <a href="https://youtu.be/8mS_DsrNxbM">
     <img src="https://img.youtube.com/vi/8mS_DsrNxbM/maxresdefault.jpg" alt="Vibing Farmer demo" width="70%">
   </a>
   <p><em>▶ 2-minute walkthrough — strategy → AI council → one signature → parallel deposits</em></p>
-</div>
+</div> -->
 
 Yield farming is the same loop: find a vault, approve, deposit, do it again for the next protocol. Vibing Farmer turns that into one wallet signature. An AI strategist picks vaults and writes per-agent instructions; workers deposit in parallel; you pay zero gas.
 
