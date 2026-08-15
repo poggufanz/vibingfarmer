@@ -9,6 +9,7 @@
   "freeze": {
     "active": true,
     "activatedOn": "2026-08-11",
+    "baselineSha": "3c792e37f7866d9c4b74105ad1705a0595187000",
     "forbiddenCommitTypes": ["feat"]
   },
   "claims": [

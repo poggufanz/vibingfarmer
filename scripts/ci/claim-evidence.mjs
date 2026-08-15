@@ -313,6 +313,9 @@ function validateEvidenceMatrixInternal(
     } else if (!matrix.freeze.forbiddenCommitTypes.includes("feat")) {
       fail("freeze.forbiddenCommitTypes must include feat");
     }
+    if (!isValidSha(matrix.freeze.baselineSha)) {
+      fail("freeze.baselineSha must be a full 40-character commit SHA", true);
+    }
   }
 
   if (!Array.isArray(matrix.claims)) {
@@ -892,11 +895,31 @@ export async function verifyCandidateFromSources({
   return { ...identity, tag, preview };
 }
 
-function getCommitSubjects(repoRoot, baseSha, headSha) {
+/**
+ * Subjects the range introduces *after* the freeze took effect. History already reachable from
+ * the freeze baseline commit predates the freeze and is excluded — a release merge (dev -> main)
+ * replays hundreds of pre-freeze commits and must not be rejected for commits the freeze never
+ * governed. Anything landed after the baseline is still scanned, so the freeze keeps its teeth.
+ */
+function getCommitSubjects(repoRoot, baseSha, headSha, baselineSha) {
+  if (!isValidSha(baselineSha)) {
+    throw new Error("freeze baseline commit SHA is invalid");
+  }
+  try {
+    execFileSync("git", ["cat-file", "-e", `${baselineSha}^{commit}`], {
+      cwd: repoRoot,
+      stdio: "ignore",
+    });
+  } catch {
+    // Fail closed: without the baseline in the checkout the exclusion cannot be trusted.
+    throw new Error(
+      "freeze baseline commit is missing from the checkout (fetch full history)",
+    );
+  }
   try {
     const output = execFileSync(
       "git",
-      ["log", "--format=%s", `${baseSha}..${headSha}`],
+      ["log", "--format=%s", `${baseSha}..${headSha}`, `^${baselineSha}`],
       {
         cwd: repoRoot,
         encoding: "utf8",
@@ -977,7 +1000,12 @@ async function run() {
   if (hasBase && hasHead) {
     let subjects;
     try {
-      subjects = getCommitSubjects(inputRepoRoot, baseSha, headSha);
+      subjects = getCommitSubjects(
+        inputRepoRoot,
+        baseSha,
+        headSha,
+        matrix.freeze?.baselineSha,
+      );
     } catch (error) {
       console.error(`claim-evidence ERROR: ${error.message}`);
       process.exitCode = 2;

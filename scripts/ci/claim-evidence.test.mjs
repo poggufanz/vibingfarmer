@@ -57,6 +57,7 @@ function matrixWithClaims(overrides = {}) {
     freeze: {
       active: true,
       activatedOn: "2026-08-11",
+      baselineSha: "0".repeat(40),
       forbiddenCommitTypes: ["feat"],
     },
     claims,
@@ -125,7 +126,7 @@ function git(cwd, args) {
   }).trim();
 }
 
-function makeGitRange(subject) {
+function makeGitRange(subject, { preFreezeSubject = null } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "claim-evidence-range-"));
   mkdirSync(path.join(root, "release"), { recursive: true });
   const fixture = matrixWithClaims();
@@ -147,12 +148,34 @@ function makeGitRange(subject) {
   git(root, ["config", "user.email", "claim-evidence-test@example.invalid"]);
   git(root, ["add", "."]);
   git(root, ["commit", "-qm", "chore: seed evidence fixture"]);
+  // Stands in for a long-lived integration branch tip that predates the freeze entirely.
+  const preFreezeBaseSha = git(root, ["rev-parse", "HEAD"]);
+  if (preFreezeSubject) {
+    writeFileSync(path.join(root, "pre-freeze.txt"), "pre-freeze work\n");
+    git(root, ["add", "pre-freeze.txt"]);
+    git(root, ["commit", "-qm", preFreezeSubject]);
+  }
+  writeFileSync(path.join(root, "freeze.txt"), "freeze\n");
+  git(root, ["add", "freeze.txt"]);
+  git(root, [
+    "commit",
+    "-qm",
+    "chore(release): publish claim evidence and freeze features",
+  ]);
+  const baselineSha = git(root, ["rev-parse", "HEAD"]);
+  fixture.freeze.baselineSha = baselineSha;
+  writeFileSync(
+    path.join(root, "release", "evidence-matrix.json"),
+    JSON.stringify(fixture, null, 2),
+  );
+  git(root, ["add", "release/evidence-matrix.json"]);
+  git(root, ["commit", "-qm", "chore(release): record the freeze baseline"]);
   const baseSha = git(root, ["rev-parse", "HEAD"]);
   writeFileSync(path.join(root, "change.txt"), "range fixture\n");
   git(root, ["add", "change.txt"]);
   git(root, ["commit", "-qm", subject]);
   const headSha = git(root, ["rev-parse", "HEAD"]);
-  return { root, baseSha, headSha };
+  return { root, baseSha, headSha, baselineSha, preFreezeBaseSha };
 }
 
 test("validateEvidenceMatrix: the minimum valid shape passes with ordinary claims proven and candidate pending", () => {
@@ -194,6 +217,27 @@ test("validateEvidenceMatrix: candidate tag, freeze, and production policy are e
   const productionPublish = matrixWithClaims();
   productionPublish.candidate.productionPublish = true;
   assert.match(failuresFor(productionPublish).join("\n"), /productionPublish/i);
+});
+
+test("validateEvidenceMatrix: the freeze must name its baseline commit as a full SHA", () => {
+  const missing = matrixWithClaims();
+  delete missing.freeze.baselineSha;
+  assert.match(failuresFor(missing).join("\n"), /baselineSha/i);
+
+  const abbreviated = matrixWithClaims();
+  abbreviated.freeze.baselineSha = "3c792e3";
+  assert.match(failuresFor(abbreviated).join("\n"), /baselineSha/i);
+});
+
+test("the checked-in freeze baseline is a real ancestor of the current commit", () => {
+  const baselineSha = checkedInMatrix().freeze.baselineSha;
+  assert.match(baselineSha, /^[0-9a-f]{40}$/);
+  const type = execFileSync(
+    "git",
+    ["cat-file", "-t", `${baselineSha}^{commit}`],
+    { cwd: repoRoot, encoding: "utf8" },
+  ).trim();
+  assert.equal(type, "commit");
 });
 
 test("validateEvidenceMatrix: evidence paths cannot escape the repository root", () => {
@@ -808,6 +852,68 @@ test("CLI: rejects a feat commit in the supplied freeze range as policy exit 1",
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /feature freeze|feat\(ui\)!/i);
+});
+
+test("CLI: a release merge replaying pre-freeze feat commits still passes", () => {
+  const fixture = makeGitRange("fix: align expiry", {
+    preFreezeSubject: "feat(ui): pre-freeze surface",
+  });
+  const result = runCli(
+    {
+      CLAIM_EVIDENCE_MATRIX_PATH: path.join(
+        fixture.root,
+        "release",
+        "evidence-matrix.json",
+      ),
+      CLAIM_EVIDENCE_REPO_ROOT: fixture.root,
+      FREEZE_BASE_SHA: fixture.preFreezeBaseSha,
+      FREEZE_HEAD_SHA: fixture.headSha,
+    },
+    fixture.root,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /claim-evidence OK/);
+});
+
+test("CLI: a feat commit landed after the baseline is still rejected in a wide range", () => {
+  const fixture = makeGitRange("feat(ui): post-freeze surface", {
+    preFreezeSubject: "feat(ui): pre-freeze surface",
+  });
+  const result = runCli(
+    {
+      CLAIM_EVIDENCE_MATRIX_PATH: path.join(
+        fixture.root,
+        "release",
+        "evidence-matrix.json",
+      ),
+      CLAIM_EVIDENCE_REPO_ROOT: fixture.root,
+      FREEZE_BASE_SHA: fixture.preFreezeBaseSha,
+      FREEZE_HEAD_SHA: fixture.headSha,
+    },
+    fixture.root,
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /post-freeze surface/);
+  assert.doesNotMatch(result.stderr, /pre-freeze surface/);
+});
+
+test("CLI: a freeze baseline missing from the checkout fails closed as exit 2", () => {
+  const fixture = makeGitRange("fix: align expiry");
+  const matrixPath = path.join(fixture.root, "release", "evidence-matrix.json");
+  const matrix = JSON.parse(readFileSync(matrixPath, "utf8"));
+  matrix.freeze.baselineSha = "b".repeat(40);
+  writeFileSync(matrixPath, JSON.stringify(matrix, null, 2));
+  const result = runCli(
+    {
+      CLAIM_EVIDENCE_MATRIX_PATH: matrixPath,
+      CLAIM_EVIDENCE_REPO_ROOT: fixture.root,
+      FREEZE_BASE_SHA: fixture.baseSha,
+      FREEZE_HEAD_SHA: fixture.headSha,
+    },
+    fixture.root,
+  );
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /baseline commit is missing/i);
 });
 
 test("CLI: rejects an unreadable freeze range as malformed exit 2", () => {
