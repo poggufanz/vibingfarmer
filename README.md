@@ -4,7 +4,7 @@
 
 > **Set once. Vibe forever.** An AI agent swarm that farms yield for you on Stellar, under limits you sign once and the chain enforces.
 
-**Live app:** [vibing-farmer.pages.dev](https://vibing-farmer.pages.dev) · [Demo video (2 min)](https://youtu.be/8mS_DsrNxbM) · [VF Wallet extension](https://github.com/poggufanz/vibingfarmer/releases/latest/download/vibingfarmer-extension.zip) · Stellar testnet
+**Live app:** [vibing-farmer.pages.dev](https://vibing-farmer.pages.dev) · [VF Wallet extension](https://github.com/poggufanz/vibingfarmer/releases/latest/download/vibingfarmer-extension.zip) · Stellar testnet
 
 <div align="center">
   <a href="https://youtu.be/8mS_DsrNxbM">
