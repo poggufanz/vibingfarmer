@@ -128,12 +128,9 @@ vi.mock('./stellar/partialWithdraw.js', () => ({
 vi.mock('./stellar/exit.js', () => ({ sweepAgents: vi.fn() }))
 vi.mock('./base/relayerClient.js', async (importOriginal) => ({
   ...(await importOriginal()),
-  getMandateStatus: (...args) => {
-    const owner = args[1]?.stellarOwner
-    return harness.mandateResponses.has(owner)
-      ? harness.mandateResponses.get(owner)
-      : harness.getMandateStatus(...args)
-  },
+  // Every call goes through the spy so an assertion can name the exact refresh that made it;
+  // the queued per-owner response is applied inside the spy, never as a path around it.
+  getMandateStatus: (...args) => harness.getMandateStatus(...args),
 }))
 vi.mock('./strategy/mergedCatalog.js', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -177,7 +174,10 @@ beforeEach(() => {
   harness.accountListener = null
   harness.mandateRecords = new Map()
   harness.mandateResponses = new Map()
-  harness.getMandateStatus.mockReset().mockResolvedValue(null)
+  harness.getMandateStatus.mockReset().mockImplementation(async (_mandateId, context) => {
+    const owner = context?.stellarOwner
+    return harness.mandateResponses.has(owner) ? harness.mandateResponses.get(owner) : null
+  })
   harness.checkRelayerHealth.mockReset().mockResolvedValue(false)
   harness.account = {
     version: 1,
@@ -232,6 +232,9 @@ describe('App Settings composition seam', () => {
 
     const pendingA = deferred()
     harness.mandateResponses.set(ACCOUNT_A, pendingA.promise)
+    // Drop the mount-time refresh's call so the assertion below can only pass on the call this
+    // explicit onRefresh() makes -- otherwise a slow mount lets a stale call satisfy it.
+    harness.getMandateStatus.mockClear()
     const refreshPromise = harness.settingsProps.onRefresh()
     await waitFor(() =>
       expect(harness.getMandateStatus).toHaveBeenCalledWith(
