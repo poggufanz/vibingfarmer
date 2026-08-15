@@ -1,20 +1,24 @@
 // frontend/src/stellar/vaultReads.test.js
 import { describe, test, expect } from 'vitest'
-import { xdr, Address, nativeToScVal } from '@stellar/stellar-sdk'
+import { xdr, nativeToScVal } from '@stellar/stellar-sdk'
 import {
   readPricePerShare,
-  readStrategies,
+  readTotalShares,
   estimateSupplyAprBps,
   readSupplyAprBps,
   readLifeboatState,
   readPendingUpgrade,
+  sharesToAssetUnits,
 } from './vaultReads.js'
 
-// Stand-in strkeys (same ones agentDeposit.test.js already uses) — any syntactically valid
+// Stand-in strkey (same one agentDeposit.test.js already uses) — any syntactically valid
 // C-address works since these reads never touch the network.
 const VAULT = 'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5'
-const STRAT_1 = 'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5'
-const STRAT_2 = 'CCRG37UTQ2BRCJSA3WYZIUTSGZVLYQ7C4EET2WYUWLU4NAWTETGB77JW'
+
+// Decode the invoked contract function's name straight off the built tx, so a test can pin
+// EXACTLY which on-chain method a read* function calls. A canned retval alone can't catch a
+// caller silently renamed to the wrong deployed method (e.g. total_shares vs total_supply).
+const invokedMethod = (tx) => tx.operations[0].func.invokeContract().functionName().toString()
 
 describe('readPricePerShare', () => {
   test('returns the decoded i128 via an injected server', async () => {
@@ -34,25 +38,32 @@ describe('readPricePerShare', () => {
   })
 })
 
-describe('readStrategies', () => {
-  test('returns decoded strategy addresses', async () => {
+describe('readTotalShares', () => {
+  test('invokes the deployed total_shares getter (pinned) and returns 0n (empty vault, first-deposit path)', async () => {
     const fakeServer = {
-      simulateTransaction: async () => ({
-        result: {
-          retval: xdr.ScVal.scvVec([
-            Address.fromString(STRAT_1).toScVal(),
-            Address.fromString(STRAT_2).toScVal(),
-          ]),
-        },
-      }),
+      simulateTransaction: async (tx) => {
+        expect(invokedMethod(tx)).toBe('total_shares')
+        return { result: { retval: nativeToScVal(0n, { type: 'i128' }) } }
+      },
     }
-    const strategies = await readStrategies(VAULT, { server: fakeServer })
-    expect(strategies).toEqual([STRAT_1, STRAT_2])
+    const shares = await readTotalShares(VAULT, { server: fakeServer })
+    expect(shares).toBe(0n)
   })
 
-  test('returns [] on simulation failure rather than throwing', async () => {
+  test('invokes total_shares (pinned) and returns the decoded i128 for a vault with prior supply', async () => {
+    const fakeServer = {
+      simulateTransaction: async (tx) => {
+        expect(invokedMethod(tx)).toBe('total_shares')
+        return { result: { retval: nativeToScVal(500_0000000n, { type: 'i128' }) } }
+      },
+    }
+    const shares = await readTotalShares(VAULT, { server: fakeServer })
+    expect(shares).toBe(500_0000000n)
+  })
+
+  test('returns null (not 0n) on simulation failure rather than throwing', async () => {
     const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
-    expect(await readStrategies(VAULT, { server: fakeServer })).toEqual([])
+    expect(await readTotalShares(VAULT, { server: fakeServer })).toBeNull()
   })
 })
 
@@ -215,5 +226,27 @@ describe('readPendingUpgrade', () => {
   test('returns null on simulation failure rather than throwing', async () => {
     const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
     expect(await readPendingUpgrade(VAULT, { server: fakeServer })).toBeNull()
+  })
+})
+
+describe('sharesToAssetUnits', () => {
+  test('0 shares is trivially worth 0, even when pps is unknown (RPC failure)', () => {
+    expect(sharesToAssetUnits(0n, null)).toBe(0n)
+  })
+
+  test('0 shares is worth 0 when pps is known too', () => {
+    expect(sharesToAssetUnits(0n, 20_000_000n)).toBe(0n)
+  })
+
+  test('a positive share count with no price (pps read failed) cannot be valued -> null, never a guess', () => {
+    expect(sharesToAssetUnits(1000n, null)).toBeNull()
+  })
+
+  test('converts at 1:1 pps (10_000_000 == 1.0000000)', () => {
+    expect(sharesToAssetUnits(1000n, 10_000_000n)).toBe(1000n)
+  })
+
+  test('converts at a non-1:1 exchange rate (pps has drifted from vault yield)', () => {
+    expect(sharesToAssetUnits(1000n, 20_000_000n)).toBe(2000n)
   })
 })

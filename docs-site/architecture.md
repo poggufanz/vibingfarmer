@@ -24,7 +24,7 @@ User input (amount, risk level, vault count)
     v     v     v
  Worker Worker Worker   (parallel agents)
    ed25519 session key signs a Soroban auth entry
-   fee-bump relay broadcasts — user pays zero gas
+   Network fee sponsored by fee-bump relay.
    autofarm vault -> Blend Capital v2 (real testnet lending yield)
                 |
                 v
@@ -45,7 +45,7 @@ Each stage below hands a specific payload to the next, and each external depende
 
 **User review → grant.** The user edits and approves the per-agent skill cards, then signs once: `funding_router.grant(owner, budget, expiry_ledger, agents[])`. This single signature sets a SEP-41 allowance from the user to the router and deploys N fresh `agent_account` contracts in the same transaction.
 
-**Grant → relay → submission.** The signed grant transaction is submitted preferentially through the fee-bump relay, which pays the network fee so the user's wallet never touches XLM. **If the relay is unreachable (a 503, a network error, or a missing configuration), the flow falls back to a direct, user-paid submission** rather than getting stuck waiting on infrastructure that isn't there — the transaction still lands, just with the user's own account paying the fee this one time.
+**Grant → relay → submission.** The signed grant transaction is submitted preferentially through the fee-bump relay. Network fee sponsored by fee-bump relay. **If the relay is unreachable (a 503, a network error, or a missing configuration), the flow falls back to a direct, user-paid submission** rather than getting stuck waiting on infrastructure that isn't there — the transaction still lands, just with the user's own account paying the fee this one time.
 
 **Grant → workers → vault.** Each worker signs a deposit authorization with its own ephemeral session key and submits it via the relay. The orchestrator dispatches workers in sequence with a short gap between each (to respect the relay's per-IP rate limit — not simultaneous, see [§3.7 in FEATURES.md](../FEATURES.md#37-parallel-agent-swarm)), and wraps each worker's execution so one failure never aborts the others. Per worker, after submitting the deposit, the code reads a baseline of vault shares beforehand and then **polls `vault.balance(agentAddress)` up to 8 times, 3 seconds apart**, until the share increase is actually confirmed on-chain — because a Soroban transaction returning "success" doesn't by itself guarantee the expected state change landed. If the poll never confirms, the worker reports failure rather than silently assuming success.
 
@@ -53,18 +53,27 @@ Each stage below hands a specific payload to the next, and each external depende
 
 **Vault → autonomy plane.** From here, three separate background actors take over routine and emergency maintenance without further user signatures — described in full below.
 
+## Explorer deployment facts
+
+The Stellar-only Explorer keeps source and deployment facts separate: 7 Soroban source crates,
+6 first-party Vibing Farmer deployments, and 2 external protocol contracts make 8 static Stellar
+testnet addresses. Agent accounts are created dynamically per run. The active funding router is
+V2 at `CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE`; the agent-account WASM value
+is a code hash, not a contract address. See the complete categorized table in
+[Deployed contracts](contracts.md).
+
 ## Layers
 
 | Layer | Technology |
 |-------|------------|
-| Smart contracts | Rust, Soroban SDK, OpenZeppelin Stellar contracts |
+| Smart contracts | Rust, Soroban SDK, OpenZeppelin Stellar contracts (`agent_account`, `attestation`, `autofarm_vault`, `blend_strategy`, `exit_router`, `funding_router`, `registry`) |
 | Frontend | React 18, Vite 5, React Router v6, Framer Motion, react-force-graph-2d |
 | Chain client | `@stellar/stellar-sdk`, Stellar Wallets Kit (Freighter / xBull / Albedo) |
 | Wallet | VF Wallet (passkey smart account + extension) or any standard Stellar wallet |
 | AI | Venice AI via API key or x402 (SIWE, prepaid USDC); DeepSeek server proxy as zero-config fallback |
 | Yield | Autofarm vault → Blend Capital v2 (real testnet lending interest) |
 | Live market data | DeFiLlama API (APY, TVL, 7-day history); Tavily search for strategy context |
-| Gas | Own fee-bump relayer (`/api/stellar-relay`, allowlisted ops) — user pays 0 |
+| Network fee | Sponsored by fee-bump relay (`/api/stellar-relay`, allowlisted ops) |
 | Cross-chain (optional) | Circle CCTP v2 + relayer + ZeroDev on Base Sepolia |
 | Crypto | ed25519 session keys; libsodium KDF-sealed per-worker key vault |
 | Hosting | Cloudflare Pages: static SPA + `/api/*` Pages Functions |

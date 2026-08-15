@@ -8,6 +8,7 @@
 // so it can NEVER be reused as the Base owner. Every wallet — VF or otherwise — therefore gets
 // ONE ZeroDev passkey ceremony, recorded here so it never repeats. This owner key guards Base
 // withdraw (drain-proof by omission) — it must stay a real passkey, never a derived/stored secret.
+import { baseOwnerStorageKey, readBaseOwner } from './baseBinding.js'
 //
 // No top-level import of passkeyBase.js: isVfWallet (below) is reached EAGERLY, at app boot,
 // via mergeFlowHelpers.js -> app.jsx — a static import here would drag the whole ZeroDev/viem
@@ -15,6 +16,13 @@
 // showed up in the eager dist chunk). The dynamic import inside ensureBaseOwner (mirrors
 // orchestrator.js's baseLeg.js gating from Task 8) keeps that chain lazy — loaded only when a
 // Base ceremony/login actually runs.
+//
+// VF Wallet Task 6: ensureBaseOwner ALSO dual-writes an owner-scoped BaseOwnerRecordV2 (see
+// ./baseBinding.js) keyed by `connectedAddress` (the Stellar owner) alongside the two legacy
+// global keys below. The legacy keys are NOT removed here — passkeyBridge.test.js (owner-
+// modified, untouched by this task) asserts them directly, and app.jsx/skills.jsx/
+// HistoryPanel.jsx migrate onto the v2 record in the same task without this file's legacy
+// behavior changing underneath them.
 const OWNER_KEY = 'vf_base_owner'
 
 export function isVfWallet(connectedAddress) {
@@ -68,5 +76,20 @@ export async function ensureBaseOwner({ connectedAddress, preferLogin = false, d
   // Persisted separately from OWNER_KEY so the dashboard can read positions (dashboardPositions.js)
   // without ever touching the passkey — only an actual withdraw calls back into this ceremony.
   localStorage.setItem('vf_base_owner_address', account.address)
+  // Owner-scoped v2 record (VF Wallet Task 6) — dual-written beside the legacy keys above.
+  // Preserves createdAt across a login-mode re-resolution; only updatedAt moves.
+  const existingV2 = readBaseOwner(connectedAddress)
+  const now = Date.now()
+  localStorage.setItem(
+    baseOwnerStorageKey(connectedAddress),
+    JSON.stringify({
+      version: 2,
+      stellarOwner: connectedAddress,
+      kernelAddress: account.address,
+      passkeyName,
+      createdAt: existingV2?.createdAt ?? now,
+      updatedAt: now,
+    })
+  )
   return { ...account, ownerMode }
 }

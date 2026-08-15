@@ -41,7 +41,9 @@ describe('readPositions', () => {
       publicClient,
     })
 
-    expect(positions).toEqual([{ pool: '0xBBBB', shares: 10_000_000n, assets: 9_900_000n, minAssets: 9_850_500n }])
+    expect(positions).toEqual([
+      { pool: '0xBBBB', shares: 10_000_000n, assets: 9_900_000n, minAssets: 9_850_500n },
+    ])
     expect(readContract).not.toHaveBeenCalledWith(
       expect.objectContaining({ functionName: 'convertToAssets', address: '0xAAAA' })
     )
@@ -62,7 +64,9 @@ describe('readPositions', () => {
       slippageBps: 100, // 1%
     })
 
-    expect(positions).toEqual([{ pool: '0xAAAA', shares: 10_000_000n, assets: 10_000_000n, minAssets: 9_900_000n }])
+    expect(positions).toEqual([
+      { pool: '0xAAAA', shares: 10_000_000n, assets: 10_000_000n, minAssets: 9_900_000n },
+    ])
   })
 
   test('rejects an empty pools list', async () => {

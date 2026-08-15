@@ -47,20 +47,35 @@ export async function signTransactionForContract({ tx, contractId, kit, sdk }) {
     }
   }
   if (!signedAny) {
-    throw new Error("VF Wallet found no auth entry in this transaction for its own account")
+    throw new Error('VF Wallet found no auth entry in this transaction for its own account')
   }
   return tx.toEnvelope().toXDR('base64')
 }
 
 /**
- * Signs a single Soroban auth entry, base64 XDR string in/out.
- * @param {{authEntry:string, kit?:object, sdk?:object}} p
+ * Signs a single Soroban auth entry, base64 XDR string in/out. When `contractId` is supplied,
+ * verifies the entry's required signer IS that contract before ever invoking the WebAuthn
+ * ceremony (kit.signAuthEntry) — fails closed instead of asking Face ID to sign for an account
+ * the caller didn't ask for. `contractId` is optional so existing internal callers (extension's
+ * own ceremony.js) keep working unchanged; approve.js's dapp-consent path always supplies it.
+ * @param {{authEntry:string, contractId?:string, kit?:object, sdk?:object}} p
  * @returns {Promise<string>} base64 signed auth entry XDR
  */
-export async function signAuthEntryString({ authEntry, kit, sdk }) {
+export async function signAuthEntryString({ authEntry, contractId, kit, sdk }) {
   kit = kit ?? (await makeKit())
-  const { xdr } = sdk ?? (await import('@stellar/stellar-sdk'))
+  const { xdr, Address } = sdk ?? (await import('@stellar/stellar-sdk'))
   const decoded = xdr.SorobanAuthorizationEntry.fromXDR(authEntry, 'base64')
+  if (contractId) {
+    const credsSwitch = decoded.credentials().switch().name
+    const wantScAddress = Address.fromString(contractId).toScAddress().toXDR('base64')
+    const gotScAddress =
+      credsSwitch === 'sorobanCredentialsAddress'
+        ? decoded.credentials().address().address().toXDR('base64')
+        : null
+    if (gotScAddress !== wantScAddress) {
+      throw new Error('VF Wallet: auth entry signer does not match the active account')
+    }
+  }
   const signed = await kit.signAuthEntry(decoded)
   return signed.toXDR('base64')
 }

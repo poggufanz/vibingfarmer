@@ -12,7 +12,11 @@ import { prunePass } from './prune.js'
 const VALID_ROLES = new Set(['yield', 'risk', 'market'])
 
 function slug(text) {
-  const base = String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)
+  const base = String(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
   return `grown-${base || 'rule'}-${Date.now().toString(36)}`
 }
 
@@ -30,7 +34,17 @@ export async function proposeRule(ctx, { ask, store }) {
     const text = typeof delta.text === 'string' ? delta.text.trim() : ''
     if (!VALID_ROLES.has(role) || text.length < 8) return
 
-    store.addRule({ id: slug(text), role, category: roleToCategory(role), text, origin: 'grown', status: 'active', helpful: 0, harmful: 0, evals: 0 })
+    store.addRule({
+      id: slug(text),
+      role,
+      category: roleToCategory(role),
+      text,
+      origin: 'grown',
+      status: 'active',
+      helpful: 0,
+      harmful: 0,
+      evals: 0,
+    })
 
     // Refine: merge near-dups, then prune the role's rules. Write back atomically.
     const all = store.getRules()

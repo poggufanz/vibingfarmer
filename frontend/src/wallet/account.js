@@ -2,6 +2,7 @@ import { WALLET_CONFIG } from './config.js'
 import { rpcServer, buildInvokeTx } from '../stellar/client.js'
 import { SOROBAN_TOKEN_ADDRESS, SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/config.js'
 import { toBaseUnits } from '../stellar/format.js'
+import { selectActiveAccount, NETWORK } from './activeAccount.js'
 
 const CACHE_KEY = 'vf_wallet_contract'
 const CREDENTIAL_KEY = 'vf_wallet_credential'
@@ -30,7 +31,9 @@ export async function createPasskeyWallet({ appName, userName, kit }) {
   })
 
   if (out.submitResult && !out.submitResult.success) {
-    throw new Error(`Failed to deploy smart account contract: ${out.submitResult.error || 'Unknown deployment error'}`)
+    throw new Error(
+      `Failed to deploy smart account contract: ${out.submitResult.error || 'Unknown deployment error'}`
+    )
   }
 
   const { contractId, credentialId } = out
@@ -41,6 +44,14 @@ export async function createPasskeyWallet({ appName, userName, kit }) {
       [CACHE_KEY]: contractId,
       [CREDENTIAL_KEY]: credentialId,
     })
+    // Creation is exactly the "creation/import/restore selects only the account just
+    // created/restored" deliberate switch (activeAccount.js) — chrome.storage.local only, same
+    // guard as the cache mirror write above (MV3 background has no window; the web app has no
+    // chrome).
+    await selectActiveAccount({
+      accountId: `${NETWORK}:${contractId}`,
+      storageLocal: chrome.storage.local,
+    })
   }
   return { contractId, credentialId }
 }
@@ -50,8 +61,12 @@ export async function connectPasskeyWallet({ contractId, credentialId, kit } = {
   kit = kit ?? (await makeKit())
   let cachedContract = contractId ?? localStorage.getItem(CACHE_KEY)
   let cachedCredential = credentialId ?? localStorage.getItem(CREDENTIAL_KEY)
-  
-  if ((!cachedContract || !cachedCredential) && typeof chrome !== 'undefined' && chrome.storage?.local) {
+
+  if (
+    (!cachedContract || !cachedCredential) &&
+    typeof chrome !== 'undefined' &&
+    chrome.storage?.local
+  ) {
     const resStore = await chrome.storage.local.get([CACHE_KEY, CREDENTIAL_KEY])
     if (!cachedContract) cachedContract = resStore[CACHE_KEY]
     if (!cachedCredential) cachedCredential = resStore[CREDENTIAL_KEY]
@@ -67,7 +82,7 @@ export async function connectPasskeyWallet({ contractId, credentialId, kit } = {
   } else {
     res = await kit.connectWallet({ prompt: true })
   }
-  
+
   if (res?.contractId) {
     localStorage.setItem(CACHE_KEY, res.contractId)
     if (res.credentialId) localStorage.setItem(CREDENTIAL_KEY, res.credentialId)
@@ -75,6 +90,13 @@ export async function connectPasskeyWallet({ contractId, credentialId, kit } = {
       await chrome.storage.local.set({
         [CACHE_KEY]: res.contractId,
         [CREDENTIAL_KEY]: res.credentialId || '',
+      })
+      // Restore is the "creation/import/restore selects only the account just created/restored"
+      // switch too — a reconnect to a cached wallet still counts as the deliberate action that
+      // makes it active.
+      await selectActiveAccount({
+        accountId: `${NETWORK}:${res.contractId}`,
+        storageLocal: chrome.storage.local,
       })
     }
   }
@@ -146,7 +168,11 @@ export async function depositToVault({ contractId, amount, eligibility, kit }) {
   kit = kit ?? (await makeKit())
   const units = typeof amount === 'bigint' ? amount : toBaseUnits(amount)
   if (kit.wallet?.deposit)
-    return kit.wallet.deposit({ from: contractId, vault: SOROBAN_ACTIVE_VAULT_ADDRESS, amount: units })
+    return kit.wallet.deposit({
+      from: contractId,
+      vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+      amount: units,
+    })
   const { xdr } = await buildInvokeTx({
     source: contractId,
     contract: SOROBAN_ACTIVE_VAULT_ADDRESS,
@@ -161,7 +187,12 @@ export async function depositToVault({ contractId, amount, eligibility, kit }) {
 // only valid for amount 0). submitApprove (submit.js) computes it from getLatestLedger,
 // wraps this with source = an ephemeral fee-payer, and passkey-signs the from auth entry.
 // Mirrors depositToVault's build-only discipline; consumed via buildInvokeTx's encodeArgs.
-export function buildApprove({ contractId, vault = SOROBAN_ACTIVE_VAULT_ADDRESS, amount, expiryLedger }) {
+export function buildApprove({
+  contractId,
+  vault = SOROBAN_ACTIVE_VAULT_ADDRESS,
+  amount,
+  expiryLedger,
+}) {
   const units = typeof amount === 'bigint' ? amount : toBaseUnits(amount)
   return {
     contract: SOROBAN_TOKEN_ADDRESS,

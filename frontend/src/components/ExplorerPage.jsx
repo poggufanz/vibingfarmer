@@ -1,54 +1,44 @@
 // ExplorerPage.jsx
 // Public on-chain verification surface for Vibing Farmer. No wallet required —
-// judges and users can audit every deployed contract, live stat, and strategy
-// attestation against Stellar testnet directly.
+// judges and users can audit the static Stellar deployments and strategy
+// attestations against Stellar testnet directly.
 //
-// Aesthetic: matches LandingHero's editorial-finance terminal — dark canvas,
-// single acid accent, mono for every address/hash/stat. Inherits palette tokens
-// from style.css so it re-themes with the rest of the app.
+// Aesthetic: matches LandingHero's editorial-finance terminal — one dominant
+// surface, single accent, mono for every address/hash/stat. Inherits Pocket
+// Crew's semantic tokens so it re-themes with the rest of the app.
 
 import { useEffect, useState } from 'react'
-import {
-  SOROBAN_FUNDING_ROUTER_ADDRESS,
-  SOROBAN_ACTIVE_VAULT_ADDRESS,
-  SOROBAN_TOKEN_ADDRESS,
-  SOROBAN_DECIMALS,
-} from '../stellar/config.js'
-import { readTotalAssets } from '../stellar/vaultReads.js'
 import { getStrategies } from '../history.js'
+import { SOROBAN_DECIMALS } from '../stellar/config.js'
+import { readTotalAssets } from '../stellar/vaultReads.js'
+import { NETWORK_IDS } from '../design/networks.js'
+import { formatCoreAmount, normalizeCoreAmount } from '../core/coreRouteAdapters.js'
+import { toExplorerPresentation } from '../secondary/secondaryRouteAdapters.js'
+import { StatusNotice, TechnicalDetails } from './pocket/Primitives.jsx'
+import { NetworkRoute } from './pocket/NetworkIdentity.jsx'
+import {
+  EXTERNAL_PROTOCOL_COUNT,
+  FIRST_PARTY_DEPLOYMENT_COUNT,
+  SOROBAN_SOURCE_CRATES,
+  STATIC_ADDRESS_COUNT,
+  STELLAR_STATIC_DEPLOYMENTS,
+} from '../stellar/deploymentFacts.js'
 import NavBar from './NavBar.jsx'
+import './ExplorerPage.css'
 
 /* ----------------------------- constants ----------------------------- */
 
 const STELLAR_EXPERT = 'https://stellar.expert/explorer/testnet/contract/'
-const DECIMALS_DIV = 10 ** SOROBAN_DECIMALS // 1 VFUSD = 10_000_000 base units (7-dp)
+const ACTIVE_VAULT_ADDRESS = STELLAR_STATIC_DEPLOYMENTS.find(
+  ({ id }) => id === 'autofarm-vault'
+).address
+const DECIMALS_DIV = 10 ** SOROBAN_DECIMALS
 
-const CONTRACTS = [
-  {
-    name: 'Funding Router',
-    type: 'CORE',
-    address: SOROBAN_FUNDING_ROUTER_ADDRESS,
-    description: 'One signed grant sets the run budget, expiry, and scoped agent accounts',
-  },
-  {
-    name: 'Autofarm Vault (vfVLT)',
-    type: 'VAULT',
-    protocol: 'Blend v2',
-    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
-    description: 'SEP-41 shares track yield from the vault strategy and keeper compounding',
-  },
-  {
-    name: 'USDC Token',
-    type: 'TOKEN',
-    protocol: 'SAC',
-    address: SOROBAN_TOKEN_ADDRESS,
-    description: 'Stellar Asset Contract with 7 decimal places',
-  },
-]
-
-// Deployed-contract count + the soroban/ unit-test count (grep-verifiable: 103 #[test]s).
-const CONTRACT_COUNT = String(CONTRACTS.length)
-const CONTRACT_TESTS = '103'
+async function fetchTotalDeposits() {
+  const assets = await readTotalAssets()
+  if (assets == null) return null
+  return Number(assets) / DECIMALS_DIV
+}
 
 const SECURITY = [
   'Funding Router grants limit the total budget and expiry',
@@ -74,21 +64,10 @@ function timeAgo(ts) {
 
 const shortHash = (h) => (h ? `${String(h).slice(0, 10)}…` : '0x…')
 
-// Live: the vault's total_assets() (idle USDC + every strategy's reported balance, i128 base
-// units, 7-dp) — real TVL, not tied to any single depositor (the pre-seeded demo agent's scope
-// pins a retired vault, so its own balance would always read 0 here). readTotalAssets catches its
-// own RPC errors and returns null; we show that as unavailable.
-async function fetchTotalDeposits() {
-  const assets = await readTotalAssets()
-  if (assets == null) return null
-  return Number(assets) / DECIMALS_DIV
-}
-
 /* ----------------------------- pieces ----------------------------- */
 
-function TypeBadge({ type }) {
-  const label = type === 'CORE' ? 'CORE CONTRACT' : type
-  return <span className={`ex-badge ex-badge--${type.toLowerCase()}`}>{label}</span>
+function OwnershipBadge({ ownership }) {
+  return <span className={`ex-badge ex-badge--${ownership}`}>{ownership}</span>
 }
 
 function ContractCard({ contract, copied, onCopy }) {
@@ -100,7 +79,7 @@ function ContractCard({ contract, copied, onCopy }) {
           {contract.name}
           {contract.protocol && <span className="ex-card__proto">, {contract.protocol}</span>}
         </h3>
-        <TypeBadge type={contract.type} />
+        <OwnershipBadge ownership={contract.ownership} />
       </div>
 
       <button
@@ -115,7 +94,7 @@ function ContractCard({ contract, copied, onCopy }) {
         </span>
       </button>
 
-      <p className="ex-card__desc">{contract.description}</p>
+      <p className="ex-card__desc">{contract.role}</p>
 
       <div className="ex-card__links">
         <a
@@ -131,14 +110,62 @@ function ContractCard({ contract, copied, onCopy }) {
   )
 }
 
-function StatBlock({ label, value, loading }) {
+function StatBlock({ label, value, loading, factView, factKey }) {
+  const state = factView?.fact?.state
   return (
-    <div className="ex-stat">
+    <div
+      className="ex-stat"
+      data-fact-key={factKey}
+      data-fact-state={state || undefined}
+      data-fact-value={value == null ? 'null' : String(value)}
+    >
       <div className="ex-stat__value">
         {loading ? <span className="ex-skeleton" aria-hidden="true" /> : value}
       </div>
       <div className="ex-stat__label">{label}</div>
     </div>
+  )
+}
+
+function readAmount(value) {
+  if (value == null) return null
+  try {
+    return normalizeCoreAmount(value)
+  } catch {
+    return null
+  }
+}
+
+function factForPrimitive(view) {
+  if (!view?.fact) return null
+  return {
+    ...view.fact,
+    consequence: view.notice?.consequence ?? view.fact.consequence,
+    safeNextAction: view.notice?.nextAction ?? view.fact.safeNextAction,
+  }
+}
+
+function ExplorerFactStatus({ factView, title, factKey, includeDetails = true }) {
+  const fact = factForPrimitive(factView)
+  if (!fact) return null
+  const unavailableCopy = factView.notice?.consequence && (
+    <div className="ex-notice-copy" role="note">
+      <p>{factView.notice.consequence}</p>
+      {factView.notice.nextAction && <p>{factView.notice.nextAction}</p>}
+    </div>
+  )
+
+  return (
+    <section
+      className="ex-evidence"
+      aria-label={title}
+      data-fact-key={factKey}
+      data-fact-state={fact.state}
+    >
+      <StatusNotice fact={fact} title={title} />
+      {fact.state === 'unavailable' && unavailableCopy}
+      {includeDetails && <TechnicalDetails summary="Technical details" fact={fact} open />}
+    </section>
   )
 }
 
@@ -155,10 +182,12 @@ function hashHex(v) {
 
 const TX_BASE = 'https://stellar.expert/explorer/testnet/tx/'
 
-function AttestationsTable({ strategies }) {
+function AttestationsTable({ strategies, initialOnchain = [] }) {
   // On-chain strategy_attested events — the public, immutable proof. Polled best-effort;
   // the localStorage rows below stay as a fallback so the table is never empty pre-attest.
-  const [onchain, setOnchain] = useState([])
+  const [onchain, setOnchain] = useState(() =>
+    Array.isArray(initialOnchain) ? initialOnchain : []
+  )
   useEffect(() => {
     let alive = true
     ;(async () => {
@@ -225,18 +254,18 @@ function AttestationsTable({ strategies }) {
 
 /* ------------------------------ page ------------------------------ */
 
-export default function ExplorerPage() {
+export default function ExplorerPage({ explorerRead } = {}) {
   const [copied, setCopied] = useState(null)
-  const [totalDeposits, setTotalDeposits] = useState(undefined) // undefined = loading
+  const [totalDeposits, setTotalDeposits] = useState(undefined)
   const [strategies] = useState(() => getStrategies().slice(0, 5))
-
   const attestationCount = getStrategies().length
 
   useEffect(() => {
+    if (explorerRead != null) return undefined
     let alive = true
     fetchTotalDeposits()
-      .then((v) => {
-        if (alive) setTotalDeposits(v)
+      .then((value) => {
+        if (alive) setTotalDeposits(value)
       })
       .catch(() => {
         if (alive) setTotalDeposits(null)
@@ -244,7 +273,7 @@ export default function ExplorerPage() {
     return () => {
       alive = false
     }
-  }, [])
+  }, [explorerRead])
 
   const copy = (address) => {
     navigator.clipboard
@@ -257,16 +286,70 @@ export default function ExplorerPage() {
   }
 
   const loadingDeposits = totalDeposits === undefined
-  // == null covers BOTH null (reads failed) and undefined (still loading) — the
-  // loading branch never reaches .toLocaleString, so render can't throw.
-  const depositsLabel =
-    totalDeposits == null
+  const fallbackState = loadingDeposits ? 'loading' : 'unavailable'
+  const fallbackRead = {
+    fact: {
+      state: fallbackState,
+      value: null,
+      source: 'Soroban RPC',
+      checkedAt: null,
+      staleAfterMs: null,
+    },
+    facts: {
+      totalAssets: {
+        state: fallbackState,
+        value: null,
+        source: 'Soroban RPC',
+        checkedAt: null,
+        staleAfterMs: null,
+      },
+    },
+    totalDeposits,
+    strategies,
+  }
+  const settledRead = explorerRead ?? fallbackRead
+  const presentation = toExplorerPresentation(settledRead)
+  const factViews = presentation.facts || {}
+  const totalAssetsView = factViews.totalAssets || factViews.tvl || factViews.rpc
+  const totalAssetsStatView = totalAssetsView || presentation
+  const directTotalAssets = readAmount(explorerRead?.totalAssets ?? explorerRead?.amount)
+  const totalAssetsState = totalAssetsView?.fact?.state || presentation.fact.state
+  const totalAssetsValue = totalAssetsView
+    ? totalAssetsView.value
+    : ['loading', 'error', 'unavailable'].includes(totalAssetsState)
+      ? null
+      : (directTotalAssets ?? presentation.value)
+  const hasInjectedRead = explorerRead != null
+  const depositsLabel = hasInjectedRead
+    ? totalAssetsValue
+      ? formatCoreAmount(totalAssetsValue)
+      : 'Not available'
+    : totalDeposits == null
       ? 'Not available'
       : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} USDC`
-
+  const depositsLoading = hasInjectedRead ? totalAssetsState === 'loading' : loadingDeposits
+  const displayedStrategies = Array.isArray(explorerRead?.strategies)
+    ? explorerRead.strategies
+    : strategies
+  const attestationView =
+    factViews.attestations || factViews.attestation || factViews.strategyAttestations
+  const attestationState = attestationView?.fact?.state
+  const effectiveAttestationState =
+    attestationState || (hasInjectedRead ? presentation.fact.state : null)
+  const attestationUnavailable = ['error', 'unavailable', 'partial'].includes(
+    effectiveAttestationState
+  )
+  const attestationLoading = effectiveAttestationState === 'loading'
+  const displayedAttestationCount = hasInjectedRead
+    ? attestationUnavailable
+      ? 'Not available'
+      : String(displayedStrategies.length)
+    : attestationCount > 0
+      ? `${attestationCount}`
+      : 'Not available'
+  const initialOnchain = Array.isArray(explorerRead?.onchain) ? explorerRead.onchain : []
   return (
     <div className="ex-page">
-      <ExplorerStyle />
       <NavBar />
 
       <main className="ex-main">
@@ -274,15 +357,24 @@ export default function ExplorerPage() {
         <header className="ex-header">
           <div className="ex-header__top">
             <h1 className="ex-title">Explorer</h1>
-            <span className="ex-net">
-              <span className="ex-net__dot" /> Stellar testnet. Live.
-            </span>
+            <NetworkRoute
+              compact
+              context={{
+                hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+                sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+                destinationNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+                custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
+                transitState: 'none',
+              }}
+            />
           </div>
           <p className="ex-lede">
-            On-chain verification for Vibing Farmer. Every deployed contract and live vault balance
-            is publicly verifiable on Stellar; strategy hashes verify off-chain.
+            8 static Stellar testnet addresses: 6 Vibing Farmer deployments and 2 external protocol
+            contracts. Agent accounts are created dynamically per run.
           </p>
         </header>
+
+        <ExplorerFactStatus factView={presentation} title="Explorer read" factKey="explorer" />
 
         {/* ---------- contracts ---------- */}
         <section className="ex-section" aria-labelledby="ex-contracts">
@@ -290,28 +382,39 @@ export default function ExplorerPage() {
             Deployed Contracts
           </h2>
           <div className="ex-cards">
-            {CONTRACTS.map((c) => (
+            {STELLAR_STATIC_DEPLOYMENTS.map((c) => (
               <ContractCard key={c.address + c.name} contract={c} copied={copied} onCopy={copy} />
             ))}
           </div>
         </section>
 
-        {/* ---------- live stats ---------- */}
+        {/* ---------- read stats ---------- */}
         <section className="ex-section" aria-labelledby="ex-stats">
           <div className="ex-section__head">
             <h2 id="ex-stats" className="ex-section__title">
-              Live Stats
+              Deployment Facts
             </h2>
-            <span className="ex-section__note">Fetched from Soroban RPC and updated live</span>
+            <span className="ex-section__note">{STATIC_ADDRESS_COUNT} static addresses</span>
           </div>
           <div className="ex-stats">
-            <StatBlock label="Vault TVL" value={depositsLabel} loading={loadingDeposits} />
+            <StatBlock label="Soroban source crates" value={SOROBAN_SOURCE_CRATES.length} />
+            <StatBlock label="VF deployments" value={FIRST_PARTY_DEPLOYMENT_COUNT} />
+            <StatBlock label="Protocol contracts" value={EXTERNAL_PROTOCOL_COUNT} />
+            <StatBlock label="Dynamic agents" value="N per run" />
+            <StatBlock
+              label="Vault TVL"
+              value={depositsLabel}
+              loading={depositsLoading}
+              factView={totalAssetsStatView}
+              factKey="totalAssets"
+            />
             <StatBlock
               label="Strategy Attestations"
-              value={attestationCount > 0 ? `${attestationCount}` : '0'}
+              value={displayedAttestationCount}
+              loading={attestationLoading}
+              factView={attestationView || (hasInjectedRead ? presentation : undefined)}
+              factKey="attestations"
             />
-            <StatBlock label="Contracts" value={CONTRACT_COUNT} />
-            <StatBlock label="Contract Tests" value={CONTRACT_TESTS} />
           </div>
         </section>
 
@@ -324,10 +427,18 @@ export default function ExplorerPage() {
             Recent strategy hashes (SHA-256, off-chain verifiable; re-derivable from the strategy
             JSON):
           </p>
-          <AttestationsTable strategies={strategies} />
+          {attestationView && attestationState !== 'current' && (
+            <ExplorerFactStatus
+              factView={attestationView}
+              title="Attestation read"
+              factKey="attestations"
+              includeDetails={false}
+            />
+          )}
+          <AttestationsTable strategies={displayedStrategies} initialOnchain={initialOnchain} />
           <a
             className="ex-extlink ex-extlink--block"
-            href={`${STELLAR_EXPERT}${SOROBAN_ACTIVE_VAULT_ADDRESS}`}
+            href={`${STELLAR_EXPERT}${ACTIVE_VAULT_ADDRESS}`}
             target="_blank"
             rel="noreferrer noopener"
           >
@@ -382,378 +493,5 @@ export default function ExplorerPage() {
         </footer>
       </main>
     </div>
-  )
-}
-
-/* ------------------------------ styles ------------------------------ */
-
-function ExplorerStyle() {
-  return (
-    <style>{`
-/* Own scroll container - the app locks body/#root (overflow:hidden, height:100vh),
-   so normal document flow can't scroll. Fixed + overflow-y:auto, same as the hero. */
-.ex-page {
-  position: fixed;
-  inset: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  background: var(--bg-base, #0e0f0c);
-  color: var(--text, #ecebe1);
-  font-family: var(--font-body, "Geist", system-ui, sans-serif);
-}
-/* faint grid texture - same atmosphere as the hero */
-.ex-page::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.016) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.016) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 20%, transparent 100%);
-}
-
-.ex-main {
-  position: relative;
-  z-index: 1;
-  max-width: 1040px;
-  margin: 0 auto;
-  padding: calc(64px + clamp(2.5rem, 7vw, 5rem)) clamp(1.1rem, 5vw, 2.6rem) 4rem;
-}
-
-/* ---------- header ---------- */
-.ex-header { padding-bottom: clamp(2rem, 5vw, 3.4rem); border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); }
-.ex-header__top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-.ex-title {
-  font-family: var(--font-display, "Geist", sans-serif);
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1;
-  font-size: clamp(2.6rem, 7vw, 4.6rem);
-  color: var(--text, #ecebe1);
-}
-.ex-net {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55ch;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.74rem;
-  letter-spacing: 0.04em;
-  color: var(--text-muted, #95958a);
-}
-.ex-net__dot {
-  position: relative;
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--accent, #cfff3d);
-}
-.ex-net__dot::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: inherit;
-  animation: ex-pulse 2.4s var(--ease-out, cubic-bezier(0.23,1,0.32,1)) infinite;
-}
-@keyframes ex-pulse {
-  0% { opacity: 0.55; transform: scale(1); }
-  70%, 100% { opacity: 0; transform: scale(2.8); }
-}
-.ex-lede {
-  margin-top: 1.1rem;
-  max-width: 60ch;
-  font-family: var(--font-mono, monospace);
-  font-size: clamp(0.82rem, 1.1vw, 0.95rem);
-  line-height: 1.7;
-  color: var(--text-muted, #95958a);
-}
-
-/* ---------- sections ---------- */
-.ex-section { padding: clamp(2.2rem, 5vw, 3.6rem) 0; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); }
-.ex-section--os { border-bottom: none; }
-.ex-section__head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-.ex-section__title {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--accent, #cfff3d);
-  margin-bottom: 1.5rem;
-}
-.ex-section__head .ex-section__title { margin-bottom: 0; }
-.ex-section__note, .ex-section__sub {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.72rem;
-  letter-spacing: 0.02em;
-  color: var(--text-faint, #56564f);
-}
-.ex-section__sub { display: block; margin: -0.6rem 0 1.3rem; font-size: 0.8rem; color: var(--text-muted, #95958a); }
-
-/* ---------- contract cards ---------- */
-.ex-cards { display: flex; flex-direction: column; gap: 0.7rem; }
-.ex-card {
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: var(--radius-lg, 14px);
-  background: var(--bg-card, #1a1b16);
-  padding: clamp(1.05rem, 2.4vw, 1.5rem);
-  transition: border-color 220ms ease, transform 220ms cubic-bezier(0.16,1,0.3,1);
-}
-.ex-card:hover { border-color: var(--border-accent, rgba(207,255,61,0.4)); }
-.ex-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-.ex-card__name {
-  font-family: var(--font-display, "Geist", sans-serif);
-  font-weight: 600;
-  font-size: clamp(1.02rem, 1.6vw, 1.2rem);
-  letter-spacing: -0.01em;
-  color: var(--text, #ecebe1);
-}
-.ex-card__proto { font-family: var(--font-mono, monospace); font-weight: 400; font-size: 0.82em; color: var(--text-muted, #95958a); }
-.ex-badge {
-  flex-shrink: 0;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  padding: 0.3rem 0.6rem;
-  border-radius: var(--radius-sm, 4px);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.ex-badge--core { color: var(--accent-fg, #0e0f0c); background: var(--accent, #cfff3d); }
-.ex-badge--vault { color: var(--text-muted, #95958a); background: var(--bg-elev, #22231d); border: 1px solid var(--border, rgba(255,255,255,0.06)); }
-.ex-badge--token { color: var(--text-muted, #95958a); background: var(--bg-elev, #22231d); border: 1px solid var(--border, rgba(255,255,255,0.06)); }
-
-.ex-addr {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.7ch;
-  margin: 0.85rem 0 0.7rem;
-  max-width: 100%;
-  cursor: pointer;
-  background: var(--bg-base, #0e0f0c);
-  border: 1px solid var(--border, rgba(255,255,255,0.06));
-  border-radius: var(--radius-sm, 4px);
-  padding: 0.45rem 0.7rem;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.78rem;
-  color: var(--text, #ecebe1);
-  transition: border-color 180ms ease, background 180ms ease;
-}
-.ex-addr:hover { border-color: var(--border-accent, rgba(207,255,61,0.4)); }
-.ex-addr:active { transform: scale(0.97); }
-.ex-addr__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ex-addr__copy {
-  flex-shrink: 0;
-  font-size: 0.64rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-faint, #56564f);
-  transition: color 180ms ease;
-}
-.ex-addr:hover .ex-addr__copy { color: var(--text-muted, #95958a); }
-.ex-addr__copy.is-copied { color: var(--accent, #cfff3d); }
-.ex-addr:focus-visible { outline: 2px solid var(--accent, #cfff3d); outline-offset: 2px; }
-
-.ex-card__desc {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: var(--text-muted, #95958a);
-}
-.ex-card__links { display: flex; flex-wrap: wrap; gap: 1.2rem; margin-top: 1rem; }
-
-.ex-extlink {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.76rem;
-  letter-spacing: 0.01em;
-  color: var(--accent, #cfff3d);
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5ch;
-  transition: opacity 160ms ease;
-}
-.ex-extlink span { transition: transform 200ms cubic-bezier(0.16,1,0.3,1); }
-.ex-extlink:focus-visible { outline: 2px solid var(--accent, #cfff3d); outline-offset: 2px; }
-.ex-extlink--block { margin-top: 1.3rem; }
-
-/* ---------- live stats ---------- */
-.ex-stats {
-  margin-top: 1.5rem;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.7rem;
-}
-.ex-stat {
-  border: 1px solid var(--border, rgba(255,255,255,0.06));
-  border-radius: var(--radius-md, 8px);
-  background: var(--bg-card, #1a1b16);
-  padding: 1.3rem 1.1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-.ex-stat__value {
-  font-family: var(--font-mono, monospace);
-  font-size: clamp(1.35rem, 2.6vw, 1.85rem);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--text, #ecebe1);
-  line-height: 1;
-  min-height: 1.1em;
-  display: flex;
-  align-items: center;
-}
-.ex-stat__label {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.68rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-faint, #56564f);
-}
-.ex-skeleton {
-  display: inline-block;
-  width: 60%;
-  height: 1em;
-  border-radius: 3px;
-  background: var(--bg-elev-2, #2a2b24);
-  opacity: 0.72;
-}
-
-/* ---------- attestations table ---------- */
-.ex-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--border-strong, rgba(255,255,255,0.13)); border-radius: var(--radius-lg, 14px); }
-.ex-table { width: 100%; border-collapse: collapse; min-width: 460px; }
-.ex-table th, .ex-table td { text-align: left; padding: 0.85rem 1.1rem; font-family: var(--font-mono, monospace); font-size: 0.78rem; }
-.ex-table thead th {
-  font-size: 0.66rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-faint, #56564f);
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
-  background: var(--bg-elev, #22231d);
-}
-.ex-table tbody tr { border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); transition: background 160ms ease; }
-.ex-table tbody tr:last-child { border-bottom: none; }
-.ex-table tbody tr:hover { background: var(--bg-elev, #22231d); }
-.ex-table__time { color: var(--text-muted, #95958a); white-space: nowrap; }
-.ex-table__hash { color: var(--accent, #cfff3d); }
-.ex-table__proto { color: var(--text, #ecebe1); }
-.ex-empty {
-  border: 1px dashed var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: var(--radius-lg, 14px);
-  padding: 2.2rem 1.5rem;
-  text-align: center;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.8rem;
-  color: var(--text-faint, #56564f);
-}
-
-/* ---------- security ---------- */
-.ex-seclist { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.55rem 1.6rem; }
-.ex-secitem {
-  position: relative;
-  padding-left: 1.4rem;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.8rem;
-  line-height: 1.5;
-  color: var(--text-muted, #95958a);
-}
-.ex-secitem::before {
-  content: "";
-  position: absolute;
-  left: 0; top: 0.5em;
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: var(--accent, #cfff3d);
-}
-.ex-disclaimer {
-  margin-top: 1.6rem;
-  padding: 0.85rem 1.1rem;
-  border-left: 2px solid var(--border-accent, rgba(207,255,61,0.4));
-  font-family: var(--font-mono, monospace);
-  font-size: 0.76rem;
-  line-height: 1.6;
-  color: var(--text-faint, #56564f);
-  background: var(--accent-soft, rgba(207,255,61,0.08));
-  border-radius: 0 var(--radius-sm, 4px) var(--radius-sm, 4px) 0;
-}
-
-/* ---------- open source ---------- */
-.ex-oslist { display: flex; flex-direction: column; gap: 0.1rem; }
-.ex-osrow {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.75rem 0;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
-}
-.ex-osrow:last-child { border-bottom: none; }
-.ex-osrow__k {
-  flex-shrink: 0;
-  width: 110px;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.7rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-faint, #56564f);
-}
-.ex-osrow__v {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.82rem;
-  color: var(--text, #ecebe1);
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5ch;
-}
-a.ex-osrow__v { color: var(--accent, #cfff3d); }
-a.ex-osrow__v span { transition: transform 200ms cubic-bezier(0.16,1,0.3,1); }
-
-@media (hover: hover) and (pointer: fine) {
-  .ex-card:hover { transform: translateY(-2px); }
-  .ex-extlink:hover span,
-  a.ex-osrow__v:hover span { transform: translate(2px, -2px); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ex-net__dot::after { animation: none; opacity: 0; }
-  .ex-card,
-  .ex-addr,
-  .ex-extlink span,
-  a.ex-osrow__v span { transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease; }
-  .ex-card:hover,
-  .ex-addr:active,
-  .ex-extlink:hover span,
-  a.ex-osrow__v:hover span { transform: none; }
-}
-
-/* ---------- footer ---------- */
-.ex-foot {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-top: 3rem;
-  padding-top: 1.8rem;
-  border-top: 1px solid var(--border, rgba(255,255,255,0.06));
-}
-.ex-foot__mark { font-family: var(--font-mono, monospace); font-size: 0.78rem; color: var(--text-muted, #95958a); }
-.ex-foot__tag { font-family: var(--font-script, "Newsreader", serif); font-style: italic; font-size: 0.95rem; color: var(--text-faint, #56564f); }
-
-/* ---------- responsive ---------- */
-@media (max-width: 760px) {
-  .ex-stats { grid-template-columns: repeat(2, 1fr); }
-}
-@media (max-width: 420px) {
-  .ex-stats { grid-template-columns: 1fr; }
-  .ex-addr__text { font-size: 0.7rem; }
-}
-`}</style>
   )
 }

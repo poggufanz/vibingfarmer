@@ -1,5 +1,10 @@
+// frontend/src/wallet/ui/classic/CreateScreen.jsx
+// VF Wallet Task 9. Recomposed onto the shared WalletShell/pc-* primitives -- dropped the
+// gradient icon box and inline styles (checklist non-negotiable: no gradients; MyMoneyRoute.
+// test.jsx's item 6 guard establishes the same "no inline style" discipline this file now
+// follows). Key-generation wiring (createClassicWallet via controller.js's doCreate) is
+// untouched -- only the markup changed.
 import { useState } from 'react'
-import { HonestyLabels } from '../HonestyLabels.jsx'
 
 export default function CreateScreen({ onCreate, onGoImport, busy, error }) {
   const [label, setLabel] = useState('Main')
@@ -9,90 +14,55 @@ export default function CreateScreen({ onCreate, onGoImport, busy, error }) {
   const mismatch = pw !== pw2
 
   return (
-    <div className="vf-screen vf-create">
-      <div
-        style={{
-          textAlign: 'center',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '6px',
-        }}
-      >
-        <div
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 14,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-card) 100%)',
-            border: '1px solid var(--border-strong)',
-            marginBottom: 4,
-            boxShadow: '0 4px 16px rgba(0,0,0,.25)',
-          }}
-        >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="var(--accent)"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
-            <path d="M2 17l10 5 10-5"></path>
-            <path d="M2 12l10 5 10-5"></path>
-          </svg>
-        </div>
-        <h2 style={{ margin: 0 }}>Create wallet</h2>
-        <p className="vf-hint" style={{ textAlign: 'center', margin: 0 }}>
-          Set a password to encrypt your keys locally.
-        </p>
-      </div>
-      <HonestyLabels scope="global" />
-      <label>
-        Label
+    <div className="pc-standard-form" data-testid="standard-create">
+      <h2>Set a password</h2>
+      <p className="pc-route-intro">This password encrypts your keys on this device only.</p>
+      <div className="pc-field">
+        <label htmlFor="wallet-label">Label</label>
         <input
+          id="wallet-label"
+          className="pc-input"
           placeholder="Example: Main"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
         />
-      </label>
-      <label>
-        Password
+      </div>
+      <div className="pc-field">
+        <label htmlFor="wallet-password">Password</label>
         <input
+          id="wallet-password"
+          className="pc-input"
           type="password"
           autoComplete="new-password"
           placeholder="12+ characters"
           value={pw}
           onChange={(e) => setPw(e.target.value)}
         />
-      </label>
-      <label>
-        Confirm password
+      </div>
+      <div className="pc-field">
+        <label htmlFor="wallet-password-confirm">Confirm password</label>
         <input
+          id="wallet-password-confirm"
+          className="pc-input"
           type="password"
           autoComplete="new-password"
           placeholder="Re-enter password"
           value={pw2}
           onChange={(e) => setPw2(e.target.value)}
         />
-      </label>
-      {weak && pw.length > 0 && <p className="vf-hint">Use 12+ characters.</p>}
-      {mismatch && pw2 && <p className="vf-error">Passwords do not match.</p>}
-      {error && <p className="vf-error">{error}</p>}
+      </div>
+      {weak && pw.length > 0 && <p className="pc-field-help">Use 12+ characters.</p>}
+      {mismatch && pw2 && <p className="pc-field-error">Passwords do not match.</p>}
+      {error && <p className="pc-field-error">{error}</p>}
       <button
-        className="vf-btn primary"
+        type="button"
+        className="pc-button pc-button--primary"
         disabled={busy || weak || mismatch}
         onClick={() => onCreate(label, pw)}
       >
         {busy ? 'Creating…' : 'Create wallet'}
       </button>
-      <button className="vf-btn ghost" onClick={onGoImport}>
+      <button type="button" className="pc-button pc-button--secondary" onClick={onGoImport}>
         Import an existing wallet
       </button>
     </div>

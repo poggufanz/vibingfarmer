@@ -46,9 +46,15 @@ const SECRET_KEYS = new Set(['veniceApiKey', 'deepseekApiKey', 'tavilyApiKey'])
 
 const dummyStorage = {
   _data: new Map(),
-  getItem(k) { return this._data.get(k) ?? null },
-  setItem(k, v) { this._data.set(k, String(v)) },
-  removeItem(k) { this._data.delete(k) }
+  getItem(k) {
+    return this._data.get(k) ?? null
+  },
+  setItem(k, v) {
+    this._data.set(k, String(v))
+  },
+  removeItem(k) {
+    this._data.delete(k)
+  },
 }
 
 const storeFor = (key) => {
@@ -57,7 +63,6 @@ const storeFor = (key) => {
   }
   return typeof localStorage !== 'undefined' ? localStorage : dummyStorage
 }
-
 
 const parse = (raw, def) => {
   if (raw == null) return def

@@ -62,4 +62,11 @@ describe('DevelopersLayout', () => {
     expect(screen.getByRole('button', { name: /connect wallet/i })).toBeTruthy()
     sessionStorage.clear()
   })
+
+  it('marks the route heading and identifies the Stellar portal network', () => {
+    renderAt('/developers')
+
+    expect(screen.getByRole('heading', { level: 1 }).hasAttribute('data-route-heading')).toBe(true)
+    expect(screen.getAllByText('Stellar testnet').length).toBeGreaterThan(0)
+  })
 })

@@ -15,7 +15,7 @@ pragma solidity ^0.8.23;
 /// Layout: [24 zero bytes][uint32 version == 0 BE][uint32 strkey length BE][strkey UTF-8]
 library HookDataLib {
     uint256 internal constant HEADER_LEN = 32;
-    uint256 internal constant MIN_STRKEY_LEN = 56;
+    uint256 internal constant STRKEY_LEN = 56;
 
     error HookDataTooShort(uint256 length);
     error HookDataDirtyHeader();
@@ -35,14 +35,51 @@ library HookDataLib {
         uint256 actualLen = hookData.length - HEADER_LEN;
         if (declaredLen != actualLen) revert HookDataLengthMismatch(declaredLen, actualLen);
 
-        if (actualLen < MIN_STRKEY_LEN) revert HookDataBadStrkey();
+        if (actualLen != STRKEY_LEN) revert HookDataBadStrkey();
 
-        // Base32 alphabet the JS regex /^[A-Z2-7]{2,}$/ accepts.
+        bytes memory decoded = new bytes(35);
+        uint256 accumulator;
+        uint256 bits;
+        uint256 out;
         for (uint256 i = HEADER_LEN; i < hookData.length; i++) {
             uint8 c = uint8(hookData[i]);
-            bool upper = c >= 0x41 && c <= 0x5A; // A-Z
-            bool digit = c >= 0x32 && c <= 0x37; // 2-7
-            if (!upper && !digit) revert HookDataBadStrkey();
+            uint8 value;
+            if (c >= 0x41 && c <= 0x5A) {
+                value = c - 0x41;
+            } else if (c >= 0x32 && c <= 0x37) {
+                value = c - 0x32 + 26;
+            } else {
+                revert HookDataBadStrkey();
+            }
+            accumulator = (accumulator << 5) | value;
+            bits += 5;
+            if (bits >= 8) {
+                bits -= 8;
+                // The accumulator is masked to fewer than eight residual bits after each emitted byte.
+                // forge-lint: disable-next-line(unsafe-typecast)
+                decoded[out++] = bytes1(uint8(accumulator >> bits));
+                accumulator &= (uint256(1) << bits) - 1;
+            }
+        }
+        if (out != 35 || bits != 0) revert HookDataBadStrkey();
+
+        uint8 versionByte = uint8(decoded[0]);
+        if (versionByte != 0x30 && versionByte != 0x10) revert HookDataBadStrkey();
+
+        uint16 crc;
+        for (uint256 i = 0; i < 33; i++) {
+            crc ^= uint16(uint8(decoded[i])) << 8;
+            for (uint256 bit = 0; bit < 8; bit++) {
+                crc = (crc & 0x8000) != 0 ? (crc << 1) ^ 0x1021 : crc << 1;
+            }
+        }
+        // These casts intentionally select the low/high CRC16 bytes for Stellar's little-endian checksum.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint8 crcLow = uint8(crc);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint8 crcHigh = uint8(crc >> 8);
+        if (uint8(decoded[33]) != crcLow || uint8(decoded[34]) != crcHigh) {
+            revert HookDataBadStrkey();
         }
     }
 }

@@ -31,6 +31,36 @@ afterEach(() => {
 
 const SESSION = { jwt: 'JWT', address: 'GAAAAAAA' }
 
+const keysRead = {
+  fact: {
+    state: 'current',
+    value: null,
+    source: 'Portal API',
+    checkedAt: '2026-08-11T00:00:00.000Z',
+    staleAfterMs: 120000,
+  },
+  facts: {
+    keys: {
+      state: 'current',
+      value: null,
+      source: 'Portal API',
+      checkedAt: '2026-08-11T00:00:00.000Z',
+      staleAfterMs: 120000,
+    },
+  },
+  keys: [
+    {
+      id: 'vfk_1',
+      key_hint: 'vf_test_ab12…',
+      scopes: '["market"]',
+      enabled: 1,
+      created_at: 1_700_000_000,
+      last_used_at: null,
+      rate_limit: 60,
+    },
+  ],
+}
+
 describe('KeysSection', () => {
   it('lists keys → create form → secret shown once with ack', async () => {
     render(<KeysSection session={SESSION} />)
@@ -74,5 +104,16 @@ describe('KeysSection', () => {
     expect(payload.scopes).toEqual(expect.arrayContaining(['market', 'scan']))
     expect(payload.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000))
     expect(listKeys).toHaveBeenCalled()
+  })
+
+  it('renders settled key evidence through Foundation primitives', async () => {
+    render(<KeysSection session={SESSION} developersRead={keysRead} />)
+
+    await waitFor(() => expect(screen.getByText('vf_test_ab12…')).toBeTruthy())
+    expect(screen.getByRole('heading', { level: 1 }).hasAttribute('data-route-heading')).toBe(true)
+    expect(screen.getAllByText('Portal API').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Checked at/).length).toBeGreaterThan(0)
+    expect(screen.getByText(/Review technical details/i)).toBeTruthy()
+    expect(screen.getByText('Technical details')).toBeTruthy()
   })
 })

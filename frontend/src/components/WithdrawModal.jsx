@@ -6,11 +6,14 @@ import { saveTransaction } from '../history.js'
 import { loadSettings, t } from '../settingsStore.js'
 import { toDisplay, toBaseUnits } from '../stellar/format.js'
 import { SOROBAN_EXIT_ROUTER_ADDRESS } from '../stellar/config.js'
-import { MAX_AGENTS_PER_SWEEP } from '../stellar/exit.js'
 import { partialWithdraw, ensureExitSigner, readAgentScope } from '../stellar/partialWithdraw.js'
 import { readVaultShares } from '../stellar/agentDeposit.js'
 import { readPricePerShare } from '../stellar/vaultReads.js'
-import { clearExitKey } from '../wallet/exitKey.js'
+import { clearManualExitKey } from '../wallet/exitKey.js'
+import { signaturesForSweep, friendlyOwnerActionError } from '../money/ownerActions.js'
+import { getActiveAccount } from '../stellar/walletKit.js'
+import { sameActiveAccount } from '../stellar/activeAccount.js'
+import { venueYield } from '../strategy/venueTruth.js'
 
 const PPS_SCALE = 10_000_000n
 
@@ -18,9 +21,13 @@ const PPS_SCALE = 10_000_000n
 // single signature the deposit does — until a position is spread over more agents than fit one
 // transaction's budget, when it costs one per batch. Unset, it is one per agent. Promising "1
 // signature" and then opening three popups is a worse lie than quoting the real number, so quote it.
+// My Money Task 13 Part B item 7: the Math.ceil/MAX_AGENTS_PER_SWEEP batching math itself moved to
+// ownerActions.js's signaturesForSweep (the SAME formula planFullExit's own expectedConfirmations
+// uses) -- this stays local only because it is a deploy-config fact (is the exit router live at
+// all), not owner-action vocabulary.
 const ONE_SIGNATURE_EXIT = Boolean(SOROBAN_EXIT_ROUTER_ADDRESS)
 const signaturesFor = (agentCount) =>
-  ONE_SIGNATURE_EXIT ? Math.ceil(agentCount / MAX_AGENTS_PER_SWEEP) : agentCount
+  signaturesForSweep(agentCount, { oneSignatureExit: ONE_SIGNATURE_EXIT })
 
 // The v2 vault exposes no per-deposit timestamp, so "time deposited" is unknown (renders "-").
 // Kept as a 0-stub so the modal effect below is unchanged. ponytail: no chain read to wire here.
@@ -40,33 +47,11 @@ const shortAddr = (addr) => {
   return `${addr.slice(0, 4)}…${addr.slice(-4)}`
 }
 
-// Map raw ethers/relayer errors to a short, human-readable line.
-// Avoids dumping the full ACTION_REJECTED / sendTransaction payload into the UI.
-const friendlyError = (err) => {
-  const code = err?.code || err?.info?.error?.code
-  const raw = (err?.shortMessage || err?.message || '').toLowerCase()
-  if (
-    code === 'ACTION_REJECTED' ||
-    code === 4001 ||
-    raw.includes('user rejected') ||
-    raw.includes('user denied')
-  ) {
-    return 'You rejected the transaction in your wallet.'
-  }
-  if (raw.includes('insufficient funds') || raw.includes('insufficient balance')) {
-    return 'Insufficient balance to cover this withdrawal.'
-  }
-  if (raw.includes('timeout') || raw.includes('timed out')) {
-    return 'The relayer timed out. Please try again.'
-  }
-  if (raw.includes('expired') || raw.includes('permission')) {
-    return 'Agent permission is no longer active. Re-grant and retry.'
-  }
-  // Fall back to the wallet's own short message when present, else a generic line.
-  const short = err?.shortMessage || err?.reason
-  if (short && short.length < 120) return short
-  return 'Withdraw failed. Please try again.'
-}
+// My Money Task 13 Part B item 7: this used to be a local `friendlyError` -- moved to
+// ownerActions.js's friendlyOwnerActionError (MM12's report, concern #5) since WithdrawDialog.jsx
+// needed the same raw-error-to-copy mapping and neither file should keep its own copy. Alias kept
+// so every call site below stays byte-identical.
+const friendlyError = friendlyOwnerActionError
 
 const PCT_CHIPS = [
   { id: '25', label: '25%', frac: 0.25 },
@@ -80,11 +65,20 @@ export default function WithdrawModal({
   balance,
   unclaimedRewards = 0,
   userAddress,
+  activeAccount = null,
   agentAddresses = [],
   onClose,
   onSuccess,
 }) {
   const { language: lang } = loadSettings()
+  const vaultYield = venueYield(vault)
+  const evidencedVaultApy = vaultYield.state === 'live' ? vaultYield.apy : null
+  const yieldEvidence = vaultYield.state === 'live' ? 'live-venue' : null
+  // stellar/ownerAuthorization.js's G/C split: a G keypair signs and pays its own fee directly; a C
+  // (VF Wallet/passkey) contract address can never hold or spend XLM, so the relay sponsors the fee
+  // instead (submitOwnerAuthorizedTx routes every C action through the relay). Same
+  // address-prefix convention developers/walletSign.js:20 already uses to tell the two apart.
+  const isSponsoredOwner = userAddress?.startsWith('C')
   const balUsdc = toDisplay(balance)
   const rewardsUsdc = toDisplay(unclaimedRewards)
   const [status, setStatus] = useState('idle') // idle | loading | done
@@ -96,6 +90,17 @@ export default function WithdrawModal({
   const [chosen, setChosen] = useState(null)
   const [amount, setAmount] = useState('')
   const confirmRef = useRef(null)
+  const actionControllerRef = useRef(null)
+  if (!actionControllerRef.current) actionControllerRef.current = new AbortController()
+  const actionSignal = actionControllerRef.current.signal
+  const isCurrentOwner = () =>
+    !actionSignal.aborted &&
+    (activeAccount?.version !== 1 || sameActiveAccount(activeAccount, getActiveAccount()))
+  const commitIfCurrent = (callback) => {
+    if (!isCurrentOwner()) return false
+    callback()
+    return true
+  }
 
   useEffect(() => {
     const prev = document.activeElement
@@ -105,9 +110,10 @@ export default function WithdrawModal({
     }
     window.addEventListener('keydown', onKey)
     readVaultDepositTimestamp(vault.address, userAddress).then((ts) => {
-      if (ts > 0) setDepositedAgoSec(Math.floor(Date.now() / 1000) - ts)
+      if (ts > 0) commitIfCurrent(() => setDepositedAgoSec(Math.floor(Date.now() / 1000) - ts))
     })
     return () => {
+      actionControllerRef.current?.abort()
       window.removeEventListener('keydown', onKey)
       prev?.focus?.()
     }
@@ -149,6 +155,10 @@ export default function WithdrawModal({
 
   const handleConfirm = async () => {
     if (!canWithdraw || status !== 'idle') return
+    if (!isCurrentOwner()) {
+      onClose()
+      return
+    }
     setStatus('loading')
     setError(null)
     setProgress(null)
@@ -157,8 +167,10 @@ export default function WithdrawModal({
         vault.address,
         userAddress,
         agentAddresses,
-        setProgress
+        (next) => commitIfCurrent(() => setProgress(next)),
+        { activeAccount, getCurrentActiveAccount: getActiveAccount, signal: actionSignal }
       )
+      if (!isCurrentOwner()) return
       const failed = results.filter((r) => !r.ok)
 
       if (failed.length) {
@@ -166,13 +178,15 @@ export default function WithdrawModal({
         // from here — so claim no amount rather than a wrong one. Reconcile shows what is left.
         // ponytail: the successful legs get no history row on this branch; add per-agent amounts
         // if the vault ever exposes a per-sweep event to size them from.
-        setError(
-          `Swept ${results.length - failed.length} of ${results.length} agents. ` +
-            `${failed.length} failed: ${failed[0].error}`
-        )
-        setStatus('idle')
-        setProgress(null)
-        onSuccess(vault.address, '0') // reconcile from chain, but never a false zero
+        commitIfCurrent(() => {
+          setError(
+            `Swept ${results.length - failed.length} of ${results.length} agents. ` +
+              `${failed.length} failed: ${failed[0].error?.message ?? failed[0].error}`
+          )
+          setStatus('idle')
+          setProgress(null)
+          onSuccess(vault.address, '0') // reconcile from chain, but never a false zero
+        })
         return
       }
 
@@ -182,17 +196,24 @@ export default function WithdrawModal({
         vaultAddress: vault.address,
         protocol: vault.protocol,
         amountUsdc: balUsdc,
-        apy: vault.apy,
+        apy: evidencedVaultApy,
+        yieldEvidence,
+        channel: results[0]?.channel,
         type: 'withdraw',
         network: 'stellar-testnet',
       })
-      setStatus('done')
-      onSuccess(vault.address, balance)
-      setTimeout(onClose, 700)
+      commitIfCurrent(() => {
+        setStatus('done')
+        onSuccess(vault.address, balance)
+        setTimeout(() => commitIfCurrent(onClose), 700)
+      })
     } catch (err) {
-      setError(friendlyError(err))
-      setStatus('idle')
-      setProgress(null)
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED' || !isCurrentOwner()) return
+      commitIfCurrent(() => {
+        setError(friendlyError(err))
+        setStatus('idle')
+        setProgress(null)
+      })
     }
   }
 
@@ -212,35 +233,57 @@ export default function WithdrawModal({
 
   const handlePartial = async () => {
     if (!canPartial || status !== 'idle') return
+    if (!isCurrentOwner()) {
+      onClose()
+      return
+    }
     setStatus('loading')
     setError(null)
     try {
-      await ensureExitSigner({ owner: userAddress, agentAddress: chosen })
+      await ensureExitSigner({
+        owner: userAddress,
+        agentAddress: chosen,
+        activeAccount,
+        getCurrentActiveAccount: getActiveAccount,
+        signal: actionSignal,
+      })
       const out = await partialWithdraw({
         owner: userAddress,
         agentAddress: chosen,
         amountUnits,
         vault: vault.address,
+        activeAccount,
+        getCurrentActiveAccount: getActiveAccount,
+        signal: actionSignal,
       })
+      if (!isCurrentOwner()) return
       saveTransaction({
         txHash: out.transferHash,
         vaultName: vault.name,
         vaultAddress: vault.address,
         protocol: vault.protocol,
         amountUsdc: toDisplay(out.redeemed),
-        apy: vault.apy,
+        apy: evidencedVaultApy,
+        yieldEvidence,
+        channel: out.channel,
         type: 'withdraw',
         network: 'stellar-testnet',
       })
-      setStatus('done')
-      onSuccess(vault.address, out.redeemed.toString())
-      setTimeout(onClose, 700)
+      commitIfCurrent(() => {
+        setStatus('done')
+        onSuccess(vault.address, out.redeemed.toString())
+        setTimeout(() => commitIfCurrent(onClose), 700)
+      })
     } catch (err) {
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED' || !isCurrentOwner()) return
       // A stale exit key (localStorage from a lost registration, or re-registered elsewhere)
       // fails auth on-chain; drop it so the retry re-registers fresh.
-      if (/signature|auth/i.test(err?.message || '')) clearExitKey(chosen)
-      setError(friendlyError(err))
-      setStatus('idle')
+      if (/signature|auth/i.test(err?.message || ''))
+        clearManualExitKey({ owner: userAddress, agent: chosen })
+      commitIfCurrent(() => {
+        setError(friendlyError(err))
+        setStatus('idle')
+      })
     }
   }
 
@@ -295,13 +338,13 @@ export default function WithdrawModal({
 
               {agentAddresses.length === 0 ? (
                 <div className="wd-callout wd-callout--danger" role="status">
-                  No active agent holds this position, so there is nothing to sweep. If you just made
-                  a deposit, wait for agent permissions to load and reopen this.
+                  No active agent holds this position, so there is nothing to sweep. If you just
+                  made a deposit, wait for agent permissions to load and reopen this.
                 </div>
               ) : (
                 <div className="wd-callout">
-                  Held by {agentAddresses.length}{' '}
-                  {agentAddresses.length === 1 ? 'agent' : 'agents'}.{' '}
+                  Held by {agentAddresses.length} {agentAddresses.length === 1 ? 'agent' : 'agents'}
+                  .{' '}
                   {ONE_SIGNATURE_EXIT
                     ? `${
                         signaturesFor(agentAddresses.length) === 1
@@ -351,13 +394,13 @@ export default function WithdrawModal({
                 </div>
                 <div className="grant-receipt-row">
                   <span className="grant-receipt-k">Network fee</span>
-                  <span className="grant-receipt-v">Paid by you, in XLM</span>
-                </div>
-                <div className="grant-receipt-row">
-                  <span className="grant-receipt-k">Estimated time</span>
-                  <span className="grant-receipt-v mono">
-                    ~{Math.max(30, signaturesFor(agentAddresses.length) * 20)} seconds
-                  </span>
+                  {isSponsoredOwner ? (
+                    <span className="grant-receipt-v grant-receipt-v--ok">
+                      Sponsored by fee-bump relay
+                    </span>
+                  ) : (
+                    <span className="grant-receipt-v">Paid by you, in XLM</span>
+                  )}
                 </div>
               </div>
               <p className="wd-footnote">Earnings remain claimable after withdrawal.</p>
@@ -392,11 +435,7 @@ export default function WithdrawModal({
                     No agents available for partial withdraw.
                   </div>
                 ) : (
-                  <div
-                    className="wd-agent-list"
-                    role="radiogroup"
-                    aria-labelledby="pw-agent-label"
-                  >
+                  <div className="wd-agent-list" role="radiogroup" aria-labelledby="pw-agent-label">
                     {agentInfo.map((a, i) => {
                       const selected = chosen === a.address
                       const maxUsdc = toDisplay(a.maxUnits).toFixed(2)
@@ -483,10 +522,7 @@ export default function WithdrawModal({
                       </button>
                     ))}
                   </div>
-                  <span
-                    id="pw-amount-hint"
-                    className={`wd-hint${overMax ? ' wd-hint--err' : ''}`}
-                  >
+                  <span id="pw-amount-hint" className={`wd-hint${overMax ? ' wd-hint--err' : ''}`}>
                     {overMax
                       ? `Exceeds this agent's max (${maxDisplay.toFixed(2)} USDC).`
                       : `Available on this agent: ${maxDisplay.toFixed(2)} USDC. Remainder stays in the vault.`}
@@ -518,14 +554,17 @@ export default function WithdrawModal({
                   </div>
                   <div className="grant-receipt-row">
                     <span className="grant-receipt-k">Network fee</span>
-                    <span className="grant-receipt-v grant-receipt-v--ok">0 XLM, fee-bump</span>
+                    <span className="grant-receipt-v grant-receipt-v--ok">
+                      Sponsored by fee-bump relay
+                    </span>
                   </div>
                 </div>
               )}
 
               <div className="wd-callout">
                 First partial withdraw from an agent asks for one signature to register its exit
-                key. After that: zero signatures, zero gas, two relayed transactions.
+                key. After that: zero signatures and two relayed transactions. Network fee sponsored
+                by fee-bump relay.
               </div>
             </div>
           )}

@@ -1,13 +1,30 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
-import { copyFileSync, cpSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
 // Second build target: emits the unpacked MV3 extension into ../extension-dist.
 // root = this dir so the HTML entries emit flat at the dist root (not nested under extension/),
 // keeping each page's relative script refs valid and the manifest's popup.html / ceremony.html
 // paths correct. A closeBundle hook copies manifest.json in (publicDir is off).
 const OUT = resolve(__dirname, '../extension-dist')
+const BRAND_SRC = resolve(__dirname, '../public/brand')
+const BRAND_OUT = resolve(OUT, 'brand')
+
+// Reviewed subset only (Wallet Task 8) -- the product mark family + lockups the wallet may show,
+// and the reviewed Stellar/Base network marks. NOT the web-app-only PWA/social assets
+// (favicon.svg, icon-192/512.png, apple-touch-icon.png, social-card.png) -- those never render
+// inside the extension boundary, so they never ship in its bundle.
+const BRAND_FILES = [
+  'vibing-farmer-mark.svg',
+  'vibing-farmer-mark-forest.svg',
+  'vibing-farmer-mark-day.svg',
+  'vibing-farmer-mark-mono.svg',
+  'vibing-farmer-lockup-forest.svg',
+  'vibing-farmer-lockup-day.svg',
+  'vibing-farmer-lockup-mono.svg',
+]
+const BRAND_NETWORK_FILES = ['stellar.svg', 'stellar-white.svg', 'base.svg']
 
 export default defineConfig({
   root: __dirname,
@@ -35,6 +52,19 @@ export default defineConfig({
         }
 
         cpSync(resolve(__dirname, 'icons'), resolve(OUT, 'icons'), { recursive: true })
+
+        // Reviewed brand mark/lockup/network subset (Wallet Task 8) -- no popup/approve/ceremony
+        // page references extension-dist/brand/** yet (nothing here renders it at this commit).
+        // Staged ahead for the wallet surface tasks that add the on-screen brand lockup and
+        // network marks; ship it inside the bundle now so that later work has local relative
+        // paths (./brand/...) to point at rather than a CDN.
+        mkdirSync(resolve(BRAND_OUT, 'networks'), { recursive: true })
+        for (const file of BRAND_FILES) {
+          copyFileSync(resolve(BRAND_SRC, file), resolve(BRAND_OUT, file))
+        }
+        for (const file of BRAND_NETWORK_FILES) {
+          copyFileSync(resolve(BRAND_SRC, 'networks', file), resolve(BRAND_OUT, 'networks', file))
+        }
       },
     },
   ],

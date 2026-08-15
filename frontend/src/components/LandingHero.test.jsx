@@ -65,6 +65,7 @@ describe('LandingHero', () => {
     expect(screen.getByText('AI plans. Rules can say no.')).toBeTruthy()
     expect(screen.getByText('Real lending underneath.')).toBeTruthy()
     expect(screen.getByText('Lifeboat needs a mandate.')).toBeTruthy()
+    expect(screen.getAllByText(/Network fee sponsored by fee-bump relay/)).toHaveLength(2)
     expect(document.querySelectorAll('video')).toHaveLength(0)
   })
 
@@ -141,16 +142,12 @@ describe('LandingHero', () => {
     const navigation = screen.getByRole('navigation', { name: 'Main navigation' })
     const menu = navigation.querySelector('.nv-menu-btn')
     const links = document.getElementById('nv-main-links')
-    const navStyles = navigation.querySelector('style')?.textContent ?? ''
 
     expect(menu?.textContent).toBe('Menu')
     expect(menu.getAttribute('aria-expanded')).toBe('false')
     expect(links).toBeTruthy()
     expect(menu.getAttribute('aria-controls')).toBe(links.id)
-    expect(navStyles).toContain('transform-origin: top right;')
-    expect(navStyles).toMatch(
-      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.nv-cta:hover \{\s*transform: none;/
-    )
+    expect(navigation.querySelector('style')).toBeNull()
 
     fireEvent.click(menu)
     expect(menu.textContent).toBe('Close')

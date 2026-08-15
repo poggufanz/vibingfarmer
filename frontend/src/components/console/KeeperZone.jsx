@@ -50,7 +50,7 @@ export default function KeeperZone({ events = [], pricePerShare = null, strategi
           <span className="txt">
             {last.kind === 'compound_executed'
               ? `Compounded, +${last.totalGainUsdc} USDC`
-              : `Rebalanced, ${last.fromLabel} → ${last.toLabel}, ${last.amountUsdc} USDC`}
+              : `Rebalanced, ${last.fromLabel} to ${last.toLabel}, ${last.amountUsdc} USDC`}
           </span>
           <span className="meta">
             {shortHash(last.txHash)}, {agoText(last.timestamp, nowMs)}

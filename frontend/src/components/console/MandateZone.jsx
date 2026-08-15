@@ -63,8 +63,7 @@ export default function MandateZone({ scopes = [], onRevoke }) {
       <Pager page={cur} pages={pages} onPage={setPage} />
       {exited > 0 && active.length > 0 && (
         <div className="mono mandate-exited" style={{ opacity: 0.5, fontSize: 10 }}>
-          {exited} exited agent{exited === 1 ? '' : 's'} hidden (revoked on-chain, nothing at
-          risk).
+          {exited} exited agent{exited === 1 ? '' : 's'} hidden (revoked on-chain, nothing at risk).
         </div>
       )}
       <div className="mandate-guards mono">

@@ -8,11 +8,14 @@
 // reaction-time variance; the agentic leg is ONE deterministic value (first
 // block after signal) — no fake distribution for a near-instant action.
 //
-// Aesthetic: matches ExplorerPage — dark canvas, single acid accent, mono stats.
+// Aesthetic: matches ExplorerPage — dark canvas, single accent, mono for raw values only.
 
 import { useEffect, useState } from 'react'
 import NavBar from './NavBar.jsx'
 import { toDisplay } from '../stellar/format.js'
+import { toReplayPresentation } from '../secondary/secondaryRouteAdapters.js'
+import { StatusNotice, TechnicalDetails } from './pocket/Primitives.jsx'
+import './ReplayPage.css'
 
 const GROUND_URL = '/data/replay-usdc-depeg.json'
 const MC_URL = '/data/replay-mc.json'
@@ -47,13 +50,78 @@ function useReplayData() {
   return state
 }
 
-/* ----------------------------- band chart ----------------------------- */
+function fallbackReplayRead({ ground, mc, error }) {
+  const state = error ? 'error' : ground && mc ? 'current' : ground || mc ? 'partial' : 'loading'
+  const checkedAt = ground?.depegDate || mc?.provenance?.depegDate || null
 
-const CHART_X0 = 50
-const CHART_X1 = 590
-const CHART_W = CHART_X1 - CHART_X0
+  return {
+    ground,
+    mc,
+    error,
+    fact: {
+      state,
+      value: null,
+      source: 'Static replay fixture',
+      checkedAt,
+      staleAfterMs: null,
+    },
+  }
+}
 
-/* ----------------------------- bar chart comparison ----------------------------- */
+function payloadSource(read) {
+  if (read && typeof read.readResult === 'object' && read.readResult !== null) {
+    return read.readResult
+  }
+  return read && typeof read === 'object' ? read : {}
+}
+
+function factForPrimitive(presentation) {
+  return {
+    ...presentation.fact,
+    consequence: presentation.notice?.consequence ?? presentation.fact.consequence,
+    safeNextAction: presentation.notice?.nextAction ?? presentation.fact.safeNextAction,
+  }
+}
+
+function ReplayEvidence({ presentation, ground, mc, error }) {
+  const state = presentation.fact.state
+  const title =
+    state === 'loading'
+      ? 'Loading replay payloads'
+      : state === 'error'
+        ? 'Replay data unavailable'
+        : state === 'empty'
+          ? 'No replay payloads available'
+          : state === 'unavailable'
+            ? 'Replay payload unavailable'
+            : 'Replay payload status'
+  const fact = factForPrimitive(presentation)
+  const hasPartialPayload = Boolean(ground) !== Boolean(mc)
+  const showPayloadStatus = hasPartialPayload || state === 'partial'
+
+  return (
+    <section className="rp-evidence" aria-label="Replay evidence" data-fact-state={state}>
+      <StatusNotice fact={fact} title={title}>
+        {error && <p>{error}</p>}
+        {showPayloadStatus && (
+          <div className="rp-payload-status">
+            <p>{ground ? 'Ground truth payload loaded.' : 'Ground truth payload unavailable.'}</p>
+            <p>{mc ? 'Monte Carlo payload loaded.' : 'Monte Carlo payload unavailable.'}</p>
+          </div>
+        )}
+        {state === 'unavailable' && <p>Do not act on unverified replay evidence.</p>}
+        {state === 'error' && (
+          <p>
+            Generate it via <code>scripts/replay/monteCarlo.ts</code>.
+          </p>
+        )}
+      </StatusNotice>
+      <TechnicalDetails summary="Technical details" fact={fact} open />
+    </section>
+  )
+}
+
+/* ----------------------------- bar chart ----------------------------- */
 
 function OutcomeBarChart({ manual, agentic }) {
   const agVal = Number(agentic.deterministic)
@@ -69,9 +137,7 @@ function OutcomeBarChart({ manual, agentic }) {
   const min = lo - pad
   const max = hi + pad
 
-  const getPct = (val) => {
-    return Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100))
-  }
+  const getPct = (val) => Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100))
 
   const agPct = getPct(agVal)
   const manP50Pct = getPct(manP50)
@@ -80,7 +146,6 @@ function OutcomeBarChart({ manual, agentic }) {
 
   return (
     <div className="rp-chart-container">
-      {/* Agentic Bar Row */}
       <div className="rp-chart-row rp-chart-row--agentic">
         <div className="rp-chart-label-col">
           <span className="rp-row-badge rp-row-badge--agentic">AGENTIC</span>
@@ -96,7 +161,6 @@ function OutcomeBarChart({ manual, agentic }) {
         </div>
       </div>
 
-      {/* Manual Bar Row */}
       <div className="rp-chart-row rp-chart-row--manual">
         <div className="rp-chart-label-col">
           <span className="rp-row-badge rp-row-badge--manual">MANUAL</span>
@@ -105,12 +169,10 @@ function OutcomeBarChart({ manual, agentic }) {
         </div>
         <div className="rp-chart-bar-col">
           <div className="rp-bar-wrapper">
-            {/* The main bar goes up to P50 */}
             <div className="rp-bar rp-bar--manual" style={{ width: `${manP50Pct}%` }}>
               <span className="rp-bar-val">{fmtWeth(manP50)}</span>
             </div>
           </div>
-          {/* Whisker line showing P5 to P95 range */}
           <div
             className="rp-bar-whisker"
             style={{
@@ -126,7 +188,6 @@ function OutcomeBarChart({ manual, agentic }) {
         </div>
       </div>
 
-      {/* X Axis Labels */}
       <div className="rp-chart-axis">
         <span className="rp-axis-tick-val">{fmtWeth(min)}</span>
         <span className="rp-axis-tick-title">WETH Received (Scale Zoomed)</span>
@@ -147,7 +208,6 @@ function ComparisonHero({ manual, agentic }) {
 
   return (
     <div className="rp-compare">
-      {/* Manual card */}
       <div className="rp-hero-card rp-hero-card--manual">
         <div className="rp-hero-tag">
           <span className="rp-hero-dot rp-hero-dot--manual" />
@@ -158,7 +218,6 @@ function ComparisonHero({ manual, agentic }) {
         <div className="rp-hero-sub">Median across reaction delays</div>
       </div>
 
-      {/* Delta badge */}
       <div className={'rp-delta' + (isPositive ? ' positive' : ' negative')}>
         <span className="rp-delta-val">
           {isPositive ? '+' : ''}
@@ -171,7 +230,6 @@ function ComparisonHero({ manual, agentic }) {
         <span className="rp-delta-label">Difference from manual P50</span>
       </div>
 
-      {/* Agentic card */}
       <div className="rp-hero-card rp-hero-card--agentic">
         <div className="rp-hero-tag">
           <span className="rp-hero-dot rp-hero-dot--agentic" />
@@ -205,21 +263,31 @@ function AssumptionRow({ label, value }) {
 
 /* ------------------------------ page ------------------------------ */
 
-export default function ReplayPage() {
-  const { ground, mc, error } = useReplayData()
+export default function ReplayPage({ replayRead } = {}) {
+  const fetchedRead = useReplayData()
+  const read = replayRead ?? fallbackReplayRead(fetchedRead)
+  const source = payloadSource(read)
+  const ground = source.ground ?? null
+  const mc = source.mc ?? null
+  const error = source.error ?? null
+  const presentation = toReplayPresentation(read)
+  const state = presentation.fact.state
+  const hasBothPayloads = Boolean(ground && mc)
+  const canRenderPayload = ['current', 'confirmed', 'stale', 'partial'].includes(state)
 
   return (
     <div className="rp-page">
-      <ReplayStyle />
       <NavBar />
 
-      <main className="rp-main">
+      <main className="rp-main" aria-busy={state === 'loading' ? 'true' : undefined}>
         <header className="rp-header">
           <div className="rp-header__top">
             <h1 className="rp-title">Historical Replay</h1>
             <span className="rp-net">
-              <span className="rp-net__dot" /> Ethereum mainnet fork snapshot. Static JSON, no
-              wallet or RPC.
+              <span className="rp-net__dot" />
+              <span>Ethereum mainnet fork</span>
+              <span>Static historical replay</span>
+              <span>No wallet or RPC execution</span>
             </span>
           </div>
           <p className="rp-lede">
@@ -230,16 +298,9 @@ export default function ReplayPage() {
           </p>
         </header>
 
-        {error && (
-          <div className="rp-empty">
-            Replay data unavailable ({error}). Generate it via{' '}
-            <code>scripts/replay/monteCarlo.ts</code>.
-          </div>
-        )}
+        <ReplayEvidence presentation={presentation} ground={ground} mc={mc} error={error} />
 
-        {!error && !mc && <div className="rp-empty">Loading replay data…</div>}
-
-        {mc && ground && (
+        {hasBothPayloads && canRenderPayload && (
           <>
             <section className="rp-section" aria-labelledby="rp-outcome">
               <h2 id="rp-outcome" className="rp-section__title">
@@ -251,13 +312,9 @@ export default function ReplayPage() {
                 at a different reaction delay.
               </p>
 
-              {/* comparison hero cards */}
               <ComparisonHero manual={mc.manual} agentic={mc.agentic} />
-
-              {/* horizontal bar comparison chart */}
               <OutcomeBarChart manual={mc.manual} agentic={mc.agentic} />
 
-              {/* stat grid */}
               <div className="rp-stats">
                 <StatBlock
                   label="Manual P5 (worst)"
@@ -319,501 +376,5 @@ export default function ReplayPage() {
         </footer>
       </main>
     </div>
-  )
-}
-
-/* ------------------------------ styles ------------------------------ */
-
-function ReplayStyle() {
-  return (
-    <style>{`
-.rp-page {
-  position: fixed;
-  inset: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  background: var(--bg-base, #0e0f0c);
-  color: var(--text, #ecebe1);
-  font-family: var(--font-body, "Geist", system-ui, sans-serif);
-}
-.rp-page::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.016) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.016) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 20%, transparent 100%);
-}
-
-.rp-main {
-  position: relative;
-  z-index: 1;
-  max-width: 1040px;
-  margin: 0 auto;
-  padding: calc(64px + clamp(2.5rem, 7vw, 5rem)) clamp(1.1rem, 5vw, 2.6rem) 4rem;
-}
-
-/* ---------- header ---------- */
-.rp-header { padding-bottom: clamp(2rem, 5vw, 3.4rem); border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); }
-.rp-header__top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-.rp-title {
-  font-family: var(--font-display, "Geist", sans-serif);
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1;
-  font-size: clamp(2.6rem, 7vw, 4.6rem);
-  color: var(--text, #ecebe1);
-}
-.rp-net {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55ch;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.74rem;
-  letter-spacing: 0.04em;
-  color: var(--text-muted, #95958a);
-}
-.rp-net__dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--text-faint, #7a7a70);
-}
-.rp-lede {
-  margin-top: 1.1rem;
-  max-width: 60ch;
-  font-family: var(--font-mono, monospace);
-  font-size: clamp(0.82rem, 1.1vw, 0.95rem);
-  line-height: 1.7;
-  color: var(--text-muted, #95958a);
-}
-
-/* ---------- sections ---------- */
-.rp-section { padding: clamp(2.2rem, 5vw, 3.6rem) 0; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); }
-.rp-section:last-of-type { border-bottom: none; }
-.rp-section__title {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--accent, #cfff3d);
-  margin-bottom: 0.6rem;
-}
-.rp-section__sub {
-  display: block;
-  margin: 0 0 1.5rem;
-  max-width: 64ch;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.8rem;
-  line-height: 1.6;
-  color: var(--text-muted, #95958a);
-}
-
-/* ---------- comparison hero cards ---------- */
-.rp-compare {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 0.7rem;
-  align-items: stretch;
-  margin-bottom: 2rem;
-}
-.rp-hero-card {
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: 14px;
-  padding: 1.5rem 1.3rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  position: relative;
-  overflow: hidden;
-}
-.rp-hero-card--manual {
-  background: var(--bg-card, #1a1b16);
-}
-.rp-hero-card--agentic {
-  background: linear-gradient(145deg, rgba(207,255,61,0.06) 0%, var(--bg-card, #1a1b16) 60%);
-  border-color: rgba(207,255,61,0.2);
-  box-shadow: 0 0 40px -8px rgba(207,255,61,0.1);
-}
-.rp-hero-card--agentic::before {
-  content: '';
-  position: absolute;
-  top: -40%; right: -30%;
-  width: 180px; height: 180px;
-  background: radial-gradient(circle, rgba(207,255,61,0.08) 0%, transparent 70%);
-  pointer-events: none;
-}
-.rp-hero-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5ch;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-faint, #56564f);
-}
-.rp-hero-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-}
-.rp-hero-dot--manual { background: var(--text-faint, #56564f); }
-.rp-hero-dot--agentic {
-  background: var(--accent, #cfff3d);
-  box-shadow: 0 0 6px rgba(207,255,61,0.5);
-}
-.rp-hero-val {
-  font-family: var(--font-mono, monospace);
-  font-size: clamp(1.8rem, 3.5vw, 2.6rem);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1;
-  color: var(--text, #ecebe1);
-}
-.rp-hero-card--agentic .rp-hero-val {
-  background: linear-gradient(135deg, var(--accent, #cfff3d), #e8ff8a);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.rp-hero-unit {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: var(--text-muted, #95958a);
-}
-.rp-hero-sub {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.68rem;
-  color: var(--text-faint, #56564f);
-  margin-top: auto;
-  padding-top: 0.5rem;
-}
-
-/* delta badge */
-.rp-delta {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.3rem;
-  padding: 0.8rem 0.6rem;
-  min-width: 100px;
-}
-.rp-delta-arrow {
-  font-size: 1.4rem;
-  line-height: 1;
-}
-.rp-delta.positive .rp-delta-arrow { color: var(--accent, #cfff3d); }
-.rp-delta.negative .rp-delta-arrow { color: #ff6b6b; }
-.rp-delta-val {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  text-align: center;
-}
-.rp-delta.positive .rp-delta-val { color: var(--accent, #cfff3d); }
-.rp-delta.negative .rp-delta-val { color: #ff6b6b; }
-.rp-delta-pct {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.7rem;
-  font-weight: 600;
-  padding: 0.15rem 0.5rem;
-  border-radius: 6px;
-}
-.rp-delta.positive .rp-delta-pct { background: rgba(207,255,61,0.1); color: var(--accent, #cfff3d); }
-.rp-delta.negative .rp-delta-pct { background: rgba(255,107,107,0.1); color: #ff6b6b; }
-.rp-delta-label {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.58rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-faint, #56564f);
-  text-align: center;
-}
-
-/* ---------- horizontal bar chart ---------- */
-.rp-chart-container {
-  display: flex;
-  flex-direction: column;
-  gap: 1.6rem;
-  background: rgba(255,255,255,0.015);
-  border: 1px solid var(--border, rgba(255,255,255,0.06));
-  border-radius: 14px;
-  padding: 1.8rem 1.5rem;
-  margin: 1.5rem 0 2rem;
-}
-.rp-chart-row {
-  display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 1.5rem;
-  align-items: center;
-}
-@media (max-width: 760px) {
-  .rp-chart-row {
-    grid-template-columns: 1fr;
-    gap: 0.6rem;
-  }
-}
-.rp-chart-label-col {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-.rp-row-badge {
-  display: inline-flex;
-  align-self: flex-start;
-  font-family: var(--font-mono, monospace);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  padding: 0.25rem 0.55rem;
-  border-radius: 4px;
-  line-height: 1;
-  margin-bottom: 0.15rem;
-}
-.rp-row-badge--agentic {
-  background: rgba(207,255,61,0.1);
-  color: var(--accent, #cfff3d);
-  border: 1px solid rgba(207,255,61,0.25);
-}
-.rp-row-badge--manual {
-  background: rgba(255,255,255,0.04);
-  color: var(--text-muted, #95958a);
-  border: 1px solid rgba(255,255,255,0.08);
-}
-.rp-row-title {
-  font-family: var(--font-display, "Geist", sans-serif);
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text, #ecebe1);
-}
-.rp-row-desc {
-  font-family: var(--font-mono, monospace);
-  font-size: 9.5px;
-  color: var(--text-faint, #56564f);
-}
-.rp-chart-bar-col {
-  position: relative;
-  height: 52px;
-  display: flex;
-  align-items: center;
-}
-.rp-bar-wrapper {
-  position: relative;
-  width: 100%;
-  height: 28px;
-  background: rgba(255,255,255,0.02);
-  border-radius: 6px;
-  border: 1px solid var(--border, rgba(255,255,255,0.06));
-}
-.rp-bar {
-  height: 100%;
-  border-radius: 5px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding-right: 12px;
-  transition: width 800ms cubic-bezier(0.16,1,0.3,1);
-  position: relative;
-  z-index: 2;
-}
-.rp-bar--agentic {
-  background: linear-gradient(90deg, rgba(207,255,61,0.25) 0%, var(--accent, #cfff3d) 100%);
-  border: 1px solid rgba(207,255,61,0.5);
-  box-shadow: 0 0 20px rgba(207,255,61,0.15);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .rp-bar { transition: none; }
-}
-.rp-bar--manual {
-  background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.12) 100%);
-  border: 1px solid rgba(255,255,255,0.15);
-}
-.rp-bar-val {
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  font-weight: 700;
-  color: #0e0f0c;
-  white-space: nowrap;
-}
-.rp-bar--manual .rp-bar-val {
-  color: var(--text, #ecebe1);
-}
-.rp-bar-whisker {
-  position: absolute;
-  top: 42px;
-  height: 2px;
-  background: rgba(255,255,255,0.25);
-  z-index: 1;
-}
-.rp-whisker-cap {
-  position: absolute;
-  top: -4px;
-  width: 2px;
-  height: 10px;
-  background: rgba(255,255,255,0.25);
-}
-.rp-whisker-cap--left { left: 0; }
-.rp-whisker-cap--right { right: 0; }
-.rp-whisker-label {
-  position: absolute;
-  top: 8px;
-  font-family: var(--font-mono, monospace);
-  font-size: 8px;
-  color: var(--text-faint, #56564f);
-  white-space: nowrap;
-}
-.rp-whisker-label--left { left: 0; transform: translateX(-50%); }
-.rp-whisker-label--right { right: 0; transform: translateX(50%); }
-.rp-chart-axis {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-top: 1px dashed var(--border-strong, rgba(255,255,255,0.13));
-  padding-top: 0.8rem;
-  margin-top: 0.4rem;
-}
-.rp-axis-tick-val {
-  font-family: var(--font-mono, monospace);
-  font-size: 10.5px;
-  color: var(--text-faint, #56564f);
-}
-.rp-axis-tick-title {
-  font-family: var(--font-mono, monospace);
-  font-size: 9px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-muted, #95958a);
-}
-
-/* ---------- stats ---------- */
-.rp-stats {
-  margin-top: 1.5rem;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.7rem;
-}
-.rp-stat {
-  border: 1px solid var(--border, rgba(255,255,255,0.06));
-  border-radius: var(--radius-md, 8px);
-  background: var(--bg-card, #1a1b16);
-  padding: 1.3rem 1.1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  transition: border-color 200ms ease;
-}
-.rp-stat--manual {
-  border-left: 3px solid rgba(255,255,255,0.1);
-}
-.rp-stat--agentic {
-  border-left: 3px solid var(--accent, #cfff3d);
-  background: linear-gradient(145deg, rgba(207,255,61,0.04) 0%, var(--bg-card, #1a1b16) 50%);
-}
-.rp-stat__value {
-  font-family: var(--font-mono, monospace);
-  font-size: clamp(1.1rem, 2.2vw, 1.5rem);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--text, #ecebe1);
-  line-height: 1;
-}
-.rp-stat--agentic .rp-stat__value { color: var(--accent, #cfff3d); }
-.rp-stat__label {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.68rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-faint, #56564f);
-}
-
-/* ---------- assumptions ---------- */
-.rp-arows { display: flex; flex-direction: column; gap: 0.1rem; margin-top: 1.5rem; }
-.rp-arow {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.75rem 0;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
-}
-.rp-arow:last-child { border-bottom: none; }
-.rp-arow__k {
-  flex-shrink: 0;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.72rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-faint, #56564f);
-}
-.rp-arow__v {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.82rem;
-  color: var(--text, #ecebe1);
-  text-align: right;
-}
-.rp-disclaimer {
-  margin-top: 1.6rem;
-  padding: 0.85rem 1.1rem;
-  border-left: 2px solid var(--border-accent, rgba(207,255,61,0.4));
-  font-family: var(--font-mono, monospace);
-  font-size: 0.76rem;
-  line-height: 1.6;
-  color: var(--text-faint, #56564f);
-  background: var(--accent-soft, rgba(207,255,61,0.08));
-  border-radius: 0 var(--radius-sm, 4px) var(--radius-sm, 4px) 0;
-}
-
-/* ---------- empty / loading ---------- */
-.rp-empty {
-  margin-top: 1.5rem;
-  border: 1px dashed var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: var(--radius-lg, 14px);
-  padding: 2.2rem 1.5rem;
-  text-align: center;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.8rem;
-  color: var(--text-faint, #56564f);
-}
-.rp-empty code {
-  color: var(--text-muted, #95958a);
-  font-family: var(--font-mono, monospace);
-}
-
-/* ---------- footer ---------- */
-.rp-foot {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-top: 3rem;
-  padding-top: 1.8rem;
-  border-top: 1px solid var(--border, rgba(255,255,255,0.06));
-}
-.rp-foot__mark { font-family: var(--font-mono, monospace); font-size: 0.78rem; color: var(--text-muted, #95958a); }
-.rp-foot__tag { font-family: var(--font-script, "Newsreader", serif); font-style: italic; font-size: 0.95rem; color: var(--text-faint, #56564f); }
-
-/* ---------- responsive ---------- */
-@media (max-width: 760px) {
-  .rp-compare { grid-template-columns: 1fr; gap: 0.5rem; }
-  .rp-delta { flex-direction: row; gap: 0.6rem; padding: 0.6rem 0; }
-  .rp-stats { grid-template-columns: repeat(2, 1fr); }
-}
-@media (max-width: 420px) {
-  .rp-stats { grid-template-columns: 1fr; }
-  .rp-arow { flex-direction: column; align-items: flex-start; gap: 0.3rem; }
-  .rp-arow__v { text-align: left; }
-}
-`}</style>
   )
 }

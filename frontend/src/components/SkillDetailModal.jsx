@@ -1,8 +1,9 @@
 // SkillDetailModal.jsx
 // Read-only human-readable skill detail. Opens from "View details" on a skill card.
-import React, { useEffect } from 'react'
 import { Icon } from '../components.jsx'
 import { translateSkill, formatProtocol } from '../skills.jsx'
+import { Dialog, StatusNotice } from './pocket/Primitives.jsx'
+import './SecondaryDialogs.css'
 
 const STEP_LABELS = {
   router_pull: () => 'Pull USDC via funding_router (scoped allowance)',
@@ -25,21 +26,13 @@ function shortAddr(addr) {
 }
 
 const Row = ({ k, v }) => (
-  <div className="skill-detail-row">
+  <div className="secondary-dialog-skill-row">
     <span>{k}</span>
     <span className="mono">{v}</span>
   </div>
 )
 
 export default function SkillDetailModal({ agent, skill, state, onClose, onApprove, onEdit }) {
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   const info = translateSkill(agent, skill)
   const vaultAddr = skill.target?.vault || agent.vault?.addr || ''
   const network = skill.target?.chain || 'stellar-testnet'
@@ -48,79 +41,88 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
   const isApproved = state === 'approved'
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal skill-detail-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="skill-detail-title"
-        style={{ maxWidth: 480 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-eyebrow skill-detail-eyebrow">
-          <span id="skill-detail-title">
-            {agent.name}, {info.risk}
-          </span>
-          <button className="modal-close-btn" onClick={onClose} aria-label="Close">
-            <Icon name="x" size={12} />
-          </button>
-        </div>
-
-        <div className="skill-detail-section">
-          <div className="skill-detail-label">Vault</div>
-          <div className="skill-detail-value">{formatProtocol(agent.vault?.protocol)}</div>
-          <div className="skill-detail-sub mono">
-            {shortAddr(vaultAddr)}, {network}
-            {vaultAddr && (
-              <a
-                href={`https://stellar.expert/explorer/testnet/contract/${vaultAddr}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="skill-detail-link"
-              >
-                View on Stellar Expert
-              </a>
-            )}
-          </div>
-        </div>
-
-        <div className="skill-detail-section">
-          <div className="skill-detail-label">Execution steps</div>
-          {(skill.steps || []).map((step, i) => (
-            <div key={step.id} className="skill-detail-step">
-              <span className="skill-detail-step-num">{i + 1}.</span>
-              <span>{labelStep(step)}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="skill-detail-section">
-          <div className="skill-detail-label">Security limits</div>
-          <Row k="Maximum" v={skill.guards?.maxAmount || info.amountVal} />
-          <Row k="Fee" v="Fee-bump sponsored" />
-          <Row k="Valid for" v={`${hours} hour${hours !== 1 ? 's' : ''} from now`} />
-          <Row k="Revocable" v={skill.guards?.revocable ? 'Yes, revoke anytime' : 'No'} />
-          <Row k="Risk" v={info.risk} />
-        </div>
-
-        <div
-          className="modal-actions"
-          style={{ justifyContent: 'space-between', alignItems: 'center' }}
-        >
-          <button className="btn btn-text" onClick={onEdit} style={{ fontSize: 12, opacity: 0.65 }}>
+    <Dialog
+      open
+      title={`${agent.name}, ${info.risk}`}
+      description="Review this worker's selected vault, execution steps, and scoped security limits."
+      onClose={onClose}
+      className="secondary-dialog secondary-dialog--wide secondary-dialog--skill-detail"
+      actions={
+        <>
+          <button className="btn btn-text" onClick={onEdit} type="button">
             Edit skill
           </button>
           {isApproved ? (
-            <button className="btn btn-ghost" disabled>
+            <button className="btn btn-ghost" disabled type="button">
               Approved
             </button>
           ) : (
-            <button className="btn btn-primary" onClick={onApprove}>
+            <button className="btn btn-primary" onClick={onApprove} type="button">
               Approve this worker
             </button>
           )}
+        </>
+      }
+    >
+      <div className="secondary-dialog-eyebrow">
+        <span>Worker skill detail</span>
+        <button
+          className="secondary-dialog-close"
+          onClick={onClose}
+          aria-label="Close"
+          type="button"
+        >
+          <Icon name="x" size={12} />
+        </button>
+      </div>
+
+      <div className="secondary-dialog-skill-section">
+        <div className="secondary-dialog-skill-label">Vault</div>
+        <div className="secondary-dialog-skill-value">{formatProtocol(agent.vault?.protocol)}</div>
+        <div className="secondary-dialog-skill-sub mono">
+          {shortAddr(vaultAddr)}, {network}
+          {vaultAddr && (
+            <a
+              href={`https://stellar.expert/explorer/testnet/contract/${vaultAddr}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="secondary-dialog-skill-link"
+            >
+              View on Stellar Expert
+            </a>
+          )}
         </div>
       </div>
-    </div>
+
+      <div className="secondary-dialog-skill-section">
+        <div className="secondary-dialog-skill-label">Execution steps</div>
+        {(skill.steps || []).map((step, i) => (
+          <div key={step.id} className="secondary-dialog-skill-step">
+            <span className="secondary-dialog-skill-step-number">{i + 1}.</span>
+            <span>{labelStep(step)}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="secondary-dialog-skill-section">
+        <div className="secondary-dialog-skill-label">Security limits</div>
+        <Row k="Maximum" v={skill.guards?.maxAmount || info.amountVal} />
+        <Row k="Network fee" v="Sponsored by fee-bump relay" />
+        <Row k="Valid for" v={`${hours} hour${hours !== 1 ? 's' : ''} from now`} />
+        <Row k="Revocable" v={skill.guards?.revocable ? 'Yes, revoke anytime' : 'No'} />
+        <Row k="Risk" v={info.risk} />
+      </div>
+
+      <div className="secondary-dialog-skill-status" aria-live="polite">
+        <StatusNotice
+          state={isApproved ? 'success' : 'info'}
+          title={isApproved ? 'Approved' : 'Needs review'}
+        >
+          {isApproved
+            ? 'This worker is ready for the next step.'
+            : 'Review the scope before approving this worker.'}
+        </StatusNotice>
+      </div>
+    </Dialog>
   )
 }

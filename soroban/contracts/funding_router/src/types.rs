@@ -10,6 +10,9 @@ use soroban_sdk::{contracterror, contracttype, Address, BytesN};
 /// `target` = vault (kind 0 / Deposit) or TokenMessengerMinter (kind 1 /
 /// Bridge). `mint_recipient` + `destination_domain` only meaningful for
 /// Bridge; zero for Deposit.
+/// v4 (Task 4): mirrors `agent_account::types::AgentScope`'s added `per_execution_max` — the
+/// field list must stay identical or `pull_v3`'s cross-contract `scope_of()` read (via
+/// `AgentScopeClient`, defined in lib.rs) decodes the wrong shape.
 #[contracttype]
 #[derive(Clone)]
 pub struct AgentScope {
@@ -25,6 +28,7 @@ pub struct AgentScope {
     pub period_start: u64,
     pub expiry: u64,
     pub revoked: bool,
+    pub per_execution_max: i128,
 }
 
 /// One token's budget in a multi-token `grant`. The router approves the
@@ -67,6 +71,28 @@ pub struct DeployedInfo {
     pub token: Address,
 }
 
+/// Router V3 (Task 4): a bounded, REUSABLE permission — unlike `grant`/`pull` (a straight SEP-41
+/// allowance pass-through with no router-side bookkeeping), the router itself tracks cumulative
+/// spend against `mandate_ceiling` so ONE owner signature can authorize MANY `pull_v3` calls over
+/// the permission's life, each individually capped at `per_run_max`. `scope_id` fingerprints the
+/// immutable (target, token, kind, mint_recipient, destination_domain) tuple shared by every
+/// agent `grant_v3` links to this permission — `pull_v3` recomputes it from the pulling agent's
+/// LIVE `scope_of()` and rejects any drift. Separate storage/events from V2 — a V2 `Deployed`
+/// receipt is never reinterpreted as a V3 permission.
+#[contracttype]
+#[derive(Clone)]
+pub struct PermissionGrantV3 {
+    pub permission_id: BytesN<32>,
+    pub scope_id: BytesN<32>,
+    pub owner: Address,
+    pub token: Address,
+    pub mandate_ceiling: i128,
+    pub confirmed_spent: i128,
+    pub per_run_max: i128,
+    pub live_until_ledger: u32,
+    pub revoked: bool,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -76,6 +102,17 @@ pub enum DataKey {
     /// Persistent: factory-deployed agent -> DeployedInfo. Only addresses
     /// present here are ever fundable via `pull`.
     Deployed(Address),
+    // --- v3 (Task 4): separate namespace from the v2 keys above — a V2 `Deployed` receipt is
+    // NEVER reinterpreted as a V3 permission/linkage record, and vice versa.
+    /// Persistent: permission_id -> PermissionGrantV3. The bounded, reusable grant record.
+    PermissionV3(BytesN<32>),
+    /// Persistent: agent -> permission_id. Set ONCE at `grant_v3`, never mutated afterward — the
+    /// "immutable agent linkage" `pull_v3` checks every call.
+    LinkedAgentV3(Address),
+    /// Persistent: sha256(permission_id, execution_id) -> true. Replay guard — every `pull_v3`
+    /// checks this is absent before executing and sets it before the SEP-41 transfer_from, so a
+    /// duplicate execution_id (from the SAME permission) can never be pulled twice.
+    ExecutionUsedV3(BytesN<32>),
 }
 
 #[contracterror]
@@ -105,4 +142,24 @@ pub enum RouterError {
     EmptyBudgets = 9,
     /// Two `budgets` entries name the same token.
     DuplicateBudgetToken = 10,
+    // --- v3 (Task 4): bounded reusable grant — appended, existing discriminants unchanged. ---
+    /// `grant_v3`'s `per_run_max` exceeds `mandate_ceiling` — a single run could never fit
+    /// within the lifetime ceiling it was supposedly planned against.
+    CeilingBelowPlanned = 11,
+    /// `pull_v3`/`permission_grant`/`revoke_v3` named a `permission_id` this router never
+    /// granted.
+    UnknownPermissionV3 = 12,
+    /// The permission is revoked (`revoke_v3` was called, or a stricter future admin path).
+    RevokedV3 = 13,
+    /// The current ledger sequence is at/past `live_until_ledger`.
+    ExpiredV3 = 14,
+    /// The linked agent's LIVE `scope_of()` no longer fingerprints to the permission's recorded
+    /// `scope_id` — target/token/kind/mint_recipient/destination_domain must never drift.
+    ScopeMismatchV3 = 15,
+    /// `pull_v3`'s `amount` exceeds `per_run_max`.
+    PerRunExceededV3 = 16,
+    /// `confirmed_spent + amount` would exceed `mandate_ceiling`.
+    CeilingExceededV3 = 17,
+    /// `execution_id` was already used for this `permission_id` (replay).
+    DuplicateExecutionV3 = 18,
 }

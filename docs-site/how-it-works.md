@@ -1,6 +1,12 @@
 # How it works
 
-Vibing Farmer turns a multi-step farming chore into a single approval followed by autonomous, bounded execution. You set an amount, a risk level, and a number of worker agents; an AI strategist and a council of specialists decide how to split the deposit; you sign one wallet transaction; disposable agent accounts do the rest, gas-free. Here is the full lifecycle, stage by stage, with the mechanics underneath each step.
+Vibing Farmer turns a multi-step farming chore into a single approval followed by autonomous, bounded execution. You set an amount, a risk level, and a number of worker agents; an AI strategist and a council of specialists decide how to split the deposit; you sign one wallet transaction; disposable agent accounts do the rest. Network fee sponsored by fee-bump relay. Here is the full lifecycle, stage by stage, with the mechanics underneath each step.
+
+The Stellar Explorer keeps deployment facts explicit: 7 Soroban source crates, 6 first-party Vibing
+Farmer deployments, and 2 external protocol contracts make 8 static testnet addresses. Agent
+accounts are created dynamically per run. The active funding router is V2 at
+`CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE`; an agent-account WASM value is a
+code hash, not a contract address. See the [categorized deployment table](contracts.md).
 
 ## 1. Strategy
 
@@ -71,7 +77,7 @@ Building the grant transaction happens in a few concrete steps: for each worker,
 
 Each worker signs its own deposit authorization with an ephemeral ed25519 **session key** — generated fresh for the run, distinct from your wallet key. That key can only authorize a deposit into the one vault the agent was scoped to at deploy time, up to its cap; it has no power over your real wallet or any other agent's funds.
 
-Every transaction is fee-bumped by the app's own relay (`POST /api/stellar-relay`): you or the agent signs the inner transaction normally, and the relay wraps it in a Stellar fee-bump transaction where the relay's own funded keypair pays the network fee. Only the fee-paying source account changes; the inner transaction's logic and authorization are untouched. The relay only fee-bumps a short allowlist — vault deposit/redeem on the configured vault, token transfers from an allowlisted agent, `router.grant`/`router.pull` on the configured router, and contract deploys matching a pinned wasm hash. Anything else, including admin functions like upgrading the vault or changing the keeper, is refused; if the vault address isn't configured at all, the guard is skipped entirely rather than relaying everything. The endpoint also sits behind an origin allowlist and a per-IP rate limit, and caches each inner-transaction hash for 30 minutes so an in-flight resubmission can't double-spend the same signed transaction. You pay zero XLM.
+Every transaction is fee-bumped by the app's own relay (`POST /api/stellar-relay`): you or the agent signs the inner transaction normally, and the relay wraps it in a Stellar fee-bump transaction where the relay's own funded keypair pays the network fee. Network fee sponsored by fee-bump relay. Only the fee-paying source account changes; the inner transaction's logic and authorization are untouched. The relay only fee-bumps a short allowlist — vault deposit/redeem on the configured vault, token transfers from an allowlisted agent, `router.grant`/`router.pull` on the configured router, and contract deploys matching a pinned wasm hash. Anything else, including admin functions like upgrading the vault or changing the keeper, is refused; if the vault address isn't configured at all, the guard is skipped entirely rather than relaying everything. The endpoint also sits behind an origin allowlist and a per-IP rate limit, and caches each inner-transaction hash for 30 minutes so an in-flight resubmission can't double-spend the same signed transaction.
 
 Each worker signs a Soroban authorization entry rather than a plain transaction, which requires a two-pass build: a first simulation runs in recording mode to work out what the transaction will touch, the session key signs the resulting authorization hash, and the transaction is then re-simulated with that signature attached to capture the final footprint. The signature covers only the authorization preimage hash, so this second pass doesn't invalidate it — it's what lets a purpose-built smart-contract account sign like a regular key without knowing its own execution footprint in advance.
 

@@ -4,7 +4,11 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import PositionsZone from './PositionsZone.jsx'
 
 vi.mock('../WithdrawModal.jsx', () => ({
-  default: ({ vault }) => <div data-testid="withdraw-modal">{vault.name}</div>,
+  default: ({ vault, activeAccount }) => (
+    <div data-testid="withdraw-modal">
+      {vault.name}:{activeAccount?.connectorId || 'missing'}
+    </div>
+  ),
 }))
 
 afterEach(cleanup)
@@ -18,6 +22,14 @@ const props = {
   lastUpdated: 1_000_000_000_000,
   nowMs: 1_000_000_000_000,
   userAddress: 'GUSER',
+  activeAccount: {
+    version: 1,
+    kind: 'G',
+    address: 'GUSER',
+    networkPassphrase: 'Test SDF Network ; September 2015',
+    connectorId: 'freighter',
+    epoch: 7,
+  },
   withdrawEnabled: true,
   onWithdrawSuccess: () => {},
   onNewStrategy: vi.fn(),
@@ -34,7 +46,33 @@ describe('PositionsZone', () => {
   it('withdraw opens the modal', () => {
     render(<PositionsZone {...props} />)
     fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
+    expect(screen.getByTestId('withdraw-modal').textContent).toMatch(/freighter/)
+  })
+  it('fails closed when the V1 owner capability is missing or belongs to another owner', () => {
+    const { rerender } = render(<PositionsZone {...props} activeAccount={null} />)
+    expect(screen.getByRole('button', { name: /withdraw/i }).disabled).toBe(true)
+    rerender(
+      <PositionsZone
+        {...props}
+        activeAccount={{ ...props.activeAccount, address: 'GOTHER', epoch: 8 }}
+      />
+    )
+    expect(screen.getByRole('button', { name: /withdraw/i }).disabled).toBe(true)
+  })
+  it('closes an already-open withdrawal when the owner capability changes', () => {
+    const { rerender } = render(<PositionsZone {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
     expect(screen.getByTestId('withdraw-modal')).toBeTruthy()
+
+    rerender(
+      <PositionsZone
+        {...props}
+        userAddress="GOTHER"
+        activeAccount={{ ...props.activeAccount, address: 'GOTHER', epoch: 8 }}
+      />
+    )
+
+    expect(screen.queryByTestId('withdraw-modal')).toBeNull()
   })
   it('empty state offers a strategy CTA', () => {
     render(<PositionsZone {...props} positions={{}} />)

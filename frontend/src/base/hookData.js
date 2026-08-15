@@ -6,12 +6,63 @@
 // (SP0 lost 1 test USDC to exactly this — spikes/SP0-GATE.md). `assertHookData` exists so this
 // mistake is structurally impossible here: withdrawBatch.js calls it before every real burn.
 const HEADER_LEN = 32 // 24 zero bytes + 4-byte version + 4-byte length
+const STRKEY_LEN = 56
+const DECODED_STRKEY_LEN = 35
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+const ALLOWED_VERSIONS = new Set([0x30, 0x10]) // G account, C contract
+
+function decodeBase32(value) {
+  if (typeof value !== 'string' || value.length !== STRKEY_LEN) {
+    throw new Error(`Stellar strkey must be exactly ${STRKEY_LEN} uppercase Base32 characters`)
+  }
+  let accumulator = 0
+  let bits = 0
+  const output = []
+  for (const character of value) {
+    const digit = BASE32_ALPHABET.indexOf(character)
+    if (digit < 0) throw new Error('Stellar strkey contains a noncanonical Base32 character')
+    accumulator = accumulator * 32 + digit
+    bits += 5
+    while (bits >= 8) {
+      bits -= 8
+      output.push(Math.floor(accumulator / 2 ** bits) & 0xff)
+      accumulator %= 2 ** bits
+    }
+  }
+  if (bits !== 0 || output.length !== DECODED_STRKEY_LEN) {
+    throw new Error('Stellar strkey does not decode to exactly 35 bytes')
+  }
+  return Uint8Array.from(output)
+}
+
+function crc16Xmodem(bytes) {
+  let crc = 0
+  for (const byte of bytes) {
+    crc ^= byte << 8
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff
+    }
+  }
+  return crc
+}
+
+export function assertStellarStrKey(strkey) {
+  const decoded = decodeBase32(strkey)
+  if (!ALLOWED_VERSIONS.has(decoded[0])) {
+    throw new Error('Stellar strkey version must identify a G account or C contract')
+  }
+  const expected = crc16Xmodem(decoded.slice(0, 33))
+  const actual = decoded[33] | (decoded[34] << 8)
+  if (actual !== expected) throw new Error('Stellar strkey checksum is invalid')
+  return strkey
+}
 
 /**
  * @param {string} strkey - Stellar G... address, as text (NOT decoded to raw bytes)
  * @returns {Uint8Array}
  */
 export function buildForwarderHookData(strkey) {
+  assertStellarStrKey(strkey)
   const strkeyBytes = new TextEncoder().encode(strkey)
   const buf = new Uint8Array(HEADER_LEN + strkeyBytes.length)
   const view = new DataView(buf.buffer)
@@ -28,11 +79,15 @@ export function buildForwarderHookData(strkey) {
  * @param {Uint8Array|Buffer} hookData
  */
 export function assertHookData(hookData) {
-  const bytes = hookData instanceof Uint8Array ? hookData : new Uint8Array(hookData)
-  if (bytes.length < HEADER_LEN) {
-    throw new Error(
-      `hookData too short: expected at least ${HEADER_LEN} bytes, got ${bytes.length}`
-    )
+  if (!(hookData instanceof Uint8Array)) {
+    throw new Error('hookData must be a byte array')
+  }
+  const bytes = hookData
+  if (bytes.length !== HEADER_LEN + STRKEY_LEN) {
+    throw new Error(`hookData must be exactly ${HEADER_LEN + STRKEY_LEN} bytes`)
+  }
+  if (bytes.slice(0, 24).some((byte) => byte !== 0)) {
+    throw new Error('hookData reserved header bytes must be zero')
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const version = view.getUint32(24, false)
@@ -43,13 +98,12 @@ export function assertHookData(hookData) {
   }
   const declaredLen = view.getUint32(28, false)
   const actualLen = bytes.length - HEADER_LEN
-  if (declaredLen !== actualLen) {
+  if (declaredLen !== STRKEY_LEN || declaredLen !== actualLen) {
     throw new Error(
       `hookData declared strkey length ${declaredLen} does not match actual ${actualLen} remaining bytes`
     )
   }
-  const strkey = new TextDecoder().decode(bytes.slice(32))
-  if (!/^[A-Z2-7]{2,}$/.test(strkey) || strkey.length < 56) {
-    throw new Error(`hookData payload does not decode as a plausible Stellar strkey: "${strkey}"`)
-  }
+  const strkey = new TextDecoder('utf-8', { fatal: true }).decode(bytes.slice(32))
+  assertStellarStrKey(strkey)
+  return strkey
 }

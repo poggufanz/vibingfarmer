@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
-import { handleProviderRequest, toProviderRequest, toProviderResult } from './providerBridge.js'
+import {
+  handleProviderRequest,
+  toProviderRequest,
+  toProviderResult,
+  toAccountChangedEvent,
+  handleAccountChangedMessage,
+} from './providerBridge.js'
 
 describe('providerBridge — page RPC to PROVIDER_REQUEST mapping', () => {
   it('wraps supported methods verbatim in a PROVIDER_REQUEST', () => {
@@ -137,6 +143,45 @@ describe('providerBridge — page RPC to PROVIDER_REQUEST mapping', () => {
         error: { code: -1, message: 'VF Wallet was updated — reload this page and try again.' },
       })
     )
+  })
+
+  it('toAccountChangedEvent maps background broadcast to a page-facing event, null otherwise', () => {
+    expect(toAccountChangedEvent({ type: 'VF_ACCOUNT_CHANGED', address: 'CNEW' })).toEqual({
+      channel: 'vf-wallet-rpc',
+      dir: 'event',
+      event: 'accountChanged',
+      address: 'CNEW',
+    })
+    expect(toAccountChangedEvent({ type: 'VF_ACCOUNT_CHANGED' })).toEqual({
+      channel: 'vf-wallet-rpc',
+      dir: 'event',
+      event: 'accountChanged',
+      address: null,
+    })
+    expect(toAccountChangedEvent({ type: 'SOMETHING_ELSE' })).toBeNull()
+    expect(toAccountChangedEvent(undefined)).toBeNull()
+  })
+
+  it('handleAccountChangedMessage posts the mapped event and reports it relayed', () => {
+    const post = vi.fn()
+    const relayed = handleAccountChangedMessage(
+      { type: 'VF_ACCOUNT_CHANGED', address: 'CNEW' },
+      { post }
+    )
+    expect(relayed).toBe(true)
+    expect(post).toHaveBeenCalledWith({
+      channel: 'vf-wallet-rpc',
+      dir: 'event',
+      event: 'accountChanged',
+      address: 'CNEW',
+    })
+  })
+
+  it('handleAccountChangedMessage ignores unrelated runtime messages', () => {
+    const post = vi.fn()
+    const relayed = handleAccountChangedMessage({ type: 'PROVIDER_REQUEST' }, { post })
+    expect(relayed).toBe(false)
+    expect(post).not.toHaveBeenCalled()
   })
 
   it('handleProviderRequest posts a -3 unsupported-method error without calling sendMessage', async () => {

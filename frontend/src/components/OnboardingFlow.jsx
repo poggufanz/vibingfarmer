@@ -1,28 +1,19 @@
 // OnboardingFlow.jsx
 // APY-first onboarding for users who have never connected a wallet.
-// Screen 1: value proposition + live vault rates (no wallet needed).
+// Screen 1: value proposition + source-backed vault evidence (no wallet needed).
 // Screen 2: how it works (shown after connect, before Step 01).
-// Self-fetches DeFiLlama data so APY is visible with zero wallet interaction.
-import React, { useState, useEffect } from 'react'
+// Self-fetches DeFiLlama data so the source can be inspected with zero wallet interaction.
+import { useState, useEffect } from 'react'
 import { YieldLine } from './SignatureMark.jsx'
-import { useCountUp, riseDelay } from '../motion.js'
 import { fetchDeFiLlamaVaults } from '../defiLlama.js'
 import { fetchApyHistoryBatch } from '../apyHistory.js'
-import { generateSparkline, calcApyStats } from '../sparkline.js'
 import { VAULT_CATALOG } from '../config.js'
-
-// APY value that counts up from 0 on mount.
-function ApyValue({ value, delay = 0 }) {
-  const n = useCountUp(Number(value) || 0, { duration: 1000, delay })
-  return (
-    <span
-      className="mono tnum accent"
-      style={{ fontSize: 13, fontWeight: 600, minWidth: 64, textAlign: 'right' }}
-    >
-      {n.toFixed(1)}% APY
-    </span>
-  )
-}
+import { NETWORK_IDS } from '../design/networks.js'
+import { toOnboardingPresentation } from '../secondary/secondaryRouteAdapters.js'
+import { StatusNotice, TechnicalDetails, VenueTruth } from './pocket/Primitives.jsx'
+import { NetworkBadge } from './pocket/NetworkIdentity.jsx'
+import './OnboardingFlow.css'
+import { venueYield } from '../strategy/venueTruth.js'
 
 const WALLET_URL = 'https://www.freighter.app/'
 const SEED = VAULT_CATALOG.slice(0, 3).map((v) => ({
@@ -31,6 +22,65 @@ const SEED = VAULT_CATALOG.slice(0, 3).map((v) => ({
   apy: v.apy,
   poolId: null,
 }))
+
+const DEFI_LLAMA_SOURCE = 'defiLlama'
+
+const unavailableOnboardingFact = () => ({
+  state: 'unavailable',
+  value: null,
+  source: null,
+  checkedAt: null,
+  staleAfterMs: null,
+})
+
+function productionOnboardingRead({ vaults, histories, status }) {
+  const sourceVault = Array.isArray(vaults)
+    ? vaults.find((vault) => {
+        const hasFreshFetch =
+          vault?.source === DEFI_LLAMA_SOURCE &&
+          typeof vault.dataFetchedAt === 'string' &&
+          vault.dataFetchedAt.trim().length > 0
+        return hasFreshFetch || venueYield(vault).state === 'live'
+      })
+    : null
+
+  const nestedYield = sourceVault?.yield
+  const liveYield = sourceVault && venueYield(sourceVault).state === 'live' ? nestedYield : null
+  const checkedAt = sourceVault?.dataFetchedAt || liveYield?.checkedAt || liveYield?.asOf || null
+
+  const fact =
+    status === 'loading'
+      ? {
+          state: 'loading',
+          value: null,
+          source: DEFI_LLAMA_SOURCE,
+          checkedAt: null,
+          staleAfterMs: null,
+        }
+      : sourceVault
+        ? {
+            state: 'current',
+            value: null,
+            source: sourceVault.source || liveYield?.source || DEFI_LLAMA_SOURCE,
+            checkedAt,
+            staleAfterMs: sourceVault.staleAfterMs ?? null,
+          }
+        : unavailableOnboardingFact()
+
+  const venue = liveYield
+    ? {
+        ...sourceVault,
+        yield: {
+          ...liveYield,
+          source: liveYield.source || sourceVault.source || DEFI_LLAMA_SOURCE,
+          asOf: liveYield.asOf || checkedAt,
+          checkedAt: liveYield.checkedAt || checkedAt,
+        },
+      }
+    : undefined
+
+  return { fact, vaults, histories, venue }
+}
 
 const HOW_STEPS = [
   {
@@ -46,7 +96,7 @@ const HOW_STEPS = [
   {
     n: '03',
     title: 'Agents execute within the approved scope.',
-    sub: 'The fee-bump relay covers Stellar network fees.',
+    sub: 'Network fee sponsored by fee-bump relay.',
   },
   {
     n: '04',
@@ -55,17 +105,31 @@ const HOW_STEPS = [
   },
 ]
 
-const scrollWrap = {
-  minHeight: '100vh',
-  overflowY: 'auto',
-  display: 'grid',
-  placeItems: 'center',
-  padding: '40px 32px',
-}
+function ValueScreen({ vaults, presentation, onConnect }) {
+  const fact = presentation?.fact ?? { state: 'unavailable' }
+  const notice = presentation?.notice ?? {}
+  const venue = presentation?.venue
+  const liveApy =
+    venue?.state === 'live'
+      ? {
+          state: 'live',
+          value: venue.apy,
+          source: venue.source,
+          // VenueTruth snapshots APY metadata as plain display data. Keep numeric ledger
+          // timestamps source-backed while adapting them to that primitive's string contract.
+          freshness:
+            typeof venue.checkedAt === 'number' ? String(venue.checkedAt) : venue.checkedAt,
+        }
+      : null
+  const apyValue = ['current', 'confirmed'].includes(fact.state) && liveApy ? liveApy.value : null
+  const statusFact = {
+    ...fact,
+    consequence: notice.consequence,
+    safeNextAction: notice.nextAction,
+  }
 
-function ValueScreen({ vaults, histories, onConnect }) {
   return (
-    <div className="enter" style={scrollWrap}>
+    <main className="onb-screen onb-screen--value enter">
       <div className="onb-split">
         <div className="onb-left">
           <div className="brand brand--hero">
@@ -76,8 +140,18 @@ function ValueScreen({ vaults, histories, onConnect }) {
 
           <h1 className="h-display onb-h1">Your USDC can earn yield.</h1>
           <p className="lede onb-sub">
-            Set your limits once. Agents deposit into approved vaults, and network fees are covered.
+            Set your limits once. Agents deposit into approved vaults. Network fee sponsored by
+            fee-bump relay.
           </p>
+
+          <div className="onb-route" aria-label="Onboarding route">
+            <NetworkBadge networkId={NETWORK_IDS.STELLAR_TESTNET} />
+            <span className="onb-route-copy">
+              <strong>Autofarm Vault</strong>
+              <span aria-hidden="true">→</span>
+              <strong>Blend Capital v2</strong>
+            </span>
+          </div>
 
           <button className="btn btn-primary btn-lg onb-cta" onClick={onConnect}>
             Connect wallet
@@ -97,74 +171,64 @@ function ValueScreen({ vaults, histories, onConnect }) {
           <div className="onb-sig">
             <YieldLine height={120} />
           </div>
-          <div className="onb-rates-label">
-            <span className="live-dot" />
-            Live vault rates
-          </div>
-          <div className="onb-rates">
+          <section
+            className="onb-evidence"
+            aria-label="Autofarm Vault evidence"
+            data-fact-state={fact.state}
+            data-apy-value={apyValue === null ? 'null' : String(apyValue)}
+          >
+            <div className="onb-evidence-heading">
+              <span>Autofarm Vault</span>
+              <span className="onb-evidence-network">Stellar testnet</span>
+            </div>
+            <div className="onb-evidence-venue">
+              <span>Yield venue</span>
+              <strong>Blend Capital v2</strong>
+            </div>
+            <StatusNotice fact={statusFact} title="Vault read" />
+            {fact.state === 'unavailable' && notice.consequence && (
+              <div className="onb-notice-copy" role="status">
+                <p>{notice.consequence}</p>
+                {notice.nextAction && <p>{notice.nextAction}</p>}
+              </div>
+            )}
+            <VenueTruth kind="stellar-live" venue="Autofarm Vault" fact={fact} apy={liveApy} />
+            <TechnicalDetails summary="Technical details" fact={fact} open />
+          </section>
+          <div className="onb-vaults" aria-label="Vault catalog">
             {vaults.map((v, i) => {
-              const stats =
-                v.poolId && histories[v.poolId] ? calcApyStats(histories[v.poolId]) : null
               return (
-                <div key={v.name} className="onb-rate-row rise" style={riseDelay(i, 90, 250)}>
-                  <span style={{ flex: 1, fontSize: 13 }}>{v.name}</span>
-                  {stats && (
-                    <span
-                      dangerouslySetInnerHTML={{
-                        __html: generateSparkline(stats.values, { width: 56, height: 22 }),
-                      }}
-                    />
-                  )}
-                  <ApyValue value={v.apy} delay={350 + i * 90} />
+                <div key={v.name || i} className="onb-vault-row">
+                  <span>{v.name}</span>
+                  <span className="onb-vault-row-state">Source-backed read</span>
                 </div>
               )
             })}
-            <div
-              className="onb-rate-row onb-rate-idle rise"
-              style={riseDelay(vaults.length, 90, 250)}
-            >
-              <span style={{ flex: 1, fontSize: 13, color: 'var(--text-muted)' }}>
-                Wallet balance
-              </span>
-              <span className="mono tnum" style={{ fontSize: 13, color: 'var(--text-faint)' }}>
-                0.0% APY
-              </span>
-            </div>
+            {!vaults.length && <div className="onb-vault-empty">No catalog records returned.</div>}
           </div>
         </div>
       </div>
-    </div>
+    </main>
   )
 }
 
 function HowItWorksScreen({ onDone, onSkip }) {
   return (
-    <div className="enter" style={scrollWrap}>
-      <div style={{ maxWidth: 540, width: '100%', textAlign: 'left' }}>
-        <h1 className="h-display" style={{ fontSize: 28 }}>
-          How Vibing Farmer works
-        </h1>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20, margin: '28px 0' }}>
+    <main className="onb-screen onb-screen--how enter">
+      <div className="onb-how-content">
+        <h1 className="h-display onb-how-title">How Vibing Farmer works</h1>
+        <div className="onb-how-steps">
           {HOW_STEPS.map((s) => (
-            <div key={s.n} style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
-              <span
-                className="mono accent"
-                style={{ fontSize: 13, fontWeight: 600, flex: 'none', minWidth: 22 }}
-              >
-                {s.n}
-              </span>
+            <div key={s.n} className="onb-how-step">
+              <span className="mono accent onb-how-step-number">{s.n}</span>
               <div>
-                <div style={{ fontSize: 14.5, fontWeight: 500, letterSpacing: '-0.01em' }}>
-                  {s.title}
-                </div>
-                <div className="lede" style={{ fontSize: 12.5, marginTop: 3 }}>
-                  {s.sub}
-                </div>
+                <div className="onb-how-step-title">{s.title}</div>
+                <div className="lede onb-how-step-sub">{s.sub}</div>
               </div>
             </div>
           ))}
         </div>
-        <div className="action-row" style={{ gap: 10 }}>
+        <div className="action-row onb-how-actions">
           <button className="btn btn-ghost" onClick={onSkip}>
             Skip intro
           </button>
@@ -173,28 +237,47 @@ function HowItWorksScreen({ onDone, onSkip }) {
           </button>
         </div>
       </div>
-    </div>
+    </main>
   )
 }
 
-export default function OnboardingFlow({ connected, onConnect, onComplete }) {
+export default function OnboardingFlow({ connected, onConnect, onComplete, onboardingRead }) {
   const [screen, setScreen] = useState(1)
   const [vaults, setVaults] = useState(SEED)
   const [histories, setHistories] = useState({})
+  const [readStatus, setReadStatus] = useState('loading')
 
   // Fetch live vault data on mount — no wallet needed.
   useEffect(() => {
     let alive = true
-    fetchDeFiLlamaVaults().then((vs) => {
-      if (!alive || !vs?.length) return
-      const top = vs.slice(0, 3)
-      setVaults(top)
-      const ids = top.map((v) => v.poolId).filter(Boolean)
-      if (ids.length)
-        fetchApyHistoryBatch(ids).then((m) => {
-          if (alive) setHistories(m)
-        })
-    })
+    fetchDeFiLlamaVaults()
+      .then((vs) => {
+        if (!alive) return
+        if (!Array.isArray(vs) || !vs.length) {
+          setReadStatus('unavailable')
+          return
+        }
+        const top = vs.slice(0, 3)
+        setVaults(top)
+        setReadStatus(
+          top.some(
+            (vault) =>
+              vault?.source === DEFI_LLAMA_SOURCE &&
+              typeof vault.dataFetchedAt === 'string' &&
+              vault.dataFetchedAt.trim().length > 0
+          )
+            ? 'current'
+            : 'unavailable'
+        )
+        const ids = top.map((v) => v.poolId).filter(Boolean)
+        if (ids.length)
+          fetchApyHistoryBatch(ids).then((m) => {
+            if (alive) setHistories(m)
+          })
+      })
+      .catch(() => {
+        if (alive) setReadStatus('unavailable')
+      })
     return () => {
       alive = false
     }
@@ -205,7 +288,19 @@ export default function OnboardingFlow({ connected, onConnect, onComplete }) {
     if (connected && screen === 1) setScreen(2)
   }, [connected, screen])
 
+  const injectedRead = onboardingRead
+  const productionRead = productionOnboardingRead({ vaults, histories, status: readStatus })
+  const settledRead = injectedRead
+    ? {
+        ...injectedRead,
+        vaults: injectedRead.vaults ?? vaults,
+        histories: injectedRead.histories ?? histories,
+      }
+    : productionRead
+  const presentation = toOnboardingPresentation(settledRead)
+  const displayVaults = Array.isArray(injectedRead?.vaults) ? injectedRead.vaults : vaults
+
   if (screen === 1)
-    return <ValueScreen vaults={vaults} histories={histories} onConnect={onConnect} />
+    return <ValueScreen vaults={displayVaults} presentation={presentation} onConnect={onConnect} />
   return <HowItWorksScreen onDone={onComplete} onSkip={onComplete} />
 }

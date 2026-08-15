@@ -1,11 +1,36 @@
 name: frontend
 
 on:
-  push: { branches: [main, dev] }
+  push:
+    branches: [main, dev]
+    tags: [v1.15.2-beta]
+  # Publishing a GitHub Release is what stamps the version: vite.config.js reads
+  # `git describe --tags`. The exact candidate tag push is also a first-class workflow event:
+  # its claim-evidence job is the authoritative promotion proof and never enters deploy.
+  # `published` fires for a brand-new release and for publishing a draft -- editing an
+  # already-published release fires `edited` instead, which is deliberately NOT wired here:
+  # cut a new release per version rather than rewriting one.
+  release: { types: [published] }
   pull_request:
+  merge_group:
+  # Manual candidate verification remains an operator retry/convenience path. The exact tag push
+  # above is the mandatory automatic proof path; its inputs are checked against the matrix, the
+  # local annotated tag, and Cloudflare's authenticated deployment metadata.
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: Annotated candidate tag to verify
+        required: true
+        default: v1.15.2-beta
+        type: string
+      candidate_preview_url:
+        description: Optional successful Cloudflare Pages preview URL to narrow the API lookup
+        required: false
+        default: ""
+        type: string
 
 jobs:
-  test-build:
+  frontend-unit-build:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -18,20 +43,251 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run lint
-        continue-on-error: true
+      # Several suites (sweep320.js and the ceremony/approval guards that call it) measure real
+      # layout in a real Chromium. Without this the launcher falls through to the runner's
+      # google-chrome-stable -- a different build from the package-lock-pinned one every
+      # developer runs, so the numbers those guards assert on were browser-dependent.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run lint:ci
+      - run: npm run format:check
+      - run: npm run brand:check
       - run: npm test
       - run: npm run build
+      - run: npm run build:ext
+      - run: npm run manifest:check
+      # build:ext only proves the extension builds; this is the other half of decision #15's
+      # carry -- it must also ship no remote resource. The Node scanner is portable across CI
+      # runners and reserves exit 2 for missing/unreadable inputs so scan errors fail closed.
+      - name: Verify extension bundle ships no bridge/remote-resource strings
+        run: node ../scripts/ci/extension-banned-scan.mjs extension-dist
 
-  # Cloudflare Pages deploy — gate: only pushes (never PRs from forks), only after tests pass.
-  # main → Production; any other pushed branch → Preview (aliased by branch name).
-  # Needs repo secrets: CLOUDFLARE_API_TOKEN (Pages:Edit), CLOUDFLARE_ACCOUNT_ID.
-  # Runtime env vars/secrets are NOT set here — they live in the Pages project
-  # (Settings → Variables and Secrets, per Production/Preview environment).
-  deploy:
-    needs: test-build
-    if: github.event_name == 'push'
+  relayer:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relayer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            relayer/package-lock.json
+            frontend/package-lock.json
+      - run: npm ci
+      # relayer/smoke/mint-mandate.mjs imports frontend/src/base/policyEngine.js — the shared,
+      # single source of truth for the session-policy shape, deliberately not duplicated here.
+      # Node resolves that file's `@zerodev/permissions` import from frontend/, not from
+      # relayer/node_modules, so test/smoke/import-safety.test.mjs needs frontend's install too.
+      - name: Install frontend deps (relayer smoke imports frontend/src/base/policyEngine.js)
+        working-directory: frontend
+        run: npm ci
+      - run: npm test
+
+  keeper:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: keeper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: keeper/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  # Pinned Ubuntu 24.04 + Rust 1.93.0 + stellar-cli 26.1.0 — deliberately not the local WSL
+  # toolchain. Gates the existing V2 soroban/ contracts (Router V3/agent V4 work was dropped
+  # from this remediation plan for lack of a WSL host; this job is unaffected by that).
+  #
+  # 1.93.0, not 1.91.0 and not the remediation plan's stated 1.82.0. soroban/Cargo.toml:6 pins
+  # `soroban-sdk = "26.1.0"`, whose own manifest declares `rust-version = "1.91.0"` — 1.82.0
+  # cannot even complete step 2 (`wasm32v1-none` as a rustup target didn't exist before 1.84),
+  # and would fail the SDK's MSRV regardless. 1.91.0 satisfies the SDK but not the toolchain
+  # this job installs one step later: the crates.io index entry for stellar-cli 26.1.0 declares
+  # `rust_version = 1.93.0`, so `cargo install` refused it outright ("requires rustc 1.93.0 or
+  # newer, while the currently active rustc version is 1.91.0" — run 30772546683). 1.93.0 is the
+  # exact minimum that satisfies both the SDK and the pinned CLI. Not `stable` — the pin stays
+  # exact, and it moves only together with the two greps below.
+  soroban:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: soroban
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          targets: wasm32v1-none
+          components: clippy
+      # Final review, Fix 4: an uncached from-source `cargo install` took ~15 min with no cache on
+      # the one job that blocks every merge -- a network/MSRV flake surface on every run. `cargo
+      # install` (without `--force`) already skips rebuilding when the exact pinned version is
+      # recorded as installed; caching `~/.cargo/bin` plus its own install ledger
+      # (`.crates.toml`/`.crates2.json`) is enough to make that skip happen on a cache hit. Keyed
+      # on the exact pinned version so a future version bump can never silently restore a stale
+      # binary from an old cache entry.
+      - name: Cache stellar-cli 26.1.0
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/stellar
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: stellar-cli-26.1.0-${{ runner.os }}
+      # stellar-cli's default `additional-libs` feature pulls libdbus-sys (OS keyring/secret
+      # service). Its build script does not probe -- it panics outright when `dbus-1.pc` is
+      # absent, which is the stock ubuntu-24.04 image ("The system library `dbus-1` required by
+      # crate `libdbus-sys` was not found", run 30778669013). Installed rather than dropped with
+      # `--no-default-features` so the binary this job builds stays the same binary the pin names.
+      - name: Install stellar-cli build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libudev-dev pkg-config
+      - name: Install stellar-cli 26.1.0
+        run: cargo install --locked --version 26.1.0 stellar-cli
+      # Final review, Fix 4: this used to print the three versions and assert nothing -- with a
+      # from-source install, this is the single place a drifted toolchain or stellar-cli would
+      # show, and a printed-but-unchecked version is invisible in a green log. Grep the pinned
+      # strings instead of only printing them.
+      - name: Verify pinned toolchain versions
+        run: |
+          rustc --version | grep -F '1.93.0'
+          cargo --version | grep -F '1.93.0'
+          stellar --version | grep -F '26.1.0'
+      - run: stellar contract build
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  playwright:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Keep the browser-level functional, layout, and accessibility assertions in CI while
+      # leaving pixel baselines opt-in for local/manual review (the repository does not commit
+      # generated screenshot evidence).
+      - run: npm run test:visual -- --ignore-snapshots
+      - name: Upload Playwright report/screenshots/traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Claim evidence is a root-level, merge-blocking check. It deliberately fetches the complete
+  # history so the active feature freeze can inspect the event's exact commit range.
+  claim-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Restore exact candidate annotated tag object
+        if: github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'
+        run: |
+          git fetch --force --no-tags origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          test "$(git cat-file -t "refs/tags/${{ github.ref_name }}")" = tag
+          test "$(git rev-parse refs/tags/${{ github.ref_name }}^{commit})" = "${{ github.sha }}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify claim, scanner, and release-gate tooling
+        run: node --test scripts/ci/public-claim-scan.test.mjs scripts/ci/claim-evidence.test.mjs scripts/ci/release-gate.test.mjs
+      - name: Scan tracked public surfaces
+        run: node scripts/ci/public-claim-scan.mjs
+      - name: Validate claim evidence and freeze
+        if: github.event_name != 'push' || github.ref != 'refs/tags/v1.15.2-beta'
+        env:
+          FREEZE_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.ref_type == 'branch' && github.event.before || '' }}
+          FREEZE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event_name == 'push' && github.ref_type == 'branch' && github.sha || '' }}
+        run: node scripts/ci/claim-evidence.mjs
+      # Ordinary PR/dev checks intentionally leave candidate-same-commit pending until the
+      # preview exists. The exact tag push is the authoritative promotion proof: this required
+      # step peels github.ref_name's annotated tag locally and resolves a successful dev preview
+      # by the tag commit from Cloudflare's authenticated API. A URL is optional because the API
+      # metadata is the identity source; caller-provided equal strings cannot manufacture it.
+      - name: Verify exact candidate tag and Cloudflare preview identity
+        if: github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'
+        env:
+          CANDIDATE_VERIFICATION_MODE: required
+          CANDIDATE_TAG: ${{ github.ref_name }}
+          CANDIDATE_PREVIEW_URL: ""
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/ci/claim-evidence.mjs
+      - name: Verify manually supplied candidate tag and Cloudflare preview identity
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CANDIDATE_VERIFICATION_MODE: required
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          CANDIDATE_PREVIEW_URL: ${{ inputs.candidate_preview_url }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/ci/claim-evidence.mjs
+
+  # The single required check. `if: always()` plus a `needs` on every stable job above means
+  # this always reports a result — success or failure — even if one of those jobs fails,
+  # is cancelled, or (should a job-level `if` ever creep back in) gets skipped. release-gate.mjs
+  # treats anything other than "success" on any required job as a gate failure.
+  release-gate:
+    name: release-gate
+    needs:
+      - frontend-unit-build
+      - relayer
+      - keeper
+      - soroban
+      - playwright
+      - claim-evidence
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify the gate itself (workflow structure + evaluateReleaseGate matrix)
+        run: node --test scripts/ci/release-gate.test.mjs
+      - name: Evaluate release gate
+        env:
+          NEEDS_CONTEXT: ${{ toJSON(needs) }}
+        run: node scripts/ci/release-gate.mjs
+
+  # Cloudflare Pages deploy — needs only release-gate (the single fail-closed check across
+  # frontend-unit-build/relayer/keeper/soroban/playwright); branch pushes and published releases
+  # only (never PRs from forks or candidate tags). main -> Production (protected environment);
+  # any other pushed branch -> Preview (aliased by branch name). Needs repo secrets: CLOUDFLARE_API_TOKEN
+  # (Cloudflare Pages:Edit + D1:Edit), CLOUDFLARE_ACCOUNT_ID. Runtime env vars/secrets are NOT
+  # set here -- they live in the Pages
+  # project (Settings -> Variables and Secrets, per Production/Preview environment).
+  #
+  # A published release always deploys Production: its ref is refs/tags/<tag>, so ref_name is the
+  # tag and the main check below cannot match. That second Production deploy is the point -- the
+  # merge to main shipped the code, publishing the release is what re-stamps the version banner.
+  deploy:
+    needs: release-gate
+    if: (github.event_name == 'push' && github.ref_type == 'branch') || github.event_name == 'release'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: false
+    environment: ${{ (github.event_name == 'release' || github.ref_name == 'main') && 'production' || 'preview' }}
     permissions:
       contents: read
       deployments: write
@@ -40,6 +296,12 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          # vite.config.js stamps the Settings > About version from `git describe --tags`.
+          # The default shallow checkout fetches no tags, so the deployed build would
+          # silently read 'dev'. Tags only -- no need for full history.
+          fetch-tags: true
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -53,7 +315,35 @@ jobs:
           # ZeroDev passkey-owner step ("VITE_ZERODEV_PASSKEY_SERVER_URL is missing").
           VITE_ZERODEV_PROJECT_ID: ${{ secrets.VITE_ZERODEV_PROJECT_ID }}
           VITE_ZERODEV_PASSKEY_SERVER_URL: ${{ secrets.VITE_ZERODEV_PASSKEY_SERVER_URL }}
-      - uses: cloudflare/wrangler-action@v3
+      - name: Readiness check (no secrets -- confirms the build produced output before touching traffic)
+        run: test -f dist/index.html
+      # Preview must have its own externally provisioned D1. The committed Wrangler preview
+      # binding is an unprovisioned sentinel and this check intentionally fails before Wrangler
+      # can run if the environment secret is absent, malformed, or production's ID.
+      - name: Require distinct preview D1 before migration
+        if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main'
+        run: node scripts/runtime-config.mjs assert-preview-d1
+        env:
+          PREVIEW_D1_DATABASE_ID: ${{ secrets.PREVIEW_D1_DATABASE_ID }}
+      - name: Apply preview D1 migrations before publishing Functions
+        if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main'
+        run: npm run d1:migrate:preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIEW_D1_DATABASE_ID: ${{ secrets.PREVIEW_D1_DATABASE_ID }}
+      - name: Apply production D1 migrations before publishing Functions
+        if: github.event_name == 'release' || github.ref_name == 'main'
+        run: npm run d1:migrate:production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Clear generated preview deployment config
+        if: github.event_name == 'release' || github.ref_name == 'main'
+        run: node scripts/runtime-config.mjs clear-preview-config
+      - name: Deploy production Pages bundle
+        if: github.event_name == 'release' || github.ref_name == 'main'
+        uses: cloudflare/wrangler-action@v3
         with:
           # Pin to the version in frontend/package.json devDependencies — the
           # action defaults to latest, and 4.110 breaks preview-env Functions
@@ -62,4 +352,17 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: frontend
+          # On a release, ref_name is the tag (v1.15.2-beta) — passing that would alias the
+          # deploy as a preview branch instead of updating Production, so pin it to main.
+          command: pages deploy ./dist --project-name=vibing-farmer --branch=main
+      - name: Deploy preview Pages bundle
+        if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          wranglerVersion: "4.100.0"
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          # Pages rejects both --config and --env. The migration step writes a flattened,
+          # preview-only config plus .wrangler/deploy/config.json, Wrangler's supported redirect.
           command: pages deploy ./dist --project-name=vibing-farmer --branch=${{ github.ref_name }}

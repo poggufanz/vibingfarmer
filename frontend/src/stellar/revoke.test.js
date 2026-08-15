@@ -1,11 +1,28 @@
-// revoke.test.js — user-signed kill switch (Registry.revoke) + live agent_revoked subscription.
+// revoke.test.js — owner-authorized kill switch (AgentAccount.revoke) + live agent_revoked
+// subscription. OwnerAuthorizationV1's own model-selection/submission-channel matrix is covered
+// in ownerAuthorization.test.js; this file only proves revoke.js wires it correctly.
 import { describe, test, it, expect, vi } from 'vitest'
 vi.mock('./client.js', () => ({
   buildInvokeTx: vi.fn().mockResolvedValue({ tx: {}, xdr: 'UNSIGNED' }),
   submitUserTx: vi.fn().mockResolvedValue({ hash: 'rh1', status: 'SUCCESS' }),
   rpcServer: vi.fn(),
 }))
-vi.mock('./walletKit.js', () => ({ signTxXdr: vi.fn().mockResolvedValue('SIGNED') }))
+vi.mock('./walletKit.js', () => ({
+  getActiveAccount: vi.fn(() => null),
+  signTxXdr: vi.fn().mockResolvedValue('SIGNED'),
+}))
+const submitViaRelayMock = vi.fn()
+const getRelayerAddressMock = vi.fn()
+vi.mock('./relay.js', () => ({
+  submitViaRelay: (...a) => submitViaRelayMock(...a),
+  getRelayerAddress: (...a) => getRelayerAddressMock(...a),
+  RelayRejectedError: class RelayRejectedError extends Error {},
+}))
+const signOwnerAuthEntryMock = vi.fn()
+vi.mock('./ownerAuthorization.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, signOwnerAuthEntry: (...a) => signOwnerAuthEntryMock(...a) }
+})
 import { revokeAgentOnChain, revokedAgentsForOwner, subscribeAgentRevoked } from './revoke.js'
 import { buildInvokeTx, submitUserTx } from './client.js'
 import { signTxXdr } from './walletKit.js'
@@ -28,6 +45,30 @@ describe('revokeAgentOnChain', () => {
     expect(signTxXdr).toHaveBeenCalledWith('UNSIGNED')
     expect(submitUserTx).toHaveBeenCalledWith(expect.objectContaining({ signedXdr: 'SIGNED' }))
     expect(r).toEqual({ hash: 'rh1', status: 'SUCCESS' })
+    expect(submitViaRelayMock).not.toHaveBeenCalled() // direct kill switch never checks the relay
+  })
+
+  test('C owner: sources the revoke from the relayer, signs a passkey auth entry, relay-only', async () => {
+    buildInvokeTx.mockClear()
+    submitUserTx.mockClear()
+    getRelayerAddressMock.mockResolvedValue('GRELAYER')
+    signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C')
+    submitViaRelayMock.mockResolvedValue({ hash: 'rc1', status: 'SUCCESS' })
+
+    const r = await revokeAgentOnChain({
+      owner: 'CAGENTOWNER',
+      agent: 'CAGENT',
+      activeAccount: { kind: 'C', address: 'CAGENTOWNER' },
+    })
+
+    expect(buildInvokeTx).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'GRELAYER', contract: 'CAGENT', method: 'revoke' })
+    )
+    expect(signOwnerAuthEntryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ contractId: 'CAGENTOWNER' })
+    )
+    expect(submitUserTx).not.toHaveBeenCalled() // no direct fallback for a C owner
+    expect(r).toEqual({ hash: 'rc1', status: 'SUCCESS' })
   })
 })
 

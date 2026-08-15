@@ -6,12 +6,13 @@
 # In production set the SAME keys as encrypted env vars in the Cloudflare Pages
 # dashboard (Settings → Variables and Secrets), or via `wrangler pages secret put`.
 
-# Mark the deployment as production so the API proxies never trust localhost origins.
-NODE_ENV=production
+# Mark this local Pages Functions runtime as development so localhost origins are available.
+NODE_ENV=development
 
 # Origin allowlist for the /api/* proxies. Set to your Pages URL(s), comma-separated.
 # e.g. https://vibing-farmer.pages.dev,https://your-custom-domain.com
-ALLOWED_ORIGIN=https://vibing-farmer.pages.dev
+ALLOWED_ORIGIN=http://localhost:5173
+ALLOWED_EXTENSION_ORIGINS=
 
 # DeepSeek — server-side AI key (read by /api/ai). OPTIONAL / host-funded.
 # The app is BYOK-first (users paste their own key in Settings). Set this only for an
@@ -32,9 +33,18 @@ SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 SOROBAN_VAULT_ADDRESS=CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77
 
-# funding_router for the one-popup grant flow; unset = router relaying disabled
-# (relay then sponsors only router.grant / router.pull on this exact contract)
+# Canonical production relay and receipt-authority lists, in deployment-fact order: live V2 first,
+# then V1 compatibility. Production rejects a different order or value. These agent WASM hashes
+# are the corresponding live bridge/deposit generations; there is no deployed V3/V4 release hash.
+SOROBAN_ROUTER_ADDRESSES=CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE,CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
+SOROBAN_AGENT_WASM_HASHES=1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1,d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba
+
+# Singular V1 compatibility fallback for older deployments/readers. The plural V2,V1 list wins.
 SOROBAN_ROUTER_ADDRESS=CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5
+
+# exit_router for the one-popup full-exit sweep (VF Wallet Task 5); unset = sweep relaying
+# disabled (fail closed — exit.js's per-agent owner_withdraw rollback path still works direct).
+SOROBAN_EXIT_ROUTER_ADDRESS=CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J
 
 # Agents the relay will sponsor F11 exit-leg-2 token.transfer calls for (comma-separated,
 # exact match, fail-closed if empty). Demo agent + your local smoke agent (SMOKE_AGENT_ADDRESS):
@@ -64,5 +74,41 @@ TRANSAK_REFERRER_DOMAIN=vibing-farmer.pages.dev
 
 # Cross-chain relayer proxy (production). Tunnel hostname of the relayer VM + the shared secret
 # the relayer requires on x-vf-relayer-key (must equal the VM's RELAYER_PROXY_KEY).
-RELAYER_ORIGIN=https://vf-relayer.example.com
+RELAYER_ORIGIN=http://localhost:8788
 RELAYER_PROXY_KEY=change-me
+
+# ─── Agent index historical backfill (Pocket Crew My Money Task 4, read by
+# scripts/agent-index/backfill-legacy-agents.mjs) ───
+# Archival Soroban RPC/events provider (implements the same getEvents contract the live indexer
+# uses, Task 3) — full retention back to ledger 1, unlike the short-retention public RPC above.
+# Server-only: even when the provider needs no credentials, this stays out of the client bundle
+# (never VITE_). Leave unset to run the backfill script with router/registry archival sources
+# honestly reported unavailable (--dry-run still works; the audit lands on 'partial').
+AGENT_INDEX_ARCHIVAL_RPC_URL=
+
+# ─── Agent index ingest gate (read by api/agent-index.js, checked in api/agent-index/handler.js) ───
+# Shared secret the POST /api/agent-index?action=ingest endpoint requires as an Authorization Bearer;
+# scripts/agent-index/backfill-legacy-agents.mjs reads the same name and refuses to write without it.
+# Compared with a constant-time equality check. Server-only (never VITE_). FAILS CLOSED: while this
+# is unset the ingest endpoint answers 503 "Agent index ingest not configured" and indexes nothing —
+# reads are unaffected, so an unset value is a safe default, not a broken one.
+AGENT_INDEX_INGEST_SECRET=
+
+# ─── Agent index reporter gate (read by api/agent-index.js, checked in api/agent-index/handler.js
+# reporterGate) ───
+# Shared secret the relayer sends as an Authorization Bearer on every execution-receipt, base-child
+# intent, lifecycle and `action=base-child-ready` write. Must equal the VM's
+# AGENT_INDEX_REPORTER_SECRET. Constant-time compared. Server-only (never VITE_) — the browser never
+# receives it and never calls a D1 write directly. FAILS CLOSED in both directions: unset here, every
+# reporter route answers 503 "Agent-index writer is not configured", and a production relayer will
+# not open its listener at all because its boot readiness probe hits that same route.
+# Generate: openssl rand -hex 32
+AGENT_INDEX_REPORTER_SECRET=
+
+# Signs read-only owner pagination cursors. Server-only; use at least 32 random bytes.
+AGENT_INDEX_CURSOR_SECRET=
+
+# D1 binding: these routes need the `VF_DB` binding (see wrangler.jsonc) with migrations 0001-0007
+# applied. Migration 0007 adds the immutable membership guard and owner-page index. Migrations 0005
+# (execution receipts) and 0006 (base child intents) are required before a production relayer can
+# boot — see "Release prerequisites" in GETTING_STARTED.md.

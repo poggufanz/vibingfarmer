@@ -1,8 +1,19 @@
 use soroban_sdk::{contracterror, contracttype, Address, BytesN};
 
-/// Capped, expiring per-agent scope (v3). `target` = vault (kind 0 / Deposit)
+/// Generation this crate currently builds. Bumped from 3 to 4 by the addition of
+/// `AgentScope.per_execution_max` (a single-execution cap enforced by `__check_auth`,
+/// independent of and additional to the existing period/cumulative cap). Exposed via
+/// `AgentAccount::version()` so an on-chain probe (and the frontend agent-creator manifest)
+/// can tell generation 4 apart from the earlier fresh-only generations without guessing from a
+/// wasm hash.
+pub const AGENT_ACCOUNT_GENERATION: u32 = 4;
+
+/// Capped, expiring per-agent scope (v4). `target` = vault (kind 0 / Deposit)
 /// atau TokenMessengerMinter (kind 1 / Bridge). `mint_recipient` +
 /// `destination_domain` hanya bermakna untuk Bridge; nol untuk Deposit.
+/// `per_execution_max` (v4, additive) bounds any SINGLE deposit/burn amount independently of
+/// `cap_per_period`'s rolling cumulative bound — `__check_auth` rejects one execution above it
+/// even when the cumulative period cap still has headroom.
 #[contracttype]
 #[derive(Clone)]
 pub struct AgentScope {
@@ -18,6 +29,7 @@ pub struct AgentScope {
     pub period_start: u64,
     pub expiry: u64,
     pub revoked: bool,
+    pub per_execution_max: i128,
 }
 
 #[contracttype]
@@ -52,4 +64,8 @@ pub enum AccountError {
     // v3 bridge scope — appended.
     BridgeArgMismatch = 22,
     KindInvalid = 23,
+    // v4 per-execution cap — appended, existing discriminants unchanged.
+    /// A single deposit/burn `amount` exceeds `scope.per_execution_max`, even though the
+    /// rolling `cap_per_period` cumulative bound still had headroom.
+    PerExecutionMaxExceeded = 24,
 }

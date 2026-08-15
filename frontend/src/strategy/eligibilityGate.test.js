@@ -11,6 +11,10 @@ import {
 
 import { yieldReality, securityScore, evaluate } from './eligibilityGate.js'
 import { SECURITY_MIN, TVL_FLOOR, TVL_CAP } from './eligibilityGate.js'
+import { resolve } from './vaultFacts.js'
+import { CAPTURED_AT } from './vaultFactsSnapshot.js'
+import { venueDisclosure } from './venueTruth.js'
+import { VAULT_CATALOG, BASE_POOL_CATALOG } from '../config.js'
 
 const tvlForSig = (sig) =>
   10 ** (Math.log10(TVL_FLOOR) + sig * (Math.log10(TVL_CAP) - Math.log10(TVL_FLOOR)))
@@ -294,5 +298,35 @@ describe('F8 lifeboat screening facts', () => {
     const v = evaluate({ protocol: 'x', facts }, F8_NOW)
     expect(v.eligible).toBe(false)
     expect(v.reasons).toContain('Required data is missing or outdated.')
+  })
+})
+
+// ===== Strategy Task 1 regression: the truthful catalog's real execution slugs still clear the
+// gate, keyed the same way basketFilter.slugFor keys them (factSlug for Base, protocol for
+// Stellar) — collapsing the four fake Stellar personas to one real venue must not silently strand
+// the real venue or the three Base proxies without eligibility facts. =====
+const CATALOG_NOW = CAPTURED_AT + 1000
+
+describe('catalog boundary — real execution slugs resolve + evaluate eligible', () => {
+  it('the sole live Stellar venue (blend-usdc) is eligible', () => {
+    expect(VAULT_CATALOG).toHaveLength(1)
+    const slug = VAULT_CATALOG[0].protocol
+    expect(evaluate(resolve(slug), CATALOG_NOW).eligible).toBe(true)
+  })
+
+  it('every Base custody-proxy fact slug is eligible', () => {
+    for (const pool of BASE_POOL_CATALOG) {
+      expect(evaluate(resolve(pool.factSlug), CATALOG_NOW).eligible).toBe(true)
+    }
+  })
+
+  it("a Base pool's disclosure never describes it as a live Aave/Morpho/Moonwell position, even though its facts borrow that protocol's reputation", () => {
+    for (const pool of BASE_POOL_CATALOG) {
+      const disclosure = venueDisclosure(pool)
+      expect(disclosure).toBe('Base Sepolia proxy. Custody only. No protocol yield.')
+      for (const persona of ['Aave', 'Morpho', 'Moonwell']) {
+        expect(disclosure).not.toContain(persona)
+      }
+    }
   })
 })

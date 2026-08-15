@@ -64,6 +64,24 @@ describe('/api/faucet handler', () => {
     expect(res.statusCode).toBe(400)
     expect(JSON.parse(res.body)).toMatchObject({ error: 'Invalid recipient' })
   })
+
+  it('does not log an arbitrary provider/request error', async () => {
+    process.env.VF_FAUCET_SECRET = 'SSECRET'
+    const poison = 'T16_PROVIDER_SECRET_FAUCET_RPC_BODY'
+    const body = {}
+    Object.defineProperty(body, 'action', {
+      get() {
+        throw new Error(poison)
+      },
+    })
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = mockRes()
+    await handler(mockReq(body), res)
+    expect(res.statusCode).toBe(502)
+    expect(JSON.stringify(JSON.parse(res.body))).not.toContain(poison)
+    expect(log.mock.calls.flat().join(' ')).not.toContain(poison)
+    log.mockRestore()
+  })
 })
 
 // Recipient validation now accepts BOTH a Soroban contract (C, passkey wallet) and a classic

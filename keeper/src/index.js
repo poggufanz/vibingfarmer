@@ -5,6 +5,7 @@
 // the next 15-min cron retries with fresh state. No retry loops within a tick.
 import { readState, submit } from './chain.js';
 import { decide } from './decide.js';
+import { syncAgentIndex } from './agentIndex.js';
 
 // Defaults match docs/superpowers/specs/2026-07-03-vf-autofarm-design.md §5.2/§7 and the
 // on-chain vault's own `set_limits` defaults (86400s cooldown) — all overridable via env vars
@@ -48,6 +49,18 @@ function logStateAndActions(state, actions) {
 
 export default {
   async scheduled(controller, env, ctx) {
+    // Pocket Crew My Money index catch-up — wired on the SAME cron tick but through its own
+    // waitUntil + catch, entirely independent of the money-moving path below: an index failure
+    // must never stop compound/rebalance/derisk, and a money-path failure must never be read as
+    // the index being unhealthy. syncAgentIndex never throws on its own, but the catch here is a
+    // second, independent backstop (an unhandled waitUntil rejection would otherwise just be a
+    // noisy platform log, never something that could affect the tick below).
+    ctx.waitUntil(
+      syncAgentIndex(env).catch((err) =>
+        console.log(JSON.stringify({ tick: 'agent-index-uncaught', error: String(err?.message || err) })),
+      ),
+    );
+
     let state;
     try {
       state = await readState(env);

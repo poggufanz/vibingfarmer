@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Keypair } from '@stellar/stellar-sdk'
-import { rehydrateScopes } from './scopeRehydrate.js'
+import { rehydrateScopes, discoverOwnerScopes } from './scopeRehydrate.js'
 
 const OWNER = Keypair.random().publicKey()
 const VAULT = 'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
@@ -180,5 +180,22 @@ describe('rehydrateScopes', () => {
     expect(warn).toHaveBeenCalledOnce()
     expect(warn.mock.calls[0][0]).toMatch(/retention/i)
     warn.mockRestore()
+  })
+})
+
+// Task 6 (Pocket Crew My Money): rehydrateScopes() stays the compatibility array adapter old
+// callers (app.jsx) already depend on, unchanged above. discoverOwnerScopes() is the new
+// full-envelope entry point — its real behavior is unit-tested in ownerDiscovery.test.js; this
+// just pins the re-export wiring so `./scopeRehydrate.js` remains one place to reach for either.
+describe('discoverOwnerScopes (re-exported from ownerDiscovery.js)', () => {
+  it('is the same function ownerDiscovery.js exports', async () => {
+    const direct = await import('./ownerDiscovery.js')
+    expect(discoverOwnerScopes).toBe(direct.discoverOwnerScopes)
+  })
+
+  it('returns an honest unavailable envelope with no owner (never a demo/view-as guess)', async () => {
+    const d = await discoverOwnerScopes({ owner: null })
+    expect(d.status).toBe('unavailable')
+    expect(d.agents).toEqual([])
   })
 })

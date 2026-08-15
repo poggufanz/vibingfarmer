@@ -1,39 +1,42 @@
+// frontend/src/wallet/ui/classic/UnlockScreen.jsx
+// VF Wallet Task 9. Recomposed onto the shared WalletShell/pc-* primitives -- dropped the
+// gradient icon box and inline styles. WalletShell's own h1 already carries the "Unlock your
+// wallet" heading, so this screen renders no second, duplicate heading. Unlock wiring
+// (unlockWallet via controller.js's doUnlock) is untouched -- only the markup changed.
 import { useState } from 'react'
+import { HonestyLabels } from '../HonestyLabels.jsx'
 
 export default function UnlockScreen({ publicKey, onUnlock, error, busy }) {
   const [pw, setPw] = useState('')
   return (
-    <div className="vf-screen vf-unlock" style={{ justifyContent: 'center', minHeight: '320px' }}>
-      <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-        <div style={{
-          width: 48, height: 48, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-card) 100%)',
-          border: '1px solid var(--border-strong)', marginBottom: 4,
-          boxShadow: '0 4px 16px rgba(0,0,0,.25)'
-        }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-          </svg>
-        </div>
-        <h2 style={{ margin: 0 }}>Unlock wallet</h2>
-        <p className="vf-muted" style={{ margin: 0 }}>
-          {publicKey?.slice(0, 6)}…{publicKey?.slice(-6)}
+    <div className="pc-standard-form" data-testid="standard-unlock">
+      {publicKey && (
+        <p className="pc-field-help pc-technical">
+          {publicKey.slice(0, 6)}…{publicKey.slice(-6)}
         </p>
+      )}
+      <div className="pc-field">
+        <label htmlFor="wallet-unlock-password">Password</label>
+        <input
+          id="wallet-unlock-password"
+          className="pc-input"
+          type="password"
+          autoComplete="current-password"
+          placeholder="Enter password"
+          value={pw}
+          onChange={(e) => setPw(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && onUnlock(pw)}
+        />
       </div>
-      <input
-        type="password"
-        autoComplete="current-password"
-        placeholder="Enter password"
-        value={pw}
-        onChange={(e) => setPw(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && onUnlock(pw)}
-      />
-      <p className="vf-hint" style={{ textAlign: 'center' }}>
-        This password unlocks the local vault in this browser.
-      </p>
-      {error && <p className="vf-error">{error}</p>}
-      <button className="vf-btn primary" disabled={busy || !pw} onClick={() => onUnlock(pw)}>
+      <p className="pc-route-intro">This password unlocks the local vault in this browser.</p>
+      <HonestyLabels scope="session-key" />
+      {error && <p className="pc-field-error">{error}</p>}
+      <button
+        type="button"
+        className="pc-button pc-button--primary"
+        disabled={busy || !pw}
+        onClick={() => onUnlock(pw)}
+      >
         {busy ? 'Unlocking…' : 'Unlock'}
       </button>
     </div>

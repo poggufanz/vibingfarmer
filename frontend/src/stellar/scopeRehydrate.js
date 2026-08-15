@@ -149,3 +149,10 @@ export async function rehydrateScopes({
     return true
   })
 }
+
+// Pocket Crew My Money Task 6: the D1-backed, full-envelope owner discovery (status/coverage/
+// hints, not just a flat scopes array) now lives in ownerDiscovery.js. Re-exported here so this
+// module stays the one place to reach for "give me this owner's agents" — rehydrateScopes() above
+// is the retained compatibility array adapter for old callers (app.jsx); discoverOwnerScopes() is
+// the new entry point. See ownerDiscovery.test.js for its behavior.
+export { discoverOwnerScopes } from './ownerDiscovery.js'

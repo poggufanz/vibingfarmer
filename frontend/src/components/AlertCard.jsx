@@ -43,15 +43,15 @@ const alertLine = (a) => {
     case 'harvest_failed':
       return `${a.vaultName}, ${a.error}`
     case 'rebalance_proposal':
-      return `${a.fromVault} ${a.fromApy}% → ${a.toProtocol} ${a.toApy}% (+${a.apyGain}%)`
+      return `${a.fromVault} ${a.fromApy}% to ${a.toProtocol} ${a.toApy}% (+${a.apyGain}%)`
     case 'apy_drift':
-      return `${a.vaultName}, ${a.baselineApy}% → ${a.currentApy}% (${a.driftPct}%)`
+      return `${a.vaultName}, ${a.baselineApy}% to ${a.currentApy}% (${a.driftPct}%)`
     case 'risk_alert':
       return `${a.vaultName}, security signal detected`
     case 'compound_executed':
       return `${a.vaultName}, ${a.totalGainUsdc} USDC gained, price/share ${a.pricePerShare}`
     case 'rebalance_executed':
-      return `${a.vaultName}, ${a.fromLabel} → ${a.toLabel}, ${a.amountUsdc} USDC moved`
+      return `${a.vaultName}, ${a.fromLabel} to ${a.toLabel}, ${a.amountUsdc} USDC moved`
     case 'blnd_held':
       return `${a.vaultName}, ${a.blndHeld} BLND held, not swapped`
     case 'vault_upgrade_scheduled':
@@ -68,7 +68,7 @@ const alertLine = (a) => {
 const whyText = (a) => {
   switch (a.kind) {
     case 'apy_drift':
-      return `APY compressed ${a.driftPct}% since deposit (${a.baselineApy}% → ${a.currentApy}%). Consider rebalancing if the drop persists into the next monitoring cycle.`
+      return `APY compressed ${a.driftPct}% since deposit (${a.baselineApy}% to ${a.currentApy}%). Consider rebalancing if the drop persists into the next monitoring cycle.`
     case 'rebalance_proposal':
       return `${a.toProtocol} currently offers ${a.toApy}% vs your ${a.fromVault} position at ${a.fromApy}%, a ${a.apyGain}% gap. Rebalancing would capture that extra yield (break-even after gas: ~2 days).`
     case 'risk_alert':

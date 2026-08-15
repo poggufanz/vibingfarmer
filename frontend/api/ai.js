@@ -5,10 +5,7 @@ import { applyCors, rateLimit } from './_guard.js'
 
 const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions'
 
-const ALLOWED_MODELS = [
-  'deepseek-v4-pro',
-  'deepseek-v4-flash',
-]
+const ALLOWED_MODELS = ['deepseek-v4-pro', 'deepseek-v4-flash']
 
 async function readBody(req) {
   if (req.body && typeof req.body === 'object') return req.body // pre-parsed (serverless)
@@ -72,4 +69,3 @@ export default async function handler(req, res) {
     res.end(JSON.stringify({ error: 'AI proxy failed' }))
   }
 }
-

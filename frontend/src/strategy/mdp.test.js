@@ -227,6 +227,28 @@ describe('scoreReward (projected reward)', () => {
     )
     expect(lowOnly.riskAdjustedScore).toBeGreaterThan(0)
   })
+
+  it('reports projection as known+numeric when every allocation has a real yield', () => {
+    const r = scoreReward(
+      [{ address: '0xAAA', allocation: 1, expected_apy: 4.8, risk_tier: 'low', drawdown: -1.2 }],
+      state
+    )
+    expect(r.projection).toEqual({ state: 'known', value: r.projectedAnnualUsdc })
+  })
+
+  it('reports projection as unavailable (never a fabricated zero) when a yield is explicitly null', () => {
+    const r = scoreReward(
+      [
+        { address: '0xAAA', allocation: 0.5, expected_apy: null, risk_tier: 'low', drawdown: -1.2 },
+        { address: '0xCCC', allocation: 0.5, expected_apy: 9.4, risk_tier: 'high', drawdown: -6.5 },
+      ],
+      state
+    )
+    expect(r.projection).toEqual({ state: 'unavailable', value: null })
+    // the legacy numeric fields stay untouched (existing out-of-scope consumers still work) —
+    // an unknown-yield allocation still contributes 0, exactly as before.
+    expect(r.blendedApy).toBeCloseTo(4.7, 2) // 0.5*0 + 0.5*9.4
+  })
 })
 
 describe('realizedReward (closes the RL loop from memory)', () => {

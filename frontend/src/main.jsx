@@ -3,7 +3,11 @@ import { Buffer } from 'buffer'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
+import '@fontsource-variable/geist'
+import '@fontsource-variable/jetbrains-mono'
+import '@fontsource-variable/newsreader'
 import '../style.css'
+import './design/pocket-crew.css'
 import App from './app.jsx'
 
 // @zerodev/webauthn-key's toWebAuthnKey uses the Node `Buffer` global after the passkey

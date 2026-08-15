@@ -13,7 +13,7 @@
   <p><em>▶ 2-minute walkthrough — strategy → AI council → one signature → parallel deposits</em></p>
 </div> -->
 
-Yield farming is the same loop: find a vault, approve, deposit, do it again for the next protocol. Vibing Farmer turns that into one wallet signature. An AI strategist picks vaults and writes per-agent instructions; workers deposit in parallel; you pay zero gas.
+Yield farming is the same loop: find a vault, approve, deposit, do it again for the next protocol. Vibing Farmer turns that into one wallet signature. An AI strategist picks vaults and writes per-agent instructions; workers deposit in parallel. Network fee sponsored by fee-bump relay.
 
 The AI does not get custody of your funds. Each agent runs in a disposable on-chain account with hard limits: how much it can deposit, which vault, until when. Those limits live in contracts (allowance, expiry, vault pin), not in a prompt.
 
@@ -25,7 +25,7 @@ The AI does not get custody of your funds. Each agent runs in a disposable on-ch
 2. Create a VF Wallet (passkey-based, no seed phrase, no extension required). Freighter, xBull, and Albedo work on testnet if you prefer those.
 3. Get test USDC from VF Wallet's built-in faucet.
 4. Go to Strategy, set amount, risk, and number of agents, review the plan, then sign once.
-5. Watch agents deposit in parallel (gas-free) and follow decisions on the Agent dashboard.
+5. Watch agents deposit in parallel and follow decisions on the Agent dashboard. Network fee sponsored by fee-bump relay.
 
 Everything runs on Stellar testnet. No real funds.
 
@@ -34,9 +34,9 @@ Everything runs on Stellar testnet. No real funds.
 1. **Strategy.** You set deposit amount, risk, and vault count. The AI returns an allocation plan and a skill file per agent, using live DeFiLlama data. A Monte Carlo pass stress-tests the allocation over 200 scenarios before anything runs.
 2. **AI council.** Three specialists (yield, risk, market) score the proposal on their own. Disagreements go to a synthesis round. Verdict, cited playbook rules, and conflict resolution are logged for review.
 3. **Review.** Skill files open in the Skills Drawer. Edit caps, expiries, or targets. Nothing runs until you approve.
-4. **One signature.** You sign `funding_router.grant` (budget + expiry). A SEP-41 token allowance is the leash: the router deploys a fresh, scoped `agent_account` per worker and can only pull what you approved.
+4. **One signature.** You sign `funding_router.grant` (budget + permission lifetime). One selected permission lifetime is encoded as an agent Unix expiry and a SEP-41 allowance ledger cutoff derived from the same captured start time. The allowance is the leash: the router deploys a fresh, scoped `agent_account` per worker and can only pull what you approved.
 
-5. **Parallel deposit.** Workers sign with ephemeral ed25519 session keys. A fee-bump relayer sponsors each transaction. One worker failing does not abort the others. You pay 0 gas. (A Base pool in the plan settles as a sibling leg — see [Optional Base leg](#optional-base-leg) for its extra prompts.)
+5. **Parallel deposit.** Workers sign with ephemeral ed25519 session keys. A fee-bump relayer sponsors each transaction. One worker failing does not abort the others. Network fee sponsored by fee-bump relay. (A Base pool in the plan settles as a sibling leg — see [Optional Base leg](#optional-base-leg) for its extra prompts.)
 6. **Attestation.** The strategy JSON is hashed and written on-chain so anyone with the original file can check what was approved.
 7. **Autonomy.** A monitor loop polls positions, flags APY drift, and can propose rebalances. Each cycle goes back through the council. A keeper compounds on a cron; lifeboat radar can de-risk the vault at ledger speed under a user-signed mandate.
 8. **Kill switch.** Two exits you can sign yourself, even if every server is down:
@@ -45,7 +45,7 @@ Everything runs on Stellar testnet. No real funds.
 
 ### Optional Base leg
 
-A Base pool only appears in the plan when the cross-chain relayer answers healthy. It settles alongside the Stellar workers in step 5, but it is not gas-free-by-one-signature — it costs extra prompts:
+A Base pool only appears in the plan when the cross-chain relayer answers healthy. It settles alongside the Stellar workers in step 5, but it uses a separate Base flow and costs extra prompts:
 
 * **First Base run:** worst case 4 prompts — grant + passkey setup (once, ever) + wallet-signed CCTP approve + burn.
 * **Every run after:** 3 wallet signatures (grant + approve + burn) plus a passkey login confirmation. The login never goes away.
@@ -89,7 +89,7 @@ User input (amount, risk level, vault count)
     v     v     v
  Worker Worker Worker   (parallel agents)
    ed25519 session key signs a Soroban auth entry
-   fee-bump relay broadcasts — user pays zero gas
+   Network fee sponsored by fee-bump relay.
    autofarm vault → Blend Capital v2 (real testnet lending yield)
                 |
                 v
@@ -102,15 +102,27 @@ Primary chain: Stellar / Soroban. Optional cross-chain leg to Base via Circle CC
 
 ## Deployed contracts (Stellar testnet)
 
-| Contract                                    | Address                                                    |
-| ------------------------------------------- | ---------------------------------------------------------- |
-| Autofarm vault (live deposit, `vfVLT` 7-dp) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` |
-| Funding router (single-signature grant)     | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` |
-| Registry                                    | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
-| Blend USDC token (7-dp)                     | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
-| Blend v2 pool                               | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
+The Explorer tracks 7 Soroban source crates, 6 first-party Vibing Farmer deployments, and 2
+external protocol contracts: 8 static Stellar testnet addresses in total. Agent accounts are
+created dynamically per run and are not static deployments.
 
-Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet): `https://stellar.expert/explorer/testnet/contract/<address>`. Full manifest (wasm hashes, deploy receipts): [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
+| Ownership | Contract | Address |
+| --------- | -------- | ------- |
+| first-party | Funding Router V2 (current app) | `CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE` |
+| first-party | Autofarm vault (live deposit, `vfVLT` 7-dp) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` |
+| first-party | Blend strategy | `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE` |
+| first-party | Exit router | `CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J` |
+| first-party | Strategy attestation | `CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6` |
+| first-party | Agent registry | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
+| external | Blend v2 pool | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
+| external | Stellar testnet USDC token (7-dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
+
+Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet):
+`https://stellar.expert/explorer/testnet/contract/<address>`. The manifest also records WASM
+hashes and deployment receipts; an agent WASM value is a hash, not a contract address:
+[`deployments/stellar-testnet.json`](deployments/stellar-testnet.json). The retired V1 router
+remains a relay compatibility address in that manifest, but is not the active app router or an
+Explorer static-deployment count.
 
 ***
 
@@ -125,7 +137,7 @@ Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet)
 | AI                     | Venice AI via API key or x402 (SIWE, prepaid USDC); DeepSeek server proxy as zero-config fallback |
 | Yield                  | Autofarm vault → Blend Capital v2 (testnet lending interest)                                      |
 | Live market data       | DeFiLlama API (APY, TVL, 7-day history); Tavily search for strategy context                       |
-| Gas                    | Own fee-bump relayer (`/api/stellar-relay`, allowlisted ops) — user pays 0                        |
+| Network fee            | Sponsored by fee-bump relay (`/api/stellar-relay`, allowlisted ops)                                |
 | Cross-chain (optional) | Circle CCTP v2 + relayer + ZeroDev on Base Sepolia                                                |
 | Crypto                 | ed25519 session keys; libsodium KDF-sealed per-worker key vault                                   |
 | Hosting                | Cloudflare Pages: static SPA + `/api/*` Pages Functions                                           |
@@ -142,7 +154,7 @@ Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet)
 | `/agent`    | Dashboard: scopes, revoke, monitor status, journal, decision log |
 | `/history`  | Tx and strategy history                                          |
 | `/settings` | Wallet, permissions, agent config, language, skill source        |
-| `/explorer` | On-chain verification (contracts, TVL, test stats); no wallet    |
+| `/explorer` | Stellar deployment facts and on-chain attestations; no wallet  |
 | `/replay`   | Timeline replay from static JSON (no RPC)                        |
 
 ***
@@ -190,7 +202,9 @@ STELLAR_RELAYER_SECRET=S...                       # fee-bump sponsor (fund on te
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 SOROBAN_VAULT_ADDRESS=CDWHNHIH…KM77               # autofarm vault
-SOROBAN_ROUTER_ADDRESS=CCEWWRQV…CYE5              # funding_router
+SOROBAN_ROUTER_ADDRESSES=CB675TTS…TRSE,CCEWWRQV…CYE5  # canonical V2,V1 order
+SOROBAN_AGENT_WASM_HASHES=1fdbe175…fbe1,d61ceaaa…a2ba # matching ordered hashes
+SOROBAN_ROUTER_ADDRESS=CB675TTS…TRSE              # singular current-V2 compatibility fallback
 ALLOWED_ORIGIN=https://your-project.pages.dev     # /api/* origin allowlist
 DEEPSEEK_API_KEY=sk-...                           # optional AI fallback (BYOK-first)
 TAVILY_API_KEY=tvly-...                           # optional market search
@@ -200,9 +214,12 @@ Leave host AI keys unset for a lockdown deploy (users bring their own keys).
 
 ### Contracts
 
+Contract commands are WSL-only on Windows. From a WSL shell, change to this checkout's
+`soroban/` directory (for example `/mnt/<drive>/<path-to-repo>/soroban`), then run:
+
 ```bash
-cd soroban
-stellar contract build                       # 6 wasms
+cd /mnt/<drive>/<path-to-repo>/soroban
+stellar contract build
 cargo test                                   # unit + integration + security drills
 cargo clippy --all-targets -- -D warnings
 ```
@@ -213,16 +230,20 @@ Deploy and seed scripts live in `scripts/soroban/`. Addresses land in `deploymen
 
 ```bash
 cd frontend
-npm test              # Vitest suite
-npm run lint          # ESLint flat config
-npm run build         # production → dist/
-npm run build:ext     # VF Wallet extension → extension-dist/
-npm run pages:dev     # build + wrangler pages dev (Functions locally)
+npm test                       # Vitest suite
+npm run lint                   # ESLint flat config (all warnings, no gate)
+npm run lint:ci                # ESLint gated against the checked-in warning-fingerprint baseline
+npm run lint:warnings:update   # regenerate the baseline locally after a reviewed warning change (refuses under CI=true)
+npm run build                  # production → dist/
+npm run build:ext              # VF Wallet extension → extension-dist/
+npm run pages:dev              # build + wrangler pages dev (Functions locally)
 ```
 
 ### CI/CD
 
-`.github/workflows/frontend.yml` runs on every push/PR to `main` and `dev`: lint (soft-fail), full Vitest suite, production build. Pushes then auto-deploy to Cloudflare Pages — `dev` → preview, `main` → production.
+`.github/workflows/frontend.yml` triggers on every `push` to `main`/`dev`, every `pull_request`, and `merge_group` (no narrowing `types`/`paths` filters — the gate always evaluates). Six stable jobs always report a result: `frontend-unit-build` (`npm ci`, `lint:ci`, `format:check`, `brand:check`, unit tests, `build`, `build:ext`, `manifest:check`, banned-string scan), `relayer`, `keeper`, `soroban` (pinned Ubuntu 24.04 + Rust 1.93.0 + `stellar-cli` 26.1.0 — the CLI's MSRV, which satisfies the SDK's 1.91.0 MSRV, not the plan's stated 1.82.0 — `stellar contract build`, `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`), `playwright` (`test:visual`, uploads the report/traces on failure), and `claim-evidence` (public-claim scan, evidence matrix, and feature-freeze validation). `release-gate` (`if: always()`, `needs` on all six, evaluated by `scripts/ci/release-gate.mjs`) is the intended single required check — it fails if any job is anything other than `success`, including skipped. The checked-in candidate forbids production publishing; if a GitHub Release event reaches `claim-evidence`, it fails with policy status 1 before the gate. `deploy` needs only `release-gate`, so no other job can be bypassed to reach Cloudflare Pages: `dev` → preview, `main` → the `production` GitHub Environment, with a non-secret readiness check before the traffic-shifting `wrangler pages deploy` step and serialized (non-cancelling) concurrency per ref.
+
+Two of those guarantees are repo settings, not YAML, and are **not yet in place**: `release-gate` still has to be registered as the required status check in branch protection, and the `production` environment has to be created and protected — `frontend.yml` only names it. The `playwright` job is also merge-blocking on 47 visual baselines that were frozen on a developer box and have never run on a runner, at zero pixel tolerance. See [GETTING\_STARTED.md](GETTING_STARTED.md) section 8 for the full release-prerequisite list, including source-only V3/V4 activation, the three Base-recovery evidence blockers, and the relayer's production boot ordering (D1 `0005`/`0006` before the relayer, never after).
 
 ### Directory structure
 
@@ -246,6 +267,7 @@ deployments/           # live contract manifests (Stellar testnet, Base Sepolia)
 | [prd.md](prd.md)                                | Product requirements and feature status         |
 | [SECURITY.md](SECURITY.md)                      | Threat model, verified controls, residual risks |
 | [GETTING\_STARTED.md](GETTING_STARTED.md)       | Local setup and demo checklist                  |
+| [EVIDENCE_MATRIX.md](EVIDENCE_MATRIX.md)        | Release claim evidence and feature-freeze policy |
 | [DESIGN.md](/broken/pages/6Jx8uHi61JqMhzEpSKM5) | Design system / UI                              |
 | [soroban/README.md](soroban/)                   | Contract build and test                         |
 

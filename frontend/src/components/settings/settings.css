@@ -1,0 +1,650 @@
+.pc-settings {
+  --pc-settings-max-width: 820px;
+  --pc-settings-input: var(--pc-canvas);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--pc-ink);
+  background: var(--pc-canvas);
+  font-family: var(--pc-font-body);
+}
+
+.pc-settings-header {
+  flex: none;
+  border-bottom: 1px solid var(--pc-line);
+  padding: var(--pc-space-4) var(--pc-route-gutter) 0;
+}
+
+.pc-settings-title {
+  max-width: var(--pc-settings-max-width);
+  margin: 0 auto var(--pc-space-3);
+  color: var(--pc-ink);
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-stage);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: var(--pc-leading-title);
+}
+
+.pc-settings-tabs {
+  max-width: var(--pc-settings-max-width);
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  gap: var(--pc-space-1);
+  overflow-x: auto;
+}
+
+.pc-settings-tab {
+  appearance: none;
+  flex: none;
+  min-height: var(--pc-touch-target);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: var(--pc-space-2) var(--pc-space-3);
+  background: transparent;
+  color: var(--pc-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--pc-type-technical);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pc-settings-tab:hover,
+.pc-settings-tab:focus-visible {
+  color: var(--pc-ink);
+}
+
+.pc-settings-tab:focus-visible,
+.pc-settings-button:focus-visible,
+.pc-settings-toggle-option:focus-visible,
+.pc-settings-check:focus-visible,
+.pc-settings-radio:focus-visible,
+.pc-settings-number:focus-visible,
+.pc-settings-api-input:focus-visible,
+.pc-settings-text-input:focus-visible {
+  outline: 3px solid var(--pc-focus);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--pc-focus-contrast);
+}
+
+.pc-settings-tab--active {
+  border-bottom-color: var(--pc-harvest);
+  color: var(--pc-ink);
+  font-weight: 600;
+}
+
+.pc-settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--pc-route-gutter);
+}
+
+.pc-settings-content {
+  width: 100%;
+  max-width: var(--pc-settings-max-width);
+  margin: 0 auto;
+}
+
+.pc-settings .mono {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pc-settings-section {
+  margin: 0 0 var(--pc-space-8);
+}
+
+.pc-settings-eyebrow {
+  margin: 0 0 var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: capitalize;
+}
+
+.pc-settings-card {
+  padding: var(--pc-space-4) var(--pc-space-5);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background: var(--pc-workspace);
+}
+
+.pc-settings-divider {
+  margin: var(--pc-space-4) 0;
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-settings-label {
+  margin: var(--pc-space-1) 0 var(--pc-space-2);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-technical);
+  font-weight: 600;
+}
+
+.pc-settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--pc-space-4);
+  padding: var(--pc-space-2) 0;
+}
+
+.pc-settings-row-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.pc-settings-row-title {
+  color: var(--pc-ink);
+  font-size: var(--pc-type-label);
+}
+
+.pc-settings-row-description {
+  max-width: 430px;
+  margin-top: var(--pc-space-1);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  line-height: var(--pc-leading-body);
+}
+
+.pc-settings-row-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+}
+
+.pc-settings-toggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--pc-line-strong);
+  border-radius: var(--pc-radius-control);
+  font-family: var(--pc-font-mono);
+  font-size: var(--pc-type-technical);
+}
+
+.pc-settings-toggle-option {
+  appearance: none;
+  min-height: var(--pc-touch-target);
+  border: 0;
+  padding: var(--pc-space-2) var(--pc-space-3);
+  background: transparent;
+  color: var(--pc-muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.pc-settings-toggle-option--active {
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-settings-radio {
+  width: 100%;
+  min-height: var(--pc-touch-target);
+  margin: 0 0 var(--pc-space-2);
+  padding: var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: transparent;
+  color: var(--pc-ink);
+  text-align: left;
+}
+
+.pc-settings-radio.sel {
+  border-color: var(--pc-focus);
+  background: var(--pc-canvas);
+}
+
+.pc-settings-radio-dot {
+  position: absolute;
+  inset: var(--pc-space-1);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-harvest);
+}
+
+.pc-settings-inline-control {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--pc-space-2);
+}
+
+.pc-settings-number-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-1);
+}
+
+.pc-settings-number {
+  width: var(--pc-space-16);
+  min-height: var(--pc-touch-target);
+  box-sizing: border-box;
+  padding: var(--pc-space-2) var(--pc-space-2);
+  border: 1px solid var(--pc-line-strong);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-settings-input);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-technical);
+  text-align: right;
+}
+
+.pc-settings-number-group[data-size='wide'] .pc-settings-number {
+  width: var(--pc-space-20);
+}
+
+.pc-settings-number-suffix {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+.pc-settings-check {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  border: 0;
+  padding: var(--pc-space-2) 0;
+  background: transparent;
+  color: var(--pc-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--pc-type-body-small);
+  text-align: left;
+}
+
+.pc-settings-checkbox {
+  width: var(--pc-space-4);
+  height: var(--pc-space-4);
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--pc-line-strong);
+  border-radius: var(--pc-radius-control);
+  background: transparent;
+}
+
+.pc-settings-checkbox--checked {
+  border-color: var(--pc-harvest);
+  background: var(--pc-harvest);
+}
+
+.pc-settings-button {
+  appearance: none;
+  min-height: var(--pc-touch-target);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--pc-line-strong);
+  border-radius: var(--pc-radius-control);
+  padding: var(--pc-space-2) var(--pc-space-3);
+  background: var(--pc-canvas);
+  color: var(--pc-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--pc-type-technical);
+  text-decoration: none;
+}
+
+.pc-settings-button:hover {
+  border-color: var(--pc-focus);
+}
+
+.pc-settings-button:disabled {
+  border-color: var(--pc-line);
+  color: var(--pc-faint);
+  cursor: not-allowed;
+}
+
+.pc-settings-button--danger {
+  border-color: var(--pc-danger);
+  color: var(--pc-danger);
+}
+
+.pc-settings-button--spaced {
+  margin-top: var(--pc-space-3);
+}
+
+.pc-settings-api-key {
+  margin-top: var(--pc-space-1);
+}
+
+.pc-settings-api-key-row,
+.pc-settings-api-key-status {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+}
+
+.pc-settings-api-key-status {
+  margin-top: var(--pc-space-2);
+}
+
+.pc-settings-api-input,
+.pc-settings-text-input {
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--pc-line-strong);
+  border-radius: var(--pc-radius-control);
+  padding: var(--pc-space-2) var(--pc-space-3);
+  background: var(--pc-settings-input);
+  color: var(--pc-ink);
+  font: inherit;
+  font-size: var(--pc-type-technical);
+}
+
+.pc-settings-api-input {
+  flex: 1;
+}
+
+.pc-settings-text-input {
+  width: 100%;
+}
+
+.pc-settings-status {
+  font-size: var(--pc-type-technical);
+}
+
+.pc-settings-status--ok {
+  color: var(--pc-harvest);
+}
+
+.pc-settings-status--danger {
+  color: var(--pc-danger);
+}
+
+.pc-settings-status--warn,
+.pc-settings-note[data-tone='warn'] {
+  color: var(--pc-warning);
+}
+
+.pc-settings-field-label {
+  margin-bottom: var(--pc-space-1);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-label);
+}
+
+.pc-settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-2);
+}
+
+.pc-settings-stack--tight {
+  gap: var(--pc-space-1);
+  margin-top: 0;
+}
+
+.pc-settings-note {
+  margin: var(--pc-space-1) 0 var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  line-height: var(--pc-leading-body);
+}
+
+.pc-settings-note[data-tone='ok'] {
+  color: var(--pc-harvest);
+}
+
+.pc-settings-contract-row,
+.pc-settings-data-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+.pc-settings-contract-row {
+  padding: var(--pc-space-2) 0;
+}
+
+.pc-settings-contract-value {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+}
+
+.pc-settings-muted {
+  color: var(--pc-muted);
+}
+
+.pc-settings-data-row {
+  padding: var(--pc-space-1) 0;
+}
+
+.pc-settings-data-row--total {
+  margin-top: var(--pc-space-1);
+  padding: var(--pc-space-2) 0;
+  border-top: 1px solid var(--pc-line);
+  color: var(--pc-ink);
+}
+
+.pc-settings-data-row--compact {
+  padding: var(--pc-space-1) 0;
+  color: var(--pc-ink);
+}
+
+.pc-settings-actions,
+.pc-settings-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+}
+
+.pc-settings-actions {
+  margin-top: var(--pc-space-3);
+  flex-wrap: wrap;
+}
+
+.pc-settings-confirm {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+.pc-settings-telemetry {
+  margin-top: var(--pc-space-2);
+}
+
+.pc-settings-emphasis {
+  color: var(--pc-harvest);
+  font-weight: 600;
+}
+
+.pc-settings-telemetry-history {
+  margin-top: var(--pc-space-3);
+}
+
+.pc-settings-small-label {
+  margin-bottom: var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+.pc-settings-telemetry-list {
+  max-height: var(--pc-space-16);
+  overflow-y: auto;
+  padding: var(--pc-space-2);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-canvas);
+}
+
+.pc-settings-telemetry-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-2);
+  padding: var(--pc-space-1) 0;
+  border-bottom: 1px solid var(--pc-line);
+  font-size: var(--pc-type-technical);
+}
+
+.pc-settings-telemetry-item:last-child {
+  border-bottom: 0;
+}
+
+.pc-settings-legacy {
+  margin-top: var(--pc-space-1);
+}
+
+.pc-settings-privacy-note {
+  display: flex;
+  gap: var(--pc-space-2);
+  padding: var(--pc-space-1) 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+.pc-settings-about {
+  color: var(--pc-ink);
+}
+
+.pc-settings-about-subtitle,
+.pc-settings-about-copy {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  line-height: var(--pc-leading-body);
+}
+
+.pc-settings-about-meta {
+  margin-top: var(--pc-space-3);
+}
+
+.pc-settings-about-list {
+  margin-top: var(--pc-space-2);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-technical);
+  line-height: var(--pc-leading-body);
+}
+
+.pc-settings-actions--about {
+  margin-top: var(--pc-space-4);
+}
+
+.pc-settings-manager {
+  padding: var(--pc-space-4) 0 0;
+  border-top: 1px solid var(--pc-line);
+  color: var(--pc-ink);
+}
+
+.pc-settings-manager .pc-settings-title {
+  margin: 0 0 var(--pc-space-2);
+  font-size: var(--pc-type-section);
+}
+
+.pc-settings-manager-status {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 600;
+}
+
+.pc-settings-manager-facts {
+  margin-top: var(--pc-space-3);
+}
+
+.pc-settings-manager .pc-settings-data-row {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  align-items: start;
+  justify-content: initial;
+}
+
+.pc-settings-manager .pc-settings-data-row dt {
+  color: var(--pc-muted);
+}
+
+.pc-settings-manager .pc-settings-data-row dd {
+  margin: 0;
+  text-align: right;
+}
+
+.pc-settings-manager-copy,
+.pc-settings-manager-disclosure,
+.pc-settings-manager-error {
+  margin: var(--pc-space-2) 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  line-height: var(--pc-leading-body);
+}
+
+.pc-settings-manager-disclosure {
+  color: var(--pc-ink);
+}
+
+.pc-settings-manager-error {
+  color: var(--pc-danger);
+}
+
+.pc-settings-manager-actions-list {
+  margin: 0 0 var(--pc-space-2);
+  padding-left: var(--pc-space-5);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-technical);
+  line-height: var(--pc-leading-body);
+}
+
+.pc-settings-manager-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2);
+  margin-top: var(--pc-space-3);
+}
+
+.pc-settings-manager-unavailable {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+@media (max-width: 767px) {
+  .pc-settings-header,
+  .pc-settings-scroll {
+    padding-right: var(--pc-space-4);
+    padding-left: var(--pc-space-4);
+  }
+
+  .pc-settings-card {
+    padding: var(--pc-space-3);
+  }
+
+  .pc-settings-row {
+    flex-direction: column;
+    gap: var(--pc-space-2);
+  }
+
+  .pc-settings-row-control {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .pc-settings-api-key-row,
+  .pc-settings-api-key-status,
+  .pc-settings-confirm {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .pc-settings-api-key-row .pc-settings-button {
+    flex: 1;
+  }
+
+  .pc-settings-contract-row,
+  .pc-settings-data-row,
+  .pc-settings-telemetry-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pc-settings-manager .pc-settings-data-row dd {
+    text-align: left;
+  }
+}

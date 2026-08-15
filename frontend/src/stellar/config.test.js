@@ -10,6 +10,10 @@ import {
   SOROBAN_TOKEN_ADDRESS,
   SOROBAN_DEMO_AGENT,
   SOROBAN_DECIMALS,
+  STELLAR_TOKEN_MESSENGER_MINTER,
+  STELLAR_USDC_SAC,
+  CCTP_STELLAR_DOMAIN,
+  CCTP_BASE_DOMAIN,
   RELAY_PROXY_URL,
 } from './config.js'
 
@@ -37,6 +41,14 @@ describe('stellar config', () => {
   })
   it('pins token/share decimals at 7 (the deployed SAC + vault metadata)', () => {
     expect(SOROBAN_DECIMALS).toBe(7)
+  })
+  it('resolves CCTP contracts and domains from the active network config', () => {
+    expect(STELLAR_TOKEN_MESSENGER_MINTER).toBe(
+      'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP'
+    )
+    expect(STELLAR_USDC_SAC).toBe('CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA')
+    expect(CCTP_STELLAR_DOMAIN).toBe(27)
+    expect(CCTP_BASE_DOMAIN).toBe(6)
   })
   it('routes to the stellar relay proxy (NOT the EVM /api/relay)', () => {
     expect(RELAY_PROXY_URL).toBe('/api/stellar-relay')

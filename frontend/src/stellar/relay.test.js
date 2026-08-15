@@ -18,15 +18,31 @@ describe('stellar client relay', () => {
     expect(global.fetch.mock.calls[0][0]).toBe('/api/stellar-relay')
   })
 
-  it('returns null when the relay is unconfigured (configured:false)', async () => {
-    global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ configured: false }) }))
+  it('returns null only for the real clean pre-submit unconfigured response', async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: 'Stellar relay not configured', configured: false }),
+    }))
     expect(await submitViaRelay({ xdr: 'x' })).toBeNull()
   })
 
-  it('returns null when the relay reports itself unconfigured (503)', async () => {
-    global.fetch = vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) }))
-    expect(await submitViaRelay({ xdr: 'x' })).toBeNull()
-  })
+  it.each([
+    ['a bare 503', { ok: false, status: 503, body: {} }],
+    ['a synthetic configured:false 200', { ok: true, status: 200, body: { configured: false } }],
+  ])(
+    'classifies %s as unknown rather than proven pre-submit unconfigured',
+    async (_label, fixture) => {
+      global.fetch = vi.fn(async () => ({
+        ok: fixture.ok,
+        status: fixture.status,
+        json: async () => fixture.body,
+      }))
+      await expect(submitViaRelay({ xdr: 'x' })).rejects.toMatchObject({
+        code: 'VF_SUBMISSION_UNKNOWN',
+      })
+    }
+  )
 
   // Regression: a refusal used to return null, which grant.js read as "no relay" and answered by
   // billing the grant to a user who holds no XLM — a config error wearing a balance error's face.
@@ -59,12 +75,90 @@ describe('stellar client relay', () => {
     await expect(submitViaRelay({ xdr: 'x' })).rejects.toThrow(/429/)
   })
 
-  it('returns null on a network throw (never crashes the worker)', async () => {
+  it('classifies a lost response after POST as submission-unknown, never unconfigured', async () => {
     global.fetch = vi.fn(async () => {
       throw new Error('offline')
     })
-    expect(await submitViaRelay({ xdr: 'x' })).toBeNull()
+    await expect(submitViaRelay({ xdr: 'x' })).rejects.toMatchObject({
+      name: 'RelaySubmissionUnknownError',
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+      result: null,
+    })
   })
+
+  it.each([
+    [502, { error: 'poll failed', submission: 'unknown', hash: 'H502', status: 'PENDING' }],
+    [
+      409,
+      {
+        error: 'inner tx already in flight',
+        submission: 'unknown',
+        hash: 'H409',
+        status: 'PENDING',
+      },
+    ],
+  ])(
+    'classifies producer HTTP %s ambiguity as unknown and preserves evidence',
+    async (status, body) => {
+      global.fetch = vi.fn(async () => ({ ok: false, status, json: async () => body }))
+      await expect(submitViaRelay({ xdr: 'x' })).rejects.toMatchObject({
+        code: 'VF_SUBMISSION_UNKNOWN',
+        result: { hash: body.hash, status: body.status },
+      })
+    }
+  )
+
+  it('never accepts a backward bare duplicate as transaction success', async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ hash: 'HOLD', status: 'duplicate' }),
+    }))
+    await expect(submitViaRelay({ xdr: 'x' })).rejects.toMatchObject({
+      code: 'VF_SUBMISSION_UNKNOWN',
+      result: { hash: 'HOLD', status: 'duplicate' },
+    })
+  })
+
+  it.each(['SUCCESS', 'FAILED'])(
+    'preserves a producer-proven cached %s duplicate',
+    async (status) => {
+      global.fetch = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ hash: `H${status}`, status, duplicate: true, relayer: 'GREL' }),
+      }))
+      await expect(submitViaRelay({ xdr: 'x' })).resolves.toEqual({
+        hash: `H${status}`,
+        status,
+        duplicate: true,
+        relayer: 'GREL',
+      })
+    }
+  )
+
+  it.each([
+    [
+      { hash: 'HPENDING', status: 'PENDING' },
+      { hash: 'HPENDING', status: 'PENDING' },
+    ],
+    [{ hash: 'HMALFORMED' }, { hash: 'HMALFORMED' }],
+    [{ status: 'SUCCESS' }, { status: 'SUCCESS' }],
+  ])(
+    'classifies an unproved 2xx relay body as unknown and preserves its evidence',
+    async (body, result) => {
+      global.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => body }))
+
+      await expect(submitViaRelay({ xdr: 'x' })).rejects.toEqual(
+        expect.objectContaining({
+          name: 'RelaySubmissionUnknownError',
+          code: 'VF_SUBMISSION_UNKNOWN',
+          result,
+        })
+      )
+    }
+  )
 
   it('getRelayerAddress returns the relayer pubkey', async () => {
     global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ address: 'GREL' }) }))

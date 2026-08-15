@@ -1,0 +1,1593 @@
+/* Pocket Crew semantic layer. Imported after the legacy stylesheet during migration. */
+
+:root,
+:root[data-theme='forest'] {
+  color-scheme: dark;
+
+  /* Fixed brand colors. Do not approximate or replace these hex values. */
+  --pc-field: #17251f;
+  --pc-grove: #20342b;
+  --pc-harvest: #dff56c;
+  --pc-rice: #f2f5ef;
+  --pc-danger: #e26e67;
+
+  /* Forest semantic pairs. */
+  --pc-canvas: var(--pc-field);
+  --pc-workspace: var(--pc-grove);
+  --pc-owned: var(--pc-rice);
+  --pc-ink: var(--pc-rice);
+  --pc-muted: #a8b5ad;
+  --pc-faint: #8c9b93;
+  --pc-owned-ink: var(--pc-field);
+  --pc-owned-muted: #536159;
+  --pc-harvest-ink: var(--pc-field);
+  --pc-danger-ink: var(--pc-field);
+  --pc-danger-on-light: #a8403c;
+  --pc-warning: #e8a33d;
+  --pc-focus: var(--pc-harvest);
+  --pc-focus-contrast: var(--pc-field);
+  --pc-line: rgb(242 245 239 / 16%);
+  --pc-line-strong: #8c9b93;
+  --pc-overlay: rgb(7 15 11 / 62%);
+  --pc-shadow-color: rgb(7 15 11 / 28%);
+
+  /* Foundation-only compatibility tokens (not part of the visual contract) -- see
+     contractTokens.test.js for the 14 that must survive every future contract port. */
+  --pc-focus-on-dark: #dff56c;
+  --pc-focus-on-light: #17251f;
+  --pc-disabled-on-dark: #8c9b93;
+  --pc-disabled-on-light: #5f6c65;
+  --pc-disabled: #8c9b93;
+
+  /* Surface pair, adopted 2026-07-29. These four elevation tokens all used to resolve to the canvas
+     hex, under a note saying existing routes would stay flat "until they adopt an explicit surface
+     pair" -- this is that adoption. While they were flat, 111 declarations across the app asked for
+     an elevated surface and got the canvas back, so every legacy card, panel and rail read as a bare
+     border (the sidebar's active nav item painted #17251f on a #17251f rail and was simply
+     invisible). Mapping them onto Grove -- the contract's one supporting surface -- makes all 111
+     resolve correctly at once, with no per-file edit.
+     --bg-input stays on the canvas on purpose: an input sits ON a card, so it needs to read as
+     inset against Grove rather than merge into it. */
+  --bg-base: #17251f;
+  --bg-canvas: #17251f;
+  --bg-card: #20342b;
+  --bg-elev: #20342b;
+  --bg-elev-2: #20342b;
+  --bg-input: #17251f;
+  --text: #f2f5ef;
+  --text-primary: #f2f5ef;
+  --text-muted: #a8b5ad;
+  --text-faint: #a8b5ad;
+  --text-dim: #a8b5ad;
+  --accent: #dff56c;
+  --accent-fg: #17251f;
+  /* Harvest is a SURFACE color, never a text color (contract rule 2 + the "one Harvest decision
+     surface" signature). `--accent` stays the fill; `--accent-text` is what a legacy consumer that
+     wants accent-COLORED TEXT must read instead. On Field the two coincide, which is why the misuse
+     was invisible for so long -- on Day Field lime-on-light measures 1.03:1. Day Field resolves this
+     the same way `--border-accent` and `--focus-ring` already do below: the accent role collapses to
+     Field ink. Deepening Harvest into a new light-mode hex would change a locked contract value. */
+  --accent-text: #dff56c;
+  --accent-soft: #20342b;
+  --border: #8c9b93;
+  --border-strong: #a8b5ad;
+  --border-accent: #dff56c;
+  --danger: #e26e67;
+  --info: #a8b5ad;
+  /* Amber, distinct from both Harvest (--accent, lime) and danger (coral red) — warn must
+     read as its own signal, not as the brand action color. */
+  --warn: #e8a33d;
+  --ok: #f2f5ef;
+  --focus-ring: #dff56c;
+  --focus-ring-contrast: #17251f;
+  --shadow-sm: var(--pc-shadow-support);
+  --shadow-md: var(--pc-shadow-support);
+  --shadow-lg: var(--pc-shadow-dominant);
+  --line: #8c9b93;
+  --eco-accent: #dff56c;
+
+  /* Fixed AgentMark identity palette (Foundation Task 5, §6.6) -- 6 swatches, seeded only by
+     an agent's identity string, never by list position. Distinct from --pc-harvest/--pc-danger
+     so a crew color is never mistaken for "current action" or "real error". */
+  --pc-crew-1: #8fbf8a;
+  --pc-crew-2: #6fa8dc;
+  --pc-crew-3: #e0b84b;
+  --pc-crew-4: #c9967b;
+  --pc-crew-5: #5fd3bc;
+  --pc-crew-6: #d98ba8;
+}
+
+:root[data-theme='day-field'] {
+  color-scheme: light;
+
+  /* Brand identity is unchanged in light mode. */
+  --pc-field: #17251f;
+  --pc-grove: #20342b;
+  --pc-harvest: #dff56c;
+  --pc-rice: #f2f5ef;
+  --pc-danger: #a8403c;
+
+  /* Day Field semantic pairs. */
+  --pc-canvas: #e9eee8;
+  --pc-workspace: #f7f9f5;
+  --pc-owned: var(--pc-rice);
+  --pc-ink: var(--pc-field);
+  --pc-muted: #536159;
+  --pc-faint: #5f6c65;
+  --pc-owned-ink: var(--pc-field);
+  --pc-owned-muted: #536159;
+  --pc-harvest-ink: var(--pc-field);
+  --pc-danger-ink: var(--pc-rice);
+  --pc-danger-on-light: #a8403c;
+  --pc-warning: #8a5a00;
+  --pc-focus: var(--pc-field);
+  --pc-focus-contrast: var(--pc-rice);
+  --pc-line: rgb(23 37 31 / 16%);
+  --pc-line-strong: #5f6c65;
+  --pc-overlay: rgb(23 37 31 / 48%);
+  --pc-shadow-color: rgb(23 37 31 / 16%);
+
+  /* Foundation-only compatibility tokens (not part of the visual contract). */
+  --pc-focus-on-dark: #dff56c;
+  --pc-focus-on-light: #17251f;
+  --pc-disabled-on-dark: #8c9b93;
+  --pc-disabled-on-light: #5f6c65;
+  --pc-disabled: #5f6c65;
+
+  /* Same surface-pair adoption as the Forest block. Day Field's supporting surface is #f7f9f5. */
+  --bg-base: #e9eee8;
+  --bg-canvas: #e9eee8;
+  --bg-card: #f7f9f5;
+  --bg-elev: #f7f9f5;
+  --bg-elev-2: #f7f9f5;
+  --bg-input: #e9eee8;
+  --text: #17251f;
+  --text-primary: #17251f;
+  --text-muted: #536159;
+  --text-faint: #536159;
+  --text-dim: #536159;
+  --accent: #dff56c;
+  --accent-fg: #17251f;
+  /* See the Forest block's note. Field ink, matching --border-accent/--focus-ring below. */
+  --accent-text: #17251f;
+  --accent-soft: #f7f9f5;
+  --border: #5f6c65;
+  --border-strong: #17251f;
+  --border-accent: #17251f;
+  --danger: #a8403c;
+  --info: #536159;
+  /* Dark amber, distinct from danger (red) — legacy consumers relied on warn != danger. */
+  --warn: #8a5a00;
+  --ok: #17251f;
+  --focus-ring: #17251f;
+  --focus-ring-contrast: #f2f5ef;
+  --shadow-sm: var(--pc-shadow-support);
+  --shadow-md: var(--pc-shadow-support);
+  --shadow-lg: var(--pc-shadow-dominant);
+  --line: #5f6c65;
+  --eco-accent: #dff56c;
+
+  /* Deeper variants of the same 6 hues, calibrated for the light canvas. crew-1/3/5 are nudged a
+     touch lighter than a plain "deepen the forest hue" pass would give: at #4f8f49/#a87c1e/#1f8f7a
+     neither #17251f (Field) nor #f2f5ef (Rice) ink cleared 4.5:1 against them (dark ink landed at
+     3.99-4.21 -- close, but under the AgentMark label-text floor). Re-verified against
+     src/design/contrast.js's contrastRatio() -- see day.crewInk/crew1,3,5 in CONTRAST_REQUIREMENTS
+     (4.61-4.80 with #17251f). Recompute + re-register there if these ever move again. */
+  --pc-crew-1: #569d50;
+  --pc-crew-2: #3e72a8;
+  --pc-crew-3: #b18220;
+  --pc-crew-4: #8c5a3e;
+  --pc-crew-5: #229c85;
+  --pc-crew-6: #a8446b;
+}
+
+:root {
+  /* Local Fontsource packages provide the first family in each stack. */
+  --pc-font-display: 'Geist Variable', 'Geist', system-ui, sans-serif;
+  --pc-font-body: 'Geist Variable', 'Geist', system-ui, sans-serif;
+  --pc-font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
+  --pc-font-wordmark: 'Newsreader Variable', 'Newsreader', Georgia, serif;
+
+  /* 4px spacing grid. Avoid one-off spacing values in route CSS. */
+  --pc-space-1: 4px;
+  --pc-space-2: 8px;
+  --pc-space-3: 12px;
+  --pc-space-4: 16px;
+  --pc-space-5: 20px;
+  --pc-space-6: 24px;
+  --pc-space-8: 32px;
+  --pc-space-10: 40px;
+  --pc-space-12: 48px;
+  --pc-space-16: 64px;
+  --pc-space-20: 80px;
+
+  /* Shape lock: controls 12px, supporting surfaces 16px, dominant surfaces 24px. */
+  --pc-radius-control: 12px;
+  --pc-radius-support: 16px;
+  --pc-radius-dominant: 24px;
+  --pc-radius-round: 999px;
+
+  /* Shell and route geometry. */
+  --pc-sidebar-width: 248px;
+  --pc-sidebar-compact-width: 80px;
+  --pc-topbar-height: 64px;
+  --pc-shell-max: 1240px;
+  --pc-route-gutter: clamp(20px, 4vw, 48px);
+  --pc-route-gap: clamp(32px, 5vw, 64px);
+  --pc-dominant-padding: clamp(24px, 4vw, 48px);
+  --pc-control-height: 48px;
+  --pc-touch-target: 44px;
+
+  /* Type scale. Money and page headings stay large without becoming marketing-hero type. */
+  --pc-type-money: clamp(48px, 7vw, 76px);
+  --pc-type-page: clamp(34px, 4.4vw, 52px);
+  --pc-type-stage: clamp(28px, 3.2vw, 40px);
+  --pc-type-section: clamp(21px, 2vw, 28px);
+  --pc-type-body: 16px;
+  --pc-type-body-small: 14px;
+  --pc-type-label: 13px;
+  --pc-type-technical: 12px;
+  --pc-leading-tight: 1.05;
+  --pc-leading-title: 1.12;
+  --pc-leading-body: 1.55;
+
+  /* Tinted, restrained elevation. No outer glow. */
+  --pc-shadow-support: 0 8px 24px var(--pc-shadow-color);
+  --pc-shadow-dominant: 0 24px 60px var(--pc-shadow-color);
+
+  /* Motion contract shared by CSS and GSAP adapters. */
+  --pc-duration-fast: 120ms;
+  --pc-duration-base: 220ms;
+  --pc-duration-enter: 320ms;
+  --pc-stagger: 40ms;
+  --pc-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --pc-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Documented layer scale. Do not invent arbitrary z-index values. */
+  --pc-z-base: 0;
+  --pc-z-sticky: 20;
+  --pc-z-popover: 40;
+  --pc-z-overlay: 80;
+  --pc-z-dialog: 90;
+  --pc-z-skip-link: 100;
+}
+
+/* Mobile. Asymmetry collapses to one column and all actions remain reachable (contract
+   :834-841). Kept alongside the other ported token blocks above rather than next to the
+   unrelated `.pc-dialog--auto` `@media (max-width: 767px)` block further down this file --
+   the two never share a selector, so this placement changes nothing about how either resolves. */
+@media (max-width: 767px) {
+  :root {
+    --pc-route-gutter: 16px;
+    --pc-route-gap: 36px;
+    --pc-dominant-padding: 24px;
+    --pc-type-money: clamp(44px, 15vw, 60px);
+    --pc-type-page: clamp(32px, 10vw, 42px);
+  }
+}
+
+:root {
+  --pc-radius-sm: var(--pc-radius-control);
+  --pc-radius-md: var(--pc-radius-support);
+  --pc-radius-lg: var(--pc-radius-dominant);
+  --radius-sm: var(--pc-radius-control);
+  --radius-md: var(--pc-radius-support);
+  --radius-lg: var(--pc-radius-support);
+  --radius-xl: var(--pc-radius-dominant);
+  --font-display: var(--pc-font-display);
+  --font-body: var(--pc-font-body);
+  --font-sans: var(--pc-font-body);
+  --font-mono: var(--pc-font-mono);
+  --mono: var(--pc-font-mono);
+  /* Legacy script consumers become Geist. Newsreader is scoped to .pc-wordmark. */
+  --font-script: var(--pc-font-body);
+  --ease-out: var(--pc-ease-out);
+}
+
+[data-density='compact'] {
+  --radius-sm: var(--pc-radius-control);
+  --radius-md: var(--pc-radius-control);
+  --radius-lg: var(--pc-radius-support);
+  --radius-xl: var(--pc-radius-support);
+}
+
+html,
+body {
+  background: var(--pc-canvas);
+}
+
+body {
+  color: var(--pc-ink);
+  font-family: var(--font-body);
+}
+
+.pc-wordmark {
+  font-family: 'Newsreader Variable', 'Newsreader', Georgia, serif;
+}
+
+.pc-workspace {
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+}
+
+.pc-owned,
+[data-pc-surface='owned'] {
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+}
+
+.pc-owned :where(.pc-muted),
+[data-pc-surface='owned'] :where(.pc-muted) {
+  color: var(--pc-owned-muted);
+}
+
+.pc-harvest,
+[data-pc-surface='harvest'] {
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-danger,
+[data-pc-surface='danger'] {
+  background: var(--pc-danger);
+  color: var(--pc-danger-ink);
+}
+
+.pc-danger-text-on-light {
+  color: var(--pc-danger-on-light);
+}
+
+/* Geometry (3px outline/offset, 5px box-shadow ring) is duplicated as a static demo-only copy in
+   frontend/visual/main.jsx's `[data-demo-focus-ring]` fixture rule (Foundation Task 7, since real
+   DOM focus is singular and that fixture needs two surfaces ring-visible in one static frame) --
+   update both if this geometry ever changes. */
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--focus-ring-contrast);
+}
+
+:where(
+  .pc-owned,
+  [data-pc-surface='owned'],
+  .pc-harvest,
+  [data-pc-surface='harvest'],
+  .btn-primary,
+  .btn-gradient
+):focus-visible,
+:where(.pc-owned, [data-pc-surface='owned'], .pc-harvest, [data-pc-surface='harvest'])
+  :focus-visible {
+  outline-color: var(--pc-focus-on-light);
+  box-shadow: 0 0 0 5px var(--pc-owned);
+}
+
+/* !important: a legacy `.btn-primary:disabled`/`.btn-gradient:disabled`/`.btn-ghost:disabled`
+   opacity rule in style.css shares this rule's specificity (or beats it, for opacity) and
+   would otherwise wash out the disabled ink color below the 4.5:1 floor. */
+:where(button, input, select, textarea):disabled,
+[aria-disabled='true'] {
+  color: var(--pc-disabled) !important;
+  cursor: not-allowed;
+  opacity: 1 !important;
+}
+
+:where(.pc-owned, [data-pc-surface='owned']) :where(button, input, select, textarea):disabled,
+:where(.pc-owned, [data-pc-surface='owned']) [aria-disabled='true'],
+/* Harvest/primary/gradient also sit on a light fill regardless of theme, so a disabled
+   `.btn-primary`/`.btn-gradient` must not fall through to the dark-calibrated --pc-disabled. */
+:where(
+    .pc-owned,
+    [data-pc-surface='owned'],
+    .pc-harvest,
+    [data-pc-surface='harvest'],
+    .btn-primary,
+    .btn-gradient
+  ):disabled,
+:where(
+    .pc-owned,
+    [data-pc-surface='owned'],
+    .pc-harvest,
+    [data-pc-surface='harvest'],
+    .btn-primary,
+    .btn-gradient
+  )[aria-disabled='true'] {
+  color: var(--pc-disabled-on-light) !important;
+}
+
+.btn-primary,
+.btn-gradient {
+  background-color: var(--pc-harvest);
+  background-image: none;
+  color: var(--pc-harvest-ink);
+  animation: none;
+}
+
+:where(
+    .btn-primary,
+    .btn-gradient,
+    .btn-ghost,
+    .icon-btn,
+    .wallet-action,
+    .btn-chip,
+    .risk-opt,
+    .codeblock-copy,
+    .perm-revoke,
+    .pill-btn
+  ):where(:hover, :focus-visible):not(:disabled) {
+  background-image: none !important;
+  animation: none !important;
+}
+
+/* The `.wd-loading-fill.is-active::after { display: none }` override that lived here is gone: it
+   only existed to hide style.css's shimmer sweep, and that pseudo-element no longer exists there. */
+
+@media (hover: none), (pointer: coarse), (max-width: 767px) {
+  :where(
+    button,
+    [role='button'],
+    a[href],
+    summary,
+    input:not([type='checkbox']):not([type='radio']),
+    select,
+    textarea
+  ) {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Foundation Task 5 -- Pocket Crew interface primitives (BrandLockup, AgentMark, MoneyFigure,
+   StatusNotice, TechnicalDetails, VenueTruth, StageShell, Dialog). One dominant surface per
+   primitive; no equal-weight card grids, no glow/lava treatments.
+   ------------------------------------------------------------------------------------------- */
+
+.pc-brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pc-brand-mark {
+  display: block;
+  flex: none;
+}
+
+.pc-brand-wordmark {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.pc-agent-mark {
+  flex: none;
+  overflow: visible;
+}
+
+.pc-agent-mark-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  /* No `fill` here on purpose: AgentMark.jsx sets it inline, per-crew-fill, so the label always
+     clears 4.5:1 against whichever identity color it landed on (a stylesheet fill would win the
+     SVG cascade over that presentation attribute and silently undo the calibration). */
+}
+
+.pc-agent-mark-state {
+  font-family: var(--font-sans);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.pc-money {
+  font-family: var(--pc-font-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-money--loading,
+.pc-money--empty,
+.pc-money--error,
+.pc-money--unknown,
+.pc-money--unavailable {
+  font-family: var(--font-body);
+  color: var(--pc-muted);
+  font-variant-numeric: normal;
+}
+
+.pc-money--error {
+  color: var(--pc-danger);
+}
+
+.pc-money-stale-flag,
+.pc-money-freshness {
+  color: var(--pc-muted);
+  font-family: var(--font-body);
+  font-size: 0.85em;
+}
+
+.pc-money-freshness {
+  margin-left: 0.35em;
+}
+
+.pc-status-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pc-space-3);
+  border-radius: var(--pc-radius-support);
+  border: 1px solid var(--border);
+  padding: var(--pc-space-3) var(--pc-space-4);
+}
+
+.pc-status-notice--danger {
+  border-color: var(--pc-danger);
+}
+
+.pc-status-notice--warning {
+  border-color: var(--warn);
+}
+
+.pc-status-notice-icon {
+  flex: none;
+  font-weight: 700;
+}
+
+.pc-status-notice-title {
+  font-weight: 600;
+  margin: 0 0 0.15rem;
+}
+
+.pc-status-notice-label,
+.pc-status-notice-consequence,
+.pc-status-notice-next-action,
+.pc-status-notice-source,
+.pc-status-notice-freshness {
+  margin: var(--pc-space-1) 0 0;
+}
+
+.pc-status-notice-label {
+  font-weight: 600;
+}
+
+/* Task 10 (IA remap): the "session resumed" banner app.jsx renders directly (not owned by any
+ * route component) ahead of MyMoneyRoute on /home. Lives in Foundation, not my-money.css --
+ * main.jsx imports this file eagerly on every route, so a banner app.jsx itself renders can
+ * never end up depending on a route stylesheet that hasn't loaded yet (the hazard my-money.css's
+ * own `.pc-route`/`.pc-route-stack` port-forward comment documents).
+ *
+ * Fix round 1, F2: this banner is a SIBLING before MyMoneyRoute's own `<div class="pc-route">`
+ * (my-money.css:61-65: `width: min(100%, shell-max + 2*gutter)`, `margin-inline: auto`,
+ * `padding: var(--pc-route-gutter)`), not a child of it -- so without matching width/centering it
+ * spanned the full <main>, uncentered, above a gutter-inset centered column. `width`/
+ * `margin-inline` below are the identical expression, so the banner lines up with the route
+ * content column beneath it; `padding-inline` mirrors `.pc-route`'s own horizontal gutter while
+ * `padding-block` stays the banner's own (smaller, single-line) vertical padding.
+ *
+ * Fix round 1, M8: `var(--pc-route-gutter, 1rem)` was a dead inline fallback (the token always
+ * exists, see :196) -- exactly the `var(--token, ...)` shape legacyPocketStyle.test.js:48-52
+ * treats as a violation on audited route files. Also a semantic fix, not just cosmetic:
+ * `--pc-route-gutter` is `.pc-route`'s own EDGE padding (horizontal AND vertical, since its
+ * `padding` shorthand applies it on all four sides); the space between this banner and the
+ * sibling route column below it is a between-elements gap, the same role `.pc-route-stack`'s
+ * `gap: var(--pc-route-gap)` already fills for every other adjacent pair on this route --
+ * `--pc-route-gap` is the correct token for that role, `--pc-route-gutter` was the wrong axis. */
+.pc-resumed-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  margin-inline: auto;
+  margin-bottom: var(--pc-route-gap);
+  padding-block: 0.625rem;
+  padding-inline: var(--pc-route-gutter);
+  border-radius: var(--pc-radius-control);
+  border: 1px solid var(--pc-line);
+  background: var(--pc-workspace);
+}
+
+.pc-resumed-banner span {
+  flex: 1;
+  font-family: var(--font-body);
+}
+
+.pc-technical-details {
+  border-radius: var(--pc-radius-control);
+  border: 1px solid var(--border);
+  padding: var(--pc-space-2) var(--pc-space-3);
+}
+
+/* Owner decision #19: a disclosure's own caption ("Technical details", "Agent 1 instructions") is
+ * always UI chrome, never a raw value -- so it must never default to mono. The body is the same
+ * story: it just as often holds friendly prose (PlanStage's editable per-agent instructions
+ * textarea) as it holds real identifiers (ProtectStage's fingerprint/contract, StartStage's tx
+ * hash, StrategyReceipt's addresses). Mono belongs to the VALUE, not the container -- see the
+ * code/pre/.pc-technical rule below, the same convention frontend/src/wallet/ui/WalletShell.jsx's
+ * own stylesheet already uses. A caller whose disclosure body holds a genuine
+ * identifier/address/hash/fingerprint must mark THAT text `.pc-technical` (or wrap it in
+ * <code>/<pre>) rather than lean on the container default -- ProtectStage.jsx/StartStage.jsx/
+ * StrategyReceipt.jsx do this at their own call sites. PlanStage.jsx's scoped strategy.css override
+ * predates this fix and is now redundant with it (verified by measurement, not left as a guess).
+ */
+.pc-technical-details-summary {
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
+
+.pc-technical-details-body {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.pc-technical-details-fact,
+.pc-venue-truth-freshness {
+  display: grid;
+  gap: var(--pc-space-2);
+  margin: 0 0 0.75rem;
+}
+
+.pc-technical-details-fact > div,
+.pc-venue-truth-freshness > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--pc-space-3);
+}
+
+.pc-technical-details-fact dt,
+.pc-venue-truth-freshness dt {
+  color: var(--pc-muted);
+}
+
+.pc-technical-details-fact dd,
+.pc-venue-truth-freshness dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Network identity is a shared primitive. The 7px network gap is the documented NetworkBadge
+ * optical exception; route fact rows remain on the 4px spacing grid. */
+.network-badge {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.network-badge-label,
+.network-route > p,
+.network-route-facts > span,
+.network-route-status > span,
+.network-route-host-note {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.network-route {
+  display: grid;
+  min-width: 0;
+  gap: var(--pc-space-2);
+}
+
+.network-route-path {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.network-route-arrow {
+  display: inline-flex;
+  flex: none;
+}
+
+.network-route-facts {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--pc-space-1) var(--pc-space-2);
+  margin: 0;
+}
+
+.network-route-status {
+  display: grid;
+  min-width: 0;
+  gap: var(--pc-space-1);
+  margin: 0;
+}
+
+.network-route-host-note {
+  margin: 0;
+}
+
+/* Foundation-wide technical/raw-value face (owner decision #19). Previously only declared inside
+ * the VF Wallet extension's own component-scoped stylesheet (WalletShell.jsx) -- this is the same
+ * rule at the shared layer, so any `.pc-technical`-marked span/code/pre in the main app (Strategy,
+ * My Money, settings) gets the same guarantee without each route re-declaring it. */
+code,
+pre,
+.pc-technical {
+  font-family: var(--font-mono);
+}
+
+.pc-venue-truth {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pc-venue-truth-apy {
+  color: var(--pc-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-venue-truth-apy-source,
+.pc-venue-truth-apy-freshness {
+  font-family: var(--font-body);
+  font-size: 0.85em;
+}
+
+/* One dominant surface per stage: a single workspace-tinted panel, never a repeated card grid. */
+.pc-stage-shell-surface {
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+  border-radius: var(--pc-radius-lg);
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.pc-stage-eyebrow {
+  color: var(--pc-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.pc-stage-title {
+  margin: 0;
+}
+
+.pc-stage-description {
+  color: var(--pc-muted);
+  margin: 0;
+}
+
+.pc-stage-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* Mixed migration layer bridge. The live legacy modal and skill-drawer selectors still ship from
+   style.css at 99/100, above Foundation's documented Overlay (80). Keep those surfaces above
+   ordinary content but below a Foundation Dialog without inventing a second z-index scale. */
+.modal-backdrop,
+.skill-drawer-overlay,
+.skill-drawer {
+  z-index: var(--pc-z-popover);
+}
+
+/* Dialog: a full-viewport overlay (position: fixed + inset: 0) sits above everything else and is
+   the only thing that can receive pointer events while open -- that alone is what stops
+   background interaction; mode only swaps the panel's own layout below. */
+.pc-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: var(--pc-z-overlay);
+  display: grid;
+  place-items: center;
+  padding: var(--pc-space-6);
+  background: var(--pc-overlay);
+  border: none;
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+.pc-dialog-panel {
+  position: relative;
+  z-index: var(--pc-z-dialog);
+  width: min(100%, 480px);
+  max-height: min(760px, calc(100dvh - 32px));
+  overflow: auto;
+  border-radius: var(--pc-radius-dominant);
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+  padding: var(--pc-space-6);
+}
+
+/* Document zoom keeps `dvh` in the layout viewport while scaling the painted panel. Bound the
+   default and explicitly centered modes to the fixed overlay's percentage box as a second
+   expression of the same contract. At normal zoom the percentage is identical to the locked
+   viewport cap; under 200% zoom it keeps the panel's actual scrollport inside the visual viewport.
+   The extra class specificity also wins over the legacy `.pc-money-dialog` compatibility sheet
+   rules, which are loaded after this foundation stylesheet. */
+.pc-dialog.pc-dialog--auto .pc-dialog-panel,
+.pc-dialog.pc-dialog--dialog .pc-dialog-panel {
+  max-height: min(760px, calc(100dvh - var(--pc-space-8)), calc(100% - var(--pc-space-8)));
+}
+
+.pc-dialog.pc-dialog--sheet .pc-dialog-panel {
+  max-height: min(88dvh, 88%);
+}
+
+.pc-dialog-title {
+  margin: 0 0 0.5rem;
+}
+
+.pc-dialog-description {
+  color: var(--pc-muted);
+  margin: 0 0 1rem;
+}
+
+.pc-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+/* mode='sheet' forces the bottom-sheet presentation at any viewport width; mode='dialog' forces
+   the centered presentation at any width. mode='auto' (default) only changes at the mobile
+   breakpoint below -- in every mode, the semantics (role, aria-modal, focus trap) are identical. */
+.pc-dialog--sheet {
+  align-items: flex-end;
+  padding: 0;
+}
+
+.pc-dialog--sheet .pc-dialog-panel {
+  width: 100%;
+  max-height: 88dvh;
+  border-radius: var(--pc-radius-dominant) var(--pc-radius-dominant) 0 0;
+  margin-bottom: 0;
+  padding-bottom: calc(var(--pc-space-6) + env(safe-area-inset-bottom));
+}
+
+@media (max-width: 767px) {
+  .pc-dialog--auto {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .pc-dialog--auto .pc-dialog-panel {
+    width: 100%;
+    max-height: 88dvh;
+    border-radius: var(--pc-radius-dominant) var(--pc-radius-dominant) 0 0;
+    margin-bottom: 0;
+    padding-bottom: calc(var(--pc-space-6) + env(safe-area-inset-bottom));
+  }
+
+  .pc-dialog.pc-dialog--auto .pc-dialog-panel {
+    max-height: min(88dvh, 88%);
+  }
+
+  /* Every Foundation dialog shares one narrow-screen action contract. The mode-qualified
+     selector keeps this override ahead of route compatibility sheets (for example the legacy
+     `.pc-money-dialog .pc-dialog-actions` rule) while leaving the desktop flex row untouched. A
+     zero intrinsic minimum is required because `.pc-button` deliberately uses `max-content` on
+     wide surfaces; without it, a long action label can widen the grid track and paint left of the
+     visible panel at document zoom. */
+  .pc-dialog .pc-dialog-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--pc-space-3);
+  }
+
+  .pc-dialog .pc-dialog-actions .pc-button {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   CAP-01 Foundation atlas. This is fixture-only composition CSS; it uses the same shell, type,
+   spacing, shape, control, layer, motion, and safe-area tokens as Pocket Crew surfaces.
+   ------------------------------------------------------------------------------------------- */
+
+.pc-foundation-atlas {
+  display: grid;
+  grid-template-columns: var(--pc-sidebar-width) minmax(0, 1fr);
+  min-height: 100dvh;
+  overflow-x: clip;
+  background: var(--pc-canvas);
+  color: var(--pc-ink);
+}
+
+.pc-foundation-atlas-sidebar {
+  display: flex;
+  grid-column: 1;
+  grid-row: 1 / -1;
+  width: var(--pc-sidebar-width);
+  min-width: var(--pc-sidebar-width);
+  flex-direction: column;
+  gap: var(--pc-space-8);
+  padding: var(--pc-space-6) var(--pc-space-4);
+  background: var(--pc-field);
+  color: var(--pc-rice);
+}
+
+.pc-foundation-atlas-sidebar nav {
+  display: grid;
+  gap: var(--pc-space-2);
+}
+
+.pc-foundation-atlas-sidebar a {
+  display: flex;
+  min-height: var(--pc-touch-target);
+  align-items: center;
+  color: inherit;
+  padding-inline: var(--pc-space-3);
+  border-radius: var(--pc-radius-control);
+  text-decoration: none;
+}
+
+.pc-foundation-atlas-sidebar a:hover,
+.pc-foundation-atlas-sidebar a:focus-visible {
+  background: var(--pc-grove);
+}
+
+.pc-foundation-atlas-shell {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1 / -1;
+  grid-template-rows: var(--pc-topbar-height) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.pc-foundation-atlas-topbar {
+  display: flex;
+  min-height: var(--pc-topbar-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-4);
+  padding: 0 var(--pc-space-6);
+  border-bottom: 1px solid var(--pc-line);
+  background: var(--pc-workspace);
+}
+
+.pc-foundation-atlas-topbar-status {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-foundation-atlas-content {
+  display: grid;
+  gap: var(--pc-route-gap);
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  min-width: 0;
+  margin-inline: auto;
+  padding: var(--pc-route-gutter);
+  padding-bottom: calc(var(--pc-space-20) + env(safe-area-inset-bottom));
+}
+
+.pc-foundation-atlas-section {
+  display: grid;
+  gap: var(--pc-space-4);
+  min-width: 0;
+  padding: var(--pc-dominant-padding);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background: var(--pc-workspace);
+}
+
+.pc-foundation-atlas-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pc-space-4);
+}
+
+.pc-foundation-atlas-section-header h2 {
+  margin: 0;
+  font-size: var(--pc-type-section);
+  line-height: var(--pc-leading-title);
+}
+
+.pc-foundation-atlas-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--pc-space-4);
+  min-width: 0;
+}
+
+.pc-foundation-atlas-stack,
+.pc-foundation-atlas-network-states,
+.pc-foundation-atlas-money-list,
+.pc-foundation-atlas-display-list {
+  display: grid;
+  gap: var(--pc-space-4);
+  min-width: 0;
+}
+
+.pc-foundation-atlas-network-badges {
+  align-items: center;
+}
+
+.pc-foundation-atlas-network-state {
+  min-width: 0;
+  padding: var(--pc-space-4);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+}
+
+.pc-foundation-atlas-network-state h3 {
+  margin: 0 0 var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 600;
+}
+
+.pc-foundation-atlas-agent-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--pc-space-3);
+  min-height: var(--pc-touch-target);
+}
+
+.pc-foundation-atlas-agent-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pc-foundation-atlas-money-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+}
+
+.pc-foundation-atlas-long-value {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pc-foundation-atlas-clock {
+  margin: var(--pc-space-4) 0 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-foundation-atlas-control {
+  min-width: var(--pc-touch-target);
+  min-height: var(--pc-touch-target);
+  padding: var(--pc-space-2) var(--pc-space-4);
+  border: 1px solid var(--pc-ink);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.pc-foundation-atlas-control:hover {
+  background: var(--pc-owned);
+}
+
+.pc-foundation-atlas-skip-link {
+  position: fixed;
+  z-index: var(--pc-z-skip-link);
+  top: var(--pc-space-2);
+  left: var(--pc-space-2);
+  transform: translateY(-200%);
+  padding: var(--pc-space-2) var(--pc-space-3);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-foundation-atlas-skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .pc-foundation-atlas {
+    grid-template-columns: var(--pc-sidebar-compact-width) minmax(0, 1fr);
+  }
+
+  .pc-foundation-atlas-sidebar {
+    width: var(--pc-sidebar-compact-width);
+    min-width: var(--pc-sidebar-compact-width);
+    align-items: center;
+    padding-inline: var(--pc-space-2);
+  }
+
+  .pc-foundation-atlas-sidebar nav a {
+    justify-content: center;
+    padding-inline: var(--pc-space-2);
+  }
+}
+
+@media (max-width: 767px) {
+  .pc-foundation-atlas {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .pc-foundation-atlas-sidebar {
+    grid-column: 1;
+    grid-row: 1;
+    width: auto;
+    min-width: 0;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pc-space-3);
+    padding: var(--pc-space-3) var(--pc-space-4);
+  }
+
+  .pc-foundation-atlas-sidebar nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--pc-space-1);
+  }
+
+  .pc-foundation-atlas-sidebar a {
+    min-height: var(--pc-touch-target);
+    padding-inline: var(--pc-space-2);
+  }
+
+  .pc-foundation-atlas-shell {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .pc-foundation-atlas-topbar {
+    min-height: var(--pc-topbar-height);
+    padding-inline: var(--pc-space-4);
+  }
+
+  .pc-foundation-atlas-topbar .pc-brand-lockup--full {
+    min-width: 0;
+  }
+
+  .pc-foundation-atlas-topbar-status {
+    max-width: 40%;
+    text-align: right;
+  }
+
+  .pc-foundation-atlas-content {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--pc-route-gap);
+    padding-inline: var(--pc-route-gutter);
+  }
+
+  .pc-foundation-atlas-section {
+    padding: var(--pc-dominant-padding);
+  }
+
+  .pc-foundation-atlas-grid,
+  .pc-foundation-atlas-money-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Route geometry, promoted from route CSS to Foundation. It was declared three times over
+   (my-money.css, crew.css, strategy.css -- the latter two byte-identical), which meant a route could
+   only line up with its siblings if it happened to load one of those three stylesheets. The legacy
+   routes load none of them, so /history, /settings, /vault, /tx and /developers each rendered at a
+   different width in a differently-inset column. Declaring it here, in the file both entry points
+   import eagerly, is what lets any route opt in with a single class.
+
+   The three route stylesheets still carry their own copies with identical values (crew/strategy also
+   fold in `display: grid` + the stack gap). Same declarations, so nothing changes visually and no
+   cascade fight is possible -- deduping them is a follow-up, not a prerequisite. */
+.pc-route {
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  margin-inline: auto;
+  padding: var(--pc-route-gutter);
+}
+
+.pc-route-stack {
+  display: grid;
+  gap: var(--pc-route-gap);
+}
+
+/* Same content column, for a route that already owns its own scrolling and padding -- /settings is
+   the one such route: SettingsPage.jsx:490 is a `flex: 1; min-height: 0; overflow-y: auto` pane with
+   its own 28px inset. Giving it `.pc-route` would double the gutter, put a second scrollbar inside
+   the first, and break its `flex: 1` by inserting a plain block between it and `.main`. So this
+   variant carries ONLY the width and centring, stays a flex item that fills `.main`, and passes the
+   flex context through. Deliberately NOT named `.pc-route`, because `.main:has(.pc-route)` must keep
+   matching only routes that actually want `.main` itself to scroll. */
+.pc-route-flush {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  margin-inline: auto;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Foundation Task 6 -- shared application shell: sidebar/topbar brand identity, the skip link,
+   and the route-change live region (RouteFocus.jsx).
+   ------------------------------------------------------------------------------------------- */
+
+/* The sidebar row keeps its original footprint (38px, icon-first, label reveals on expand) --
+   only the mark image swaps for a themed BrandLockup, sized to match the retired inline <img>. */
+.sb-logo .pc-brand-mark {
+  width: 18px;
+  height: 18px;
+}
+
+.pc-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* First focusable element on every route. Hidden the same way as .pc-visually-hidden until it
+   receives keyboard focus, then it needs to be genuinely visible above everything else. */
+.pc-skip-link {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pc-skip-link:focus {
+  position: fixed;
+  top: var(--pc-space-3);
+  left: var(--pc-space-3);
+  z-index: var(--pc-z-skip-link);
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: var(--pc-space-2) var(--pc-space-4);
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+  border-radius: var(--pc-radius-control);
+  transition: opacity var(--pc-duration-fast) var(--pc-ease-standard);
+  font-weight: 600;
+}
+
+.pc-credits-about {
+  margin-top: 12px;
+}
+
+.pc-credits-about-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.pc-credits-independence {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+
+.pc-credits-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pc-credits-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pc-credits-trademark {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Real-app fixes found by driving /strategy and /agent in Chromium, 2026-07-28. None of these was
+ * reachable from the visual harness: it mounts `.pc-route` standalone, outside the legacy shell,
+ * so every one of the 12 Strategy and 4 My Money baselines is blind to the two defects below.
+ * ------------------------------------------------------------------------------------------- */
+
+/* SCROLL. style.css:350-356 sets `.main { overflow: hidden }` -- correct for the legacy routes it
+ * was written for (/home, /history both measure exactly the viewport height, and /settings scrolls
+ * inside a child of its own). A Pocket Crew route is taller than the shell ever assumed: measured
+ * 723.7px on /strategy and 1734.4px on /agent inside a 629px `.main`, with NO scrollable container
+ * anywhere in the ancestor chain, so 162px and 1105px of real content were simply unreachable.
+ * Scoped with :has() so the legacy routes keep the clip they were built for. Specificity (0,2,0)
+ * beats the bare `.main` (0,1,0) regardless of stylesheet order, so this does not depend on
+ * style.css and pocket-crew.css keeping their current import order in main.jsx. */
+.main:has(.pc-route) {
+  overflow-y: auto;
+}
+
+/* HOVER. `.pc-button` already declares a transition for background-color and border-color
+ * (strategy.css:291-293 and its verbatim twin in my-money.css), but NOTHING in the design system
+ * ever changed either property -- there was not one `:hover` rule for a control anywhere, so every
+ * button animated `transform` alone and read as framed text rather than something pressable.
+ * currentcolor keeps this correct on every surface the buttons sit on, including the lime decision
+ * card, without introducing a new token. Declared here in Foundation rather than in the two route
+ * stylesheets, so the byte-identical `.pc-button` blocks they both carry stay byte-identical. */
+.pc-button:where(:hover, :focus-visible):not(:disabled):not([aria-disabled='true']) {
+  border-color: currentcolor;
+  background-color: color-mix(in srgb, currentcolor 12%, transparent);
+}
+
+/* Primary already has a filled background, so the tint above would wash it out; darken instead.
+ * Same specificity as the rule above, ordered after it so it wins on source order. */
+.pc-button--primary:where(:hover, :focus-visible):not(:disabled):not([aria-disabled='true']) {
+  background-color: color-mix(in srgb, var(--pc-harvest) 86%, var(--pc-ink));
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Foundation Task 8 -- final compatibility override: retired lava-gradient buttons never animate
+   or replay their gradient sweep on shared/disconnected routes, in either theme. `.mandate-revoke`
+   was missing from every earlier hover/focus reset, so its console.css `.pos-cta` hover rule still
+   played the sweep; `!important` here guarantees this wins regardless of load order or the other
+   rule's higher selector specificity. Only `animation`/`background-image` are touched -- focus-ring
+   (outline/box-shadow) and danger colors (color/border-color) are declared elsewhere and stay more
+   specific, so disabling the sweep never erases that state feedback.
+   ------------------------------------------------------------------------------------------- */
+[data-theme] .btn-primary,
+[data-theme] .btn-ghost,
+[data-theme] .btn-chip,
+[data-theme] .mandate-revoke {
+  animation: none !important;
+  background-image: none !important;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Foundation Task 7 -- shared shell geometry. This is the late-loaded owner for the app shell;
+   style.css keeps only legacy component structure and no longer sets shell widths or breakpoints.
+   --------------------------------------------------------------------------------------------- */
+[data-pocket-shell] {
+  display: grid;
+  grid-template-columns: var(--pc-sidebar-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  gap: 0;
+  overflow: hidden;
+  background: var(--pc-canvas);
+}
+
+[data-pocket-shell].sb-minimized {
+  grid-template-columns: var(--pc-sidebar-compact-width) minmax(0, 1fr);
+}
+
+[data-pocket-sidebar] {
+  grid-column: 1;
+  grid-row: 1;
+  width: var(--pc-sidebar-width);
+  min-width: var(--pc-sidebar-width);
+  min-height: 100dvh;
+  box-sizing: border-box;
+  padding: var(--pc-space-6) var(--pc-space-4);
+  gap: var(--pc-space-2);
+  transition: width var(--pc-duration-base) var(--pc-ease-standard);
+}
+
+[data-pocket-shell].sb-minimized [data-pocket-sidebar] {
+  width: var(--pc-sidebar-compact-width);
+  min-width: var(--pc-sidebar-compact-width);
+}
+
+[data-pocket-sidebar] .sb-item {
+  min-width: var(--pc-touch-target);
+  min-height: var(--pc-touch-target);
+  height: var(--pc-touch-target);
+  border-radius: var(--pc-radius-control);
+}
+
+[data-pocket-main] {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+[data-pocket-topbar] {
+  min-height: var(--pc-topbar-height);
+  height: var(--pc-topbar-height);
+  box-sizing: border-box;
+  padding: 0 var(--pc-route-gutter);
+  transition: background-color var(--pc-duration-base) var(--pc-ease-standard);
+}
+
+[data-pocket-topbar] .icon-btn,
+[data-pocket-topbar] .header-wallet-trigger {
+  min-width: var(--pc-touch-target);
+  min-height: var(--pc-touch-target);
+}
+
+[data-pocket-topbar] .icon-btn {
+  width: var(--pc-touch-target);
+  height: var(--pc-touch-target);
+}
+
+@media (min-width: 1024px) {
+  [data-pocket-shell] {
+    grid-template-columns: var(--pc-sidebar-width) minmax(0, 1fr);
+  }
+
+  [data-pocket-shell].sb-minimized {
+    grid-template-columns: var(--pc-sidebar-compact-width) minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  [data-pocket-shell] {
+    grid-template-columns: var(--pc-sidebar-compact-width) minmax(0, 1fr);
+  }
+
+  [data-pocket-sidebar],
+  [data-pocket-shell].sb-minimized [data-pocket-sidebar] {
+    width: var(--pc-sidebar-compact-width);
+    min-width: var(--pc-sidebar-compact-width);
+  }
+
+  [data-pocket-sidebar] .sb-label,
+  [data-pocket-sidebar] .sb-badge,
+  [data-pocket-sidebar] .sb-logo-text {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+
+  [data-pocket-shell] .pc-route-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  [data-pocket-shell] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+
+  [data-pocket-shell].sb-minimized {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  [data-pocket-main] {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  [data-pocket-sidebar],
+  [data-pocket-shell].sb-minimized [data-pocket-sidebar] {
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
+    min-width: 0;
+    min-height: var(--pc-touch-target);
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-around;
+    padding: var(--pc-space-2) var(--pc-space-2);
+    gap: var(--pc-space-1);
+    border-top: 1px solid var(--pc-line);
+    border-right: 0;
+    overflow: visible;
+    transition: none;
+  }
+
+  [data-pocket-sidebar] .sb-logo,
+  [data-pocket-sidebar] .sb-spacer,
+  [data-pocket-sidebar] .sb-toggle {
+    display: none;
+  }
+
+  [data-pocket-sidebar] .sb-item,
+  [data-pocket-shell].sb-extended [data-pocket-sidebar] .sb-item {
+    flex: 1 1 0;
+    max-width: 64px;
+    min-width: 0;
+    min-height: var(--pc-touch-target);
+    height: var(--pc-touch-target);
+    padding: var(--pc-space-1) var(--pc-space-1);
+    flex-direction: column;
+    justify-content: center;
+    border-radius: var(--pc-radius-control);
+  }
+
+  [data-pocket-sidebar] .sb-label {
+    display: block;
+    max-width: 100%;
+    margin-left: 0;
+    margin-top: var(--pc-space-1);
+    opacity: 1;
+    transform: none;
+    font-size: 8.5px;
+    line-height: 1.15;
+    letter-spacing: 0;
+    white-space: normal;
+    text-align: center;
+  }
+
+  [data-pocket-sidebar] .sb-badge {
+    display: none;
+  }
+
+  [data-pocket-topbar] {
+    padding-inline: var(--pc-space-4);
+    gap: var(--pc-space-2);
+  }
+
+  [data-pocket-topbar] .topbar-meta,
+  [data-pocket-topbar] .pc-brand-wordmark,
+  [data-pocket-topbar] .header-wallet-address,
+  [data-pocket-topbar] .header-wallet-dot {
+    display: none;
+  }
+
+  [data-pocket-topbar] .topbar-left,
+  [data-pocket-topbar] .topbar-right {
+    gap: var(--pc-space-2);
+  }
+
+  [data-pocket-topbar] .topbar-left {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  [data-pocket-topbar] .network-badge {
+    white-space: nowrap;
+  }
+
+  [data-pocket-topbar] .header-wallet-trigger {
+    width: var(--pc-touch-target);
+    justify-content: center;
+    padding: 0;
+  }
+
+  [data-pocket-main] .pc-route {
+    padding-bottom: calc(var(--pc-space-20) + env(safe-area-inset-bottom));
+  }
+}
+
+/* Keep the shared no-gradient compatibility reset last in the cascade, after shell media rules. */
+[data-theme] .btn-primary,
+[data-theme] .btn-ghost,
+[data-theme] .btn-chip,
+[data-theme] .mandate-revoke {
+  animation: none !important;
+  background-image: none !important;
+}

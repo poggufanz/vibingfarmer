@@ -1,7 +1,7 @@
 // SettingsPage.jsx
 // Full settings panel. Agent config lives in app state (yv_agent_settings); the rest
 // persists via settingsStore (individual yv_* keys). Renders when view === 'settings'.
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { VENICE_BASE_URL, DEEPSEEK_BASE_URL } from '../config.js'
 import {
   SOROBAN_REGISTRY_ADDRESS,
@@ -18,120 +18,46 @@ import {
   clearAllHistory,
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
-import AutoExitSettings from './AutoExitSettings.jsx'
+import { NETWORK_IDS } from '../design/networks.js'
+import LegacyAutoExitCleanup from './settings/LegacyAutoExitCleanup.jsx'
 import { getTokenUsageHistory, clearTokenUsageHistory } from '../strategist.js'
+import { BrandLockup } from './pocket/BrandLockup.jsx'
+import { CreditsAbout } from './pocket/CreditsAbout.jsx'
+import { Dialog } from './pocket/Primitives.jsx'
+import { NetworkBadge } from './pocket/NetworkIdentity.jsx'
+import BaseMandateManager from './settings/BaseMandateManager.jsx'
+import './settings/settings.css'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
-const eyebrow = {
-  fontSize: 11,
-  letterSpacing: '0.01em',
-  color: 'var(--text-muted)',
-  textTransform: 'capitalize',
-  fontWeight: 500,
-}
-const card = {
-  background: 'var(--bg-card)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius-md)',
-  padding: '16px 18px',
-}
-const miniBtn = {
-  appearance: 'none',
-  border: '.5px solid var(--border-strong)',
-  borderRadius: 5,
-  background: 'rgba(255,255,255,.06)',
-  color: 'inherit',
-  font: 'inherit',
-  fontSize: 11,
-  padding: '5px 10px',
-  cursor: 'pointer',
-}
-const dangerBtn = { ...miniBtn, borderColor: 'var(--danger)', color: 'var(--danger)' }
-const inputStyle = {
-  background: 'var(--bg-input)',
-  border: '1px solid var(--border-strong)',
-  borderRadius: 6,
-  color: 'inherit',
-  font: 'inherit',
-  fontSize: 12,
-  padding: '6px 9px',
-}
 
 // Category tabs — replaces the single long scroll with one panel per click.
 const TABS = [
   { id: 'agent', label: 'Agent' },
   { id: 'strategy', label: 'Strategy' },
   { id: 'alerts', label: 'Alerts' },
-  { id: 'auto-exit', label: 'Auto-Exit' },
   { id: 'wallet', label: 'Wallet' },
   { id: 'data', label: 'Data & Privacy' },
   { id: 'about', label: 'About' },
 ]
-const tabBtn = (active) => ({
-  appearance: 'none',
-  border: 0,
-  background: 'transparent',
-  cursor: 'pointer',
-  font: 'inherit',
-  fontSize: 12.5,
-  padding: '10px 14px',
-  whiteSpace: 'nowrap',
-  color: active ? 'inherit' : 'var(--text-muted)',
-  fontWeight: active ? 600 : 500,
-  borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
-  marginBottom: -1,
-})
-
 const Section = ({ title, children }) => (
-  <div style={{ marginBottom: 28 }}>
-    <div style={eyebrow}>{title}</div>
-    <div style={{ ...card, marginTop: 10 }}>{children}</div>
-  </div>
+  <section className="pc-settings-section">
+    <div className="pc-settings-eyebrow">{title}</div>
+    <div className="pc-settings-card">{children}</div>
+  </section>
 )
-const Divider = () => <div style={{ borderTop: '1px solid var(--border)', margin: '14px 0' }} />
-const SubLabel = ({ children }) => (
-  <div style={{ fontSize: 12, fontWeight: 600, margin: '2px 0 6px' }}>{children}</div>
-)
+const Divider = () => <div className="pc-settings-divider" />
+const SubLabel = ({ children }) => <div className="pc-settings-label">{children}</div>
 const Row = ({ label, desc, children }) => (
-  <div
-    style={{
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start',
-      gap: 16,
-      padding: '8px 0',
-    }}
-  >
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: 13 }}>{label}</div>
-      {desc && (
-        <div
-          style={{
-            fontSize: 11,
-            color: 'var(--text-muted)',
-            marginTop: 3,
-            lineHeight: 1.5,
-            maxWidth: 430,
-          }}
-        >
-          {desc}
-        </div>
-      )}
+  <div className="pc-settings-row">
+    <div className="pc-settings-row-copy">
+      <div className="pc-settings-row-title">{label}</div>
+      {desc && <div className="pc-settings-row-description">{desc}</div>}
     </div>
-    <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>{children}</div>
+    <div className="pc-settings-row-control">{children}</div>
   </div>
 )
 const Toggle = ({ on, onChange, onLabel = 'ON', offLabel = 'OFF' }) => (
-  <div
-    style={{
-      display: 'inline-flex',
-      border: '1px solid var(--border-strong)',
-      borderRadius: 6,
-      overflow: 'hidden',
-      fontFamily: 'var(--font-mono)',
-      fontSize: 11,
-    }}
-  >
+  <div className="pc-settings-toggle">
     {[
       [true, onLabel],
       [false, offLabel],
@@ -140,15 +66,7 @@ const Toggle = ({ on, onChange, onLabel = 'ON', offLabel = 'OFF' }) => (
         key={l}
         type="button"
         onClick={() => onChange(v)}
-        style={{
-          appearance: 'none',
-          border: 0,
-          padding: '5px 12px',
-          cursor: 'pointer',
-          font: 'inherit',
-          background: on === v ? 'var(--accent)' : 'transparent',
-          color: on === v ? 'var(--accent-fg)' : 'var(--text-muted)',
-        }}
+        className={`pc-settings-toggle-option ${on === v ? 'pc-settings-toggle-option--active' : ''}`}
       >
         {l}
       </button>
@@ -158,9 +76,8 @@ const Toggle = ({ on, onChange, onLabel = 'ON', offLabel = 'OFF' }) => (
 const Radio = ({ sel, onClick, title, desc }) => (
   <button
     type="button"
-    className={`skill-opt ${sel ? 'sel' : ''}`}
+    className={`skill-opt pc-settings-radio ${sel ? 'sel' : ''}`}
     onClick={onClick}
-    style={{ marginBottom: 6 }}
   >
     <span className="skill-radio" />
     <span className="skill-opt-main">
@@ -170,59 +87,28 @@ const Radio = ({ sel, onClick, title, desc }) => (
   </button>
 )
 const Num = ({ value, onChange, suffix, step = '1', width = 64 }) => (
-  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+  <span className="pc-settings-number-group" data-size={width > 64 ? 'wide' : 'compact'}>
     <input
       type="number"
-      className="mono"
+      className="mono pc-settings-number"
       value={value}
       step={step}
       onChange={(e) => onChange(e.target.value)}
-      style={{ ...inputStyle, width, textAlign: 'right' }}
     />
-    {suffix && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{suffix}</span>}
+    {suffix && <span className="pc-settings-number-suffix">{suffix}</span>}
   </span>
 )
 const Check = ({ on, onChange, label }) => (
-  <button
-    type="button"
-    onClick={() => onChange(!on)}
-    style={{
-      appearance: 'none',
-      border: 0,
-      background: 'transparent',
-      color: 'inherit',
-      font: 'inherit',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 9,
-      cursor: 'pointer',
-      padding: '5px 0',
-      textAlign: 'left',
-      width: '100%',
-    }}
-  >
-    <span
-      style={{
-        width: 16,
-        height: 16,
-        borderRadius: 4,
-        border: '1px solid var(--border-strong)',
-        background: on ? 'var(--accent)' : 'transparent',
-        color: 'var(--accent-fg)',
-        display: 'grid',
-        placeItems: 'center',
-        fontSize: 11,
-        flex: 'none',
-      }}
-    ></span>
-    <span style={{ fontSize: 12.5 }}>{label}</span>
+  <button type="button" onClick={() => onChange(!on)} className="pc-settings-check">
+    <span className={`pc-settings-checkbox ${on ? 'pc-settings-checkbox--checked' : ''}`} />
+    <span>{label}</span>
   </button>
 )
 const ApiKeyField = ({ value, onChange, onClear, onTest, testState }) => {
   const [reveal, setReveal] = useState(false)
   return (
-    <div style={{ marginTop: 4 }}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+    <div className="pc-settings-api-key">
+      <div className="pc-settings-api-key-row">
         <input
           type={reveal ? 'text' : 'password'}
           value={value}
@@ -230,26 +116,34 @@ const ApiKeyField = ({ value, onChange, onClear, onTest, testState }) => {
           autoComplete="off"
           spellCheck={false}
           onChange={(e) => onChange(e.target.value)}
-          className="mono"
-          style={{ ...inputStyle, flex: 1, minWidth: 0 }}
+          className="mono pc-settings-api-input"
         />
-        <button type="button" style={miniBtn} onClick={() => setReveal((r) => !r)}>
+        <button type="button" className="pc-settings-button" onClick={() => setReveal((r) => !r)}>
           {reveal ? 'Hide' : 'Show'}
         </button>
-        <button type="button" style={miniBtn} onClick={onClear}>
+        <button type="button" className="pc-settings-button" onClick={onClear}>
           Clear
         </button>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-        <button type="button" style={miniBtn} onClick={onTest} disabled={testState === 'testing'}>
+      <div className="pc-settings-api-key-status">
+        <button
+          type="button"
+          className="pc-settings-button"
+          onClick={onTest}
+          disabled={testState === 'testing'}
+        >
           {testState === 'testing' ? 'Testing…' : 'Test connection'}
         </button>
-        {testState === 'ok' && <span style={{ fontSize: 11, color: 'var(--ok)' }}>Connected</span>}
+        {testState === 'ok' && (
+          <span className="pc-settings-status pc-settings-status--ok">Connected</span>
+        )}
         {testState === 'fail' && (
-          <span style={{ fontSize: 11, color: 'var(--danger)' }}>Rejected. Check the key.</span>
+          <span className="pc-settings-status pc-settings-status--danger">
+            Rejected. Check the key.
+          </span>
         )}
         {testState === 'unreachable' && (
-          <span style={{ fontSize: 11, color: 'var(--warn)' }}>
+          <span className="pc-settings-status pc-settings-status--warn">
             Unreachable from browser (CORS/network)
           </span>
         )}
@@ -258,30 +152,32 @@ const ApiKeyField = ({ value, onChange, onClear, onTest, testState }) => {
   )
 }
 const ContractRow = ({ name, addr }) => (
-  <div
-    style={{
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: 10,
-      padding: '6px 0',
-      fontSize: 12,
-    }}
-  >
-    <span style={{ color: 'var(--text-muted)' }}>{name}</span>
-    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+  <div className="pc-settings-contract-row">
+    <span className="pc-settings-muted">{name}</span>
+    <span className="pc-settings-contract-value">
       <span className="mono">{short(addr)}</span>
       <a
         href={`https://stellar.expert/explorer/testnet/contract/${addr}`}
         target="_blank"
         rel="noopener noreferrer"
-        style={{ ...miniBtn, textDecoration: 'none' }}
+        className="pc-settings-button"
       >
         Explorer
       </a>
     </span>
   </div>
 )
+
+const readSettingsLocation = () => {
+  if (typeof window === 'undefined') return { tab: 'agent', deepLink: false, signature: '' }
+  const requested = new URLSearchParams(window.location.search).get('tab')
+  const tab = TABS.some((item) => item.id === requested) ? requested : 'agent'
+  return {
+    tab,
+    deepLink: tab === 'wallet' && window.location.hash === '#base-mandate',
+    signature: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+  }
+}
 
 const withTimeout = (ms) => {
   const c = new AbortController()
@@ -309,14 +205,54 @@ export default function SettingsPage({
   onDisconnect,
   onRevoke,
   addLog,
+  mandateView = null,
+  connected = false,
+  busy = false,
+  error = null,
+  onSetup,
+  onRenew,
+  onBaseRevoke,
+  onRefresh,
 }) {
   const [s, setS] = useState(loadSettings)
-  const [tab, setTab] = useState('agent')
+  const [location, setLocation] = useState(readSettingsLocation)
+  const [tab, setTab] = useState(() => readSettingsLocation().tab)
   const [test, setTest] = useState({ venice: 'idle', deepseek: 'idle', tavily: 'idle' })
   const [confirmClear, setConfirmClear] = useState(false)
+  const clearCancelRef = useRef(null)
   const [copied, setCopied] = useState(false)
   const [, setTick] = useState(0)
+  const observedLocationSignature = useRef(null)
+  const focusedDeepLinkSignature = useRef(null)
   const refresh = () => setTick((x) => x + 1)
+
+  useEffect(() => {
+    const updateLocation = () => setLocation(readSettingsLocation())
+    window.addEventListener('popstate', updateLocation)
+    window.addEventListener('hashchange', updateLocation)
+    return () => {
+      window.removeEventListener('popstate', updateLocation)
+      window.removeEventListener('hashchange', updateLocation)
+    }
+  }, [])
+
+  useEffect(() => {
+    setTab(location.tab)
+  }, [location])
+
+  useEffect(() => {
+    if (observedLocationSignature.current !== location.signature) {
+      observedLocationSignature.current = location.signature
+      focusedDeepLinkSignature.current = null
+    }
+    if (!location.deepLink || tab !== 'wallet') return
+    if (focusedDeepLinkSignature.current === location.signature) return
+    const target = document.getElementById('base-mandate')
+    if (!target) return
+    target.focus({ preventScroll: true })
+    target.scrollIntoView?.({ block: 'start' })
+    focusedDeepLinkSignature.current = location.signature
+  }, [location, tab])
 
   const set = (key, val) => {
     setS((p) => ({ ...p, [key]: val }))
@@ -459,35 +395,41 @@ export default function SettingsPage({
   const ghUrl = import.meta.env.VITE_GITHUB_URL || '#'
 
   return (
-    <div
-      className="enter"
-      style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
-    >
-      <div style={{ borderBottom: '1px solid var(--border)', padding: '18px 28px 0' }}>
-        <div
-          style={{
-            maxWidth: 820,
-            margin: '0 auto',
-            width: '100%',
-            display: 'flex',
-            gap: 2,
-            overflowX: 'auto',
-          }}
-        >
+    <div className="pc-settings enter">
+      <header className="pc-settings-header">
+        {/* 2026-08-02 polish (audit item #13): this route had no real page heading at all --
+            the first text on screen was a tab strip. One h1 gives the page its identity. */}
+        <h1 className="pc-settings-title">Settings</h1>
+        <div className="pc-settings-tabs" role="tablist" aria-label="Settings sections">
           {TABS.map((tb) => (
             <button
               key={tb.id}
               type="button"
               onClick={() => setTab(tb.id)}
-              style={tabBtn(tab === tb.id)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                setTab(tb.id)
+              }}
+              className={`pc-settings-tab ${tab === tb.id ? 'pc-settings-tab--active' : ''}`}
+              role="tab"
+              id={`settings-tab-${tb.id}`}
+              aria-controls={`settings-panel-${tb.id}`}
+              aria-selected={tab === tb.id}
+              tabIndex={0}
             >
               {tb.label}
             </button>
           ))}
         </div>
-      </div>
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 28 }}>
-        <div style={{ maxWidth: 820, margin: '0 auto', width: '100%' }}>
+      </header>
+      <div className="pc-settings-scroll">
+        <div
+          className="pc-settings-content"
+          id={`settings-panel-${tab}`}
+          role="tabpanel"
+          aria-labelledby={`settings-tab-${tab}`}
+        >
           {/* ── SECTION 1: Agent Configuration ── */}
           {tab === 'agent' && (
             <Section title="Agent Configuration">
@@ -587,7 +529,7 @@ export default function SettingsPage({
               </Row>
               <Divider />
               <SubLabel>Emergency Withdraw</SubLabel>
-              <div style={{ marginBottom: 6 }}>
+              <div className="pc-settings-stack pc-settings-stack--tight">
                 <Radio
                   sel={!!agentSettings.emergencyFull}
                   onClick={() => setAgent('emergencyFull', true)}
@@ -595,30 +537,13 @@ export default function SettingsPage({
                 />
                 <div
                   className="skill-opt"
-                  style={{ cursor: 'default' }}
+                  role="presentation"
                   onClick={() => setAgent('emergencyFull', false)}
                 >
-                  <span
-                    className={`skill-radio ${!agentSettings.emergencyFull ? '' : ''}`}
-                    style={{
-                      borderColor: !agentSettings.emergencyFull ? 'var(--accent)' : undefined,
-                    }}
-                  >
-                    {!agentSettings.emergencyFull && (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          inset: 3,
-                          borderRadius: '50%',
-                          background: 'var(--accent)',
-                        }}
-                      />
-                    )}
+                  <span className={`skill-radio ${!agentSettings.emergencyFull ? '' : ''}`}>
+                    {!agentSettings.emergencyFull && <span className="pc-settings-radio-dot" />}
                   </span>
-                  <span
-                    className="skill-opt-main"
-                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
-                  >
+                  <span className="skill-opt-main pc-settings-inline-control">
                     <span className="skill-opt-title">Partial:</span>
                     <Num
                       value={agentSettings.emergencyPct ?? 50}
@@ -631,7 +556,7 @@ export default function SettingsPage({
                   </span>
                 </div>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              <div className="pc-settings-note">
                 When RiskWatcher detects a high severity threat, emergency withdraw will use this
                 setting.
               </div>
@@ -707,7 +632,7 @@ export default function SettingsPage({
                     : 'Default Strategy by Vibing Farmer'
                 }
               >
-                <button type="button" style={miniBtn} onClick={onChangeSkill}>
+                <button type="button" className="pc-settings-button" onClick={onChangeSkill}>
                   Change skill
                 </button>
               </Row>
@@ -731,14 +656,7 @@ export default function SettingsPage({
                 title="DeepSeek"
                 desc="Prefer your DeepSeek key (OpenAI-compatible, direct call)"
               />
-              <div
-                style={{
-                  fontSize: 11,
-                  color: `var(--${activeProvider.tone})`,
-                  margin: '2px 0 8px',
-                  lineHeight: 1.5,
-                }}
-              >
+              <div className="pc-settings-note" data-tone={activeProvider.tone}>
                 Active: {activeProvider.label}
                 {userAddress ? ', a funded x402 wallet overrides this.' : ''}
               </div>
@@ -842,45 +760,35 @@ export default function SettingsPage({
               </Row>
               <Divider />
               <SubLabel>Push Notifications (Telegram / Discord)</SubLabel>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+              <div className="pc-settings-stack">
                 <div>
-                  <div style={{ fontSize: 13, marginBottom: 4 }}>Discord Webhook URL</div>
+                  <div className="pc-settings-field-label">Discord Webhook URL</div>
                   <input
                     type="text"
                     value={agentSettings.discordWebhookUrl || ''}
                     placeholder="https://discord.com/api/webhooks/..."
                     onChange={(e) => setAgent('discordWebhookUrl', e.target.value)}
-                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }}
+                    className="pc-settings-text-input"
                   />
                 </div>
                 <div>
-                  <div style={{ fontSize: 13, marginBottom: 4 }}>Telegram Bot Token</div>
+                  <div className="pc-settings-field-label">Telegram Bot Token</div>
                   <input
                     type="password"
                     value={agentSettings.telegramToken || ''}
                     placeholder="123456789:ABCdef..."
                     onChange={(e) => setAgent('telegramToken', e.target.value)}
-                    style={{
-                      ...inputStyle,
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      fontFamily: 'var(--font-mono)',
-                    }}
+                    className="pc-settings-text-input mono"
                   />
                 </div>
                 <div>
-                  <div style={{ fontSize: 13, marginBottom: 4 }}>Telegram Chat ID</div>
+                  <div className="pc-settings-field-label">Telegram Chat ID</div>
                   <input
                     type="text"
                     value={agentSettings.telegramChatId || ''}
                     placeholder="Example: 987654321"
                     onChange={(e) => setAgent('telegramChatId', e.target.value)}
-                    style={{
-                      ...inputStyle,
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      fontFamily: 'var(--font-mono)',
-                    }}
+                    className="pc-settings-text-input mono"
                   />
                 </div>
               </div>
@@ -911,24 +819,24 @@ export default function SettingsPage({
             </Section>
           )}
 
-          {tab === 'auto-exit' && <AutoExitSettings realAddress={userAddress} addLog={addLog} />}
-
           {/* ── SECTION 4: Wallet & Network ── */}
           {tab === 'wallet' && (
             <Section title="Wallet & Network">
+              <Row label="Network">
+                <NetworkBadge networkId={NETWORK_IDS.STELLAR_TESTNET} />
+              </Row>
+              <Divider />
               {userAddress ? (
                 <>
                   <Row
                     label="Connected Wallet"
                     desc={walletPhase === 'upgraded' ? 'Session keys active' : 'Standard wallet'}
                   >
-                    <span className="mono" style={{ fontSize: 12 }}>
-                      {short(userAddress)}
-                    </span>
-                    <button type="button" style={miniBtn} onClick={copyAddr}>
+                    <span className="mono pc-settings-wallet-address">{short(userAddress)}</span>
+                    <button type="button" className="pc-settings-button" onClick={copyAddr}>
                       {copied ? 'Copied' : 'Copy'}
                     </button>
-                    <button type="button" style={miniBtn} onClick={onDisconnect}>
+                    <button type="button" className="pc-settings-button" onClick={onDisconnect}>
                       Disconnect
                     </button>
                   </Row>
@@ -942,23 +850,38 @@ export default function SettingsPage({
                     }
                   >
                     {permActive && (
-                      <button type="button" style={dangerBtn} onClick={onRevoke}>
+                      <button
+                        type="button"
+                        className="pc-settings-button pc-settings-button--danger"
+                        onClick={onRevoke}
+                      >
                         Revoke all
                       </button>
                     )}
                   </Row>
                   <Divider />
-                  <Row label="Relayer" desc="fee-bump relayer, gas cost to user: 0 USDC">
+                  <Row label="Network fee" desc="Sponsored by fee-bump relay.">
                     <span />
                   </Row>
                 </>
               ) : (
                 <Row label="Wallet" desc="Not connected.">
-                  <button type="button" style={miniBtn} onClick={onConnect}>
+                  <button type="button" className="pc-settings-button" onClick={onConnect}>
                     Connect Wallet
                   </button>
                 </Row>
               )}
+              <Divider />
+              <BaseMandateManager
+                mandateView={mandateView}
+                connected={connected}
+                busy={busy}
+                error={error}
+                onSetup={onSetup}
+                onRenew={onRenew}
+                onRevoke={onBaseRevoke}
+                onRefresh={onRefresh}
+              />
             </Section>
           )}
 
@@ -974,59 +897,59 @@ export default function SettingsPage({
                 ['User skill', skillSet ? 'Set' : 'Not set'],
                 ['AI telemetry log', `${telemetryHistory.length} entries`],
               ].map(([k, v]) => (
-                <div
-                  key={k}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: 12,
-                    padding: '4px 0',
-                    color: 'var(--text-muted)',
-                  }}
-                >
+                <div key={k} className="pc-settings-data-row">
                   <span>{k}</span>
                   <span className="mono">{v}</span>
                 </div>
               ))}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  fontSize: 12,
-                  padding: '6px 0',
-                  borderTop: '1px solid var(--border)',
-                  marginTop: 4,
-                }}
-              >
+              <div className="pc-settings-data-row pc-settings-data-row--total">
                 <span>Total</span>
                 <span className="mono">~{total} entries</span>
               </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                <button type="button" style={miniBtn} onClick={exportData}>
+              <div className="pc-settings-actions">
+                <button type="button" className="pc-settings-button" onClick={exportData}>
                   Export all data
                 </button>
-                {confirmClear ? (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5 }}>
-                    This clears all history and resets settings. Continue?
-                    <button type="button" style={miniBtn} onClick={() => setConfirmClear(false)}>
+                <button
+                  type="button"
+                  className="pc-settings-button pc-settings-button--danger"
+                  onClick={() => setConfirmClear(true)}
+                >
+                  Clear all data
+                </button>
+              </div>
+              <Dialog
+                open={confirmClear}
+                title="Clear all data?"
+                description="This clears all history and resets settings. Continue?"
+                onClose={() => setConfirmClear(false)}
+                initialFocusRef={clearCancelRef}
+                actions={
+                  <>
+                    <button
+                      ref={clearCancelRef}
+                      type="button"
+                      className="pc-settings-button"
+                      onClick={() => setConfirmClear(false)}
+                    >
                       Cancel
                     </button>
-                    <button type="button" style={dangerBtn} onClick={clearAll}>
+                    <button
+                      type="button"
+                      className="pc-settings-button pc-settings-button--danger"
+                      onClick={clearAll}
+                    >
                       Yes, clear all
                     </button>
-                  </span>
-                ) : (
-                  <button type="button" style={dangerBtn} onClick={() => setConfirmClear(true)}>
-                    Clear all data
-                  </button>
-                )}
-              </div>
+                  </>
+                }
+              />
               <Divider />
               <SubLabel>Clear Individual Stores</SubLabel>
               <Row label="Transaction history">
                 <button
                   type="button"
-                  style={miniBtn}
+                  className="pc-settings-button"
                   onClick={() => {
                     clearTransactions()
                     refresh()
@@ -1038,7 +961,7 @@ export default function SettingsPage({
               <Row label="Strategy history">
                 <button
                   type="button"
-                  style={miniBtn}
+                  className="pc-settings-button"
                   onClick={() => {
                     clearStrategies()
                     refresh()
@@ -1050,7 +973,7 @@ export default function SettingsPage({
               <Row label="AI reasoning log">
                 <button
                   type="button"
-                  style={miniBtn}
+                  className="pc-settings-button"
                   onClick={() => {
                     clearReasoningLog()
                     refresh()
@@ -1062,7 +985,7 @@ export default function SettingsPage({
               <Row label="User skill (custom)">
                 <button
                   type="button"
-                  style={miniBtn}
+                  className="pc-settings-button"
                   onClick={() => {
                     onResetSkill?.()
                     refresh()
@@ -1072,81 +995,39 @@ export default function SettingsPage({
                 </button>
               </Row>
               <Row label="Agent settings">
-                <button type="button" style={miniBtn} onClick={() => onResetAgentSettings?.()}>
+                <button
+                  type="button"
+                  className="pc-settings-button"
+                  onClick={() => onResetAgentSettings?.()}
+                >
                   Reset to defaults
                 </button>
               </Row>
               <Divider />
               <SubLabel>AI Token Telemetry</SubLabel>
-              <div style={{ marginTop: 8 }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: 12,
-                    padding: '4px 0',
-                    color: 'var(--text-muted)',
-                  }}
-                >
+              <div className="pc-settings-telemetry">
+                <div className="pc-settings-data-row">
                   <span>Total Prompt Tokens</span>
                   <span className="mono">{telemetryStats.prompt}</span>
                 </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: 12,
-                    padding: '4px 0',
-                    color: 'var(--text-muted)',
-                  }}
-                >
+                <div className="pc-settings-data-row">
                   <span>Total Completion Tokens</span>
                   <span className="mono">{telemetryStats.completion}</span>
                 </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: 12,
-                    padding: '4px 0',
-                    color: 'var(--text-muted)',
-                  }}
-                >
+                <div className="pc-settings-data-row">
                   <span>Total Tokens Used</span>
-                  <span className="mono" style={{ color: 'var(--accent)', fontWeight: 600 }}>
-                    {telemetryStats.total}
-                  </span>
+                  <span className="mono pc-settings-emphasis">{telemetryStats.total}</span>
                 </div>
                 {telemetryStats.history.length > 0 && (
-                  <div style={{ marginTop: 12 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
-                      Recent API Requests (last 5):
-                    </div>
-                    <div
-                      style={{
-                        maxHeight: 120,
-                        overflowY: 'auto',
-                        border: '1px solid var(--border)',
-                        borderRadius: 4,
-                        padding: '6px 8px',
-                        background: 'rgba(0,0,0,0.1)',
-                      }}
-                    >
+                  <div className="pc-settings-telemetry-history">
+                    <div className="pc-settings-small-label">Recent API Requests (last 5):</div>
+                    <div className="pc-settings-telemetry-list">
                       {telemetryStats.history
                         .slice(-5)
                         .reverse()
                         .map((h, i) => (
-                          <div
-                            key={i}
-                            style={{
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              fontSize: 10.5,
-                              padding: '3px 0',
-                              borderBottom: i < 4 ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                            }}
-                          >
-                            <span style={{ color: 'var(--text-muted)' }}>
+                          <div key={i} className="pc-settings-telemetry-item">
+                            <span className="pc-settings-muted">
                               {new Date(h.timestamp).toLocaleTimeString()} ({h.model})
                             </span>
                             <span className="mono">
@@ -1159,7 +1040,7 @@ export default function SettingsPage({
                 )}
                 <button
                   type="button"
-                  style={{ ...miniBtn, marginTop: 10 }}
+                  className="pc-settings-button pc-settings-button--spaced"
                   onClick={() => {
                     clearTokenUsageHistory()
                     refresh()
@@ -1167,6 +1048,11 @@ export default function SettingsPage({
                 >
                   Clear Telemetry History
                 </button>
+              </div>
+              <Divider />
+              <SubLabel>Legacy auto-exit data</SubLabel>
+              <div className="pc-settings-legacy">
+                <LegacyAutoExitCleanup addLog={addLog} />
               </div>
               <Divider />
               <SubLabel>Privacy Notes</SubLabel>
@@ -1180,21 +1066,8 @@ export default function SettingsPage({
                 'The fee-bump relayer can see transaction data submitted on-chain.',
                 'All other data stays in your browser.',
               ].map((n) => (
-                <div
-                  key={n}
-                  style={{
-                    fontSize: 11.5,
-                    color: 'var(--text-muted)',
-                    padding: '3px 0',
-                    display: 'flex',
-                    gap: 8,
-                  }}
-                >
-                  <span
-                    className="ui-dot"
-                    style={{ color: 'var(--text-faint)' }}
-                    aria-hidden="true"
-                  />
+                <div key={n} className="pc-settings-privacy-note">
+                  <span className="ui-dot" aria-hidden="true" />
                   {n}
                 </div>
               ))}
@@ -1204,30 +1077,18 @@ export default function SettingsPage({
           {/* ── SECTION 6: About ── */}
           {tab === 'about' && (
             <Section title="About">
-              <div className="brand" style={{ fontSize: 18 }}>
-                <span>vibing</span>
-                <span className="slash">/</span>
-                <span className="vibing">farmer</span>
+              <div className="pc-settings-about">
+                <BrandLockup variant="full" />
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                Autonomous DeFi yield farming agent
-              </div>
-              <div style={{ marginTop: 12 }}>
+              <div className="pc-settings-about-subtitle">Autonomous DeFi yield farming agent</div>
+              <div className="pc-settings-about-meta">
                 {[
-                  ['Version', '1.13.2'],
+                  ['Version', import.meta.env.VITE_APP_VERSION],
                   ['Network', 'Stellar testnet'],
                   ['Contracts', 'Verified on Sourcify'],
                 ].map(([k, v]) => (
-                  <div
-                    key={k}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: 12,
-                      padding: '3px 0',
-                    }}
-                  >
-                    <span style={{ color: 'var(--text-muted)' }}>{k}</span>
+                  <div key={k} className="pc-settings-data-row pc-settings-data-row--compact">
+                    <span className="pc-settings-muted">{k}</span>
                     <span className="mono">{v}</span>
                   </div>
                 ))}
@@ -1238,10 +1099,10 @@ export default function SettingsPage({
               <ContractRow name="Legacy vault (1:1)" addr={SOROBAN_VAULT_ADDRESS} />
               <ContractRow name="VFUSD token" addr={SOROBAN_TOKEN_ADDRESS} />
               <Divider />
-              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              <div className="pc-settings-about-copy">
                 Uses Soroban session keys, fee-bump relaying, and Venice AI.
               </div>
-              <div style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.8 }}>
+              <div className="pc-settings-about-list">
                 {[
                   'The fee-bump relayer pays transaction fees.',
                   'Venice AI can generate strategies.',
@@ -1251,21 +1112,32 @@ export default function SettingsPage({
                   <div key={p}>{p}</div>
                 ))}
               </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+              <div className="pc-settings-actions pc-settings-actions--about">
                 {ghUrl !== '#' && (
                   <a
                     href={ghUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ ...miniBtn, textDecoration: 'none' }}
+                    className="pc-settings-button"
                   >
                     View on GitHub
                   </a>
                 )}
               </div>
+              <Divider />
+              <CreditsAbout />
             </Section>
           )}
         </div>
+        {TABS.filter((item) => item.id !== tab).map((item) => (
+          <div
+            key={`settings-panel-${item.id}`}
+            id={`settings-panel-${item.id}`}
+            role="tabpanel"
+            aria-labelledby={`settings-tab-${item.id}`}
+            hidden
+          />
+        ))}
       </div>
     </div>
   )

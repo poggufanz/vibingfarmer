@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Icon } from '../components.jsx'
 import { loadVaultSkill, saveUserSkill, clearUserSkill } from '../skillLoader.js'
+import { Dialog, StatusNotice } from './pocket/Primitives.jsx'
+import './SecondaryDialogs.css'
 
 const SkillDrawer = ({ open, onClose, skillSource, onSkillChange }) => {
   const isCustomSource = skillSource === 'user-local' || skillSource === 'user-file'
@@ -9,6 +11,7 @@ const SkillDrawer = ({ open, onClose, skillSource, onSkillChange }) => {
   const [error, setError] = useState(null)
   const taRef = useRef(null)
   const fileRef = useRef(null)
+  const closeRef = useRef(null)
 
   // On open: sync mode to current source and prefill custom content
   useEffect(() => {
@@ -60,79 +63,101 @@ const SkillDrawer = ({ open, onClose, skillSource, onSkillChange }) => {
   }
 
   return (
-    <>
-      {open && <div className="skill-drawer-overlay" onClick={onClose} />}
-      <div
-        className={`skill-drawer ${open ? 'open' : ''}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Vault Advisor Skill"
-      >
-        <div className="skill-drawer-head">
-          <div>
-            <div className="skill-drawer-title">Vault Advisor Skill</div>
-            <div className="skill-drawer-sub">Choose how Venice AI selects vaults</div>
-          </div>
-          <button className="icon-btn" aria-label="Close" onClick={onClose}>
-            <Icon name="x" />
-          </button>
-        </div>
-
-        <div className="skill-drawer-body">
-          <button
-            className={`skill-opt ${mode === 'default' ? 'sel' : ''}`}
-            onClick={selectDefault}
-          >
-            <span className="skill-radio" />
-            <span className="skill-opt-main">
-              <span className="skill-opt-title">Default Strategy by Vibing Farmer</span>
-              <span className="skill-opt-desc">
-                Built-in rules for vault eligibility, allocation, and risk.
-              </span>
-              <span className="skill-opt-meta mono">Uses the current eligible vault set</span>
-            </span>
-          </button>
-
-          <button className={`skill-opt ${mode === 'custom' ? 'sel' : ''}`} onClick={selectCustom}>
-            <span className="skill-radio" />
-            <span className="skill-opt-main">
-              <span className="skill-opt-title">Custom Strategy</span>
-            </span>
-          </button>
-
-          <div className="skill-custom-area">
-            <textarea
-              ref={taRef}
-              className="skill-textarea mono"
-              placeholder={'# My Vault Strategy\nYou are a DeFi advisor...'}
-              value={text}
-              disabled={mode !== 'custom'}
-              onChange={(e) => {
-                setText(e.target.value)
-                if (error) setError(null)
-              }}
-            />
-            <input ref={fileRef} type="file" accept=".md,.txt" hidden onChange={onUpload} />
-            <button
-              className="skill-upload"
-              disabled={mode !== 'custom'}
-              onClick={() => fileRef.current?.click()}
-            >
-              Upload .md file
-            </button>
-            <div className="skill-hint mono">Hint: paste Markdown or upload a file</div>
-            {error && <div className="skill-error mono">{error}</div>}
-          </div>
-        </div>
-
-        <div className="skill-drawer-foot">
-          <button className="btn btn-primary skill-apply" onClick={apply}>
+    <Dialog
+      open={open}
+      title="Vault Advisor Skill"
+      description="Choose how Venice AI selects vaults. Changes apply to the next strategy generation."
+      onClose={onClose}
+      mode="sheet"
+      initialFocusRef={closeRef}
+      className="secondary-dialog secondary-dialog--drawer"
+      actions={
+        <>
+          <button className="btn btn-primary" onClick={apply}>
             Apply strategy
           </button>
-          <div className="skill-foot-note">Changes apply to the next strategy generation</div>
+          <span className="secondary-dialog-drawer-hint">
+            Changes apply to the next strategy generation
+          </span>
+        </>
+      }
+    >
+      <div className="secondary-dialog-eyebrow">
+        <span>Strategy source</span>
+        <button
+          ref={closeRef}
+          className="secondary-dialog-close icon-btn"
+          aria-label="Close"
+          type="button"
+          onClick={onClose}
+        >
+          <Icon name="x" />
+        </button>
+      </div>
+
+      <div className="secondary-dialog-drawer-body">
+        <button
+          type="button"
+          className={`secondary-dialog-drawer-option${mode === 'default' ? ' is-selected' : ''}`}
+          onClick={selectDefault}
+        >
+          <span className="secondary-dialog-drawer-radio" aria-hidden="true" />
+          <span className="secondary-dialog-drawer-option-main">
+            <span className="secondary-dialog-drawer-option-title">
+              Default Strategy by Vibing Farmer
+            </span>
+            <span className="secondary-dialog-drawer-option-description">
+              Built-in rules for vault eligibility, allocation, and risk.
+            </span>
+            <span className="secondary-dialog-drawer-option-meta">
+              Uses the current eligible vault set
+            </span>
+          </span>
+        </button>
+
+        <button
+          type="button"
+          className={`secondary-dialog-drawer-option${mode === 'custom' ? ' is-selected' : ''}`}
+          onClick={selectCustom}
+        >
+          <span className="secondary-dialog-drawer-radio" aria-hidden="true" />
+          <span className="secondary-dialog-drawer-option-main">
+            <span className="secondary-dialog-drawer-option-title">Custom Strategy</span>
+          </span>
+        </button>
+
+        <div className="secondary-dialog-drawer-custom">
+          <textarea
+            ref={taRef}
+            className="secondary-dialog-drawer-textarea mono"
+            placeholder={'# My Vault Strategy\nYou are a DeFi advisor...'}
+            value={text}
+            disabled={mode !== 'custom'}
+            onChange={(e) => {
+              setText(e.target.value)
+              if (error) setError(null)
+            }}
+          />
+          <input ref={fileRef} type="file" accept=".md,.txt" hidden onChange={onUpload} />
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={mode !== 'custom'}
+            onClick={() => fileRef.current?.click()}
+          >
+            Upload .md file
+          </button>
+          <div className="secondary-dialog-drawer-hint">Hint: paste Markdown or upload a file</div>
+          {error && (
+            <div className="secondary-dialog-error" aria-live="assertive">
+              <StatusNotice state="danger" title="Strategy unavailable">
+                {error}
+              </StatusNotice>
+            </div>
+          )}
         </div>
       </div>
-    </>
+    </Dialog>
   )
 }
 

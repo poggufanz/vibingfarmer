@@ -16,10 +16,10 @@ export function prunePass(rules, cfg = PRUNE_CFG) {
   const out = []
   for (const r of rules) {
     if (underperforms(r, cfg)) {
-      if (r.origin === 'grown') continue            // hard delete
-      out.push({ ...r, status: 'retired' })         // seed → retire
+      if (r.origin === 'grown') continue // hard delete
+      out.push({ ...r, status: 'retired' }) // seed → retire
     } else if (r.status === 'retired' && r.helpful >= r.harmful) {
-      out.push({ ...r, status: 'active' })           // recovered → reactivate
+      out.push({ ...r, status: 'active' }) // recovered → reactivate
     } else {
       out.push(r)
     }

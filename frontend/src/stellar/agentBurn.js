@@ -87,6 +87,7 @@ export async function runAgentBurn({
     })
     res = await submitViaRelay({ xdr })
   } catch (err) {
+    if (err?.code === 'VF_SUBMISSION_UNKNOWN') throw err
     throw new Error(`deposit_for_burn: ${err.message}`)
   }
   if (!res || res.status !== 'SUCCESS') {

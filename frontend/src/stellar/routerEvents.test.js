@@ -1,12 +1,35 @@
 import { describe, it, expect } from 'vitest'
 import { nativeToScVal, Keypair } from '@stellar/stellar-sdk'
-import { symbolScVal, addrScVal } from './scval.js'
-import { decodeDeployedEvent, fetchRouterDeployedEvents } from './routerEvents.js'
+import { symbolScVal, addrScVal, bytes32ScVal } from './scval.js'
+import {
+  decodeDeployedEvent,
+  decodeGrantedV3Event,
+  decodePulledV3Event,
+  fetchRouterDeployedEvents,
+} from './routerEvents.js'
 
 const ROUTER = 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY'
 const AGENT_A = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 const AGENT_B = 'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
 const OWNER = Keypair.random().publicKey()
+
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+async function waitUntil(predicate) {
+  for (let attempts = 0; attempts < 100; attempts += 1) {
+    if (predicate()) return
+    await Promise.resolve()
+  }
+  throw new Error('condition was not reached')
+}
 
 // Mirror an RPC getEvents `Deployed` record: topics [deployed(lowercase), owner, agent],
 // data = ScMap { cap }.
@@ -46,6 +69,97 @@ describe('decodeDeployedEvent', () => {
     }
     expect(() => decodeDeployedEvent(rec)).not.toThrow()
     expect(decodeDeployedEvent(rec)).toBeNull()
+  })
+})
+
+describe('decodeGrantedV3Event', () => {
+  const PERMISSION_ID = Buffer.alloc(32, 0x11)
+  function grantedV3Record({ owner = OWNER, permissionId = PERMISSION_ID, agents = 2 } = {}) {
+    return {
+      ledger: 55,
+      txHash: 'TXV3G',
+      topic: [symbolScVal('granted_v3'), addrScVal(owner), bytes32ScVal(permissionId)],
+      value: nativeToScVal({
+        token: AGENT_A,
+        mandate_ceiling: 300_000_000n,
+        per_run_max: 200_000_000n,
+        live_until_ledger: 1_000,
+        agents,
+      }),
+    }
+  }
+
+  it('decodes a granted_v3 record into its full shape', () => {
+    expect(decodeGrantedV3Event(grantedV3Record())).toEqual({
+      owner: OWNER,
+      permissionId: PERMISSION_ID,
+      token: AGENT_A,
+      mandateCeiling: 300_000_000n,
+      perRunMax: 200_000_000n,
+      liveUntilLedger: 1_000,
+      agents: 2,
+      ledger: 55,
+      txHash: 'TXV3G',
+    })
+  })
+
+  it('returns null for a non-granted_v3 topic', () => {
+    const rec = {
+      topic: [symbolScVal('deployed'), addrScVal(OWNER), addrScVal(AGENT_A)],
+      value: nativeToScVal({ cap: 5n }),
+    }
+    expect(decodeGrantedV3Event(rec)).toBeNull()
+  })
+
+  it('returns null for a malformed value instead of throwing', () => {
+    const rec = {
+      topic: [symbolScVal('granted_v3'), addrScVal(OWNER), bytes32ScVal(PERMISSION_ID)],
+      value: nativeToScVal(null),
+    }
+    expect(() => decodeGrantedV3Event(rec)).not.toThrow()
+    expect(decodeGrantedV3Event(rec)).toBeNull()
+  })
+})
+
+describe('decodePulledV3Event', () => {
+  const PERMISSION_ID = Buffer.alloc(32, 0x22)
+  const EXECUTION_ID = Buffer.alloc(32, 0x33)
+  function pulledV3Record({ owner = OWNER, agent = AGENT_A, amount = 50_000_000n } = {}) {
+    return {
+      ledger: 56,
+      txHash: 'TXV3P',
+      topic: [symbolScVal('pulled_v3'), addrScVal(owner), bytes32ScVal(PERMISSION_ID)],
+      value: nativeToScVal({ agent, execution_id: EXECUTION_ID, amount }),
+    }
+  }
+
+  it('decodes a pulled_v3 record into its full shape', () => {
+    expect(decodePulledV3Event(pulledV3Record())).toEqual({
+      owner: OWNER,
+      permissionId: PERMISSION_ID,
+      agent: AGENT_A,
+      executionId: EXECUTION_ID,
+      amount: 50_000_000n,
+      ledger: 56,
+      txHash: 'TXV3P',
+    })
+  })
+
+  it('returns null for a non-pulled_v3 topic', () => {
+    const rec = {
+      topic: [symbolScVal('pulled'), addrScVal(OWNER), addrScVal(AGENT_A)],
+      value: nativeToScVal({ amount: 5n }),
+    }
+    expect(decodePulledV3Event(rec)).toBeNull()
+  })
+
+  it('returns null for a malformed value instead of throwing', () => {
+    const rec = {
+      topic: [symbolScVal('pulled_v3'), addrScVal(OWNER), bytes32ScVal(PERMISSION_ID)],
+      value: nativeToScVal(null),
+    }
+    expect(() => decodePulledV3Event(rec)).not.toThrow()
+    expect(decodePulledV3Event(rec)).toBeNull()
   })
 })
 
@@ -113,5 +227,80 @@ describe('fetchRouterDeployedEvents', () => {
     }
     const out = await fetchRouterDeployedEvents({ server, routerAddress: ROUTER, owner: OWNER })
     expect(out).toEqual([])
+  })
+
+  it('rejects promptly and never starts page two when aborted during page one', async () => {
+    const pageOne = deferred()
+    const abortReason = new Error('owner changed')
+    const controller = new AbortController()
+    let eventCalls = 0
+    const server = {
+      getHealth: async () => ({ oldestLedger: 1 }),
+      getEvents: async () => {
+        eventCalls += 1
+        if (eventCalls === 1) return pageOne.promise
+        return { events: [], cursor: 'page-2' }
+      },
+    }
+
+    const operation = fetchRouterDeployedEvents({
+      server,
+      routerAddress: ROUTER,
+      owner: OWNER,
+      signal: controller.signal,
+    })
+    const observed = operation.then(
+      () => ({ status: 'fulfilled' }),
+      (reason) => ({ status: 'rejected', reason })
+    )
+
+    await waitUntil(() => eventCalls === 1)
+    controller.abort(abortReason)
+    const promptOutcome = await Promise.race([
+      observed,
+      new Promise((resolve) => setTimeout(() => resolve({ status: 'pending' }), 20)),
+    ])
+    pageOne.resolve({ events: [], cursor: 'page-2' })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(promptOutcome).toEqual({ status: 'rejected', reason: abortReason })
+    expect(eventCalls).toBe(1)
+  })
+
+  it('stops before decoding another record when the signal aborts during decode', async () => {
+    const controller = new AbortController()
+    const abortReason = new Error('owner changed while decoding')
+    const first = deployedRecord({ agent: AGENT_A, cap: 1n, ledger: 100, txHash: 'TXA' })
+    const firstTopic = first.topic
+    Object.defineProperty(first, 'topic', {
+      get() {
+        controller.abort(abortReason)
+        return firstTopic
+      },
+    })
+    let secondDecoded = false
+    const second = deployedRecord({ agent: AGENT_B, cap: 2n, ledger: 101, txHash: 'TXB' })
+    const secondTopic = second.topic
+    Object.defineProperty(second, 'topic', {
+      get() {
+        secondDecoded = true
+        return secondTopic
+      },
+    })
+    const server = {
+      getHealth: async () => ({ oldestLedger: 1 }),
+      getEvents: async () => ({ events: [first, second] }),
+    }
+
+    await expect(
+      fetchRouterDeployedEvents({
+        server,
+        routerAddress: ROUTER,
+        owner: OWNER,
+        signal: controller.signal,
+      })
+    ).rejects.toBe(abortReason)
+    expect(secondDecoded).toBe(false)
   })
 })

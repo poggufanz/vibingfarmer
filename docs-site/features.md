@@ -43,9 +43,9 @@ Workers run in parallel, each inside a disposable, deposit-only agent account de
 
 One failure never aborts the batch. Dispatch generates every worker's skill in parallel, then submits deposits in sequence with a short gap between each one to stay under the relay's own rate limit — not literally simultaneous, but the property that matters holds regardless: each worker's execution is isolated, so one agent's error never blocks or rolls back another's.
 
-## Gasless execution
+## Sponsored network fees
 
-An own fee-bump relayer sponsors every allowlisted operation, so you pay zero XLM: it wraps your already-signed inner transaction inside a Stellar fee-bump transaction, paying the network fee from its own funded keypair without touching the inner transaction's logic or authorization. The relay only sponsors what's on a short, explicit allowlist:
+An own fee-bump relayer sponsors every allowlisted operation. Network fee sponsored by fee-bump relay. It wraps your already-signed inner transaction inside a Stellar fee-bump transaction, paying the network fee from its own funded keypair without touching the inner transaction's logic or authorization. The relay only sponsors what's on a short, explicit allowlist:
 
 - Vault deposit or redeem, on the configured vault address only
 - Router grant or pull, on the configured router

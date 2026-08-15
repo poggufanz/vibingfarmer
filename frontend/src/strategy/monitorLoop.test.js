@@ -176,6 +176,49 @@ describe('createMonitorLoop', () => {
   })
 })
 
+describe('createMonitorLoop — nullable yield (unavailable projection)', () => {
+  it('journals score:null instead of a fabricated riskAdjustedScore when yield is unavailable (discard)', async () => {
+    const { saved, deps } = makeDeps({
+      simulate: vi.fn(() => ({
+        riskAdjustedScore: 0,
+        projectedAnnualUsdc: 0,
+        projection: { state: 'unavailable', value: null },
+      })),
+      council: vi.fn(async () => ({
+        verdict: 'discard',
+        reason: 'Risk Analyst',
+        confidence: 0.5,
+        citedRules: [],
+        specialists: [],
+        resolvedBy: 'veto',
+      })),
+    })
+    const loop = createMonitorLoop(deps)
+    await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
+    expect(saved[0].score).toBeNull()
+  })
+
+  it('journals score:null instead of a fabricated riskAdjustedScore when yield is unavailable (keep)', async () => {
+    const { saved, deps } = makeDeps({
+      simulate: vi.fn(() => ({
+        riskAdjustedScore: 0,
+        projectedAnnualUsdc: 0,
+        projection: { state: 'unavailable', value: null },
+      })),
+    })
+    const loop = createMonitorLoop(deps)
+    await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
+    expect(saved[0].score).toBeNull()
+  })
+
+  it('a known projection still journals the real score (no regression)', async () => {
+    const { saved, deps } = makeDeps()
+    const loop = createMonitorLoop(deps)
+    await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
+    expect(saved[0].score).toBe(6)
+  })
+})
+
 describe('createMonitorLoop recordDecision', () => {
   it('records a decision on keep (council deliberated)', async () => {
     const recordDecision = vi.fn()

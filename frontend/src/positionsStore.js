@@ -8,10 +8,11 @@
 //
 // Stellar model: vault shares are held by the agent custom account (deposit mints
 // to `from` = the agent), NOT the user — the user exits via owner_withdraw. So a
-// "position" is read as the agent's vault-share balance. The demo uses one agent
-// (SOROBAN_DEMO_AGENT) + one vault; pass `agents` for a multi-agent session.
+// "position" is read as the agent's vault-share balance. `agents` must be an explicit,
+// caller-supplied list (Pocket Crew My Money Task 6): no address is ever guessed, so an omitted
+// or empty list reads nothing rather than silently substituting a demo/seeded agent.
 
-import { SOROBAN_ACTIVE_VAULT_ADDRESS, SOROBAN_DEMO_AGENT } from './stellar/config.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
 import { readVaultShares } from './stellar/agentDeposit.js'
 import { readPricePerShare } from './stellar/vaultReads.js'
 
@@ -66,23 +67,31 @@ export function saveDeployedAgents(address, agents) {
 /**
  * Reconcile positions against the Stellar vault. Sums the vault-share balance across
  * every agent the user funded (shares are i128 base units, 7-dp). Returns a positions
- * map ({ [vaultAddr]: { vaultName, balance, unclaimedRewards } }), or null when EVERY
- * read fails so callers keep the cached snapshot instead of wiping it.
+ * map ({ [vaultAddr]: { vaultName, balance, unclaimedRewards } }), or null when `agents`
+ * is missing/empty or EVERY read fails, so callers keep the cached snapshot instead of
+ * wiping it.
+ *
+ * `agents` is REQUIRED — no default, no demo-agent fallback (Task 6: "no product read ever
+ * defaults to SOROBAN_DEMO_AGENT"). The caller (positions discovery) is the one place that
+ * knows which addresses are real; guessing here would misreport whose money this is.
  *
  * A balance of '0' is an explicit entry (not absent) so an authoritative consumer
  * (applyChainPositions) can PRUNE a fully-swept vault. readVaultShares returns null on
  * RPC failure (it catches), so a transient failure stays out of the total — never
  * mistaken for a withdrawal.
  *
+ * The returned map also carries a non-enumerable `agentStatus` array (one { agent, status:
+ * 'ok'|'failed' } per input agent) — a side channel for callers that want per-agent detail
+ * without perturbing existing consumers that iterate the map's own vault keys directly
+ * (Object.keys/entries/spread/JSON.stringify all skip a non-enumerable property).
+ *
  * @param {string} address - connected user wallet (kept for caller/localStorage compat)
  * @param {{ agents?: string[], server?: object }} [opts]
  * @returns {Promise<Object|null>}
  */
-export async function reconcilePositionsFromChain(
-  address,
-  { agents = [SOROBAN_DEMO_AGENT], server } = {}
-) {
+export async function reconcilePositionsFromChain(address, { agents, server } = {}) {
   if (!address) return null
+  if (!Array.isArray(agents) || agents.length === 0) return null
 
   const results = await Promise.allSettled(
     agents.map((agent) => readVaultShares(agent, { server }))
@@ -111,7 +120,7 @@ export async function reconcilePositionsFromChain(
 
   // ponytail: balance is base-unit (7-dp) string — render sites must divide by 1e7
   // (SOROBAN_DECIMALS), not the legacy EVM 1e6. Single vault for the demo.
-  return {
+  const positions = {
     [SOROBAN_ACTIVE_VAULT_ADDRESS]: {
       vaultName: VAULT_NAME,
       balance: assets.toString(),
@@ -119,45 +128,44 @@ export async function reconcilePositionsFromChain(
       unclaimedRewards: '0',
     },
   }
+  Object.defineProperty(positions, 'agentStatus', {
+    value: agents.map((agent, i) => ({
+      agent,
+      status: results[i].status === 'fulfilled' && results[i].value != null ? 'ok' : 'failed',
+    })),
+    enumerable: false,
+  })
+  return positions
 }
 
-/**
- * Choose which agents' vault shares represent the user's positions. View-as (dev) reads the
- * impersonated address's OWN shares; a real run reads the per-run agents the router deployed
- * (scopes[].agent, non-revoked) — where deposit mints the shares. Returns undefined when there
- * is nothing better yet (e.g. before scopes have rehydrated) so reconcile keeps its default.
- *
- * @param {Array<{agent?: string, revoked?: boolean}>} scopes
- * @param {string} [viewAsAddress]
- * @returns {string[]|undefined}
- */
-export function pickPositionsAgents(scopes, viewAsAddress) {
-  if (viewAsAddress) return [viewAsAddress]
-  const deployed = (scopes || []).filter((s) => s && !s.revoked && s.agent).map((s) => s.agent)
-  return deployed.length ? deployed : undefined
-}
-
-/**
- * The agents whose shares back the position shown for `vaultAddress` — i.e. the set `owner_withdraw`
- * must sweep, one user-signed tx each, because a position is the SUM over every agent (see the
- * `total +=` above) while the exit is per-agent.
- *
- * Deliberately NOT pickPositionsAgents: that one is for DISPLAY, so it may fall back to a default
- * and may return a view-as address. An exit must never guess an agent — the user cannot sign for an
- * agent they do not own, and a wrong guess is what made every withdraw invoke the demo agent.
- * Empty means empty: the caller must disable the button, not substitute something.
- *
- * @param {Array<{agent?: string, vault?: string, revoked?: boolean}>} scopes
- * @param {string} vaultAddress
- * @returns {string[]} non-revoked agents pinned to that vault, deduped, in scope order
- */
-export function pickVaultAgents(scopes, vaultAddress) {
+// My Money Task 13 Part B item 5. `pickPositionsAgents` (deprecated since My Money Task 6) is
+// DELETED outright: it had exactly one remaining caller (app.jsx's `positionsAgents`), now
+// migrated to the discovery-based `pickRecoverableVaultAgents` below (see app.jsx's own comment at
+// that call site).
+//
+// `pickVaultAgents` carried the identical defect (both silently dropped revoked agents -- the
+// exit-enumeration rule forbids that, since a revoked-but-funded agent is exactly the one a sweep
+// must not skip) and could not simply be deleted: `frontend/src/components/console/
+// PositionsZone.jsx` (legacy OpsConsole, kept on disk for rollback/tests only, unreachable from any
+// production route since My Money Task 13's route-composition step) is still a real, tested caller,
+// and it holds `scopes` (rehydrateScopes()'s plain-scope shape: `.agent`/`.vault`/`.revoked`)
+// rather than an `OwnerDiscoveryV1` envelope -- `pickRecoverableVaultAgents` below expects the
+// latter and would silently return every row's `.address` as `undefined` if forced onto `scopes`
+// (the same shape mismatch app.jsx's own `hasLiveScopeForVault` doc explains).
+//
+// Wave 6 carry (My Money Task 6, carried through Task 13 Part B): renamed to
+// `pickVaultAgentsForExit` and the revoked-filter deleted -- this IS the explicit-semantics
+// replacement, operating on the scopes shape PositionsZone.jsx actually has, with the same
+// inclusive (never-drop-a-revoked-but-funded-agent) rule `pickRecoverableVaultAgents` already
+// enforces for the discovery shape. Do not add a NEW caller of this scopes-shaped picker without
+// checking whether `pickRecoverableVaultAgents` (discovery-shaped) already covers it instead.
+export function pickVaultAgentsForExit(scopes, vaultAddress) {
   const want = (vaultAddress || '').toLowerCase()
   if (!want) return []
   const seen = new Set()
   const out = []
   for (const s of scopes || []) {
-    if (!s || s.revoked || !s.agent) continue
+    if (!s || !s.agent) continue
     if ((s.vault || '').toLowerCase() !== want) continue
     if (seen.has(s.agent)) continue
     seen.add(s.agent)
@@ -203,4 +211,68 @@ export function applyChainPositions(prev, chain) {
     positions[key] = { ...positions[key], ...pos }
   }
   return positions
+}
+
+// --- Discovery-driven pickers (Pocket Crew My Money Task 6) -------------------------------
+// `pickVaultAgentsForExit` above operates on the LIVE `scopes` array
+// (rehydrateScopes()'s shape) — kept unchanged for its existing caller (PositionsZone.jsx). These
+// three operate on an `OwnerDiscoveryV1` envelope
+// (ownerDiscovery.js's discoverOwnerScopes()) instead, whose `status` can be 'partial' or
+// 'unavailable' — information a plain scopes array never carried, and which display/exit
+// actions must not paper over.
+
+// A 'bridge'-kind membership moves USDC toward Base — it never holds Stellar vault shares.
+// 'unknown' (agent-v3-bridge wasm before evidence narrows it) can't be ruled out, so it stays IN:
+// fail OPEN on inclusion here (never strand a possibly-funded agent out of the exit list) — the
+// opposite direction from the vault filter below, which fails open on an unKNOWN vault too, for
+// the same reason.
+function vaultCandidateAgents(discovery) {
+  return (discovery?.agents || []).filter((a) => a && a.kind !== 'bridge')
+}
+
+/**
+ * Agent rows an owner might reasonably want to SEE for `vault` — every known candidate
+ * regardless of on-chain liveness: active, expired, revoked, and revoked-but-funded agents all
+ * stay visible (product truth: hiding them is exactly how funds go missing from the exit list).
+ * Only a row PROVEN scoped to a different vault is excluded; a row whose vault is unread/unknown
+ * is kept rather than silently dropped.
+ * ponytail: `vault` isn't filtered further than a straight match today (one live vault,
+ * SOROBAN_ACTIVE_VAULT_ADDRESS) — the param exists for interface parity with pickVaultAgentsForExit;
+ * revisit if a second vault ships.
+ * @param {{status:string, agents:Array}} discovery an OwnerDiscoveryV1 envelope
+ * @param {{vault?: string}} [opts]
+ */
+export function pickDisplayAgents(discovery, { vault } = {}) {
+  const want = (vault || '').toLowerCase()
+  return vaultCandidateAgents(discovery).filter((a) => {
+    if (!want || a.vault == null) return true
+    return String(a.vault).toLowerCase() === want
+  })
+}
+
+/**
+ * Agent ADDRESSES `vault`'s exit must sweep — same inclusion rule as pickDisplayAgents, but
+ * returns plain address strings (the shape owner_withdraw/exit_router sweep calls expect).
+ * Empty means empty: never a demo/view-as substitute.
+ * @param {{status:string, agents:Array}} discovery
+ * @param {{vault?: string}} [opts]
+ * @returns {string[]}
+ */
+export function pickRecoverableVaultAgents(discovery, { vault } = {}) {
+  return pickDisplayAgents(discovery, { vault }).map((a) => a.address)
+}
+
+/**
+ * The exit scope a "leave everything" action may claim. `{ kind: 'all' }` is a completeness
+ * CLAIM — only `discovery.status === 'complete'` (every source proven gap-free/fresh/backfilled,
+ * see coverageProof in api/agent-index/indexer.js) may make it. Anything less is
+ * `{ kind: 'known-only' }`: still the full recoverable list this discovery can see, but the
+ * caller must say so explicitly rather than render it as "you're fully out".
+ * @param {{status:string, agents:Array}} discovery
+ * @param {{vault?: string}} [opts]
+ * @returns {{kind: 'all'|'known-only', agents: string[]}}
+ */
+export function buildBulkExitTarget(discovery, { vault } = {}) {
+  const agents = pickRecoverableVaultAgents(discovery, { vault })
+  return { kind: discovery?.status === 'complete' ? 'all' : 'known-only', agents }
 }

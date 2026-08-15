@@ -1,0 +1,1712 @@
+/* frontend/src/components/strategy/strategy.css
+ * Strategy Task 10 (Pocket Crew redesign, Wave 5). Every rule below is copied VERBATIM from the
+ * locked visual contract (docs/superpowers/specs/2026-07-23-pocket-crew-visual-contract.css,
+ * local-only, never imported directly) -- selectors, declarations, and values unchanged. Tokens
+ * (--pc-*) already live in frontend/src/design/pocket-crew.css (commit 208843d); this file adds
+ * no new hex/radius/spacing literal that duplicates one.
+ *
+ * Scope: only the contract sections StrategyRoute/StrategyProgress/PlanStage/ProtectStage
+ * actually render.
+ * Not ported here (out of this task's surface, or already covered elsewhere):
+ *   - .pc-app-shell/.pc-route-intro: the outer app shell belongs to the app frame (Foundation
+ *     Task 6), not this route's own content; StrategyRoute renders inside that shell, it does not
+ *     reproduce it. (.pc-route-header itself is now owned HERE -- Task 2, Pocket Crew design
+ *     alignment -- the route-level "Hire a crew, once." header + step counter that sits above the
+ *     stage tabs; see the rule below and StrategyRoute.jsx.)
+ *   - .pc-agent-mark(--hero), .pc-visually-hidden, the shared :focus-visible rule: already ported
+ *     into pocket-crew.css (Foundation Task 5/6/7) and loaded globally; re-declaring them here
+ *     would just be a duplicate, not a fix.
+ *   - .pc-network-badge img/svg, .pc-network-badge--compact, .pc-network-route,
+ *     .pc-button--danger, .pc-field > label, .pc-input, .pc-agent-lane-progress: no
+ *     compact/danger/icon/progress markup exists anywhere in Plan or Protect (Protect shows
+ *     nothing moving yet -- there is no in-flight worker progress to draw), so porting these
+ *     rules would be porting rules neither surface uses. (Task 11: .pc-protect-boundary,
+ *     .pc-protect-limit, and .pc-agent-lane themselves ARE now ported below -- Protect is
+ *     exactly the surface Task 10 reserved them for.)
+ *   - Grouped selectors that mix an unbuilt sibling surface's class with one of ours (e.g.
+ *     `.pc-allocation-list, .pc-agent-lanes, .pc-position-list, .pc-crew-list` or the
+ *     `.pc-strategy-layout, .pc-protect-boundary, .pc-money-hero` responsive collapse) are kept
+ *     WHOLE, selector list untouched -- splitting a locked selector list to drop classes this
+ *     task doesn't use would itself be an edit to a verbatim rule. The extra selectors are inert
+ *     until those routes exist.
+ */
+
+/* Strategy: Plan, Protect, Start. */
+.pc-strategy-stage-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+
+  /* Was `max-width: 560px` -- a constant with no relationship to anything it sits above, so it
+   * could only line up with the decision card by coincidence, and did not: measured 560px against
+   * the card's 530.3px at a 1440 window, the nav overhanging its own content by 29.7px. Derive it
+   * from the SAME tracks `.pc-strategy-layout` uses (8fr of an 8fr/4fr grid, minus one gap) so the
+   * two right edges cannot drift apart at any width. The gap literal is duplicated from
+   * `.pc-strategy-layout` below rather than hoisted to a custom property, because the nav and the
+   * layout are SIBLINGS under Foundation's `.pc-route-stack` -- there is no strategy-owned common
+   * ancestor to hang a variable on, and scoping one onto `.pc-route-stack` from this stylesheet is
+   * exactly the cross-route cascade contamination My Money Task 14 was bitten by. The pairing is
+   * held by a browser test that measures both right edges instead. */
+  width: calc((100% - clamp(24px, 4vw, 56px)) * 8 / 12);
+  border-bottom: 1px solid var(--pc-line);
+}
+
+/* Below 1024px `.pc-strategy-layout` collapses to a single `1fr` column (see the media query at the
+ * foot of this file), so the 8/12 derivation above stops describing anything and the nav takes the
+ * full stack width, matching the card again. */
+@media (max-width: 1023px) {
+  .pc-strategy-stage-nav {
+    width: 100%;
+  }
+}
+
+.pc-strategy-stage-nav > * {
+  min-height: var(--pc-touch-target);
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--pc-muted);
+  font-weight: 650;
+  text-align: left;
+}
+
+.pc-strategy-stage-nav > [aria-current='step'] {
+  border-bottom-color: var(--pc-harvest);
+  color: var(--pc-ink);
+}
+
+/* Fix (Task 2 review, Important 2): `.pc-route` was a plain block box with no gap of its own, so
+ * the new `.pc-route-header` (sibling of `.pc-route-stack`, both zero-margin) sat flush against
+ * the stage tabs below it. `display: grid` on `.pc-route` puts a single implicit column/row track
+ * -- with only ever one or two direct children (the header, then `.pc-route-stack`), both already
+ * block-level elements that stretched to the container's full inline size under the PREVIOUS block
+ * layout, `justify-items: stretch`'s default keeps that width unchanged; `gap` only inserts space
+ * BETWEEN rows, so the single-child harnesses several tests build (`.pc-route > .pc-route-stack`
+ * alone, no header) are unaffected -- verified against StrategyRoute.test.jsx's real-Chromium
+ * 320px/1240px guards and the equivalent harnesses in ProtectStage/StartStage/StrategyReceipt/
+ * strategyJourney tests, all still green. Reuses the same `--pc-route-gap` token
+ * `.pc-route-stack` already uses for its own internal gap (pocket-crew.css, with its own 36px
+ * override at <=767px) rather than inventing a second gap value for what is visually the same kind
+ * of vertical rhythm. */
+.pc-route {
+  display: grid;
+  gap: var(--pc-route-gap);
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  margin-inline: auto;
+  padding: var(--pc-route-gutter);
+}
+
+.pc-route-stack {
+  display: grid;
+  gap: var(--pc-route-gap);
+}
+
+.pc-start-stage {
+  display: grid;
+  gap: var(--pc-space-6);
+}
+
+/* Task 2 (Pocket Crew design alignment) -- the route-level header: the single h1 ("Hire a crew,
+ * once.") plus the "Step N of 3" counter for the current stage, sitting above StrategyProgress's
+ * tabs. Mirrors the mock's `.pc-rhead`. Mobile collapse (`grid-template-columns: 1fr`) is already
+ * carried by the locked `@media (max-width: 767px)` selector group at the foot of this file --
+ * `.pc-route-step`'s own mobile realignment lives there too, not duplicated here. */
+.pc-route-header {
+  display: grid;
+  grid-template-columns: minmax(0, 760px) minmax(180px, 1fr);
+  gap: var(--pc-space-8);
+  align-items: end;
+}
+
+.pc-route-title {
+  max-width: 15ch;
+  margin: 0 0 var(--pc-space-3);
+  font-size: var(--pc-type-page);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.pc-route-sub {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--pc-muted);
+  text-wrap: pretty;
+}
+
+.pc-route-step {
+  justify-self: end;
+  text-align: right;
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.pc-route-step-label {
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+  color: var(--pc-faint);
+}
+
+.pc-route-step-name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.pc-strategy-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 8fr) minmax(260px, 4fr);
+  gap: clamp(24px, 4vw, 56px);
+  align-items: start;
+}
+
+.pc-strategy-decision {
+  min-height: 420px;
+}
+
+.pc-strategy-question {
+  max-width: 13ch;
+  margin-bottom: var(--pc-space-6);
+  font-size: var(--pc-type-stage);
+  font-weight: 700;
+  line-height: var(--pc-leading-title);
+  letter-spacing: -0.035em;
+}
+
+.pc-strategy-amount {
+  width: 100%;
+
+  /* Was `border: 0` + a bare 2px underline on a transparent background, with no placeholder on the
+   * element either (PlanStage.jsx now supplies one). Rendered, that is a 434x120px transparent area
+   * carrying nothing at all: no boundary, no fill, no hint text -- zero signal that it is typeable,
+   * which is why it reads as plain text rather than a field. The 120px height is NOT a defect and is
+   * left alone: it follows `--pc-type-money` (76px), which the visual contract locks. */
+  border: 1px solid color-mix(in srgb, currentcolor 26%, transparent);
+  border-bottom: 2px solid currentcolor;
+  border-radius: var(--pc-radius-control) var(--pc-radius-control) 0 0;
+  padding: var(--pc-space-2) var(--pc-space-4) var(--pc-space-3);
+  background: color-mix(in srgb, currentcolor 5%, transparent);
+  color: currentcolor;
+  font-size: var(--pc-type-money);
+  font-variant-numeric: tabular-nums;
+  font-weight: 720;
+  letter-spacing: -0.055em;
+  line-height: 1;
+}
+
+.pc-strategy-aside {
+  display: grid;
+  gap: var(--pc-space-6);
+  padding-top: var(--pc-space-4);
+}
+
+/* Task 4 (Pocket Crew design alignment) -- the aside's live "plan so far" summary (PlanStage.jsx),
+ * first block inside `.pc-strategy-aside` above. Not a locked contract selector -- this route's
+ * own addition, new scoped rules. Most literals below reuse an exact-value --pc-* token (noted
+ * inline); a few genuinely have none and stay literal, same as this file's existing precedent
+ * (`.pc-amount-preset`'s comment above walks the same exercise):
+ *   - `.pc-aside-title`'s `font-size: 21px`: --pc-type-section is a `clamp(21px, 2vw, 28px)`, not
+ *     a static 21px value, so it is not an exact-value match; `font-weight: 650` and
+ *     `letter-spacing: -0.02em` have no matching token at all (-0.02em matches
+ *     `.pc-route-step-name`'s own un-tokenized letter-spacing above, same precedent).
+ *   - `.pc-fact-row`'s `min-height: 56px`: no spacing/control/touch-target token holds 56px, and
+ *     this row is a plain `<li>` (no button/input/a inside it), so pocket-crew.css's global 44px
+ *     touch-target floor (`:where(button, [role='button'], a[href], summary, input, select,
+ *     textarea)`) does not select it in the first place -- nothing here opts out of that floor.
+ *   - `.pc-fact-value`'s `font-size: 15px` / `font-weight: 700`: no 15px token exists; no
+ *     font-weight token exists anywhere in this file (`.pc-button`/`.pc-route-title` above, both
+ *     literal too).
+ *   - `.pc-provenance`'s `font-weight: 620`: no font-weight token exists, but this exact value is
+ *     already the established literal `.pc-network-badge`/`.pc-source-badge` above both use.
+ */
+.pc-plan-so-far {
+  display: grid;
+  gap: var(--pc-space-1);
+}
+
+.pc-aside-title {
+  margin: 0 0 var(--pc-space-2);
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.pc-fact-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pc-fact-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--pc-space-4);
+  align-items: center;
+  min-height: 56px;
+  padding-block: var(--pc-space-3);
+  border-bottom: 1px solid var(--pc-line);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-fact-row:last-child {
+  border-bottom: 0;
+}
+
+.pc-fact-dot {
+  display: block;
+  width: var(--pc-space-2);
+  height: var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-line-strong);
+}
+
+.pc-fact-dot--harvest {
+  background: var(--pc-harvest);
+}
+
+.pc-fact-value {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin: var(--pc-space-3) 0 0;
+  font-size: var(--pc-type-label);
+  font-weight: 620;
+  color: var(--pc-muted);
+}
+
+.pc-vault-advisor {
+  display: grid;
+  gap: var(--pc-space-2);
+  padding-top: var(--pc-space-6);
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-vault-advisor-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--pc-space-4);
+}
+
+.pc-vault-advisor-head .pc-aside-title {
+  margin-bottom: var(--pc-space-2);
+}
+
+.pc-vault-advisor-status {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin: 0;
+  font-size: var(--pc-type-body-small);
+  font-weight: 650;
+}
+
+.pc-vault-advisor-status > span {
+  width: var(--pc-space-2);
+  height: var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-focus);
+}
+
+.pc-vault-advisor-detail {
+  margin: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  line-height: 1.5;
+}
+
+.pc-vault-advisor-action {
+  flex: none;
+  min-height: var(--pc-touch-target);
+  padding-inline: var(--pc-space-4);
+  font-size: var(--pc-type-label);
+}
+
+/* Surface hierarchy. These are roles, not a reusable card grid. */
+.pc-dominant {
+  position: relative;
+  overflow: clip;
+  border-radius: var(--pc-radius-dominant);
+  padding: var(--pc-dominant-padding);
+  box-shadow: var(--pc-shadow-dominant);
+}
+
+.pc-dominant--decision {
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-support {
+  border-radius: var(--pc-radius-support);
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+}
+
+.pc-allocation-list,
+.pc-agent-lanes,
+.pc-position-list,
+.pc-crew-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pc-allocation-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--pc-space-4);
+  align-items: center;
+  padding-block: var(--pc-space-4);
+  border-bottom: 1px solid currentcolor;
+  border-bottom-color: rgb(23 37 31 / 22%);
+}
+
+/* Task 11 -- Protect. Ported verbatim from the contract (lines 583-603); Task 10 explicitly left
+ * these three unported because Plan never renders them ("this surface never renders an element
+ * carrying these classes") -- Protect is exactly the surface they were reserved for. */
+.pc-protect-boundary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(260px, 0.7fr);
+  gap: var(--pc-space-8);
+}
+
+.pc-protect-limit {
+  border-radius: var(--pc-radius-support);
+  padding: var(--pc-space-6);
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+}
+
+.pc-agent-lane {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(96px, auto);
+  gap: var(--pc-space-4);
+  align-items: center;
+  min-height: 76px;
+  border-bottom: 1px solid var(--pc-line);
+}
+
+/* Task 6 (Pocket Crew design alignment) -- Protect's own addition, not a locked contract selector:
+ * the boundaries list, the eligibility background-check rows, and the right-column ceiling card.
+ * Every literal below was checked against the token scales in pocket-crew.css first; most have an
+ * exact-value match and are tokenized. The ones that do not (documented per rule, same convention
+ * `.pc-plan-so-far`'s comment above already established):
+ *   - `.pc-boundary-list`'s `margin: 0 0 28px`: the --pc-space-* scale steps 24px/32px; 28px sits
+ *     between, no exact match.
+ *   - `.pc-boundary-list`'s own `gap: 14px` and `.pc-candidate-row`'s `padding-block: 14px`: the
+ *     --pc-space-* scale steps 12px/16px; 14px sits between. (--pc-type-body-small is 14px, but
+ *     that is a font-size token -- reusing it for a gap/padding value would be a mismatched-category
+ *     "match" this file has no other precedent for, so it stays literal like `.pc-fact-row`'s own
+ *     un-matched 56px above.)
+ *   - `.pc-candidate-dot`'s `width`/`height: 10px`: the --pc-space-* scale steps 8px/12px; no exact
+ *     match. `transform: rotate(45deg)` is the diamond-marker shape itself, not a token category.
+ *   - `.pc-candidate-name`'s `font-size: 15px` / `font-weight: 650`: no 15px token exists (same as
+ *     `.pc-fact-value`'s own un-matched 15px above); no font-weight token exists anywhere in this
+ *     file.
+ *   - `.pc-candidate-reason`'s `margin-top: 2px`: matches `.pc-route-step`'s own un-tokenized
+ *     `gap: 2px` precedent above, not the --pc-space-* scale (smallest step is 4px).
+ *   - `.pc-ceiling-rows li`'s border-bottom `rgb(23 37 31 / 18%)`: the same un-tokenized
+ *     `--pc-field`-RGB-triple idiom `.pc-allocation-row`/`.pc-amount-preset` above already use for
+ *     their own opacity values (22%/30%) -- no token holds this specific opacity either. Fix round 1
+ *     -- F1 (review finding): this literal is only correct on `.pc-protect-limit`'s light Rice
+ *     surface; `.pc-support .pc-ceiling-rows li` now overrides it to `var(--pc-line)` (see that
+ *     rule's own comment below) since `.pc-support` can be the near-black forest surface.
+ *   - `.pc-ceiling-rows li span:last-child`'s `font-weight: 700`: no font-weight token, same as
+ *     every other literal font-weight in this file.
+ *   - `.pc-ceiling-total`'s own addition (the brief only gave verbatim CSS for the row list, not
+ *     the "big amount on top" line above it): reuses --pc-type-section/700 rather than inventing a
+ *     new scale step. Final-review fix (bundled with F2): split into a `--pc-type-label`/`--pc-muted`
+ *     caption over a `--pc-type-section`/700/tabular-nums amount -- matches the mock's "small
+ *     caption above a big amount" shape instead of one uniform-size line. Tokens only.
+ */
+.pc-boundary-list {
+  list-style: none;
+  margin: 0 0 28px;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+  max-width: 60ch;
+}
+
+.pc-boundary-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--pc-space-3);
+  align-items: start;
+  font-size: var(--pc-type-body);
+  text-wrap: pretty;
+}
+
+.pc-boundary-list li::before {
+  content: '';
+  width: var(--pc-space-2);
+  height: var(--pc-space-2);
+  margin-top: var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-harvest);
+}
+
+.pc-section-sub {
+  margin: 0 0 var(--pc-space-3);
+  max-width: 56ch;
+  font-size: var(--pc-type-body-small);
+  color: var(--pc-muted);
+}
+
+/* Same on-Harvest failure family as the candidate-row override below (audit item #6): 1.76:1. */
+.pc-dominant--decision .pc-section-sub {
+  color: var(--pc-owned-muted);
+}
+
+.pc-candidate-list {
+  list-style: none;
+  margin: 0 0 var(--pc-space-6);
+  padding: 0;
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-candidate-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--pc-space-4);
+  align-items: center;
+  min-height: var(--pc-space-16);
+  padding-block: 14px;
+  border-bottom: 1px solid var(--pc-line);
+}
+
+.pc-candidate-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg);
+  background: var(--pc-harvest);
+}
+
+.pc-candidate-row[data-eligible='false'] .pc-candidate-dot {
+  background: var(--pc-danger);
+}
+
+.pc-candidate-row[data-eligible='false'] .pc-candidate-name {
+  text-decoration: line-through;
+}
+
+.pc-candidate-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+/* Fix round 1 -- F5 (review finding): `chain` needed its own visibly distinct treatment from the
+ * protocol name so two same-protocol, different-chain rows read as different at a glance. Reuses
+ * `--pc-type-label`/`--pc-muted` (the same pair `.pc-provenance`/`.pc-network-badge` above already
+ * use for secondary metadata) and the `font-weight: 620` literal those two rules already established
+ * (no font-weight token exists anywhere in this file) -- no new literal introduced.
+ */
+.pc-candidate-chain {
+  font-size: var(--pc-type-label);
+  font-weight: 620;
+  color: var(--pc-muted);
+}
+
+.pc-candidate-reason {
+  margin: 2px 0 0;
+  max-width: 56ch;
+  font-size: var(--pc-type-body-small);
+  color: var(--pc-muted);
+}
+
+.pc-candidate-badge {
+  font-family: var(--pc-font-mono);
+  font-size: var(--pc-type-technical);
+  white-space: nowrap;
+  color: var(--pc-harvest);
+}
+
+.pc-candidate-row[data-eligible='false'] .pc-candidate-badge {
+  color: var(--pc-danger);
+}
+
+/* 2026-08-02 polish (audit item #6): the candidate list sits on `.pc-dominant--decision`'s light
+ * Harvest surface, where the dark-canvas calibrations above fail hard -- measured: --pc-muted on
+ * #DFF56C is 1.76:1, --pc-danger on #DFF56C is 2.61:1, and a --pc-harvest dot/badge on the same
+ * Harvest fill is literally invisible (1:1), so the PASSED row lost its marker exactly where the
+ * safety evidence matters. Same fix family as my-money.css's `.pc-dominant--owned` overrides and
+ * this file's own I1 precedent: swap to the on-light pairs (--pc-owned-muted 5.41:1,
+ * --pc-danger-on-light 5.03:1, --pc-harvest-ink 13.18:1 -- all AA on Harvest), scoped to the
+ * decision surface only. */
+.pc-dominant--decision .pc-candidate-dot {
+  background: var(--pc-harvest-ink);
+}
+
+.pc-dominant--decision .pc-candidate-row[data-eligible='false'] .pc-candidate-dot {
+  background: var(--pc-danger-on-light);
+}
+
+.pc-dominant--decision .pc-candidate-chain,
+.pc-dominant--decision .pc-candidate-reason {
+  color: var(--pc-owned-muted);
+}
+
+.pc-dominant--decision .pc-candidate-badge {
+  color: var(--pc-harvest-ink);
+}
+
+.pc-dominant--decision .pc-candidate-row[data-eligible='false'] .pc-candidate-badge {
+  color: var(--pc-danger-on-light);
+}
+
+.pc-ceiling-total {
+  margin: 0 0 var(--pc-space-2);
+  display: grid;
+  gap: var(--pc-space-1);
+}
+
+.pc-ceiling-total-label {
+  font-size: var(--pc-type-label);
+  font-weight: 500;
+  color: var(--pc-muted);
+}
+
+.pc-ceiling-total-amount {
+  font-size: var(--pc-type-section);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-ceiling-rows {
+  list-style: none;
+  margin: var(--pc-space-5) 0 0;
+  padding: 0;
+}
+
+.pc-ceiling-rows li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+  padding-block: var(--pc-space-3);
+  border-bottom: 1px solid rgb(23 37 31 / 18%);
+  font-size: var(--pc-type-body-small);
+}
+
+/* Fix round 1 -- F1 (review finding): the literal above is a dark-ink line tuned for
+ * `.pc-protect-limit`'s always-light Rice surface (--pc-owned, Task 11 -- Protect). The SAME rule
+ * also styles `.pc-support`'s rows, but `.pc-support`'s background is --pc-workspace, which in the
+ * default forest theme is near-black (--pc-grove) -- the identical dark-ink-at-18% line is then
+ * effectively invisible over it. `.pc-support` is the FIRST-RUN default path (a fresh grant, no
+ * existing permission to reuse yet), so the common case shipped four separator-less rows. Unlike
+ * the `.pc-allocation-row`/`.pc-amount-preset` literal-RGB precedent this rule originally followed
+ * (both only ever sit on a light surface), this rule now spans two surfaces of opposite polarity, so
+ * the literal-RGB idiom does not transfer here. `--pc-line` is the token calibrated per-theme for
+ * exactly this general-purpose divider role (forest rgb(242 245 239/16%), day-field
+ * rgb(23 37 31/16%)) -- correct on both surfaces regardless of theme, so `.pc-support`'s rows get
+ * the token override while `.pc-protect-limit`'s keep the Rice-tuned literal above. */
+.pc-support .pc-ceiling-rows li {
+  border-bottom-color: var(--pc-line);
+}
+
+.pc-ceiling-rows li:last-child {
+  border-bottom: 0;
+}
+
+.pc-ceiling-rows li span:last-child {
+  font-weight: 700;
+}
+
+.pc-network-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  color: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+/* Task 12 -- Start. Ported verbatim from the contract (lines 605-618); Task 10 explicitly left this
+ * unported because "no in-flight worker progress exists to draw" on Plan/Protect -- Start is
+ * exactly the surface it was reserved for. */
+.pc-agent-lane-progress {
+  height: 6px;
+  margin-top: var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  background: color-mix(in srgb, currentcolor 24%, transparent);
+  overflow: hidden;
+}
+
+.pc-agent-lane-progress > span {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: currentcolor;
+  transform-origin: left center;
+}
+
+/* Width is a discrete, event-backed value. The component only mounts this element when the
+ * adapter has one of the four canonical milestones, so no CSS state can invent progress. */
+.pc-agent-lane-progress[data-progress='0'] > span {
+  width: 0%;
+}
+
+.pc-agent-lane-progress[data-progress='22'] > span {
+  width: 22%;
+}
+
+.pc-agent-lane-progress[data-progress='66'] > span {
+  width: 66%;
+}
+
+.pc-agent-lane-progress[data-progress='100'] > span {
+  width: 100%;
+}
+
+/* Task 12 -- Start's custody receipt. `.pc-dominant--owned` (Rice) is ported verbatim from the
+ * contract (lines 308-311) -- unused by Plan/Protect (neither surface has confirmed, settled
+ * money to show), but exactly the role a settled receipt's reconciled totals earn (checklist item
+ * 4: Rice is reserved for user-owned or confirmed money). */
+.pc-dominant--owned {
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+}
+
+/* Task 12 -- Start's own addition: the receipt's two CTAs. Same flex-row shape as the contract's
+ * (not-yet-ported, My-Money-reserved) `.pc-money-actions` -- reused tokens, own selector so this
+ * file never reaches into a sibling route's reserved class before that route exists. */
+.pc-receipt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-6);
+}
+
+/* Task 7 (Pocket Crew design alignment) -- Start's own additions: the safety-rail list, the
+ * "what gets signed" disclosure, and the per-lane cap figure. Same discipline Task 6's own comment
+ * above (`.pc-boundary-list`/`.pc-candidate-*`) established: every literal checked against the
+ * token scales first; exact matches are tokenized, and the couple that are not follow the SAME
+ * already-established exceptions from that comment, not new ones:
+ *   - `.pc-safety-list`'s own `gap: 14px`: identical value to `.pc-boundary-list`'s own un-matched
+ *     14px (the --pc-space-* scale steps 12px/16px, no exact match) -- same literal, same reason.
+ *   - `.pc-signed-details summary`'s `font-weight: 650`: no font-weight token exists anywhere in
+ *     this file (same as every other literal font-weight here, e.g. `.pc-candidate-name` above).
+ * Everything else below has an exact --pc-* match and is tokenized, including the ones the brief's
+ * own verbatim CSS wrote as raw px (12px/8px/16px/13px/12px/999px all have exact token matches).
+ *
+ * Fix round 1 (F2, review finding): `.pc-safety-panel` added -- the one wrapper block around the
+ * title/list/disclosure so `.pc-strategy-aside`'s own grid (gap 24px, 2 columns at 768-1023px, see
+ * that rule below) only ever sees ONE item for this whole panel, never three that can land in
+ * different columns/rows. Same `display: grid; gap: var(--pc-space-1)` PlanStage.jsx's own sibling
+ * `.pc-plan-so-far` already uses for the identical "title glued to what it labels" job -- own
+ * selector, not reaching into that class (same "own selector" precedent `.pc-receipt-actions`'
+ * comment above documents).
+ */
+.pc-safety-panel {
+  display: grid;
+  gap: var(--pc-space-1);
+}
+
+.pc-safety-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.pc-safety-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--pc-space-3);
+  align-items: start;
+  font-size: var(--pc-type-body-small);
+  color: var(--pc-muted);
+  text-wrap: pretty;
+}
+
+.pc-safety-list li::before {
+  content: '';
+  width: var(--pc-space-2);
+  height: var(--pc-space-2);
+  margin-top: var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-line-strong);
+}
+
+.pc-signed-details {
+  border-top: 1px solid var(--pc-line);
+  margin-top: var(--pc-space-4);
+  padding-top: var(--pc-space-4);
+}
+
+.pc-signed-details summary {
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+  color: var(--pc-faint);
+  cursor: pointer;
+}
+
+.pc-lane-cap {
+  margin: 0;
+  font-family: var(--pc-font-mono);
+  font-size: var(--pc-type-technical);
+  text-align: right;
+}
+
+.pc-start-stage .pc-strategy-question:focus {
+  outline: 0;
+}
+
+.pc-start-stage .pc-agent-lane {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  padding-block: var(--pc-space-5);
+  border-bottom-width: 2px;
+  border-bottom-color: color-mix(in srgb, currentcolor 34%, transparent);
+}
+
+.pc-start-stage .pc-agent-lane:first-child {
+  padding-top: 0;
+}
+
+.pc-start-stage .pc-agent-lane:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.pc-start-stage .pc-agent-mark {
+  margin-top: var(--pc-space-1);
+}
+
+.pc-agent-lane-body {
+  display: grid;
+  min-width: 0;
+  gap: var(--pc-space-3);
+}
+
+.pc-agent-lane-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+}
+
+.pc-lane-phase {
+  margin: 0;
+  font-size: var(--pc-type-body-small);
+  font-weight: 700;
+}
+
+.pc-start-stage .pc-agent-lane > .pc-button {
+  grid-column: 2;
+  justify-self: start;
+}
+
+/* Task 12 -- lanes render agent addresses/allocationIds and the receipt renders tx hashes and full
+ * contract addresses inside Technical details -- genuinely technical, whitespace-free strings.
+ * Same fix ProtectStage.jsx needed (its own comment above documents 617px/552px real-browser
+ * overflow before this rule existed) applied to this route's two new roots; `anywhere` is a
+ * keyword, not a duplicated hex/radius/spacing token, and a no-op for ordinary spaced copy. */
+.pc-start-stage,
+.pc-strategy-receipt {
+  overflow-wrap: anywhere;
+}
+
+/* Controls. Buttons are soft rectangles, not pills. Pills are reserved for compact metadata. */
+.pc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: max-content;
+  min-height: var(--pc-control-height);
+  padding: 0 var(--pc-space-6);
+  border: 1px solid transparent;
+  border-radius: var(--pc-radius-control);
+  font-size: var(--pc-type-body-small);
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform var(--pc-duration-fast) var(--pc-ease-standard),
+    background-color var(--pc-duration-fast) var(--pc-ease-standard),
+    border-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.pc-button--primary {
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-button--secondary {
+  border-color: var(--pc-line-strong);
+  background: transparent;
+  color: currentcolor;
+}
+
+.pc-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+
+.pc-button:disabled,
+.pc-button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.pc-field {
+  display: grid;
+  gap: var(--pc-space-2);
+}
+
+/* Fix loop 2 -- Minor (re-review finding): the comfort-level radiogroup had no layout rule, so
+ * the three buttons abutted with zero gap. Not a contract selector (this radiogroup is this
+ * task's own addition, not ported from the contract) -- a new, scoped rule using only existing
+ * spacing tokens. */
+.pc-comfort-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2);
+}
+
+.pc-comfort-group .pc-button {
+  min-height: var(--pc-touch-target);
+  padding-inline: var(--pc-space-4);
+  font-size: var(--pc-type-label);
+}
+
+.pc-amount-presets + .pc-comfort-group {
+  margin-top: var(--pc-space-5);
+}
+
+.pc-field-help,
+.pc-field-error {
+  margin: 0;
+  font-size: var(--pc-type-label);
+}
+
+.pc-field-help {
+  color: var(--pc-muted);
+}
+
+.pc-amount-presets ~ .pc-field-help {
+  margin-bottom: var(--pc-space-4);
+}
+
+.pc-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-4);
+}
+
+.pc-plan-actions .pc-button {
+  min-height: var(--pc-touch-target);
+  padding-inline: var(--pc-space-5);
+  font-size: var(--pc-type-label);
+}
+
+.pc-plan-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-4);
+}
+
+.pc-field-error {
+  color: var(--pc-danger);
+}
+
+.pc-plan-building .pc-status-notice {
+  border-width: 2px;
+}
+
+.pc-protect-failure .pc-status-notice,
+.pc-protect-failure .pc-button {
+  border-width: 2px;
+}
+
+.pc-protect-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-4);
+}
+
+.pc-plan-building-copy {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pc-space-4);
+  margin-bottom: var(--pc-space-3);
+}
+
+.pc-plan-building-message {
+  margin: 0;
+  font-weight: 650;
+}
+
+.pc-plan-building-elapsed {
+  min-width: 5ch;
+  color: var(--pc-owned-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-plan-building-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin: 0;
+}
+
+.pc-plan-building-progress .think-spin {
+  width: var(--pc-space-4);
+  height: var(--pc-space-4);
+  margin-left: 0;
+  border-width: 2px;
+  border-color: var(--pc-owned-muted);
+  border-top-color: var(--pc-harvest-ink);
+}
+
+/* Fix loop 1 -- I4/M4: the amount input previously carried only an aria-label (no visible
+ * label). Porting the contract's own (previously-unused, hence not-ported) `.pc-field > label`
+ * rule now that PlanStage.jsx actually renders one. */
+.pc-field > label {
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+/* Task 3 (Pocket Crew design alignment) -- quick amount-preset chips under the Plan card's amount
+ * field, and the read-only, DERIVED crew-count line under the risk group (PlanStage.jsx). Neither
+ * is a locked contract selector -- this route's own addition, new scoped rules. `gap`/`margin-top`
+ * reuse --pc-space-2/--pc-space-3 (8px/12px, exact token matches); `border-radius` reuses
+ * --pc-radius-round (999px); the two font-sizes reuse --pc-type-label/--pc-type-body-small (13px/
+ * 14px). fix loop 1 -- Important 3 (review finding): the brief's own `min-height: 38px` literal
+ * would have defeated pocket-crew.css:406-418's global `min-height: 44px` touch-target floor on
+ * touch/mobile -- that rule reaches every `button` via `:where(...)` (zero specificity), so this
+ * class's own (0,1,0) selector would win and opt these chips out of the same floor every sibling
+ * control obeys. `--pc-touch-target` (same token/convention this file already uses at line 63)
+ * both fixes that and gives min-height an exact token match, so nothing here is a bare literal
+ * needing this comment's usual exemption anymore. One literal still has no matching token: the
+ * crew line's `margin: 10px 0 0` (the --pc-space-* scale steps 8px/12px; 10px sits between, no
+ * exact match). The border tint reuses `.pc-allocation-row`'s own established, un-tokenized
+ * `rgb(23 37 31 / N%)` idiom above (23 37 31 is --pc-field's own RGB triple) -- no --pc-* token
+ * holds exactly 30%, same as that rule's own un-matched 22%. `font-weight: 700` also stays literal
+ * -- no font-weight token exists anywhere in this file (see `.pc-button`/`.pc-route-title` above,
+ * both literal too).
+ */
+.pc-amount-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2);
+  margin-top: var(--pc-space-3);
+}
+
+.pc-amount-preset {
+  min-height: var(--pc-touch-target);
+  padding: 0 var(--pc-space-3);
+  border: 1px solid rgb(23 37 31 / 30%);
+  border-radius: var(--pc-radius-round);
+  background: transparent;
+  color: var(--pc-harvest-ink);
+  font: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pc-amount-preset--active {
+  background: var(--pc-field);
+  color: var(--pc-rice);
+}
+
+.pc-crew-line {
+  margin: 10px 0 0;
+  font-size: var(--pc-type-body-small);
+  color: var(--pc-owned-muted);
+}
+
+/* Fix loop 1 -- C1 (review finding): `.pc-button--primary` (background: var(--pc-harvest)) sits
+ * directly on `.pc-dominant--decision` (background: var(--pc-harvest)) -- background-color ===
+ * surface background-color, so the primary CTA (and the selected comfort-level radio, which
+ * shares this exact class) is invisible. Fix is Field-on-Harvest: the contract's own two fixed
+ * ink extremes (--pc-field/--pc-rice), reused verbatim -- no new colour invented. This also fixes
+ * the selected radio "losing its outline": a filled Field pill now reads as clearly selected next
+ * to the outlined (`.pc-button--secondary`) unselected options, instead of vanishing into the
+ * surface. Longhand `background-color` (not the shorthand `background`) so this exact override
+ * doubles as a computed-style regression test (see PlanStage.test.jsx); no visual difference vs.
+ * the shorthand since no background-image is set anywhere in this chain. Scoped, new declaration
+ * -- the locked `.pc-button--primary`/`.pc-dominant--decision` rules above are untouched. */
+.pc-dominant--decision .pc-button--primary {
+  background-color: var(--pc-field);
+  color: var(--pc-rice);
+}
+
+.pc-dominant--decision
+  .pc-button--primary:where(:hover, :focus-visible):not(:disabled):not([aria-disabled='true']) {
+  border-color: var(--pc-field);
+  background-color: var(--pc-grove);
+  color: var(--pc-rice);
+}
+
+/* Foundation's global disabled rule (pocket-crew.css:348-353) sets the disabled ink to whichever
+ * shade fits the PAGE's overall theme (--pc-disabled), not the shade for THIS button's own
+ * (always-dark, Field) background -- in day-field theme that badly under-contrasts against our
+ * now-dark button. --pc-disabled-on-dark is the existing token calibrated for a dark surface
+ * regardless of overall theme. !important + higher specificity to beat Foundation's !important
+ * rule; Foundation's file is untouched. */
+.pc-dominant--decision .pc-button--primary:disabled,
+.pc-dominant--decision .pc-button--primary[aria-disabled='true'] {
+  color: var(--pc-disabled-on-dark) !important;
+}
+
+/* Fix loop 1 -- I1 (review finding), corrected in fix loop 2 -- N1 (re-review finding):
+ * `.pc-field-help`/`.pc-field-error` above are verbatim contract rules calibrated for the dark
+ * canvas, but this surface places them on the light Harvest fill (measured 2.41:1 in Chrome).
+ * Fix loop 1 re-scoped the `--pc-muted`/`--pc-danger` CUSTOM PROPERTIES themselves on
+ * `.pc-dominant--decision`, which fixed the two rules above but also leaked into every OTHER
+ * descendant reading those same tokens -- including AgentMark's state-badge glyph
+ * (`--pc-muted` for the `idle` state), which dropped from 7.48:1 to 2.44:1 and silently
+ * falsified the registered `forest.stateInk/idle` contrast invariant in src/design/contrast.js.
+ * Targeting the two rules directly instead has zero blast radius: nothing else in this surface
+ * reads `.pc-field-help`/`.pc-field-error`. */
+.pc-dominant--decision .pc-field-help {
+  color: var(--pc-owned-muted);
+}
+
+.pc-dominant--decision .pc-field-error {
+  color: var(--pc-danger-on-light);
+}
+
+/* Fix loop 1 -- I9 (review finding): the current step in StrategyProgress is `disabled` by
+ * design (see StrategyProgress.jsx's `canNavigate`), so Foundation's global disabled `!important`
+ * rule (pocket-crew.css:348-353) defeats this file's own locked current-step colour rule above,
+ * making the current step colour-identical to unreached ones. Scoped, higher-specificity
+ * override; Foundation's file is untouched. */
+.pc-strategy-stage-nav > [aria-current='step']:disabled {
+  color: var(--pc-ink) !important;
+}
+
+/* Wave 6 carry (owner decision #19): the scoped override that used to live here (`.pc-allocation-row
+ * .pc-technical-details-summary/-body { font-family: var(--pc-font-body) }`) is retired -- Foundation
+ * itself no longer defaults TechnicalDetails' summary/body to mono (pocket-crew.css:542-552 now
+ * default to the body face; mono moved to the `.pc-technical` value-level marker), so this route's
+ * agent-instructions textarea gets the correct face from the root default with no local override
+ * needed. Verified by measurement (ProtectStage/PlanStage real-stylesheet tests), not left as a
+ * guess -- see PlanStage.test.jsx's "friendly copy never renders in the mono face" test. */
+
+/* Task 11 -- Protect renders several genuinely technical, whitespace-free strings as plain text:
+ * session-key fingerprints and contract IDs inside TechnicalDetails, a full deployed agent address
+ * in the reuse receipt, and confirmed agent addresses in the success notice. Foundation's default
+ * `overflow-wrap: normal` leaves any of these as one unbreakable run, forcing the surface wider
+ * than a 320px viewport (reproduced in a real browser at 617px and 552px for two of the three; see
+ * ProtectStage.test.jsx's 320px guards). Rather than chase every individual spot with its own
+ * selector, this is set once, inherited (`overflow-wrap` is an inherited property), on this
+ * surface's own root class -- `anywhere` is a keyword, not a hex/radius/spacing literal, so this
+ * adds no duplicated token, and it is a no-op for ordinary space-separated copy. Scoped to
+ * `.pc-protect-stage` only; no other surface (including Plan, which shares `.pc-dominant--decision`
+ * with this one) is affected. */
+.pc-protect-stage {
+  overflow-wrap: anywhere;
+}
+
+/* Fix loop 1 -- M3 (review finding): the source/freshness badge is not a network mark, so it
+ * must not reuse the locked `.pc-network-badge` selector (which is meant to match nothing but a
+ * real network mark). Same declarations, own class -- no new literal, only re-used tokens. */
+.pc-source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding-inline: var(--pc-space-3);
+  border: 2px solid currentcolor;
+  border-radius: var(--pc-radius-round);
+  color: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+/* Fix loop 1 -- M1 (review finding): `.pc-support` deliberately carries no padding (a role, not
+ * a card), so its content touched the surface edge. A padded child, not an edit to the locked
+ * role rule above. */
+.pc-support-content {
+  padding: var(--pc-space-5);
+}
+
+/* The Stellar proof block carries live execution facts, so it gets stronger hierarchy than the
+ * generic supporting surface without becoming another dominant card. */
+.pc-stellar-truth {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  background: color-mix(in srgb, var(--pc-harvest) 4%, var(--pc-workspace));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--pc-ink) 10%, transparent);
+}
+
+.pc-stellar-truth::before {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 92px;
+  height: 4px;
+  background: var(--pc-harvest);
+  content: '';
+}
+
+.pc-stellar-truth .pc-support-content {
+  display: grid;
+  gap: var(--pc-space-5);
+  padding: var(--pc-space-6);
+}
+
+.pc-stellar-truth-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pc-stellar-truth-header h2 {
+  margin: 0;
+  font-size: var(--pc-type-section);
+  letter-spacing: -0.025em;
+}
+
+.pc-stellar-truth-status {
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+  font-size: var(--pc-type-label);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pc-stellar-truth-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: color-mix(in srgb, var(--pc-ink) 5%, transparent);
+}
+
+.pc-stellar-truth-facts p {
+  min-width: 0;
+  margin: 0;
+  padding: var(--pc-space-4);
+  font-size: var(--pc-type-body-small);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+.pc-stellar-truth-facts p + p {
+  border-left: 1px solid var(--pc-line);
+}
+
+.pc-stellar-truth-route {
+  display: grid;
+  gap: var(--pc-space-1);
+  padding-top: var(--pc-space-4);
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-stellar-truth-label,
+.pc-stellar-truth-route .pc-venue-truth-copy {
+  margin: 0;
+}
+
+.pc-stellar-truth-label {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+.pc-stellar-truth-route .pc-venue-truth-copy {
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+/* Strategy Task 14 fix loop N -- owner report, items 1/6/8. Two new, scoped flex rows (neither is
+ * a locked contract selector -- `.pc-plan-summary-header`/`.pc-plan-facts` don't exist in the
+ * contract at all, this route's own addition): the source badge, the optional Retry-live-check
+ * button, and the plan total amount were three bare inline siblings with no separating
+ * container, concatenating as "Live AI + live market checks100 USDC" with zero CSS gap (item 1).
+ * `.pc-plan-facts` holds the network/expiry/yield facts PlanStage.jsx now hoists out of every
+ * worker row into one shared line above the list (items 6/8) -- same reused tokens, same
+ * flex+gap shape, so both rows read consistently.
+ */
+.pc-planned-amount {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pc-space-2);
+}
+
+.pc-proof-label {
+  color: var(--pc-owned-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+.pc-plan-cap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pc-space-2);
+  margin: 0;
+}
+
+.pc-plan-isolation,
+.pc-plan-route {
+  margin: var(--pc-space-3) 0 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  text-wrap: pretty;
+}
+
+.pc-plan-summary-header,
+.pc-plan-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-3);
+  margin-bottom: var(--pc-space-4);
+}
+
+.pc-plan-summary-header .pc-money-freshness {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-left: var(--pc-space-2);
+  padding-inline: var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-field);
+  color: var(--pc-rice);
+  font-weight: 700;
+}
+
+.pc-plan-facts .network-badge,
+.pc-start-stage .network-badge,
+.pc-agent-lanes--review .network-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  min-height: 32px;
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border: 2px solid var(--pc-field);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-field);
+  color: var(--pc-rice);
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+.pc-plan-facts .network-mark,
+.pc-start-stage .network-mark,
+.pc-agent-lanes--review .network-mark {
+  display: block;
+  flex: none;
+  filter: brightness(0) invert(1);
+}
+
+.pc-plan-facts p {
+  margin: 0;
+}
+
+.pc-plan-yield-note {
+  width: fit-content;
+  margin: calc(-1 * var(--pc-space-2)) 0 var(--pc-space-5);
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border-left: 3px solid var(--pc-field);
+  color: var(--pc-owned-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+.pc-dominant--decision .pc-allocation-row {
+  border-bottom-width: 2px;
+  border-bottom-color: rgb(23 37 31 / 38%);
+}
+
+.pc-dominant--decision .pc-technical-details {
+  border-width: 2px;
+  border-color: rgb(23 37 31 / 38%);
+}
+
+/* Item 5 (owner report): the crew avatar previously centered against the WHOLE (tall,
+ * multi-line) row via the locked `.pc-allocation-row`'s own `align-items: center` above --
+ * floating in the middle of a block far taller than its own header line, reading as unattached to
+ * any one worker. Pinning it to the row's own start aligns it with the crew-name line that now
+ * leads each row's content, without touching the locked row rule itself (new descendant selector,
+ * only affects the mark).
+ */
+.pc-allocation-row > .pc-agent-mark,
+.pc-allocation-row > .pc-plan-agent-avatar {
+  align-self: start;
+}
+
+.pc-plan-agent-avatar {
+  display: block;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--pc-radius-control);
+}
+
+.pc-crew-avatar {
+  display: block;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: var(--pc-radius-control);
+}
+
+.pc-protect-bound-agent {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--pc-space-4);
+  align-items: start;
+  margin-top: var(--pc-space-5);
+}
+
+.pc-protect-bound-agent > div {
+  min-width: 0;
+}
+
+.pc-crew-syncing,
+.pc-lane-address {
+  margin: 0;
+}
+
+.pc-crew-syncing {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+}
+
+.pc-lane-address {
+  overflow-wrap: anywhere;
+}
+
+.pc-agent-lanes--review {
+  margin-top: var(--pc-space-8);
+  border-radius: var(--pc-radius-dominant);
+  padding: var(--pc-dominant-padding);
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+  box-shadow: var(--pc-shadow-dominant);
+}
+
+.pc-agent-lanes--review .pc-agent-lane {
+  grid-template-columns: auto minmax(0, 1fr);
+  padding-block: var(--pc-space-5);
+  border-bottom-width: 2px;
+  border-bottom-color: rgb(23 37 31 / 38%);
+}
+
+.pc-agent-lanes--review .pc-agent-lane:first-child {
+  padding-top: 0;
+}
+
+.pc-agent-lanes--review .pc-agent-lane:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.pc-agent-lanes--review .pc-agent-lane > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--pc-space-2);
+}
+
+.pc-agent-lanes--review p {
+  margin: 0;
+}
+
+.pc-protect-agent-avatar {
+  display: block;
+  width: 44px;
+  height: 44px;
+  align-self: start;
+  border-radius: var(--pc-radius-control);
+}
+
+.pc-agent-lanes--review .pc-technical-details {
+  margin-top: var(--pc-space-2);
+  border-width: 2px;
+  border-color: rgb(23 37 31 / 38%);
+}
+
+.pc-worker-name {
+  margin: 0 0 var(--pc-space-1);
+  font-weight: 650;
+}
+
+/* Item 2 (owner report), closing Strategy Task 14's own deferred m-4 finding
+ * (PlanStage.jsx:412's bare unstyled `<textarea>`). Measured in a real browser: this surface's
+ * root inherits `color-scheme: dark` (contract `:root`), so an unstyled textarea's UA-default
+ * background renders Chromium's dark form-control fill (measured rgb(59, 59, 59)) while author
+ * CSS gives it this surface's own dark ink (`color: inherit` in style.css, cascading down from
+ * `.pc-dominant--decision`'s `--pc-harvest-ink`) -- dark text on a near-black fill, exactly the
+ * "redacted bar" the owner saw, for both the placeholder-empty and filled states alike (both read
+ * off the same broken pair). `color-scheme: light` asks the UA for its LIGHT native chrome
+ * (scrollbar/resize-handle/selection) to match the always-light Harvest surface this control sits
+ * on regardless of the page's own dark color-scheme; explicit `background`/`color` (never
+ * `inherit`) reuse the exact tinted-surface-on-Harvest recipe `.pc-strategy-amount` above already
+ * established for the same surface -- no new literal invented.
+ */
+.pc-plan-textarea {
+  width: 100%;
+  height: calc(var(--pc-space-16) * 2);
+  min-height: calc(var(--pc-space-16) * 2);
+  margin-top: var(--pc-space-2);
+  border: 1px solid color-mix(in srgb, currentcolor 26%, transparent);
+  border-radius: var(--pc-radius-control);
+  padding: var(--pc-space-2) var(--pc-space-4);
+  background: color-mix(in srgb, currentcolor 5%, transparent);
+  color: currentcolor;
+  color-scheme: light;
+  font-size: var(--pc-type-body-small);
+  font-family: var(--pc-font-body);
+}
+
+/* Item 9 (owner report): `Accept plan` is the primary action of the whole reviewed-plan surface --
+ * full-width instead of shrink-to-content makes it read as the one dominant next step, consistent
+ * with the card's own money-first scale. */
+.pc-accept-plan-button {
+  width: 100%;
+  min-width: 0;
+  font-size: var(--pc-type-body);
+}
+
+.pc-plan-final-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+  gap: var(--pc-space-3);
+  align-items: stretch;
+  margin-top: var(--pc-space-6);
+}
+
+.pc-plan-final-actions--single {
+  grid-template-columns: 1fr;
+}
+
+.pc-plan-change-menu {
+  position: relative;
+}
+
+.pc-plan-change-menu > summary {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding-inline: var(--pc-space-2);
+  list-style: none;
+  font-size: var(--pc-type-label);
+  white-space: nowrap;
+}
+
+.pc-plan-change-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Drawn, not typed -- same reason as NetworkIdentity.jsx's route arrow: U+2304 is outside every
+   bundled Geist subset, so the glyph fell back to a machine-dependent system font and its box
+   differed between the machine that froze the visual baselines and CI. Borders are identical
+   everywhere. */
+.pc-plan-change-menu > summary::after {
+  content: '';
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
+  margin-left: var(--pc-space-2);
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-0.15em) rotate(45deg);
+}
+
+.pc-plan-change-options {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--pc-space-2));
+  z-index: var(--pc-z-popover);
+  display: grid;
+  gap: var(--pc-space-2);
+  min-width: 200px;
+  padding: var(--pc-space-2);
+  border: 2px solid var(--pc-field);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-rice);
+  color: var(--pc-field);
+}
+
+.pc-plan-change-options .pc-button {
+  width: 100%;
+  min-width: 0;
+}
+
+.pc-plan-reset-button {
+  border-width: 2px;
+  border-color: var(--pc-danger-on-light);
+  color: var(--pc-danger-on-light);
+}
+
+.pc-protect-check-button {
+  margin-top: var(--pc-space-4);
+}
+
+.pc-protect-review-summary {
+  display: grid;
+  gap: var(--pc-space-2);
+  margin-bottom: var(--pc-space-5);
+}
+
+.pc-protect-review-summary p {
+  margin: 0;
+}
+
+.pc-protect-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+}
+
+.pc-strategy-layout .pc-dialog-panel {
+  border: 2px solid var(--pc-line-strong);
+}
+
+/* Tablet. Supporting context moves below the dominant surface. */
+@media (max-width: 1023px) {
+  .pc-strategy-layout,
+  .pc-protect-boundary,
+  .pc-money-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .pc-strategy-aside {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Mobile. Asymmetry collapses to one column and all actions remain reachable. */
+@media (max-width: 767px) {
+  .pc-route {
+    padding-bottom: calc(var(--pc-space-20) + env(safe-area-inset-bottom));
+  }
+
+  .pc-route-header,
+  .pc-strategy-layout,
+  .pc-protect-boundary,
+  .pc-money-hero,
+  .pc-money-section {
+    grid-template-columns: 1fr;
+    gap: var(--pc-space-6);
+  }
+
+  /* Task 2 -- the step counter right-aligns against the title on desktop (.pc-route-step above);
+   * once the header collapses to one column just above, right-aligned text would sit stranded
+   * under the title instead of reading as its continuation, so it re-joins the same left edge. */
+  .pc-route-step {
+    justify-self: start;
+    text-align: left;
+  }
+
+  .pc-strategy-aside {
+    grid-template-columns: 1fr;
+  }
+
+  /* Task 11 -- the Plan so far facts retain three desktop tracks, but the long Autofarm/Blend
+   * label can be starved by its value at 320px. Keep the dot and label in the first row, then
+   * place the value beneath the label in the same flexible second track. The existing spacing and
+   * track tokens preserve the desktop anatomy without clipping or hiding any copy. */
+  .pc-fact-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pc-fact-value {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+    min-width: 0;
+  }
+
+  .pc-strategy-decision {
+    min-height: 360px;
+  }
+
+  /* Fix loop 3 -- G1 (re-review finding): the contract's own `.pc-button` locks
+   * `min-width: max-content; white-space: nowrap` (contract:349,358, ported verbatim above).
+   * On the disconnected first-visit input phase, `Connect to check Base testnet` (29 chars) is
+   * a 261px intrinsic button; plus this surface's 24px mobile padding on each side, that is a
+   * 309px min-content width forced onto `.pc-strategy-decision`'s single `1fr` grid track (its
+   * min-width defaults to `auto`, i.e. "at least my widest child's min-content"), so the whole
+   * dominant surface -- not just the button -- grows to 309px against `.pc-route`'s 288px content
+   * box at a 320px device, and `document.documentElement.scrollWidth` measures 325. Nothing is
+   * clipped (`.pc-dominant { overflow: clip }` never engages -- the box itself grew, there is no
+   * overflow to clip), so the fix is to stop forcing that min-content width on THIS surface's own
+   * buttons at this breakpoint, not to clip. Letting the label wrap keeps every word visible.
+   * Scoped to `.pc-dominant--decision` only; the contract's own `.pc-button` rule above is
+   * untouched (verbatim, unedited) and every other surface still gets the locked nowrap/max-content
+   * behavior. See PlanStage.test.jsx's G1 regression guard. */
+  .pc-dominant--decision .pc-button {
+    min-width: 0;
+    white-space: normal;
+  }
+
+  /* I-2 (Strategy Task 14 fix round 1, reviewer finding): the contract's own mobile collapse for
+   * `.pc-position-row, .pc-crew-row, .pc-agent-lane` (contract:610-618, two columns + the action
+   * item repositioned to column 2) was never ported for `.pc-agent-lane` specifically -- at a real
+   * mobile width the desktop `auto minmax(0, 1fr) minmax(96px, auto)` template still reserved a
+   * fixed 96px action column, starving the content track down to ~128px and forcing a 64-char tx
+   * hash into a ~54px-wide, 350px-tall single-character-per-line stack (no HORIZONTAL overflow at
+   * all, which is exactly why the 320px scrollWidth/rect-right guard could not see it -- this is
+   * the same class of defect turned ninety degrees).
+   *
+   * Verbatim `minmax(0, 1fr)` from the contract, NOT a hardcoded floor -- a first attempt at
+   * `minmax(200px, 1fr)` regressed into the OTHER direction of the same class of bug this file's
+   * own G1 comment above already documents: a grid item's `min-width` defaults to `auto` (never
+   * smaller than its content's min-content size), so a 200px floor on this track, inside
+   * `.pc-dominant`'s own 24px mobile padding, forced `.pc-dominant` itself past 320px
+   * (`overflow: clip` only clips painting, it does not relax a forced min-content layout size) --
+   * caught by `assertNoOverflowAt320` regressing to scrollWidth 328 on re-freeze. Dropping the
+   * fixed 96px THIRD column (not adding a floor to the second) is what actually fixes I-2: the
+   * content track now gets ALL remaining space after the mark, which is already meaningfully wider
+   * than the original 3-column ~128px -- verified against `assertNoVerticalTextTrap` below. */
+  .pc-agent-lane {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pc-agent-lane > :last-child {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  /* Task 12 -- Start's receipt actions stack full-width on mobile, same pattern as the contract's
+   * (not yet ported) `.pc-money-actions`/`.pc-dialog-actions` mobile collapse. */
+  .pc-receipt-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .pc-receipt-actions .pc-button {
+    width: 100%;
+  }
+
+  /* Same G1 rationale as `.pc-dominant--decision` above, applied to Rice's own dominant surface --
+   * the receipt's long agent addresses/tx hashes live inside Technical details (overflow-wrap
+   * handled there), but its own two action buttons still lock min-width/nowrap from the contract's
+   * base `.pc-button` rule and must not force this surface wider than a 320px viewport. */
+  .pc-dominant--owned .pc-button {
+    min-width: 0;
+    white-space: normal;
+  }
+}

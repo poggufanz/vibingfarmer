@@ -8,14 +8,16 @@
 // spikes/cctp-corridor/roundtrip.mjs's `stellarApproveAndBurn` (do not re-derive these constants
 // or the arg order — see spikes/cctp-corridor/addresses.md).
 import { rpcServer } from './client.js'
-import { NETWORK_PASSPHRASE } from './config.js'
+import {
+  NETWORK_PASSPHRASE,
+  STELLAR_TOKEN_MESSENGER_MINTER,
+  STELLAR_USDC_SAC,
+  CCTP_STELLAR_DOMAIN,
+  CCTP_BASE_DOMAIN,
+} from './config.js'
 
-// --- Proven testnet constants (spikes/cctp-corridor/addresses.md, confirmed live in SP0) ---
-export const STELLAR_TOKEN_MESSENGER_MINTER =
-  'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP'
-export const STELLAR_USDC_SAC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
-export const CCTP_STELLAR_DOMAIN = 27
-export const CCTP_BASE_DOMAIN = 6
+export { STELLAR_TOKEN_MESSENGER_MINTER, STELLAR_USDC_SAC, CCTP_STELLAR_DOMAIN, CCTP_BASE_DOMAIN }
+
 export const CCTP_MIN_FINALITY_STANDARD = 2000 // finalized, no fast-fee (default — safer than Fast)
 export const CCTP_MAX_FEE = 0n
 const APPROVE_ALLOWANCE_HEADROOM = 10n // approve 10x the burn amount, mirrors roundtrip.mjs's generosity

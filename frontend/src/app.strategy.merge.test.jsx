@@ -4,26 +4,18 @@
 // helpers that never touch browser globals. jsdom below, same as components.sidebar.test.jsx.
 import { describe, it, expect, vi } from 'vitest'
 import {
-  resolveBaseAvailability,
-  checkStoredBaseMandate,
   checkCircleUsdcFunding,
-  readStoredBaseMandate,
+  checkStoredBaseMandate,
   buildBaseLegContext,
 } from './mergeFlowHelpers.js'
 
 describe('merge flow helpers', () => {
-  it("returns the health-check PROMISE synchronously (overlaps with the caller's own work instead of serializing before it)", () => {
-    const { baseAvailable } = resolveBaseAvailability({ checkHealth: async () => true })
-    expect(baseAvailable).toBeInstanceOf(Promise)
-  })
-  it('baseAvailable mirrors relayer health, once awaited', async () => {
-    const { baseAvailable } = resolveBaseAvailability({ checkHealth: async () => true })
-    expect(await baseAvailable).toBe(true)
-    const { baseAvailable: baseAvailable2 } = resolveBaseAvailability({
-      checkHealth: async () => false,
-    })
-    expect(await baseAvailable2).toBe(false)
-  })
+  // Strategy Task 13 (decision log #22, obligation D): the two `resolveBaseAvailability`
+  // legacy-shape tests that lived here (`{checkHealth}`-only) are DELETED along with the
+  // migrated app.jsx call site and the now-removed `resolveLegacyBaseAvailability` branch —
+  // mergeFlowHelpers.test.js's 'resolveBaseAvailability — canonical bound-mandate contract'
+  // describe block covers the surviving `{mandate, connection, health}` contract, including that
+  // `baseAvailable` is a Promise resolved lazily.
   it('no wallet -> no base leg context', () => {
     expect(buildBaseLegContext({ connectedAddress: null, kitSignTransaction: vi.fn() })).toBeNull()
   })
@@ -35,114 +27,84 @@ describe('merge flow helpers', () => {
   })
 })
 
-describe('resolveBaseAvailability - fail-closed preflight (Task 7: mandate + funding gates)', () => {
-  it('healthy relayer, no mandate/funding gates supplied -> unaffected (backward compatible)', async () => {
-    const { baseAvailable } = resolveBaseAvailability({ checkHealth: async () => true })
-    expect(await baseAvailable).toBe(true)
-  })
-  it('relayer down short-circuits before the mandate/funding checks ever run', async () => {
-    const checkMandate = vi.fn(async () => true)
-    const checkFunding = vi.fn(async () => true)
-    const { baseAvailable } = resolveBaseAvailability({
-      checkHealth: async () => false,
-      checkMandate,
-      checkFunding,
-    })
-    expect(await baseAvailable).toBe(false)
-    expect(checkMandate).not.toHaveBeenCalled()
-    expect(checkFunding).not.toHaveBeenCalled()
-  })
-  it('healthy + mandate ok + funded -> available', async () => {
-    const { baseAvailable } = resolveBaseAvailability({
-      checkHealth: async () => true,
-      checkMandate: async () => true,
-      checkFunding: async () => true,
-    })
-    expect(await baseAvailable).toBe(true)
-  })
-  it('a stored-but-invalid mandate fails closed even though the relayer is healthy', async () => {
-    const { baseAvailable } = resolveBaseAvailability({
-      checkHealth: async () => true,
-      checkMandate: async () => false,
-      checkFunding: async () => true,
-    })
-    expect(await baseAvailable).toBe(false)
-  })
-  it('no Circle USDC funding fails closed even though everything else is fine', async () => {
-    const { baseAvailable } = resolveBaseAvailability({
-      checkHealth: async () => true,
-      checkMandate: async () => true,
-      checkFunding: async () => false,
-    })
-    expect(await baseAvailable).toBe(false)
-  })
-  it('a throwing check fails closed instead of surfacing an error', async () => {
-    const { baseAvailable } = resolveBaseAvailability({
-      checkHealth: async () => true,
-      checkMandate: async () => {
-        throw new Error('relayer blip')
+// Strategy Task 13 (decision log #22, obligation D): the 'resolveBaseAvailability - fail-closed
+// preflight (Task 7: mandate + funding gates)' describe block (the `{checkHealth, checkMandate,
+// checkFunding}` legacy shape) and the 'checkStoredBaseMandate' describe block (the unscoped
+// `{getMandateStatus, storage}` shape with no `stellarOwner`) are BOTH DELETED here, in the same
+// commit that migrates app.jsx's call site off them and removes the two overloads from
+// mergeFlowHelpers.js. checkStoredBaseMandate now REQUIRES `stellarOwner`; its owner-scoped
+// behavior (including the funding gate, now composed at the app.jsx integration layer via
+// `resolveBaseForPlan` rather than inside `resolveBaseAvailability` itself) is covered by
+// mergeFlowHelpers.test.js's 'checkStoredBaseMandate — owner-scoped gating' and
+// 'resolveBaseAvailability — canonical bound-mandate contract' describe blocks.
+
+describe('app owner-scoped v3 mandate boundary', () => {
+  it('rechecks one amount-free mandate identity and never reads a global approval blob', async () => {
+    const mandateId = '11'.repeat(16)
+    const kernelAddress = '0x0000000000000000000000000000000000000aa1'
+    const record = {
+      version: 3,
+      mandateId,
+      stellarOwner: 'GUSER',
+      kernelAddress,
+      sessionKeyAddress: '0x0000000000000000000000000000000000000bb2',
+      relayerOrigin: 'https://relayer.example',
+      validUntilSeconds: 9_999_999_999,
+      status: 'active',
+      bindingId: 'binding-1',
+      bindingHash: 'binding-hash-1',
+      reasonCodes: [],
+      expected: {},
+      observed: {
+        blockNumber: '100',
+        blockHash: `0x${'ab'.repeat(32)}`,
+        blockTime: 2_000_000_000,
+        implementation: '0x0000000000000000000000000000000000000cc3',
+        permission: { digest: 'permission-digest' },
+        activation: {
+          userOpHash: `0x${'33'.repeat(32)}`,
+          txHash: `0x${'44'.repeat(32)}`,
+          activatedAt: 2_000_000_000,
+        },
       },
-    })
-    expect(await baseAvailable).toBe(false)
-  })
-})
+      checks: Object.fromEntries(
+        [
+          'chain',
+          'owner',
+          'kernel',
+          'session',
+          'permission',
+          'policy',
+          'binding',
+          'origin',
+          'implementation',
+          'freshness',
+          'reconstruction',
+          'activation',
+        ].map((key) => [key, true])
+      ),
+    }
+    const values = new Map([
+      [`vf_base_mandate_v3:GUSER`, JSON.stringify(record)],
+      ['vf_base_mandate', JSON.stringify({ serializedApproval: 'MUST-NOT-BE-READ' })],
+    ])
+    const storage = {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      removeItem: vi.fn((key) => values.delete(key)),
+    }
+    const getMandateStatus = vi.fn(async () => record)
 
-describe('checkStoredBaseMandate', () => {
-  const fakeStorage = (initial = {}) => {
-    const m = new Map(Object.entries(initial))
-    return { getItem: (k) => (m.has(k) ? m.get(k) : null) }
-  }
-  it('no stored mandate -> false (mandate setup is its own per-window ceremony, never part of a run)', async () => {
-    const getMandateStatus = vi.fn()
-    const check = checkStoredBaseMandate({ getMandateStatus, storage: fakeStorage() })
-    expect(await check()).toBe(false)
-    expect(getMandateStatus).not.toHaveBeenCalled()
-  })
-  it('a stored mandate the relayer confirms valid -> true', async () => {
-    const getMandateStatus = vi.fn(async () => ({ valid: true }))
-    const storage = fakeStorage({
-      vf_base_mandate: JSON.stringify({ serializedApproval: 'APPROVAL-1' }),
+    expect(
+      await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' })()
+    ).toBe(true)
+    expect(getMandateStatus).toHaveBeenCalledWith(mandateId, {
+      stellarOwner: 'GUSER',
+      kernelAddress,
     })
-    const check = checkStoredBaseMandate({ getMandateStatus, storage })
-    expect(await check()).toBe(true)
-    expect(getMandateStatus).toHaveBeenCalledWith('APPROVAL-1')
-  })
-  it('a stored mandate the relayer rejects -> false', async () => {
-    const getMandateStatus = vi.fn(async () => ({ valid: false }))
-    const storage = fakeStorage({
-      vf_base_mandate: JSON.stringify({ serializedApproval: 'STALE' }),
-    })
-    const check = checkStoredBaseMandate({ getMandateStatus, storage })
-    expect(await check()).toBe(false)
-  })
-  it('a corrupt stored record self-heals to null -> false, same as nothing stored', async () => {
-    const getMandateStatus = vi.fn()
-    const check = checkStoredBaseMandate({
-      getMandateStatus,
-      storage: fakeStorage({ vf_base_mandate: '{not json' }),
-    })
-    expect(await check()).toBe(false)
-    expect(getMandateStatus).not.toHaveBeenCalled()
-  })
-})
-
-describe('readStoredBaseMandate', () => {
-  const fakeStorage = (initial = {}) => {
-    const m = new Map(Object.entries(initial))
-    return { getItem: (k) => (m.has(k) ? m.get(k) : null) }
-  }
-  it('parses the stored record', () => {
-    const storage = fakeStorage({
-      vf_base_mandate: JSON.stringify({ kernelAddress: '0xKERNEL', serializedApproval: 'A' }),
-    })
-    expect(readStoredBaseMandate(storage)).toEqual({
-      kernelAddress: '0xKERNEL',
-      serializedApproval: 'A',
-    })
-  })
-  it('null when nothing is stored, and null (never throws) on a corrupt record', () => {
-    expect(readStoredBaseMandate(fakeStorage())).toBeNull()
-    expect(readStoredBaseMandate(fakeStorage({ vf_base_mandate: '{not json' }))).toBeNull()
+    expect(storage.removeItem).toHaveBeenCalledWith('vf_base_mandate')
+    expect(JSON.stringify(getMandateStatus.mock.calls)).not.toMatch(
+      /MUST-NOT-BE-READ|serializedApproval/
+    )
   })
 })
 

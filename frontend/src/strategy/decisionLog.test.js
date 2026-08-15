@@ -228,3 +228,126 @@ describe('decisionLog store', () => {
     expect(s.byAgent.risk).toMatchObject({ DEPOSIT: 1, HOLD: 1 })
   })
 })
+
+// Pocket Crew "My money" Task 8: owner+network-scoped forms. The legacy single-argument calls
+// above must keep working unchanged — these cover the NEW scoped forms only.
+describe('decisionLog — owner+network scoped (Pocket Crew Task 8)', () => {
+  beforeEach(() => {
+    const store = {}
+    vi.stubGlobal('localStorage', {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => {
+        store[k] = String(v)
+      },
+      removeItem: (k) => {
+        delete store[k]
+      },
+    })
+  })
+
+  const ctxFor = (cycle, signal) => ({
+    cycle,
+    idea: { kind: 'rebalance', vaultName: 'V' },
+    state: { market: { turbulence: 'calm' } },
+    verdict: {
+      verdict: signal === 'DEPOSIT' ? 'keep' : 'discard',
+      resolvedBy: 'unanimous',
+      reason: null,
+      citedRules: [],
+      specialists: [
+        { role: 'yield', signal, confidence: 0.7, citedRules: [], concerns: [] },
+        { role: 'risk', signal, confidence: 0.7, citedRules: [], concerns: [] },
+        { role: 'market', signal, confidence: 0.7, citedRules: [], concerns: [] },
+      ],
+    },
+  })
+
+  it('records and reads back scoped to owner+network, newest-first', () => {
+    recordDecision('GOWNER', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    recordDecision('GOWNER', ctxFor(2, 'HOLD'), { network: 'stellar-testnet' })
+    const rows = getDecisions('GOWNER', { network: 'stellar-testnet' })
+    expect(rows).toHaveLength(2)
+    expect(rows[0].cycle).toBe(2)
+    expect(rows[1].cycle).toBe(1)
+  })
+
+  it('never reuses decision history across wallets', () => {
+    recordDecision('GOWNER_A', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    expect(getDecisions('GOWNER_B', { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('never reuses decision history across networks for the same owner', () => {
+    recordDecision('GOWNER', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    expect(getDecisions('GOWNER', { network: 'stellar-mainnet' })).toEqual([])
+  })
+
+  it('does not leak into or read from the legacy unowned bucket', () => {
+    recordDecision(ctxFor(1, 'DEPOSIT')) // legacy call — hidden bucket
+    expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+    recordDecision('GOWNER', ctxFor(2, 'HOLD'), { network: 'stellar-testnet' })
+    expect(getDecisions()).toHaveLength(1) // legacy bucket still only has its own row
+  })
+
+  it('drops a scoped write with no owner — never guesses whose decision log it is', () => {
+    recordDecision(null, ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('returns [] for a scoped read with no owner', () => {
+    expect(getDecisions(null, { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('clearDecisions(owner, {network}) empties only that bucket', () => {
+    recordDecision('GOWNER', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    recordDecision('OTHER', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    clearDecisions('GOWNER', { network: 'stellar-testnet' })
+    expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+    expect(getDecisions('OTHER', { network: 'stellar-testnet' })).toHaveLength(1)
+  })
+
+  // Fix 6 (minor, review loop 1): mirrors cycleJournal's fix exactly — a not-yet-loaded owner
+  // (explicit `undefined`) must never fall through to the legacy, unowned bucket.
+  it('does not fall through to the legacy bucket when owner is explicitly undefined (not omitted)', () => {
+    recordDecision(ctxFor(1, 'DEPOSIT')) // real legacy write
+    expect(getDecisions(undefined, { network: 'stellar-testnet' })).toEqual([])
+    clearDecisions(undefined, { network: 'stellar-testnet' }) // must not wipe the legacy bucket
+    expect(getDecisions()).toHaveLength(1)
+  })
+
+  // Fix 6 (minor, review loop 1): missing network must drop the write, matching riskWatchStore's
+  // policy — never invent an 'unknown' bucket that merges every network-less write for one owner.
+  it('drops a scoped write with no network — never invents a shared "unknown" bucket', () => {
+    recordDecision('GOWNER', ctxFor(1, 'DEPOSIT')) // no {network} at all — must be a true no-op
+    expect(getDecisions('GOWNER', {})).toEqual([])
+    expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('returns [] for a scoped read with no network', () => {
+    recordDecision('GOWNER', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    expect(getDecisions('GOWNER', {})).toEqual([])
+  })
+
+  // Fix 3 (minor, review loop 2): review loop 1 removed the try/catch around the scoped write on
+  // the premise that read()/write() already swallow everything themselves — that premise never
+  // accounted for buildDecisionRecord(ctx) itself, which destructures its parameter and throws on
+  // a null ctx. cycleJournal.js's and riskWatchStore.js's own removals were genuinely dead
+  // (`{...undefined}` cannot throw); this one was not.
+  it('never throws when the scoped ctx is null — restores the guard around buildDecisionRecord', () => {
+    expect(() => recordDecision('GOWNER', null, { network: 'stellar-testnet' })).not.toThrow()
+    expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  // Fix 4 (minor, review loop 2): the write side of the same arity bug the read side already
+  // hardened (see the `does not fall through to the legacy bucket when owner is explicitly
+  // undefined` test above). `ctx === undefined` cannot distinguish a true legacy call
+  // (`recordDecision(ctx)`, 1 argument) from a scoped call whose ctx just hasn't loaded yet
+  // (`recordDecision(owner, undefined, { network })`, 3 arguments) — the latter used to fall
+  // through and write a bogus record (built from destructuring the owner STRING) into the
+  // unowned legacy bucket.
+  it('never falls through to the legacy bucket when the scoped ctx is explicitly undefined', () => {
+    recordDecision(ctxFor(1, 'DEPOSIT')) // baseline real legacy write
+    expect(() => recordDecision('GOWNER', undefined, { network: 'stellar-testnet' })).not.toThrow()
+    expect(getDecisions()).toHaveLength(1) // legacy bucket untouched by the scoped call
+    expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([]) // nothing bogus landed here either
+  })
+})

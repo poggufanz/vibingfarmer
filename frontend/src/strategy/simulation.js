@@ -19,14 +19,28 @@ export const SCENARIOS = [
   { name: 'bear', apyDriftPct: -3.0, apyVolPct: 2.5, gasMultiplier: 1.5, weight: 0.25 },
 ]
 
-/** Weighted APY of an allocation: allocation-carried apy wins, else the universe observation. */
+/** Weighted APY of an allocation: allocation-carried apy wins, else the universe observation.
+ * Yield is nullable (venueTruth.js): an explicit `apy: null` means truthfully unknown/no-yield
+ * and contributes 0 here, same as a missing value always has — callers that need to distinguish
+ * "confirmed zero" from "no data" should use {@link hasUnknownYield} alongside this. */
 function blendApy(allocations, state) {
   const byAddr = new Map((state.universe || []).map((v) => [String(v.address).toLowerCase(), v]))
   return (allocations || []).reduce((s, a) => {
     const obs = byAddr.get(String(a.address).toLowerCase()) || {}
-    const apy = Number(a.apy != null ? a.apy : obs.apy) || 0
+    const apy = Number(a.apy !== undefined ? a.apy : obs.apy) || 0
     return s + (Number(a.allocation) || 0) * apy
   }, 0)
+}
+
+/** True when any allocation's resolved yield (its own `apy`, else the matching universe
+ * observation) is explicitly unknown (null). Pure — mirrors blendApy's resolution order. */
+export function hasUnknownYield(allocations, state) {
+  const byAddr = new Map((state.universe || []).map((v) => [String(v.address).toLowerCase(), v]))
+  return (allocations || []).some((a) => {
+    const obs = byAddr.get(String(a.address).toLowerCase()) || {}
+    const rawApy = a.apy !== undefined ? a.apy : obs.apy
+    return rawApy == null
+  })
 }
 
 /**
@@ -76,7 +90,8 @@ function distribution(values, alpha = 0.05) {
   const n = sorted.length || 1
   const mean = sorted.reduce((s, x) => s + x, 0) / n
   const variance = sorted.reduce((s, x) => s + (x - mean) ** 2, 0) / n
-  const pct = (p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))]
+  const pct = (p) =>
+    sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))]
   const profit = sorted.filter((x) => x > 0).length
   const { VaR, CVaR } = computeVarCvar(sorted, alpha)
   return {
@@ -153,7 +168,7 @@ function gasToUsdc(gwei) {
  * @param {Array<{address:string, allocation:number, apy?:number}>} allocations
  * @param {Object} state StrategyState
  * @param {{runs?:number, horizonDays?:number, seed?:number, entryGasUsdc?:number, context?:{turbulence?:string, apyTrendPct?:number, gasGwei?:number}}} [opts]
- * @returns {{scenarios:Array, expectedValue:number, probProfit:number, horizonDays:number, runs:number, capitalUsdc:number, context:Object}}
+ * @returns {{scenarios:Array, expectedValue:number, probProfit:number, horizonDays:number, runs:number, capitalUsdc:number, context:Object, projection:{state:'known'|'unavailable', value:number|null}}}
  */
 export function runSimulation(allocations, state, opts = {}) {
   const context = opts.context || {}
@@ -175,7 +190,8 @@ export function runSimulation(allocations, state, opts = {}) {
     scenarios.reduce((s, sc, i) => s + sc.mean * (Number(params[i].weight) || 0), 0) / totalWeight
   ).toFixed(2)
   const probProfit = +(
-    scenarios.reduce((s, sc, i) => s + sc.probProfit * (Number(params[i].weight) || 0), 0) / totalWeight
+    scenarios.reduce((s, sc, i) => s + sc.probProfit * (Number(params[i].weight) || 0), 0) /
+    totalWeight
   ).toFixed(3)
   const weightedVaR = +(
     scenarios.reduce((s, sc, i) => s + sc.VaR * (Number(params[i].weight) || 0), 0) / totalWeight
@@ -183,12 +199,19 @@ export function runSimulation(allocations, state, opts = {}) {
   const weightedCVaR = +(
     scenarios.reduce((s, sc, i) => s + sc.CVaR * (Number(params[i].weight) || 0), 0) / totalWeight
   ).toFixed(2)
+  // Additive, truthful signal alongside expectedValue (which stays numeric/unchanged for existing
+  // consumers): if any allocation's yield is unknown, the projection is honestly unavailable
+  // rather than letting a UI read a fabricated-from-zero expectedValue as a real projection.
+  const projection = hasUnknownYield(allocations, state)
+    ? { state: 'unavailable', value: null }
+    : { state: 'known', value: expectedValue }
   return {
     scenarios,
     expectedValue,
     probProfit,
     VaR: weightedVaR,
     CVaR: weightedCVaR,
+    projection,
     horizonDays: opts.horizonDays || DEFAULT_HORIZON_DAYS,
     runs: opts.runs || DEFAULT_RUNS,
     capitalUsdc: Number(state.capital?.amountUsdc) || 0,
@@ -203,14 +226,16 @@ export function runSimulation(allocations, state, opts = {}) {
 /**
  * Adapt the wizard's strategy.agents (USDC amounts) into normalized allocation
  * weights carrying each vault's APY. Mirrors how app.jsx builds the strategy.
- * @param {{total?:number, agents?:Array<{vault?:{addr?:string, apy?:string|number}, allocation?:number}>}} strategy
- * @returns {Array<{address:string, allocation:number, apy:number}>}
+ * A vault whose apy is explicitly `null` (a truthfully unavailable/no-yield venue) stays null
+ * here rather than being coerced to 0 — see {@link hasUnknownYield}/blendApy's null handling.
+ * @param {{total?:number, agents?:Array<{vault?:{addr?:string, apy?:string|number|null}, allocation?:number}>}} strategy
+ * @returns {Array<{address:string, allocation:number, apy:number|null}>}
  */
 export function allocationsFromStrategy(strategy) {
   const total = Number(strategy?.total) || 0
   return (strategy?.agents || []).map((a) => ({
     address: a.vault?.addr,
-    allocation: total ? +(((Number(a.allocation) || 0) / total)).toFixed(4) : 0,
-    apy: Number(a.vault?.apy) || 0,
+    allocation: total ? +((Number(a.allocation) || 0) / total).toFixed(4) : 0,
+    apy: a.vault?.apy == null ? null : Number(a.vault.apy) || 0,
   }))
 }

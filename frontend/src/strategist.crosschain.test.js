@@ -45,6 +45,17 @@ describe('chain-aware validateStrategyResponse', () => {
     const catalog = buildMergedCatalog({ baseAvailable: false })
     expect(() => validateStrategyResponse(mixedResponse(), catalog)).toThrow(/hallucinated/)
   })
+  it('forces the Base leg to expected_apy: null even when the model supplies a number, and keeps the Stellar leg', () => {
+    const catalog = buildMergedCatalog({ baseAvailable: true }).map((v, i) =>
+      i === 0 ? { ...v, address: STELLAR_ADDRESS } : v
+    )
+    const out = validateStrategyResponse(mixedResponse(), catalog)
+    expect(out.selected_vaults[1].expected_apy).toBeNull()
+    expect(out.selected_vaults[1].venueKind).toBe('base-custody-proxy')
+    expect(out.selected_vaults[0].expected_apy).toBe(4.8) // non-proxy leg keeps its supplied figure
+    expect(out.selected_vaults[0].venueKind).toBe('stellar-live')
+  })
+
   it('snaps an LLM-mangled address casing back to the catalog canonical string', () => {
     // LLMs mangle hex casing; a mixed-case address that fails EIP-55 is rejected by viem at
     // the first contract read (live 2026-07-20, mandate stage). Membership check is

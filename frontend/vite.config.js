@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -8,16 +9,64 @@ import stellarRelayProxy from './api/stellar-relay.js'
 import faucetProxy from './api/faucet.js'
 import vfRouter from './api/vf/_router.js'
 import onrampSessionProxy from './api/onramp-session.js'
+import vfCrossProxy from './api/vf-cross.js'
+import { withJsonBody } from './api/_viteAdapter.js'
+import agentIndexViteUnavailable from './api/agent-index-vite-unavailable.js'
+
+const vfCrossViteProxy = withJsonBody(vfCrossProxy)
+
+// Connect strips the mounted `/api/agent-index` prefix before invoking this middleware. The
+// browser imports the pure recovery decision module at `/api/agent-index/recovery.js`, so allow
+// only that exact GET path (plus Vite's cache-busting query) to continue into Vite's transform
+// pipeline. Every other Agent Index request remains fail-closed at the generic 503 handler,
+// including arbitrary `.js`-looking paths.
+function agentIndexViteUnavailableMiddleware(req, res, next) {
+  const requestUrl = typeof req?.url === 'string' ? req.url : ''
+  const requestPath = requestUrl.split('?', 1)[0]
+  if (req?.method === 'GET' && requestPath === '/recovery.js' && typeof next === 'function') {
+    return next()
+  }
+  return agentIndexViteUnavailable(req, res, next)
+}
 
 // Repo root (parent of frontend/) — needed below so the dev server's fs.allow boundary covers
 // frontend/src/stellar/vaultReads.js's cross-package import of keeper/src/apr.js.
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
+// ponytail: the newest reachable git tag IS the version — no version field to hand-edit, no
+// release bot. `git tag vX.Y.Z-beta` is the single bump. Shallow clones and tarball builds have
+// no tags, so fall back to 'dev' rather than baking a stale literal (CI must checkout with
+// fetch-depth: 0, see .github/workflows/frontend.yml). Upgrade path: if release notes ever need
+// generating too, add release-please — the commits are already Conventional Commits.
+const appVersion = (() => {
+  try {
+    return execFileSync('git', ['describe', '--tags', '--abbrev=0'], {
+      cwd: repoRoot,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+    })
+      .trim()
+      .replace(/^v/, '')
+  } catch {
+    return 'dev'
+  }
+})()
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '') // all vars (incl. non-VITE server-side)
-  if (env.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = env.DEEPSEEK_API_KEY
-  if (env.TAVILY_API_KEY) process.env.TAVILY_API_KEY = env.TAVILY_API_KEY
-  if (env.ALLOWED_ORIGIN) process.env.ALLOWED_ORIGIN = env.ALLOWED_ORIGIN
+  const passthrough = [
+    'DEEPSEEK_API_KEY',
+    'TAVILY_API_KEY',
+    'ALLOWED_ORIGIN',
+    'ALLOWED_EXTENSION_ORIGINS',
+    'NODE_ENV',
+    'TRUST_PROXY_HOPS',
+    'RELAYER_ORIGIN',
+    'RELAYER_PROXY_KEY',
+  ]
+  for (const key of passthrough) {
+    if (env[key]) process.env[key] = env[key]
+  }
 
   // Soroban gasless relay (sub-project 2) — server-side only, never in the client bundle.
   if (env.STELLAR_RELAYER_SECRET) process.env.STELLAR_RELAYER_SECRET = env.STELLAR_RELAYER_SECRET
@@ -35,8 +84,10 @@ export default defineConfig(({ mode }) => {
   // fail-closed passthrough discipline as the single-value vars above. Cloudflare Pages
   // (_pagesAdapter.js) already forwards ALL context.env keys unconditionally; only this
   // hand-rolled `vite dev` allowlist needed the three new keys added.
-  if (env.SOROBAN_ROUTER_ADDRESSES) process.env.SOROBAN_ROUTER_ADDRESSES = env.SOROBAN_ROUTER_ADDRESSES
-  if (env.SOROBAN_AGENT_WASM_HASHES) process.env.SOROBAN_AGENT_WASM_HASHES = env.SOROBAN_AGENT_WASM_HASHES
+  if (env.SOROBAN_ROUTER_ADDRESSES)
+    process.env.SOROBAN_ROUTER_ADDRESSES = env.SOROBAN_ROUTER_ADDRESSES
+  if (env.SOROBAN_AGENT_WASM_HASHES)
+    process.env.SOROBAN_AGENT_WASM_HASHES = env.SOROBAN_AGENT_WASM_HASHES
   if (env.SOROBAN_TOKEN_MESSENGER_ADDRESS)
     process.env.SOROBAN_TOKEN_MESSENGER_ADDRESS = env.SOROBAN_TOKEN_MESSENGER_ADDRESS
 
@@ -56,6 +107,8 @@ export default defineConfig(({ mode }) => {
   const apiProxyPlugin = {
     name: 'api-proxy',
     configureServer(s) {
+      s.middlewares.use('/api/vf-cross', vfCrossViteProxy)
+      s.middlewares.use('/api/agent-index', agentIndexViteUnavailableMiddleware)
       s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
@@ -64,6 +117,8 @@ export default defineConfig(({ mode }) => {
       s.middlewares.use('/api/onramp-session', onrampSessionProxy)
     },
     configurePreviewServer(s) {
+      s.middlewares.use('/api/vf-cross', vfCrossViteProxy)
+      s.middlewares.use('/api/agent-index', agentIndexViteUnavailableMiddleware)
       s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
@@ -76,6 +131,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), apiProxyPlugin],
     root: '.',
+    define: { 'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion) },
     build: {
       outDir: 'dist',
       rollupOptions: {

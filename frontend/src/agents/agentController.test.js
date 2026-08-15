@@ -17,12 +17,28 @@ vi.mock('../stellar/exit.js', () => ({
 vi.mock('./transactionStore.js', () => ({ saveTransaction: vi.fn() }))
 
 import { ownerWithdraw, sweepAgents } from '../stellar/exit.js'
-import { withdrawFromVault, withdrawAllFromVault } from './agentController.js'
+import {
+  withdrawFromVault as productionWithdrawFromVault,
+  withdrawAllFromVault as productionWithdrawAllFromVault,
+} from './agentController.js'
 
 const USER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const AGENT = 'CDWHNHIHYQ7YSJXFSNVKRJRAJNBS6XXQBGKB5UUFQAEXKFVHMOFKM77A'
 const VAULT = 'CDWHNHIHYQ7YSJXFSNVKRJRAJNBS6XXQBGKB5UUFQAEXKFVHMOFKM77A'
 const AGENTS = ['CA_ONE', 'CA_TWO', 'CA_THREE']
+const ACTIVE = Object.freeze({
+  version: 1,
+  kind: 'G',
+  address: USER,
+  networkPassphrase: 'Test SDF Network ; September 2015',
+  connectorId: 'freighter',
+  epoch: 9,
+})
+const ownerAuth = () => ({ activeAccount: ACTIVE, getCurrentActiveAccount: () => ACTIVE })
+const withdrawFromVault = (vault, amount, user, agent, auth = ownerAuth()) =>
+  productionWithdrawFromVault(vault, amount, user, agent, auth)
+const withdrawAllFromVault = (vault, user, agents, progress, auth = ownerAuth()) =>
+  productionWithdrawAllFromVault(vault, user, agents, progress, auth)
 
 beforeEach(() => {
   exitRouter = 'CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J'
@@ -34,8 +50,12 @@ beforeEach(() => {
 
 describe('withdrawFromVault', () => {
   it('sweeps the agent the caller names, to the user wallet', async () => {
-    await withdrawFromVault(VAULT, '1000', USER, AGENT)
-    expect(ownerWithdraw).toHaveBeenCalledWith({ owner: USER, agentAddress: AGENT, to: USER })
+    ownerWithdraw.mockResolvedValueOnce({ hash: 'h1', status: 'SUCCESS', channel: 'direct' })
+    const result = await withdrawFromVault(VAULT, '1000', USER, AGENT)
+    expect(ownerWithdraw).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: USER, agentAddress: AGENT, to: USER, activeAccount: ACTIVE })
+    )
+    expect(result).toMatchObject({ txHash: 'h1', status: 'SUCCESS', channel: 'direct' })
   })
 
   it('throws instead of falling back to a hardcoded demo agent', async () => {
@@ -43,6 +63,43 @@ describe('withdrawFromVault', () => {
     // made every withdraw target a stranger's account, fail on-chain, and report success.
     await expect(withdrawFromVault(VAULT, '1000', USER)).rejects.toThrow(/agent/i)
     expect(ownerWithdraw).not.toHaveBeenCalled()
+  })
+
+  it('forwards the owner-authorization model (activeAccount/getRelayerAddress/kit) to ownerWithdraw', async () => {
+    const activeAccount = ACTIVE
+    const getCurrentActiveAccount = () => activeAccount
+    const getRelayerAddress = vi.fn()
+    const kit = {}
+    await withdrawFromVault(VAULT, '1000', USER, AGENT, {
+      activeAccount,
+      getCurrentActiveAccount,
+      getRelayerAddress,
+      kit,
+    })
+    expect(ownerWithdraw).toHaveBeenCalledWith(
+      expect.objectContaining({ activeAccount, getCurrentActiveAccount, getRelayerAddress, kit })
+    )
+  })
+
+  it('fails closed without a complete V1 browser capability', async () => {
+    await expect(productionWithdrawFromVault(VAULT, '1000', USER, AGENT)).rejects.toMatchObject({
+      code: 'ACTIVE_ACCOUNT_CHANGED',
+    })
+    expect(ownerWithdraw).not.toHaveBeenCalled()
+  })
+
+  it('drops a completion when the account changes while ownerWithdraw is in flight', async () => {
+    let current = ACTIVE
+    ownerWithdraw.mockImplementationOnce(async () => {
+      current = Object.freeze({ ...ACTIVE, address: 'GOTHER', epoch: 10 })
+      return { hash: 'stale', status: 'SUCCESS' }
+    })
+    await expect(
+      productionWithdrawFromVault(VAULT, '1000', USER, AGENT, {
+        activeAccount: ACTIVE,
+        getCurrentActiveAccount: () => current,
+      })
+    ).rejects.toMatchObject({ code: 'ACTIVE_ACCOUNT_CHANGED' })
   })
 })
 
@@ -52,20 +109,24 @@ describe('withdrawAllFromVault — one-signature sweep', () => {
     sweepAgents.mockResolvedValue({
       swept: [10n, 20n, 30n],
       txHashes: ['sweep1', 'sweep1', 'sweep1'],
+      channels: ['relay', 'relay', 'relay'],
       errors: [],
     })
     const out = await withdrawAllFromVault(VAULT, USER, AGENTS)
     expect(sweepAgents).toHaveBeenCalledTimes(1)
-    expect(sweepAgents).toHaveBeenCalledWith({
-      owner: USER,
-      agentAddresses: AGENTS,
-      to: USER,
-    })
+    expect(sweepAgents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: USER,
+        agentAddresses: AGENTS,
+        to: USER,
+        activeAccount: ACTIVE,
+      })
+    )
     expect(ownerWithdraw).not.toHaveBeenCalled()
     expect(out).toEqual([
-      { agentAddress: 'CA_ONE', ok: true, txHash: 'sweep1' },
-      { agentAddress: 'CA_TWO', ok: true, txHash: 'sweep1' },
-      { agentAddress: 'CA_THREE', ok: true, txHash: 'sweep1' },
+      { agentAddress: 'CA_ONE', ok: true, txHash: 'sweep1', channel: 'relay' },
+      { agentAddress: 'CA_TWO', ok: true, txHash: 'sweep1', channel: 'relay' },
+      { agentAddress: 'CA_THREE', ok: true, txHash: 'sweep1', channel: 'relay' },
     ])
   })
 
@@ -106,6 +167,41 @@ describe('withdrawAllFromVault — one-signature sweep', () => {
     await expect(withdrawAllFromVault(VAULT, USER, [])).rejects.toThrow(/at least one agent/i)
     expect(sweepAgents).not.toHaveBeenCalled()
   })
+
+  it('Fix 1 (fix loop 1): passes a structured sweepAgents error straight through, not flattened to a string', async () => {
+    // exit.js's sweepChunk now reports {message, code, submission} instead of a bare string
+    // (Fix 1) so a post-sign relay loss survives to reach ownerActionOutcome. This is a pure
+    // passthrough here — errors[i] || <default string> — so it needed no code change, only this
+    // regression guard.
+    const structuredError = {
+      message: 'Lost contact with the relay after signing.',
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+    }
+    sweepAgents.mockResolvedValue({
+      swept: [0n, 20n, 30n],
+      txHashes: [undefined, 'sweep1', 'sweep1'],
+      errors: [structuredError, undefined, undefined],
+    })
+    const out = await withdrawAllFromVault(VAULT, USER, AGENTS)
+    expect(out[0].error).toBe(structuredError)
+  })
+
+  it('forwards the owner-authorization model (activeAccount/getRelayerAddress/kit) to sweepAgents', async () => {
+    const activeAccount = ACTIVE
+    const getCurrentActiveAccount = () => activeAccount
+    const getRelayerAddress = vi.fn()
+    const kit = {}
+    await withdrawAllFromVault(VAULT, USER, AGENTS, undefined, {
+      activeAccount,
+      getCurrentActiveAccount,
+      getRelayerAddress,
+      kit,
+    })
+    expect(sweepAgents).toHaveBeenCalledWith(
+      expect.objectContaining({ activeAccount, getCurrentActiveAccount, getRelayerAddress, kit })
+    )
+  })
 })
 
 describe('withdrawAllFromVault — per-agent fallback (exit router unset)', () => {
@@ -136,7 +232,24 @@ describe('withdrawAllFromVault — per-agent fallback (exit router unset)', () =
     const out = await withdrawAllFromVault(VAULT, USER, AGENTS)
     expect(ownerWithdraw).toHaveBeenCalledTimes(3)
     expect(out.map((r) => r.ok)).toEqual([true, false, true])
-    expect(out[1].error).toMatch(/not confirmed/i)
+    expect(out[1].error.message).toMatch(/not confirmed/i)
+  })
+
+  it('Fix 3 (fix loop 2): passes a structured owner_withdraw error straight through on the per-agent fallback too, not flattened to a string', async () => {
+    // Dormant on the shipped config (a real exitRouter is pinned), but this fallback is a live UI
+    // mode (WithdrawModal.jsx quotes N signatures for it) — a channel-level error here deserves the
+    // same code/submission fidelity Fix 1 (fix loop 1) already gave the sweep-router path, so
+    // ownerActionOutcome can still tell an unproven channel loss apart from a confirmed failure.
+    const structuredErr = Object.assign(new Error('Lost contact with the relay after signing.'), {
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+    })
+    ownerWithdraw
+      .mockResolvedValueOnce({ hash: 'h1', status: 'SUCCESS' })
+      .mockRejectedValueOnce(structuredErr)
+      .mockResolvedValueOnce({ hash: 'h3', status: 'SUCCESS' })
+    const out = await withdrawAllFromVault(VAULT, USER, AGENTS)
+    expect(out[1].error).toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' })
   })
 
   it('reports progress before each wallet popup', async () => {

@@ -5,8 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 const prefersReducedMotion = () =>
-  typeof window !== 'undefined' &&
-  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
 // easeOutExpo — fast start, long settle. Reads "alive" without bounce.
 const easeOutExpo = (t) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t))

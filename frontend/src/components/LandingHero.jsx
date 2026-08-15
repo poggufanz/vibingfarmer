@@ -52,7 +52,7 @@ const RUN_FLOW = [
 
 const PROOF = [
   { value: '1', label: 'wallet signature for the initial grant' },
-  { value: '0 XLM', label: 'paid by you on sponsored calls' },
+  { value: 'Sponsored', label: 'network fee on sponsored calls' },
   { value: '1 vault', label: 'maximum target per worker' },
   { value: '~6 sec', label: 'Lifeboat market scan cadence' },
 ]
@@ -67,7 +67,7 @@ const CAPITAL_PATH = [
 const landingEaseOut = [0.23, 1, 0.32, 1]
 const heroTransition = { duration: 0.5, ease: landingEaseOut }
 const revealTransition = { duration: 0.4, ease: landingEaseOut }
-const reducedRevealTransition = { duration: 0.2, ease: landingEaseOut }
+const reducedRevealTransition = { duration: 0 }
 
 const capitalPathVariants = {
   hidden: {},
@@ -81,7 +81,7 @@ function Reveal({ children, className = '', delay = 0, rise = false }) {
   return (
     <motion.div
       className={className}
-      initial={{ opacity: 0, transform }}
+      initial={reduceMotion ? false : { opacity: 0, transform }}
       whileInView={{ opacity: 1, transform: 'translateY(0px)' }}
       viewport={{ once: true, amount: 0.18 }}
       transition={{
@@ -112,7 +112,7 @@ function CapitalPath() {
     <motion.div
       className="vf-capital-path"
       variants={capitalPathVariants}
-      initial="hidden"
+      initial={reduceMotion ? false : 'hidden'}
       whileInView="visible"
       viewport={{ once: true, amount: 0.3 }}
     >
@@ -167,10 +167,10 @@ function Hero({ onStart, reduceMotion }) {
   }
 
   return (
-    <header className="vf-hero" data-xray>
+    <header className="vf-hero" data-landing-section="Hero">
       <motion.div
         className="vf-hero__copy"
-        initial="hidden"
+        initial={reduceMotion ? false : 'hidden'}
         animate="visible"
         variants={{
           hidden: {},
@@ -186,7 +186,7 @@ function Hero({ onStart, reduceMotion }) {
         </motion.h1>
         <motion.p className="vf-hero__lede" variants={itemVariants}>
           Set risk and a USDC budget. Scoped agents enter real Blend lending without repeated
-          approvals or XLM on sponsored calls.
+          approvals on sponsored calls. Network fee sponsored by fee-bump relay.
         </motion.p>
         <motion.div className="vf-hero__actions" variants={itemVariants}>
           <button className="vf-button vf-button--primary" onClick={onStart}>
@@ -200,7 +200,7 @@ function Hero({ onStart, reduceMotion }) {
 
       <motion.div
         className="vf-hero__media"
-        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, transform: 'translateX(32px)' }}
+        initial={reduceMotion ? false : { opacity: 0, transform: 'translateX(32px)' }}
         animate={{ opacity: 1, transform: 'translateX(0px)' }}
         transition={reduceMotion ? reducedRevealTransition : { ...heroTransition, delay: 0.16 }}
       >
@@ -227,7 +227,7 @@ function Hero({ onStart, reduceMotion }) {
           <em>fee-bump sponsor · allowlisted ops only</em>
         </div>
         <div className="vf-xray-box vf-xray-box--vault">
-          <span>vault.deposit → Blend v2</span>
+          <span>vault.deposit to Blend v2</span>
           <em>real testnet lending, not a mock drip</em>
         </div>
         <div className="vf-xray-tag">X-RAY // the machine under the marketing</div>
@@ -241,7 +241,7 @@ function Hero({ onStart, reduceMotion }) {
 
 function ProofStrip() {
   return (
-    <section className="vf-proof" aria-label="Product facts">
+    <section className="vf-proof" data-landing-section="ProofStrip" aria-label="Product facts">
       {PROOF.map((item) => (
         <div className="vf-proof__item" key={item.label}>
           <strong>{item.value}</strong>
@@ -254,7 +254,11 @@ function ProofStrip() {
 
 function ProblemSection() {
   return (
-    <section className="vf-section vf-problem" aria-labelledby="problem-title">
+    <section
+      className="vf-section vf-problem"
+      data-landing-section="ProblemSection"
+      aria-labelledby="problem-title"
+    >
       <Reveal className="vf-problem__statement" rise>
         <p className="vf-kicker">Why it exists</p>
         <h2 id="problem-title">Yield farming should not feel like clerical work.</h2>
@@ -280,7 +284,12 @@ function ProblemSection() {
 
 function FlowSection() {
   return (
-    <section className="vf-section vf-flow" id="how-it-works" aria-labelledby="flow-title">
+    <section
+      className="vf-section vf-flow"
+      data-landing-section="FlowSection"
+      id="how-it-works"
+      aria-labelledby="flow-title"
+    >
       <Reveal className="vf-flow__intro" rise>
         <h2 id="flow-title">From intent to working capital.</h2>
         <p>
@@ -307,7 +316,11 @@ function FlowSection() {
 
 function BoundsSection() {
   return (
-    <section className="vf-section vf-bounds" aria-labelledby="bounds-title">
+    <section
+      className="vf-section vf-bounds"
+      data-landing-section="BoundsSection"
+      aria-labelledby="bounds-title"
+    >
       <Reveal className="vf-bounds__header" rise>
         <h2 id="bounds-title">Autonomy, with a leash.</h2>
         <p>
@@ -336,7 +349,11 @@ function BoundsSection() {
 
 function IntelligenceSection() {
   return (
-    <section className="vf-section vf-intelligence" aria-labelledby="intelligence-title">
+    <section
+      className="vf-section vf-intelligence"
+      data-landing-section="IntelligenceSection"
+      aria-labelledby="intelligence-title"
+    >
       <Reveal className="vf-intelligence__copy" rise>
         <h2 id="intelligence-title">AI plans. Rules can say no.</h2>
         <p>
@@ -376,7 +393,11 @@ function IntelligenceSection() {
 
 function YieldSection() {
   return (
-    <section className="vf-section vf-yield" aria-labelledby="yield-title">
+    <section
+      className="vf-section vf-yield"
+      data-landing-section="YieldSection"
+      aria-labelledby="yield-title"
+    >
       <Reveal className="vf-yield__lead" rise>
         <p className="vf-kicker">Stellar testnet</p>
         <h2 id="yield-title">Real lending underneath.</h2>
@@ -419,16 +440,20 @@ function YieldSection() {
 
 function RelaySection() {
   return (
-    <section className="vf-section vf-relay" aria-labelledby="relay-title">
+    <section
+      className="vf-section vf-relay"
+      data-landing-section="RelaySection"
+      aria-labelledby="relay-title"
+    >
       <div className="vf-relay__number">
-        <strong>0 XLM</strong>
-        <span>required from your wallet for sponsored calls</span>
+        <strong>Sponsored</strong>
+        <span>network fee on sponsored calls</span>
       </div>
       <Reveal className="vf-relay__copy" delay={0.08} rise>
         <h2 id="relay-title">The relay pays. It does not control principal.</h2>
         <p>
-          Vibing Farmer wraps approved Stellar transactions in a fee-bump. The server pays the
-          network fee and rejects calls outside a short allowlist.
+          Network fee sponsored by fee-bump relay. Vibing Farmer wraps approved Stellar transactions
+          in a fee-bump and rejects calls outside a short allowlist.
         </p>
         <p className="vf-note">
           For the initial grant, relay failure can fall back to direct user-paid submission instead
@@ -441,7 +466,11 @@ function RelaySection() {
 
 function ObservabilitySection() {
   return (
-    <section className="vf-section vf-observe" aria-labelledby="observe-title">
+    <section
+      className="vf-section vf-observe"
+      data-landing-section="ObservabilitySection"
+      aria-labelledby="observe-title"
+    >
       <Reveal className="vf-observe__copy" rise>
         <h2 id="observe-title">Watch the swarm work.</h2>
         <p>
@@ -471,7 +500,11 @@ function ObservabilitySection() {
 
 function HonestySection() {
   return (
-    <section className="vf-section vf-honesty" aria-labelledby="honesty-title">
+    <section
+      className="vf-section vf-honesty"
+      data-landing-section="HonestySection"
+      aria-labelledby="honesty-title"
+    >
       <Reveal className="vf-honesty__intro" rise>
         <h2 id="honesty-title">Real where it counts. Clear where it is not.</h2>
         <p>
@@ -514,7 +547,14 @@ function HonestySection() {
 export const ECOSYSTEM = [
   // Soroban is Stellar's own smart-contract platform (same ecosystem, not a separate one) —
   // named together on one card, as the retired PARTNERS list already did.
-  { name: 'Stellar / Soroban', icon: '/logos/stellar.svg' },
+  // Official SDF mark ships Black + White finals; Black is illegible on the Forest canvas
+  // (near-black-on-near-black), so EcosystemBand swaps to White under Forest via CSS —
+  // no recoloring of the official artwork, just picking the SDF-approved variant per theme.
+  {
+    name: 'Stellar / Soroban',
+    icon: '/brand/networks/stellar.svg',
+    iconDark: '/brand/networks/stellar-white.svg',
+  },
   { name: 'Blend Capital', icon: '/logos/blend.svg' },
   { name: 'Base', icon: '/logos/base.svg' },
   { name: 'Circle CCTP', icon: '/logos/circle.svg' },
@@ -528,7 +568,22 @@ function EcosystemBand() {
     <span className="vf-marquee__seq" key={key}>
       {ECOSYSTEM.map((item) => (
         <span className="vf-marquee__logo" key={item.name}>
-          {item.icon ? <img src={item.icon} alt="" loading="lazy" /> : null}
+          {item.icon ? (
+            <img
+              src={item.icon}
+              alt=""
+              loading="lazy"
+              className={item.iconDark ? 'vf-marquee__logo-icon--default' : undefined}
+            />
+          ) : null}
+          {item.iconDark ? (
+            <img
+              src={item.iconDark}
+              alt=""
+              loading="lazy"
+              className="vf-marquee__logo-icon--dark"
+            />
+          ) : null}
           {item.name}
         </span>
       ))}
@@ -536,7 +591,11 @@ function EcosystemBand() {
   )
 
   return (
-    <div className="vf-marquee vf-marquee--logos" aria-hidden="true">
+    <div
+      className="vf-marquee vf-marquee--logos"
+      data-landing-section="EcosystemBand"
+      aria-hidden="true"
+    >
       <div className="vf-marquee__track">
         {sequence('a')}
         {sequence('b')}
@@ -547,7 +606,7 @@ function EcosystemBand() {
 
 function FinalSection({ onStart }) {
   return (
-    <section className="vf-final" aria-labelledby="final-title">
+    <section className="vf-final" data-landing-section="FinalSection" aria-labelledby="final-title">
       <Reveal className="vf-final__inner" rise>
         <p className="vf-final__tagline">Set once. Vibe forever.</p>
         <h2 id="final-title">Set your bounds. Let the system do the work.</h2>

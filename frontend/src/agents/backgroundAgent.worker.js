@@ -1,11 +1,14 @@
 // backgroundAgent.worker.js
 // Runs in a separate thread. Polls on intervals, posts findings to the main thread.
-// Does NOT execute transactions — it detects + notifies; main thread handles execution.
-// Pure fetch (DeFiLlama + the /api/search proxy) — no chain SDK in the worker. On-chain
-// position reconciliation lives on the main thread (Stellar reconcilePositionsFromChain).
+// Does NOT execute transactions — it detects + notifies; main thread handles execution. No
+// transaction executor is ever imported here, by design (Pocket Crew "My money" Task 8: risk
+// watch is observe-only, never auto-executing — see product truth: no legacy rule may
+// autonomously move production funds). Pure fetch (DeFiLlama + the /api/search proxy) — no chain
+// SDK in the worker. On-chain position reconciliation lives on the main thread (Stellar
+// reconcilePositionsFromChain).
 
 const INTERVALS = {
-  apy: 10 * 60 * 1000, // 10 min — APY drift + rebalance opportunity
+  facts: 10 * 60 * 1000, // 10 min — canonical protocol facts for the owner's real positions
   risk: 15 * 60 * 1000, // 15 min — security news scan
 }
 
@@ -31,8 +34,8 @@ self.onmessage = (e) => {
 function startMonitoring() {
   stopMonitoring()
   // Run each monitor immediately, then on interval. Each is independent — one crash never stops others.
-  runApyCheck()
-  timers.push(setInterval(runApyCheck, INTERVALS.apy))
+  runFactsCheck()
+  timers.push(setInterval(runFactsCheck, INTERVALS.facts))
   runRiskCheck()
   timers.push(setInterval(runRiskCheck, INTERVALS.risk))
 }
@@ -45,102 +48,83 @@ function stopMonitoring() {
 // Position reconciliation is NOT a worker monitor — the main thread reads vault shares from
 // Soroban (reconcilePositionsFromChain) on mount, on each sync tick, and after withdraws.
 
-// ─── Monitor 2: APY Drift + Rebalance Opportunity (DeFiLlama) ──────────────────
-async function runApyCheck() {
+// Fix 4 (review loop 1): canonical protocol -> DeFiLlama pool identity for THIS app's one real
+// yield venue. Mirrors the mapping vaultFactsLive.js's own LLAMA_SLUG already defines
+// ('blend-usdc' -> 'blend', see that file's header comment) — duplicated here rather than
+// imported because this fix loop's authorized file list does not include
+// vaultFactsLive.js/vaultFacts.js/api/vf/vault-facts.js (and the API handler is server-only —
+// unimportable into a client worker bundle regardless). Every OTHER protocol slug a stale
+// position might still carry (legacy Aave/Morpho/Pendle/Fluid, or a Base custody-proxy slug) has
+// NO confirmed real-world pool behind it in this app any more (see config.js's VAULT_CATALOG and
+// vaultFactsSnapshot.js's own header: "no Stellar catalog entry keys into them any more") —
+// matching one by project name alone across every DeFiLlama chain and asset would misattribute a
+// stranger's real-world APY to a position that was never actually there. Only the one confirmed
+// real venue is ever looked up; everything else honestly reports 'unavailable'.
+const REAL_YIELD_VENUE = {
+  protocol: 'blend-usdc',
+  project: 'blend',
+  chain: 'Stellar',
+  symbolIncludes: 'USDC',
+}
+
+function findRealPool(pools, protocol) {
+  if (protocol !== REAL_YIELD_VENUE.protocol) return null
+  return (
+    (pools || []).find(
+      (p) =>
+        String(p.project).toLowerCase() === REAL_YIELD_VENUE.project &&
+        String(p.chain) === REAL_YIELD_VENUE.chain &&
+        String(p.symbol ?? '')
+          .toUpperCase()
+          .includes(REAL_YIELD_VENUE.symbolIncludes)
+    ) ?? null
+  )
+}
+
+// ─── Monitor: canonical protocol facts (DeFiLlama) ─────────────────────────────
+// Pocket Crew "My money" Task 8: this used to match `vault.protocol` against Ethereum-mainnet
+// DeFiLlama pools (`chain === 'Ethereum'`) and, on a miss — which is EVERY real position, since
+// this product has no live Ethereum venue (Stellar Autofarm -> Blend is the only real yield
+// venue; Base pools are honest 1:1 custody proxies, never a yield source — see custody.js's
+// header) — fell back to a HARDCODED per-protocol drawdown map (`{'aave-v3': -1.2, ...}`) to
+// manufacture a DRAWDOWN_ALERT out of thin air, and proposed rebalancing into unaudited strangers'
+// pools from that same unfiltered map. A missing fact reads 'unavailable', never a synthetic
+// number — this monitor looks up the real protocol's own DeFiLlama pool identity (project + chain
+// + asset symbol, see REAL_YIELD_VENUE above — a project-name match alone is not enough:
+// DeFiLlama's 'blend' project spans multiple pools/assets, and other protocol names like
+// 'aave-v3' span many unrelated chains) and reports whatever it verifiably finds, or honestly
+// nothing.
+async function runFactsCheck() {
   if (!config) return
+  const vaults = config.activeVaults ?? []
+  // Fix 5 (minor, review loop 2): findRealPool short-circuits to null at :53 for any protocol
+  // that isn't the one real yield venue, before it ever looks at `pools` — so when no active
+  // vault carries that protocol, fetching the whole response would only be discarded. Skip it.
+  const needsFetch = vaults.some((v) => v.protocol === REAL_YIELD_VENUE.protocol)
   try {
-    const res = await fetch('https://yields.llama.fi/pools')
-    const { data } = await res.json()
-
-    const apyByVault = {}
-    for (const vault of config.activeVaults) {
-      const pool = data.find(
-        (p) => p.project === vault.protocol && p.chain === 'Ethereum' && p.symbol?.includes('USDC')
-      )
-      if (!pool) continue
-      const currentApy = pool.apy
-      apyByVault[vault.name] = currentApy
-      const baselineApy = vault.depositApy
-
-      if (baselineApy > 0) {
-        const driftPct = ((currentApy - baselineApy) / baselineApy) * 100
-        if (driftPct < -(config.thresholds.apyDropPct || 20)) {
-          self.postMessage({
-            type: 'APY_DRIFT',
-            payload: {
-              vaultName: vault.name,
-              baselineApy,
-              currentApy,
-              driftPct: driftPct.toFixed(1),
-              severity: driftPct < -40 ? 'high' : 'medium',
-              timestamp: Date.now(),
-            },
-          })
-        }
-      }
-
-      // Check drawdown threshold
-      const drawdowns = {
-        'aave-v3': -1.2,
-        'morpho-blue': -2.8,
-        'pendle': -6.5,
-        'fluid': -4.1,
-        'compound-v3': -1.5,
-        'spark': -1.3,
-      }
-      const drawdown = drawdowns[vault.protocol] || -2.0
-      const maxDrawdown = config.thresholds.maxDrawdownPct || 10.0
-      if (Math.abs(drawdown) > maxDrawdown) {
-        self.postMessage({
-          type: 'DRAWDOWN_ALERT',
-          payload: {
-            vaultName: vault.name,
-            vaultAddress: vault.address,
-            protocol: vault.protocol,
-            drawdown,
-            maxDrawdown,
-            timestamp: Date.now(),
-          },
-        })
-      }
-
-      // A BETTER vault exists → rebalance opportunity (propose only)
-      const betterPools = data
-        .filter(
-          (p) =>
-            p.chain === 'Ethereum' &&
-            p.symbol?.includes('USDC') &&
-            p.apy > currentApy + (config.thresholds.rebalanceThresholdPct || 1.5) &&
-            p.tvlUsd > 1_000_000 &&
-            config.supportedProtocols.includes(p.project)
-        )
-        .sort((a, b) => b.apy - a.apy)
-
-      if (betterPools.length > 0) {
-        const best = betterPools[0]
-        self.postMessage({
-          type: 'REBALANCE_OPPORTUNITY',
-          payload: {
-            fromVault: vault.name,
-            fromApy: currentApy,
-            toProtocol: best.project,
-            toApy: best.apy,
-            apyGain: (best.apy - currentApy).toFixed(2),
-            timestamp: Date.now(),
-          },
-        })
-      }
+    let data = []
+    if (needsFetch) {
+      const res = await fetch('https://yields.llama.fi/pools')
+      ;({ data } = await res.json())
     }
-
-    // Always emit MARKET_SIGNAL with current APY snapshot for council monitor
-    if (Object.keys(apyByVault).length > 0) {
+    for (const vault of vaults) {
+      const pool = findRealPool(data, vault.protocol)
       self.postMessage({
-        type: 'MARKET_SIGNAL',
-        payload: { apyByVault, timestamp: Date.now() },
+        type: 'RISK_FACT',
+        payload: {
+          vaultName: vault.name,
+          vaultAddress: vault.address,
+          protocol: vault.protocol,
+          state: pool ? 'known' : 'unavailable',
+          apy: pool ? pool.apy : null,
+          tvlUsd: pool ? pool.tvlUsd : null,
+          source: 'defillama',
+          checkedAt: Date.now(),
+        },
       })
     }
   } catch (err) {
-    self.postMessage({ type: 'MONITOR_ERROR', payload: { monitor: 'apy', error: err.message } })
+    self.postMessage({ type: 'MONITOR_ERROR', payload: { monitor: 'facts', error: err.message } })
   }
 }
 
@@ -151,7 +135,7 @@ async function runApyCheck() {
 async function runRiskCheck() {
   if (config?.thresholds?.riskMonitoring === false) return
   try {
-    for (const vault of config.activeVaults) {
+    for (const vault of config.activeVaults ?? []) {
       const query = `${vault.protocol} exploit hack vulnerability depeg 2026`
       // Server-side proxy — Tavily key stays on the server (see api/search.js).
       const res = await fetch('/api/search', {
@@ -165,7 +149,10 @@ async function runRiskCheck() {
         }),
       })
       const data = await res.json()
-      // Post raw findings — main thread asks Venice AI to classify severity
+      // Post raw findings — main thread asks Venice AI to classify severity. This is the ONLY
+      // "recommendation" this worker ever produces — a search result for a human/AI reviewer to
+      // weigh, never an instruction any code path executes automatically (riskWatchStore.js
+      // records it, it never acts on it).
       self.postMessage({
         type: 'RISK_SCAN_RESULT',
         payload: {
@@ -174,6 +161,8 @@ async function runRiskCheck() {
           protocol: vault.protocol,
           searchAnswer: data.answer || '',
           sources: (data.results || []).map((r) => ({ title: r.title, url: r.url })),
+          source: 'tavily',
+          checkedAt: Date.now(),
           timestamp: Date.now(),
         },
       })

@@ -16,9 +16,39 @@ import { fromScVal, symbolScVal, addrScVal } from './scval.js'
 import { SOROBAN_RPC_URL } from './config.js'
 
 const DEPLOYED_TOPIC = 'deployed' // lowercase — see header note
+// Router V3 (Task 4, bounded reusable grant) event topics — same lowercase-snake_case rule as
+// `deployed`: soroban-sdk's #[contractevent] derives the topic from the struct name.
+const GRANTED_V3_TOPIC = 'granted_v3'
+const PULLED_V3_TOPIC = 'pulled_v3'
 // Safety cap on the cursor loop: the probe saw ≤61 pages for a full 7d retention window; 250 is a
 // runaway backstop, not a real bound. ponytail: bump only if retention windows grow past ~15 days.
 const MAX_PAGES = 250
+
+function abortReason(signal) {
+  return signal?.reason ?? new DOMException('Aborted', 'AbortError')
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortReason(signal)
+}
+
+async function awaitWithAbort(promise, signal) {
+  throwIfAborted(signal)
+  if (!signal) return promise
+
+  let onAbort
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(abortReason(signal))
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    const value = await Promise.race([promise, aborted])
+    throwIfAborted(signal)
+    return value
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
 
 async function realServer(rpcUrl) {
   const { rpc } = await import('@stellar/stellar-sdk')
@@ -45,14 +75,96 @@ export function decodeDeployedEvent(rec) {
   }
 }
 
-/** oldestLedger the RPC still retains — the floor for any startLedger. */
-async function retentionFloor(server) {
+/**
+ * Decode one raw getEvents record into a V3 `grant_v3` receipt. Topics: [granted_v3(lowercase),
+ * owner, permission_id]; data ScMap {token, mandate_ceiling, per_run_max, live_until_ledger,
+ * agents}. Returns `null` for any topic that isn't `granted_v3`, or any record that fails to
+ * decode.
+ * @param {{ topic: unknown[], value: unknown, ledger?: number, txHash?: string }} rec
+ * @returns {{ owner: string, permissionId: Buffer, token: string, mandateCeiling: bigint,
+ *   perRunMax: bigint, liveUntilLedger: number, agents: number, ledger?: number,
+ *   txHash?: string } | null}
+ */
+export function decodeGrantedV3Event(rec) {
   try {
-    const health = await server.getHealth()
+    if (fromScVal(rec.topic[0]) !== GRANTED_V3_TOPIC) return null
+    const owner = fromScVal(rec.topic[1])
+    const permissionId = fromScVal(rec.topic[2])
+    const data = fromScVal(rec.value) ?? {}
+    const {
+      token,
+      mandate_ceiling: mandateCeiling,
+      per_run_max: perRunMax,
+      live_until_ledger: liveUntilLedger,
+      agents,
+    } = data
+    if (
+      !token ||
+      mandateCeiling == null ||
+      perRunMax == null ||
+      liveUntilLedger == null ||
+      agents == null
+    ) {
+      return null
+    }
+    return {
+      owner,
+      permissionId,
+      token,
+      mandateCeiling: BigInt(mandateCeiling),
+      perRunMax: BigInt(perRunMax),
+      liveUntilLedger: Number(liveUntilLedger),
+      agents: Number(agents),
+      ledger: rec.ledger,
+      txHash: rec.txHash,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Decode one raw getEvents record into a V3 `pull_v3` execution. Topics: [pulled_v3(lowercase),
+ * owner, permission_id]; data ScMap {agent, execution_id, amount}. Returns `null` for any topic
+ * that isn't `pulled_v3`, or any record that fails to decode.
+ * @param {{ topic: unknown[], value: unknown, ledger?: number, txHash?: string }} rec
+ * @returns {{ owner: string, permissionId: Buffer, agent: string, executionId: Buffer,
+ *   amount: bigint, ledger?: number, txHash?: string } | null}
+ */
+export function decodePulledV3Event(rec) {
+  try {
+    if (fromScVal(rec.topic[0]) !== PULLED_V3_TOPIC) return null
+    const owner = fromScVal(rec.topic[1])
+    const permissionId = fromScVal(rec.topic[2])
+    const data = fromScVal(rec.value) ?? {}
+    const { agent, execution_id: executionId, amount } = data
+    if (!agent || executionId == null || amount == null) return null
+    return {
+      owner,
+      permissionId,
+      agent,
+      executionId,
+      amount: BigInt(amount),
+      ledger: rec.ledger,
+      txHash: rec.txHash,
+    }
+  } catch {
+    return null
+  }
+}
+
+/** oldestLedger the RPC still retains — the floor for any startLedger. */
+async function retentionFloor(server, signal) {
+  throwIfAborted(signal)
+  try {
+    const health = await awaitWithAbort(server.getHealth(), signal)
+    throwIfAborted(signal)
     if (Number.isFinite(health?.oldestLedger)) return health.oldestLedger
   } catch {
+    throwIfAborted(signal)
     /* older RPC without getHealth — the -32600 clamp below is the safety net */
   }
+  throwIfAborted(signal)
   return 1
 }
 
@@ -62,10 +174,13 @@ async function retentionFloor(server) {
  * scan (e.g. the last 24h) passes an explicit lookback. NEVER hardcode a ledger count: ledger time
  * can shift (CAP-0070) so a fixed number silently under-scans.
  */
-async function resolveStartLedger(server, lookbackLedgers) {
-  const floor = await retentionFloor(server)
+async function resolveStartLedger(server, lookbackLedgers, signal) {
+  throwIfAborted(signal)
+  const floor = await retentionFloor(server, signal)
+  throwIfAborted(signal)
   if (lookbackLedgers == null) return floor
-  const { sequence } = await server.getLatestLedger()
+  const { sequence } = await awaitWithAbort(server.getLatestLedger(), signal)
+  throwIfAborted(signal)
   return Math.max(floor, Math.max(1, sequence - lookbackLedgers))
 }
 
@@ -84,6 +199,7 @@ function oldestFromRangeError(err) {
  *   owner: string,            // grant owner (G...) — scopes the topic filter
  *   lookbackLedgers?: number, // omit = full retention window
  *   limit?: number,
+ *   signal?: AbortSignal,
  * }} p
  * @returns {Promise<Array<{ owner: string, agent: string, cap: bigint, ledger?: number, txHash?: string }>>}
  */
@@ -94,8 +210,11 @@ export async function fetchRouterDeployedEvents({
   owner,
   lookbackLedgers,
   limit = 1000,
+  signal,
 } = {}) {
-  const s = server || (await realServer(rpcUrl))
+  throwIfAborted(signal)
+  const s = server || (await awaitWithAbort(realServer(rpcUrl), signal))
+  throwIfAborted(signal)
   // 3-segment topic filter: [deployed(lowercase), owner, *]. Base64-XDR strings + '*' wildcard —
   // verified to match exactly the owner's deployed events (no client-side re-filter needed).
   const topics = [
@@ -103,31 +222,43 @@ export async function fetchRouterDeployedEvents({
   ]
   const filters = [{ type: 'contract', contractIds: [routerAddress], topics }]
 
-  let startLedger = await resolveStartLedger(s, lookbackLedgers)
+  let startLedger = await resolveStartLedger(s, lookbackLedgers, signal)
+  throwIfAborted(signal)
   const out = []
   let cursor
   for (let page = 0; page < MAX_PAGES; page++) {
+    throwIfAborted(signal)
     let res
     try {
-      res = cursor
-        ? await s.getEvents({ filters, cursor, limit }) // cursor mode: startLedger MUST be omitted
-        : await s.getEvents({ startLedger, filters, limit })
+      res = await awaitWithAbort(
+        cursor
+          ? s.getEvents({ filters, cursor, limit }) // cursor mode: startLedger MUST be omitted
+          : s.getEvents({ startLedger, filters, limit }),
+        signal
+      )
+      throwIfAborted(signal)
     } catch (err) {
+      throwIfAborted(signal)
       const oldest = oldestFromRangeError(err)
       if (oldest != null && !cursor) {
         startLedger = oldest // fell below retention between probe and call — clamp & retry once
+        throwIfAborted(signal)
         continue
       }
       throw err
     }
     for (const rec of res.events || []) {
+      throwIfAborted(signal)
       const row = decodeDeployedEvent(rec)
+      throwIfAborted(signal)
       if (row) out.push(row)
     }
     // Terminate when the cursor stops advancing (tip reached). Do NOT stop on an empty page —
     // the window may be sparse but still have later ledgers to scan.
+    throwIfAborted(signal)
     if (!res.cursor || res.cursor === cursor) break
     cursor = res.cursor
   }
+  throwIfAborted(signal)
   return out
 }

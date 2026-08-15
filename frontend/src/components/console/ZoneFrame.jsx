@@ -1,7 +1,6 @@
 // frontend/src/components/console/ZoneFrame.jsx
 // Tier-D zone chrome: mono header strip + status LED + corner ticks (CSS).
 // Presentational only — hue/led semantics are the caller's business.
-import './../../console.css'
 
 /**
  * @param {object} p

@@ -1,0 +1,21 @@
+{
+  "name": "Vibing Farmer Pocket Crew",
+  "short_name": "Pocket Crew",
+  "description": "Set once. Vibe forever. AI-coordinated agent swarm for automated yield farming on Stellar/Soroban testnet.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#17251F",
+  "theme_color": "#DFF56C",
+  "icons": [
+    {
+      "src": "/brand/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/brand/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
