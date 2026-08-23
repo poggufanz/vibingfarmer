@@ -1496,12 +1496,7 @@ describe('ingestAgentIndexPage — gap-branch atomicity ordering (Important 3)',
     // ensureSourceRow always runs first (idempotent ON CONFLICT DO NOTHING) — the invariant that
     // matters is recordGap strictly before commitSourcePage. The gap hole commits first, then the
     // fall-through scan of everything the provider can serve commits its own page.
-    expect(calls).toEqual([
-      'ensureSourceRow',
-      'recordGap',
-      'commitSourcePage',
-      'commitSourcePage',
-    ])
+    expect(calls).toEqual(['ensureSourceRow', 'recordGap', 'commitSourcePage', 'commitSourcePage'])
   })
 
   it('records the gap before the commit when the source row already exists (retention floor advances mid-catch-up; ensureSourceRow is a harmless idempotent no-op here)', async () => {
@@ -1551,12 +1546,7 @@ describe('ingestAgentIndexPage — gap-branch atomicity ordering (Important 3)',
     // ensureSourceRow always runs first (idempotent ON CONFLICT DO NOTHING) — the invariant that
     // matters is recordGap strictly before commitSourcePage, which holds either way. The hole
     // commits first, then the fall-through scan commits the rest up to the provider's latest.
-    expect(calls).toEqual([
-      'ensureSourceRow',
-      'recordGap',
-      'commitSourcePage',
-      'commitSourcePage',
-    ])
+    expect(calls).toEqual(['ensureSourceRow', 'recordGap', 'commitSourcePage', 'commitSourcePage'])
   })
 })
 
