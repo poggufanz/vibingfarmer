@@ -79,3 +79,4 @@ graphify/
 .graphifyignore
 mcps
 .codex/
+.opencode/
