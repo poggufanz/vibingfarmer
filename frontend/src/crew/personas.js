@@ -53,6 +53,26 @@ export function legacyPersonaSlot(networkId, verifiedAddress) {
   return hash % CREW_PERSONAS.length
 }
 
+// Resolve the presentation-only persona used by compact account summaries. A proven assignment
+// from owner discovery always wins. Older agent accounts can predate run ordinals, so they fall
+// back to the same stable address hash used by the legacy crew projection. The returned persona
+// never replaces the account address as the actual identity or transaction target.
+export function presentationPersonaForAddress(
+  personaByAddress,
+  address,
+  networkId = 'stellar-testnet'
+) {
+  if (!isNonEmptyString(address)) return null
+
+  const assigned =
+    personaByAddress instanceof Map ? personaByAddress.get(address) : personaByAddress?.[address]
+  const catalogPersona = CREW_PERSONAS.find((persona) => persona.id === assigned?.id)
+  if (catalogPersona) return catalogPersona
+
+  const slot = legacyPersonaSlot(networkId, address)
+  return slot == null ? null : CREW_PERSONAS[slot]
+}
+
 export function assignCrewPersona({ networkId, discoveryRow } = {}) {
   if (!isD1Proven(discoveryRow)) return { state: 'pending', reason: 'unverified-discovery-row' }
 

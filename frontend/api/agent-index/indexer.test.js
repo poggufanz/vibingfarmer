@@ -1403,15 +1403,62 @@ describe('ingestAgentIndexPage — retention-floor gaps', () => {
       eventSource: es,
       finalizedLedger: start + 500,
     })
-    expect(out.status).toBe('gapped')
+    expect(out.status).toBe('committed')
     const { sources, gaps } = await store.readCoverage({ networkId: ROUTER_V1.networkId })
-    expect(sources[0].indexedThroughLedger).toBe(start + 99) // cursor moved past the hole
+    // The hole [start..start+99] stays recorded as an open gap, but the call continued past it
+    // and scanned to the provider's latest — the cursor is never pinned behind the receding floor.
+    expect(sources[0].indexedThroughLedger).toBe(start + 500)
     expect(gaps).toHaveLength(1)
     expect(gaps[0]).toMatchObject({ fromLedger: start, throughLedger: start + 99, status: 'open' })
     // The proof can never call this contiguous while the gap is open.
     expect(
       coverageProof({ manifest: { creators: [] }, sources, gaps, backfillAudit: [] }).contiguous
     ).toBe(false)
+  })
+
+  it('records an honest gap when the adapter clamps forward past a receding floor, and still commits the events it collected', async () => {
+    const store = freshStore()
+    const start = ROUTER_V1.coverageStartLedger
+    const rec = deployedRecord({
+      owner: OWNER_A,
+      agent: AGENT_A,
+      ledger: start + 200,
+      txHash: 'TX-CLAMPED',
+    })
+    // The adapter snapshot said the floor was fine, but the real floor moved mid-call: the page
+    // reports the clamped hole via retentionClampedFromLedger while still returning events.
+    const es = {
+      providerId: 'test-rpc',
+      endpointClass: 'live',
+      oldestAvailableLedger: start,
+      latestAvailableLedger: start + 500,
+      async getEvents(_req) {
+        return {
+          events: [rec],
+          cursor: null,
+          scannedThroughLedger: start + 300,
+          latestLedger: start + 500,
+          retentionClampedFromLedger: start + 100,
+        }
+      },
+    }
+    const out = await ingestAgentIndexPage({
+      source: ROUTER_V1,
+      store,
+      eventSource: es,
+      finalizedLedger: start + 500,
+    })
+    expect(out.status).toBe('committed')
+    expect(out.membershipCount).toBe(1)
+    const { sources, gaps } = await store.readCoverage({ networkId: ROUTER_V1.networkId })
+    expect(gaps).toHaveLength(1)
+    expect(gaps[0]).toMatchObject({ fromLedger: start, throughLedger: start + 99, status: 'open' })
+    expect(sources[0].indexedThroughLedger).toBe(start + 300)
+    const rows = await store.readOwnerMemberships({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+    })
+    expect(rows.map((r) => r.address)).toEqual([AGENT_A])
   })
 })
 
@@ -1446,7 +1493,10 @@ describe('ingestAgentIndexPage — gap-branch atomicity ordering (Important 3)',
       eventSource: es,
       finalizedLedger: start + 500,
     })
-    expect(calls).toEqual(['ensureSourceRow', 'recordGap', 'commitSourcePage'])
+    // ensureSourceRow always runs first (idempotent ON CONFLICT DO NOTHING) — the invariant that
+    // matters is recordGap strictly before commitSourcePage. The gap hole commits first, then the
+    // fall-through scan of everything the provider can serve commits its own page.
+    expect(calls).toEqual(['ensureSourceRow', 'recordGap', 'commitSourcePage', 'commitSourcePage'])
   })
 
   it('records the gap before the commit when the source row already exists (retention floor advances mid-catch-up; ensureSourceRow is a harmless idempotent no-op here)', async () => {
@@ -1494,8 +1544,9 @@ describe('ingestAgentIndexPage — gap-branch atomicity ordering (Important 3)',
       finalizedLedger: start + 500,
     })
     // ensureSourceRow always runs first (idempotent ON CONFLICT DO NOTHING) — the invariant that
-    // matters is recordGap strictly before commitSourcePage, which holds either way.
-    expect(calls).toEqual(['ensureSourceRow', 'recordGap', 'commitSourcePage'])
+    // matters is recordGap strictly before commitSourcePage, which holds either way. The hole
+    // commits first, then the fall-through scan commits the rest up to the provider's latest.
+    expect(calls).toEqual(['ensureSourceRow', 'recordGap', 'commitSourcePage', 'commitSourcePage'])
   })
 })
 

@@ -1,10 +1,9 @@
 // frontend/src/components/money/AgentTeam.jsx
-// My Money Task 11 (Pocket Crew redesign, Wave 5). "Your agent team": one row per deployed
-// agent_account, keyed by its own stable address -- never list index (AgentMark.jsx's own hard
-// rule, §6.6). A revoked/expired agent that still holds confirmed money stays VISIBLE here as
-// "Needs recovery" -- myMoneyModel.js's own docs (readOwnerMoney.js: owner_withdraw has no scope
-// gate on-chain) are the reason a naive "hide anything revoked" filter would be actively dangerous:
-// it would hide exactly the agents the owner most needs to see.
+// My Money Task 11 (Pocket Crew redesign, Wave 5). "Your agent team" is the compact current-crew
+// summary, capped to the product's three presentation personas. Agent accounts accumulate across
+// runs, so funded and recoverable accounts rank before active, in-flight, and historical accounts.
+// The full history remains available in TechnicalMoneyDetails and still feeds the account-wide
+// recovery planner; this summary never deletes or mutates discovery evidence.
 //
 // Consumes the SAME raw per-agent rows PositionList.jsx does (readOwnerMoney.js:317-327 --
 // {address, scope, vaultShares, idleToken, amount, executionStatus, custody, custodyBreakdown,
@@ -27,13 +26,14 @@
 // in this component) -- an agent whose deploy event was never seen, or whose discovery hasn't
 // resolved yet, honestly renders "Unavailable", never a coerced zero or a fabricated number.
 import { useState } from 'react'
-import { AgentMark } from '../pocket/AgentMark.jsx'
+import { AgentPersonaAvatar } from '../pocket/AgentPersonaAvatar.jsx'
 import { NetworkBadge } from '../pocket/NetworkIdentity.jsx'
 import { Dialog } from '../pocket/Primitives.jsx'
 import { planFullExit } from '../../money/ownerActions.js'
 import { SOROBAN_DECIMALS } from '../../stellar/config.js'
 import { formatUtcSeconds } from './formatUtc.js'
 import { formatCoreAmount, toAgentIdentityView } from '../../core/coreRouteAdapters.js'
+import { CREW_PERSONAS, presentationPersonaForAddress } from '../../crew/personas.js'
 
 // Same explorer convention StrategyReceipt.jsx already uses for a Stellar account
 // (StrategyReceipt.jsx:97-99) -- re-declared locally per that file's own sibling-surface rationale
@@ -59,6 +59,58 @@ function isKnownPositive(amount) {
   } catch {
     return false
   }
+}
+
+function isCurrentScope(agent, presentationNow) {
+  if (agent.scope?.state !== 'known' || agent.scope.value?.revoked) return false
+  const expiry = Number(agent.scope.value?.expiry ?? 0)
+  if (!Number.isFinite(expiry) || expiry <= 0) return true
+  const nowSec = Number.isFinite(presentationNow) ? Math.floor(presentationNow / 1000) : 0
+  return expiry > nowSec
+}
+
+function createdLedgerFor(address, discovery) {
+  const ledger = Number(
+    (discovery?.agents ?? []).find((row) => row.address === address)?.createdLedger
+  )
+  return Number.isSafeInteger(ledger) && ledger >= 0 ? ledger : -1
+}
+
+/**
+ * Keep the home summary to the three fixed crew identities. Historical account evidence is not
+ * deleted: the full array still flows to TechnicalMoneyDetails and the full-exit planner.
+ */
+export function selectAgentTeamAgents({
+  agents = [],
+  problemAgents = [],
+  discovery = null,
+  presentationNow = 0,
+} = {}) {
+  if (agents.length <= CREW_PERSONAS.length) return agents
+
+  const problems = new Set(problemAgents)
+  return agents
+    .map((agent, originalIndex) => ({
+      agent,
+      originalIndex,
+      recovery: problems.has(agent.address) ? 1 : 0,
+      funded: isKnownPositive(agent.amount) ? 1 : 0,
+      current: isCurrentScope(agent, presentationNow) ? 1 : 0,
+      inFlight: agent.executionStatus === 'queued' || agent.executionStatus === 'executing' ? 1 : 0,
+      createdLedger: createdLedgerFor(agent.address, discovery),
+    }))
+    .sort(
+      (left, right) =>
+        right.recovery - left.recovery ||
+        right.funded - left.funded ||
+        right.current - left.current ||
+        right.inFlight - left.inFlight ||
+        right.createdLedger - left.createdLedger ||
+        String(left.agent.address).localeCompare(String(right.agent.address)) ||
+        left.originalIndex - right.originalIndex
+    )
+    .slice(0, CREW_PERSONAS.length)
+    .map(({ agent }) => agent)
 }
 
 // Fix loop 1, I1: names for custody.js's own fixed location enum (custody.js:7-14), used to
@@ -157,10 +209,17 @@ export function AgentTeam({
   onRecoverAgent,
   collectionState = null,
   presentationNow = 0,
+  personaByAddress = null,
 }) {
   const [recoveryAddress, setRecoveryAddress] = useState(null)
   const recoveryTarget = agents.find((a) => a.address === recoveryAddress) ?? null
   const effectivePresentationNow = Number.isFinite(presentationNow) ? presentationNow : 0
+  const teamAgents = selectAgentTeamAgents({
+    agents,
+    problemAgents,
+    discovery,
+    presentationNow: effectivePresentationNow,
+  })
   const plan =
     recoveryTarget && discovery && account
       ? planFullExit({
@@ -193,9 +252,15 @@ export function AgentTeam({
         <h2 id="your-agent-team-heading">Your agent team</h2>
       </header>
       <div>
-        {agents.length === 0 && <p>{emptyCopy}</p>}
+        {teamAgents.length === 0 && <p>{emptyCopy}</p>}
+        {agents.length > teamAgents.length && (
+          <p className="pc-crew-summary-note">
+            Showing your three current crew identities. Older agent accounts remain in Technical
+            details.
+          </p>
+        )}
         <ul className="pc-crew-list">
-          {agents.map((agent) => {
+          {teamAgents.map((agent) => {
             const recoveryNeeded = problemAgents.includes(agent.address)
             const label = recoveryNeeded
               ? 'Needs recovery'
@@ -208,6 +273,7 @@ export function AgentTeam({
               state: markStateFor(agent, recoveryNeeded),
             })
             const identityAvailable = identity.identityAvailable
+            const persona = presentationPersonaForAddress(personaByAddress, agent.address)
             const cap = capFor(agent, discovery)
             const capToken = cap?.token || agent.amount?.token || 'USDC'
             return (
@@ -216,11 +282,18 @@ export function AgentTeam({
                 className="pc-crew-row"
                 data-agent-state={recoveryNeeded ? 'needs-recovery' : 'ok'}
               >
-                <AgentMark identity={identity} state={markStateFor(agent, recoveryNeeded)} />
+                <AgentPersonaAvatar
+                  identity={identity}
+                  persona={persona}
+                  state={markStateFor(agent, recoveryNeeded)}
+                />
                 <div>
-                  <NetworkBadge networkId="stellar-testnet" />
                   {identityAvailable ? (
                     <>
+                      <div className="pc-agent-team-heading">
+                        <strong>{persona?.name ?? 'Agent'}</strong>
+                        <NetworkBadge networkId="stellar-testnet" />
+                      </div>
                       <p>
                         <a
                           href={explorerAccountUrl(agent.address)}

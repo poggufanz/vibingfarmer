@@ -52,7 +52,10 @@ function decodeSourceEvent(source, rec) {
       return { matched: false }
     }
     if (topic0 !== 'deployed') return { matched: false }
-    if (rec.pagingToken == null || String(rec.pagingToken).length === 0) {
+    // RPC events identify a record canonically via `pagingToken` (older SDKs) or `id`
+    // ("<ledger-paging-token>-<event-index>", current SDK) — either proves stable order.
+    const pagingToken = rec.pagingToken ?? rec.id
+    if (pagingToken == null || String(pagingToken).length === 0) {
       return {
         matched: true,
         error: new Error(
@@ -65,7 +68,7 @@ function decodeSourceEvent(source, rec) {
       return {
         matched: true,
         error: new Error(
-          `decodeSourceEvent: 'deployed' event failed to decode (pagingToken ${rec.pagingToken}) — schema drift?`
+          `decodeSourceEvent: 'deployed' event failed to decode (pagingToken ${String(pagingToken)}) — schema drift?`
         ),
       }
     }
@@ -76,7 +79,7 @@ function decodeSourceEvent(source, rec) {
         ownerAddress: d.owner,
         ledger: d.ledger,
         txHash: d.txHash,
-        pagingToken: String(rec.pagingToken),
+        pagingToken: String(pagingToken),
       },
     }
   }
@@ -341,7 +344,7 @@ export async function ingestAgentIndexPage({
   const sourceId = sourceIdFor({ networkId: source.networkId, creatorAddress: source.address })
   const { sources } = await store.readCoverage({ networkId: source.networkId })
   const existing = sources.find((s) => s.sourceId === sourceId)
-  const fromLedger = existing ? existing.indexedThroughLedger + 1 : source.coverageStartLedger
+  let fromLedger = existing ? existing.indexedThroughLedger + 1 : source.coverageStartLedger
 
   const reportedLatestAvailable = Number.isInteger(eventSource.latestAvailableLedger)
     ? eventSource.latestAvailableLedger
@@ -351,50 +354,56 @@ export async function ingestAgentIndexPage({
   // provider can never certify a range older than what it reports it has. Commit an empty page
   // spanning exactly the hole — the documented store.js resume protocol — so the cursor advances
   // past ledgers this call could never have proven, then record the gap.
+  //
+  // After the hole is on record, the call CONTINUES scanning from gapThrough + 1 instead of
+  // returning: the floor moves forward continuously, so a return here would leave the cursor
+  // pinned just behind the floor forever (every later tick re-enters this branch and never
+  // reaches a real scan). Falling through lets one call both certify the hole and then scan
+  // everything the provider currently CAN serve — the only way a source stuck behind a receding
+  // floor ever catches up.
   if (
     Number.isInteger(eventSource.oldestAvailableLedger) &&
     fromLedger < eventSource.oldestAvailableLedger
   ) {
     const gapThrough = Math.min(eventSource.oldestAvailableLedger - 1, finalizedLedger)
-    if (gapThrough < fromLedger) {
-      return { sourceId, status: 'idle' }
+    if (gapThrough >= fromLedger) {
+      // agent_index_gaps.source_id is a real FK against agent_index_sources — on a source's very
+      // first-ever page there is no row yet. `ensureSourceRow` seeds the "nothing indexed yet"
+      // sentinel row FIRST (a no-op if the row already exists), so `recordGap` can ALWAYS run
+      // before the substantive commit below, uniformly — a crash between recordGap and the commit
+      // then always leaves the gap on record behind a cursor that hasn't moved past it, never the
+      // reverse (Important 3: gap-branch atomicity ordering).
+      await store.ensureSourceRow({
+        sourceId,
+        networkId: source.networkId,
+        creatorAddress: source.address,
+        fromLedger,
+        providerId: eventSource.providerId,
+        endpointClass: eventSource.endpointClass,
+        reportedOldestLedger: eventSource.oldestAvailableLedger,
+        reportedLatestLedger: reportedLatestAvailable,
+      })
+      await store.recordGap({
+        sourceId,
+        networkId: source.networkId,
+        fromLedger,
+        throughLedger: gapThrough,
+        reason: `${eventSource.endpointClass}-provider:${eventSource.providerId}:below-oldest-available-ledger`,
+      })
+      await store.commitSourcePage({
+        sourceId,
+        fromLedger,
+        throughLedger: gapThrough,
+        finalizedThroughLedger: gapThrough,
+        cursor: existing?.cursor ?? null,
+        memberships: [],
+        providerId: eventSource.providerId,
+        endpointClass: eventSource.endpointClass,
+        reportedOldestLedger: eventSource.oldestAvailableLedger,
+        reportedLatestLedger: reportedLatestAvailable,
+      })
+      fromLedger = gapThrough + 1
     }
-    // agent_index_gaps.source_id is a real FK against agent_index_sources — on a source's very
-    // first-ever page there is no row yet. `ensureSourceRow` seeds the "nothing indexed yet"
-    // sentinel row FIRST (a no-op if the row already exists), so `recordGap` can ALWAYS run
-    // before the substantive commit below, uniformly — a crash between recordGap and the commit
-    // then always leaves the gap on record behind a cursor that hasn't moved past it, never the
-    // reverse (Important 3: gap-branch atomicity ordering).
-    await store.ensureSourceRow({
-      sourceId,
-      networkId: source.networkId,
-      creatorAddress: source.address,
-      fromLedger,
-      providerId: eventSource.providerId,
-      endpointClass: eventSource.endpointClass,
-      reportedOldestLedger: eventSource.oldestAvailableLedger,
-      reportedLatestLedger: reportedLatestAvailable,
-    })
-    await store.recordGap({
-      sourceId,
-      networkId: source.networkId,
-      fromLedger,
-      throughLedger: gapThrough,
-      reason: `${eventSource.endpointClass}-provider:${eventSource.providerId}:below-oldest-available-ledger`,
-    })
-    await store.commitSourcePage({
-      sourceId,
-      fromLedger,
-      throughLedger: gapThrough,
-      finalizedThroughLedger: gapThrough,
-      cursor: existing?.cursor ?? null,
-      memberships: [],
-      providerId: eventSource.providerId,
-      endpointClass: eventSource.endpointClass,
-      reportedOldestLedger: eventSource.oldestAvailableLedger,
-      reportedLatestLedger: reportedLatestAvailable,
-    })
-    return { sourceId, status: 'gapped', fromLedger, throughLedger: gapThrough }
   }
 
   const requestEnd = reportedLatestAvailable ?? finalizedLedger
@@ -412,6 +421,34 @@ export async function ingestAgentIndexPage({
     throw new Error(
       `ingestAgentIndexPage: eventSource reported no confirmed scanned range for ${sourceId}`
     )
+  }
+  // The live provider's retention floor moved past our persisted cursor mid-call: the adapter
+  // clamped forward and surfaced the skipped hole. Record it exactly like the snapshot-floor gap
+  // branch above, then let the normal commit below cover [fromLedger..throughLedger] with the
+  // events it actually collected — coverage stays honest (gap row) without losing memberships.
+  if (Number.isInteger(res.retentionClampedFromLedger)) {
+    const gapThrough = Math.min(res.retentionClampedFromLedger - 1, finalizedLedger)
+    if (gapThrough >= fromLedger) {
+      await store.ensureSourceRow({
+        sourceId,
+        networkId: source.networkId,
+        creatorAddress: source.address,
+        fromLedger,
+        providerId: eventSource.providerId,
+        endpointClass: eventSource.endpointClass,
+        reportedOldestLedger: res.retentionClampedFromLedger,
+        reportedLatestLedger: Number.isInteger(res.latestLedger)
+          ? res.latestLedger
+          : reportedLatestAvailable,
+      })
+      await store.recordGap({
+        sourceId,
+        networkId: source.networkId,
+        fromLedger,
+        throughLedger: gapThrough,
+        reason: `${eventSource.endpointClass}-provider:${eventSource.providerId}:below-oldest-available-ledger`,
+      })
+    }
   }
   // Never advance further than the RPC actually confirmed, even on an empty page.
   const throughLedger = Math.min(res.scannedThroughLedger, requestEnd)

@@ -1,7 +1,6 @@
 // frontend/src/components/money/AgentTeam.test.jsx
-// My Money Task 11. AgentTeam renders one row per deployed agent, keyed by stable address -- see
-// the component's own header comment for the exact readOwnerMoney.js row shape and the Cap
-// investigation (why Cap always renders "Unavailable", cited file:line there).
+// My Money Task 11. AgentTeam renders the three-account current-crew summary, keyed by stable
+// addresses, while the complete account history remains outside this compact surface.
 // @vitest-environment jsdom
 import fs from 'node:fs'
 import path from 'node:path'
@@ -56,29 +55,26 @@ function revokedFundedAgent(address = 'CREVOKED1') {
 }
 
 describe('AgentTeam — real stable identity, never list index', () => {
-  it("seeds each AgentMark from the real address: reordering the array never changes either address's fill", () => {
-    // A list-index-seeded regression (`identity={index}` or any positional string) would still
-    // pass a weaker version of this test that only checks "some fill exists" -- the real proof is
-    // that CAGENT1's fill is IDENTICAL whether it renders first or second, and likewise for
-    // CAGENT2's, which only holds if the fill is a pure function of the address.
+  it('resolves each branded avatar from the real address: reordering never changes its persona', () => {
+    // The fallback persona is address-derived, so rearranging rows cannot swap an account's icon.
     const { unmount: unmountFirst } = render(
       <AgentTeam agents={[healthyAgent('CAGENT1'), healthyAgent('CAGENT2')]} problemAgents={[]} />
     )
     const marksInOrder = document.querySelectorAll('.pc-agent-mark')
-    const cagent1FillAtIndex0 = marksInOrder[0].querySelector('path').getAttribute('fill')
-    const cagent2FillAtIndex1 = marksInOrder[1].querySelector('path').getAttribute('fill')
+    const cagent1AvatarAtIndex0 = marksInOrder[0].getAttribute('src')
+    const cagent2AvatarAtIndex1 = marksInOrder[1].getAttribute('src')
     unmountFirst()
 
     const { unmount: unmountReversed } = render(
       <AgentTeam agents={[healthyAgent('CAGENT2'), healthyAgent('CAGENT1')]} problemAgents={[]} />
     )
     const reorderedMarks = document.querySelectorAll('.pc-agent-mark')
-    const cagent2FillAtIndex0 = reorderedMarks[0].querySelector('path').getAttribute('fill')
-    const cagent1FillAtIndex1 = reorderedMarks[1].querySelector('path').getAttribute('fill')
+    const cagent2AvatarAtIndex0 = reorderedMarks[0].getAttribute('src')
+    const cagent1AvatarAtIndex1 = reorderedMarks[1].getAttribute('src')
     unmountReversed()
 
-    expect(cagent1FillAtIndex1).toBe(cagent1FillAtIndex0) // CAGENT1: index 0 -> index 1, same fill
-    expect(cagent2FillAtIndex0).toBe(cagent2FillAtIndex1) // CAGENT2: index 1 -> index 0, same fill
+    expect(cagent1AvatarAtIndex1).toBe(cagent1AvatarAtIndex0)
+    expect(cagent2AvatarAtIndex0).toBe(cagent2AvatarAtIndex1)
   })
 
   it('renders the real full address as an explorer link', () => {
@@ -90,6 +86,40 @@ describe('AgentTeam — real stable identity, never list index', () => {
     expect(link.getAttribute('href')).toBe(
       'https://stellar.expert/explorer/testnet/account/CAGENT1'
     )
+  })
+
+  it('shows at most three funded/current agents with the branded persona assets', () => {
+    const archived = (address) => ({
+      ...revokedFundedAgent(address),
+      amount: amt(0n),
+      idleToken: { state: 'known', amount: amt(0n) },
+    })
+    render(
+      <AgentTeam
+        agents={[
+          archived('COLD1'),
+          healthyAgent('CCURRENT1'),
+          archived('COLD2'),
+          healthyAgent('CCURRENT2'),
+          healthyAgent('CCURRENT3'),
+        ]}
+        problemAgents={[]}
+        personaByAddress={{
+          CCURRENT1: { id: 'sprout' },
+          CCURRENT2: { id: 'clover' },
+          CCURRENT3: { id: 'mochi' },
+        }}
+      />
+    )
+
+    const rows = document.querySelectorAll('.pc-crew-list > .pc-crew-row')
+    expect(rows).toHaveLength(3)
+    expect(screen.queryByText('COLD1')).toBeNull()
+    expect(screen.queryByText('COLD2')).toBeNull()
+    expect(
+      Array.from(rows, (row) => row.querySelector('.pc-money-agent-avatar')?.getAttribute('src'))
+    ).toEqual(['/brand/agents/sprout.svg', '/brand/agents/clover.svg', '/brand/agents/mochi.svg'])
+    expect(screen.getByText(/Older agent accounts remain in Technical details/)).toBeTruthy()
   })
 })
 

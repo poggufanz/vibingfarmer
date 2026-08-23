@@ -1475,6 +1475,9 @@ export async function handleIngest({
   )
   const results = settled.map((r, i) => {
     const sourceId = `${sources[i].networkId}:${sources[i].address}`
+    if (r.status === 'rejected') {
+      console.error(`ingest source failed ${sourceId}:`, r.reason)
+    }
     return r.status === 'fulfilled'
       ? { sourceId, ok: true, ...r.value }
       : { sourceId, ok: false, error: 'AGENT_INDEX_SOURCE_UNAVAILABLE' }

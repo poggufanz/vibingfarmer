@@ -4739,6 +4739,7 @@ const App = () => {
                 <MyMoneyRoute
                   model={moneyModel}
                   agents={moneyRead?.agents ?? []}
+                  personaByAddress={personaByAddress}
                   discovery={moneyDiscovery}
                   account={moneyAccountValue}
                   keeper={moneyKeeper}

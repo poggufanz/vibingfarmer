@@ -267,23 +267,75 @@ async function buildEventSource(source, server, sdkMod) {
     oldestAvailableLedger,
     latestAvailableLedger: latest.sequence,
     async getEvents({ startLedger, endLedger, limit }) {
-      const res = await server.getEvents({
-        startLedger,
-        filters: [{ type: 'contract', contractIds: [source.address], topics }],
-        limit,
-      })
+      // The public RPC caps a single getEvents range to a fixed LEDGER WINDOW (~2-3k+ ledgers,
+      // see routerEvents.js header note, pinned via live probe) and returns a cursor even on a
+      // complete 0-match page — so a single non-paginated call must never be trusted to cover a
+      // whole stale window, and cursor-based loops are unbounded. Instead walk the requested
+      // range in explicit 5000-ledger windows, each honored fully by the RPC (verified live).
+      //
+      // Boundedness is also a hard platform requirement: Cloudflare Workers caps subrequests per
+      // invocation (~50), and every window is one subrequest. 8 windows/source keeps 5 sources
+      // under the cap with room for the two health probes; later ticks resume via the store cursor.
+      //
+      // The RPC rejects startLedgers below its sliding retention floor ("startLedger must be
+      // within the ledger range: <o> - <l>") once a persisted cursor has fallen behind the floor —
+      // clamp forward to the reported floor, surfacing the skipped hole via
+      // `retentionClampedFromLedger`.
+      const WINDOW_LEDGERS = 5000
+      const MAX_WINDOWS = 8
+      const filters = [{ type: 'contract', contractIds: [source.address], topics }]
+      const collected = []
+      let latestLedger = null
+      let retentionClampedFromLedger = null
+      let from = startLedger
+      const requestEnd = endLedger ?? latest.sequence
+      let windows = 0
+      let lastWindowEnd = null
+      while (windows < MAX_WINDOWS) {
+        windows += 1
+        const to = Math.min(requestEnd, from + WINDOW_LEDGERS - 1)
+        if (to < from) break
+        let res
+        try {
+          res = await server.getEvents({
+            startLedger: from,
+            endLedger: to,
+            filters,
+            limit,
+          })
+        } catch (error) {
+          const match = String(error?.message ?? '').match(
+            /startLedger must be within the ledger range:\s*(\d+)\s*-\s*(\d+)/
+          )
+          if (!match) throw error
+          const floor = Number(match[1])
+          if (!Number.isSafeInteger(floor) || floor <= from) throw error
+          if (retentionClampedFromLedger == null) retentionClampedFromLedger = floor
+          from = floor
+          continue
+        }
+        latestLedger = res.latestLedger ?? latestLedger
+        collected.push(...(res.events || []))
+        lastWindowEnd = to
+        if (to >= requestEnd) break
+        from = to + 1
+      }
+      // Honest scan bound: the furthest ledger a fully-requested window covered. Passing
+      // `latestLedger: null` to scanRpcEventsPage makes it claim exactly this window (tip
+      // arithmetic is deliberately not used — we did not necessarily reach the tip).
       const page = scanRpcEventsPage({
-        events: res.events || [],
-        cursor: res.cursor,
-        latestLedger: res.latestLedger,
+        events: collected,
+        cursor: null,
+        latestLedger: null,
         startLedger,
-        endLedger,
+        endLedger: lastWindowEnd ?? startLedger,
       })
       return {
         events: page.events,
         cursor: null,
         scannedThroughLedger: page.scannedThroughLedger,
         latestLedger: page.latestLedger,
+        ...(retentionClampedFromLedger != null ? { retentionClampedFromLedger } : {}),
       }
     },
     // Registry `authorize()` never pins a wasm — only funding-router sources skip this (the

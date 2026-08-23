@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { parse as parseDotenv } from 'dotenv'
 import { experimental_readRawConfig } from 'wrangler'
@@ -105,7 +106,7 @@ describe('runtime commands and Wrangler bindings', () => {
       expect(generated.vars.ALLOWED_ORIGIN).toBe('https://dev.vibing-farmer.pages.dev')
       expect(generated.vars.RELAYER_ORIGIN).toBeUndefined()
       expect(resolve(dirname(target), generated.pages_build_output_dir)).toBe(
-        resolve(new URL('..', import.meta.url).pathname, 'dist')
+        resolve(fileURLToPath(new URL('..', import.meta.url)), 'dist')
       )
       expect(generated.d1_databases[0].migrations_dir).toMatch(/migrations$/)
       expect(JSON.parse(readFileSync(redirect, 'utf8'))).toEqual({
@@ -128,7 +129,7 @@ describe('runtime commands and Wrangler bindings', () => {
       await writePreviewConfig()
       const result = spawnSync(
         process.execPath,
-        [new URL('./runtime-config.mjs', import.meta.url).pathname, 'clear-preview-config'],
+        [fileURLToPath(new URL('./runtime-config.mjs', import.meta.url)), 'clear-preview-config'],
         { encoding: 'utf8' }
       )
       expect(result.status).toBe(0)
