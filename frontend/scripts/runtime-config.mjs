@@ -1,8 +1,12 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, relative, resolve } from 'node:path'
+import { basename, dirname, relative, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { experimental_readRawConfig } from 'wrangler'
 
-const TRACKED_WRANGLER_CONFIG = resolve(new URL('../wrangler.jsonc', import.meta.url).pathname)
+// fileURLToPath (not .pathname): .pathname yields "/C:/..." on Windows and resolve() then
+// produces "C:\C:\...", which breaks every local preview command on win32.
+const SCRIPTS_DIR = fileURLToPath(new URL('.', import.meta.url))
+const TRACKED_WRANGLER_CONFIG = resolve(SCRIPTS_DIR, '..', 'wrangler.jsonc')
 const { rawConfig: TRACKED_RAW_CONFIG } = await experimental_readRawConfig({
   config: TRACKED_WRANGLER_CONFIG,
 })
@@ -16,7 +20,7 @@ export const PRODUCTION_D1_DATABASE_ID = String(productionBinding.database_id).t
 // Deliberately unprovisioned UUID-shaped value so Wrangler's schema accepts the local config;
 // preview remote commands must reject it before invoking Wrangler until a real ID is supplied.
 export const PREVIEW_D1_SENTINEL = '00000000-0000-4000-8000-000000000001'
-const FRONTEND_DIR = resolve(new URL('..', import.meta.url).pathname)
+const FRONTEND_DIR = resolve(SCRIPTS_DIR, '..')
 export const PREVIEW_WRANGLER_CONFIG = resolve(
   FRONTEND_DIR,
   '.wrangler/deploy/vibing-farmer-preview.jsonc'
@@ -64,13 +68,16 @@ export async function writePreviewConfig(
     resolve(FRONTEND_DIR, rawConfig.pages_build_output_dir)
   )
   // Keep migration discovery anchored to the checkout rather than the generated config path.
-  binding.migrations_dir = resolve(new URL('../migrations', import.meta.url).pathname)
+  binding.migrations_dir = resolve(SCRIPTS_DIR, '..', 'migrations')
   mkdirSync(dirname(target), { recursive: true })
   mkdirSync(dirname(redirectTarget), { recursive: true })
   writeFileSync(target, `${JSON.stringify(generated, null, 2)}\n`, { mode: 0o600 })
+  // POSIX separators: Wrangler resolves configPath against the redirect file's directory, and
+  // forward slashes are valid on every platform — backslash literals would differ from CI.
+  const redirectConfig = relative(dirname(redirectTarget), target).split('\\').join('/')
   writeFileSync(
     redirectTarget,
-    `${JSON.stringify({ configPath: relative(dirname(redirectTarget), target) }, null, 2)}\n`,
+    `${JSON.stringify({ configPath: redirectConfig }, null, 2)}\n`,
     { mode: 0o600 }
   )
   return target
@@ -84,14 +91,15 @@ export function clearPreviewConfig(
   rmSync(redirectTarget, { force: true })
 }
 
-if (
-  process.argv[1]?.endsWith('/runtime-config.mjs') &&
-  process.argv[2] === 'clear-preview-config'
-) {
+// basename (not endsWith('/runtime-config.mjs')): on win32 argv[1] uses backslashes, so the
+// slash form never matches and every CLI command silently no-ops.
+const INVOKED_AS_SCRIPT = basename(process.argv[1] ?? '') === 'runtime-config.mjs'
+
+if (INVOKED_AS_SCRIPT && process.argv[2] === 'clear-preview-config') {
   clearPreviewConfig()
 }
 
-if (process.argv[1]?.endsWith('/runtime-config.mjs') && process.argv[2] === 'assert-preview-d1') {
+if (INVOKED_AS_SCRIPT && process.argv[2] === 'assert-preview-d1') {
   const result = validatePreviewDatabaseId(process.env.PREVIEW_D1_DATABASE_ID)
   if (!result.ok) {
     console.error(
@@ -101,10 +109,7 @@ if (process.argv[1]?.endsWith('/runtime-config.mjs') && process.argv[2] === 'ass
   }
 }
 
-if (
-  process.argv[1]?.endsWith('/runtime-config.mjs') &&
-  process.argv[2] === 'write-preview-config'
-) {
+if (INVOKED_AS_SCRIPT && process.argv[2] === 'write-preview-config') {
   try {
     await writePreviewConfig()
   } catch (error) {
