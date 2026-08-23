@@ -369,7 +369,7 @@ test('workflow: ordinary push/PR/merge-group triggers are present and the exact 
     'missing merge_group trigger',
   )
   assert.deepEqual(workflow.on.push.branches, ['main', 'dev'])
-  assert.deepEqual(workflow.on.push.tags, ['v1.15.2-beta'])
+  assert.deepEqual(workflow.on.push.tags, ['v1.16.0-beta'])
   assertUnfiltered(workflow.on.pull_request, 'pull_request')
   assertUnfiltered(workflow.on.merge_group, 'merge_group')
 })
@@ -380,7 +380,7 @@ test('workflow: the exact candidate tag push runs required identity verification
   const candidateStep = claimEvidence.steps.find(
     (step) =>
       step.name === 'Verify exact candidate tag and Cloudflare preview identity' &&
-      step.if === "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'",
+      step.if === "github.event_name == 'push' && github.ref == 'refs/tags/v1.16.0-beta'",
   )
   assert.ok(candidateStep, 'exact candidate tag push must have an automatic verification step')
   assert.equal(candidateStep.env.CANDIDATE_VERIFICATION_MODE, 'required')
@@ -427,7 +427,7 @@ test('workflow: exact candidate tag restores the remote annotated tag object bef
   const restoreStep = steps[restoreIdx]
   assert.equal(
     restoreStep.if,
-    "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'",
+    "github.event_name == 'push' && github.ref == 'refs/tags/v1.16.0-beta'",
   )
   assert.match(String(restoreStep.run), /git fetch\s+--force\s+--no-tags\s+origin/)
   assert.match(
@@ -452,13 +452,13 @@ test('workflow: generic claim validation skips only the exact candidate tag push
   assert.ok(genericStep, 'claim-evidence must retain generic claim validation')
   assert.equal(
     genericStep.if,
-    "github.event_name != 'push' || github.ref != 'refs/tags/v1.15.2-beta'",
+    "github.event_name != 'push' || github.ref != 'refs/tags/v1.16.0-beta'",
     'generic validation must skip only the exact candidate tag push',
   )
   assert.ok(candidateStep, 'dedicated exact-candidate verification must remain present')
   assert.equal(
     candidateStep.if,
-    "github.event_name == 'push' && github.ref == 'refs/tags/v1.15.2-beta'",
+    "github.event_name == 'push' && github.ref == 'refs/tags/v1.16.0-beta'",
   )
 })
 

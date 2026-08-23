@@ -30,7 +30,7 @@ export const REQUIRED_CLAIM_IDS = Object.freeze([
 ]);
 
 const CANDIDATE_LOCATORS = Object.freeze([
-  "https://github.com/poggufanz/vibingfarmer/tree/v1.15.2-beta",
+  "https://github.com/poggufanz/vibingfarmer/tree/v1.16.0-beta",
   "https://dev.vibing-farmer.pages.dev",
 ]);
 
@@ -160,7 +160,7 @@ export const CLAIM_CONTRACTS = Object.freeze(
 );
 
 const EXPECTED_CANDIDATE = Object.freeze({
-  tag: "v1.15.2-beta",
+  tag: "v1.16.0-beta",
   targetBranch: "dev",
   cloudflareProject: "vibing-farmer",
 });
