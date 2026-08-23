@@ -1432,7 +1432,7 @@ describe('ingestAgentIndexPage — retention-floor gaps', () => {
       endpointClass: 'live',
       oldestAvailableLedger: start,
       latestAvailableLedger: start + 500,
-      async getEvents(req) {
+      async getEvents(_req) {
         return {
           events: [rec],
           cursor: null,

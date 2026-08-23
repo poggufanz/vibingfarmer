@@ -266,7 +266,7 @@ async function buildEventSource(source, server, sdkMod) {
     endpointClass: 'live',
     oldestAvailableLedger,
     latestAvailableLedger: latest.sequence,
-async getEvents({ startLedger, endLedger, limit }) {
+    async getEvents({ startLedger, endLedger, limit }) {
       // The public RPC caps a single getEvents range to a fixed LEDGER WINDOW (~2-3k+ ledgers,
       // see routerEvents.js header note, pinned via live probe) and returns a cursor even on a
       // complete 0-match page — so a single non-paginated call must never be trusted to cover a
@@ -288,7 +288,7 @@ async getEvents({ startLedger, endLedger, limit }) {
       let latestLedger = null
       let retentionClampedFromLedger = null
       let from = startLedger
-      const requestEnd = endLedger ?? latestAvailableLedger
+      const requestEnd = endLedger ?? latest.sequence
       let windows = 0
       let lastWindowEnd = null
       while (windows < MAX_WINDOWS) {
