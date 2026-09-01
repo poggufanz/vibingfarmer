@@ -44,9 +44,9 @@ const CONTRACT_VERIFICATIONS = Object.freeze({
   "permission-lifetime":
     "cd frontend && npx vitest run src/strategy/permissionWindow.test.js src/strategy/flowState.test.js src/stellar/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
   "yield-availability":
-    "cd frontend && npx vitest run src/strategy/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history.yield.test.js src/components/HistoryPanel.test.jsx src/strategist.yield.test.js src/components/TxDetailPage.test.jsx",
+    "cd frontend && npx vitest run src/strategy/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history/__tests__/history.yield.test.js src/components/HistoryPanel.test.jsx src/strategist.yield.test.js src/components/TxDetailPage.test.jsx",
   "sponsored-network-fee":
-    "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history.yield.test.js src/stellar/exit.test.js src/agents/agentController.test.js src/stellar/partialWithdraw.test.js src/components/TxDetailPage.test.jsx",
+    "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history/__tests__/history.yield.test.js src/stellar/exit.test.js src/agents/agentController.test.js src/stellar/partialWithdraw.test.js src/components/TxDetailPage.test.jsx",
   "stellar-explorer-counts":
     "cd frontend && npx vitest run src/stellar/deploymentFacts.test.js src/components/ExplorerPage.test.jsx",
   "candidate-same-commit":
@@ -93,7 +93,7 @@ const CONTRACT_EVIDENCE = Object.freeze({
     "frontend/src/components/VaultDetailPage.jsx",
     "frontend/src/components/VaultDetailPage.test.jsx",
     "frontend/src/history.js",
-    "frontend/src/history.yield.test.js",
+    "frontend/src/history/__tests__/history.yield.test.js",
     "frontend/src/components/HistoryPanel.jsx",
     "frontend/src/components/HistoryPanel.test.jsx",
     "frontend/src/strategist.js",
@@ -105,7 +105,7 @@ const CONTRACT_EVIDENCE = Object.freeze({
     "scripts/ci/public-claim-scan.mjs",
     "scripts/ci/public-claim-scan.test.mjs",
     "frontend/src/history.js",
-    "frontend/src/history.yield.test.js",
+    "frontend/src/history/__tests__/history.yield.test.js",
     "frontend/src/stellar/exit.js",
     "frontend/src/stellar/exit.test.js",
     "frontend/src/agents/agentController.js",

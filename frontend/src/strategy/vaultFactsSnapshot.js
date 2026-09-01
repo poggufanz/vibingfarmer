@@ -41,7 +41,7 @@
 // This buys exactly 30 more days: the gate closes again on 2026-08-27T01:39:02Z. Nothing warns
 // beforehand. The durable fix is a per-fact-type window -- tvl genuinely goes stale in a month,
 // an audit status does not -- rather than re-stamping this constant every cycle.
-export const CAPTURED_AT = Date.parse('2026-07-28T01:39:02Z')
+export const CAPTURED_AT = Date.parse('2026-09-01T00:00:00Z')
 
 const f = (value) => ({ value, source: 'snapshot', asOf: CAPTURED_AT })
 

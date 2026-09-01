@@ -9,7 +9,7 @@ import {
   saveReasoning,
   saveStrategy,
   saveTransaction,
-} from './history.js'
+} from '../history.js'
 
 afterEach(() => clearAllHistory())
 
