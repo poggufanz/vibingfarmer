@@ -42,9 +42,9 @@ const MAX_CLOUDFLARE_DEPLOYMENT_PAGES = 100;
 
 const CONTRACT_VERIFICATIONS = Object.freeze({
   "permission-lifetime":
-    "cd frontend && npx vitest run src/strategy/__tests__/permissionWindow.test.js src/strategy/__tests__/flowState.test.js src/stellar/__tests__/grant.test.js src/orchestrator/__tests__/orchestrator.test.js src/orchestrator/__tests__/orchestrator.router.test.js src/orchestrator/__tests__/orchestrator.baseleg.test.js src/orchestrator/__tests__/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
+    "cd frontend && npx vitest run src/strategy/__tests__/permissionWindow.test.js src/strategy/__tests__/flowState.test.js src/stellar/__tests__/grant.test.js src/orchestrator/__tests__/orchestrator.test.js src/orchestrator/__tests__/orchestrator.router.test.js src/orchestrator/__tests__/orchestrator.baseleg.test.js src/orchestrator/__tests__/orchestrator.unavailable.test.js src/components/strategy/__tests__/ProtectStage.test.jsx",
   "yield-availability":
-    "cd frontend && npx vitest run src/strategy/__tests__/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/__tests__/OnboardingFlow.test.jsx src/components/__tests__/VaultDetailPage.test.jsx src/history/__tests__/history.yield.test.js src/components/__tests__/HistoryPanel.test.jsx src/strategy/__tests__/strategist.yield.test.js src/components/__tests__/TxDetailPage.test.jsx",
+    "cd frontend && npx vitest run src/strategy/__tests__/venueTruth.test.js src/components/strategy/__tests__/PlanStage.test.jsx src/components/__tests__/OnboardingFlow.test.jsx src/components/__tests__/VaultDetailPage.test.jsx src/history/__tests__/history.yield.test.js src/components/__tests__/HistoryPanel.test.jsx src/strategy/__tests__/strategist.yield.test.js src/components/__tests__/TxDetailPage.test.jsx",
   "sponsored-network-fee":
     "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history/__tests__/history.yield.test.js src/stellar/__tests__/exit.test.js src/agents/agentController.test.js src/stellar/__tests__/partialWithdraw.test.js src/components/__tests__/TxDetailPage.test.jsx",
   "stellar-explorer-counts":
@@ -81,13 +81,13 @@ const CONTRACT_EVIDENCE = Object.freeze({
     "frontend/src/orchestrator/__tests__/orchestrator.baseleg.test.js",
     "frontend/src/orchestrator/__tests__/orchestrator.unavailable.test.js",
     "frontend/src/components/strategy/ProtectStage.jsx",
-    "frontend/src/components/strategy/ProtectStage.test.jsx",
+    "frontend/src/components/strategy/__tests__/ProtectStage.test.jsx",
   ]),
   "yield-availability": Object.freeze([
     "frontend/src/strategy/venueTruth.js",
     "frontend/src/strategy/__tests__/venueTruth.test.js",
     "frontend/src/components/strategy/PlanStage.jsx",
-    "frontend/src/components/strategy/PlanStage.test.jsx",
+    "frontend/src/components/strategy/__tests__/PlanStage.test.jsx",
     "frontend/src/components/OnboardingFlow.jsx",
     "frontend/src/components/__tests__/OnboardingFlow.test.jsx",
     "frontend/src/components/VaultDetailPage.jsx",
