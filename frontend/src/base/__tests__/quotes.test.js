@@ -1,6 +1,6 @@
 // frontend/src/base/quotes.test.js
 import { describe, test, expect, vi } from 'vitest'
-import { estimateMinShares } from './quotes.js'
+import { estimateMinShares } from '../quotes.js'
 
 describe('estimateMinShares', () => {
   test('reads convertToShares live and applies the slippage tolerance', async () => {

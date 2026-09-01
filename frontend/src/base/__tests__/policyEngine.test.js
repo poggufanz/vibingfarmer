@@ -1,9 +1,9 @@
 import { describe, test, expect, vi } from 'vitest'
 
 vi.stubEnv('VITE_YIELD_ROUTER_ADDRESS', '0xF0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0')
-const policyEngine = await import('./policyEngine.js')
+const policyEngine = await import('../policyEngine.js')
 const { buildDepositPermissions, buildFarmPermissions, evaluateCall } = policyEngine
-const { ERC20_ABI, YIELD_ROUTER_ABI, YIELD_ROUTER_ADDRESS } = await import('./config.js')
+const { ERC20_ABI, YIELD_ROUTER_ABI, YIELD_ROUTER_ADDRESS } = await import('../config.js')
 const { ParamCondition } = await import('@zerodev/permissions/policies')
 
 const POOL_A = '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'

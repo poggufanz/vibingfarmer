@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-vi.mock('./base/deploymentFacts.js', async () => {
-  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./base/hardenedDeployment.fixture.js')
+vi.mock('../deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('../hardenedDeployment.fixture.js')
   return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
 })
 
-import { executeBaseLeg } from './baseLeg.js'
-import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
+import { executeBaseLeg } from '../../baseLeg.js'
+import { buildDispatchReceipt } from '../../strategy/dispatchSummary.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'
 const BRIDGE_AGENT = 'CBRIDGEAGENT'

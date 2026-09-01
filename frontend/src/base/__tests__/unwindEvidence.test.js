@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { encodeAbiParameters, encodeEventTopics } from 'viem'
-import { readKnownUnwindUserOperation, reconcileUnwindUserOperation } from './unwindEvidence.js'
+import { readKnownUnwindUserOperation, reconcileUnwindUserOperation } from '../unwindEvidence.js'
 
-vi.mock('./deploymentFacts.js', async () => {
-  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./hardenedDeployment.fixture.js')
+vi.mock('../deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('../hardenedDeployment.fixture.js')
   return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
 })
 
-import { BASE_EXIT_SWEEPER_ABI, BASE_EXIT_SWEEPER_ADDRESS } from './config.js'
+import { BASE_EXIT_SWEEPER_ABI, BASE_EXIT_SWEEPER_ADDRESS } from '../config.js'
 
 const JOB_ID = '44'.repeat(16)
 const USER_OP_HASH = `0x${'77'.repeat(32)}`

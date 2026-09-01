@@ -1,18 +1,18 @@
 import { describe, it, expect, vi } from 'vitest'
 import { encodeEventTopics, encodeAbiParameters, decodeFunctionData } from 'viem'
 
-vi.mock('./deploymentFacts.js', async () => {
-  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./hardenedDeployment.fixture.js')
+vi.mock('../deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('../hardenedDeployment.fixture.js')
   return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
 })
 
-import { buildUnwindCalls, signAndSubmitUnwind } from './withdrawBatch.js'
+import { buildUnwindCalls, signAndSubmitUnwind } from '../withdrawBatch.js'
 import {
   BASE_EXIT_SWEEPER_ADDRESS,
   BASE_EXIT_SWEEPER_ABI,
   BASE_USDC_ADDRESS,
   ERC20_ABI,
-} from './config.js'
+} from '../config.js'
 
 const STELLAR = 'GCXMZCDVYTAANBRASUGWS5GDKRGSQWNM5XHVB4JI7PXECZYKBG5OTTRK'
 const BASE_USDC = BASE_USDC_ADDRESS

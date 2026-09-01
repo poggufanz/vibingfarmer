@@ -1,11 +1,11 @@
 // frontend/src/base/dashboardPositions.test.js
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { loadDeviceBasePositions, loadIndexedBasePositions } from './dashboardPositions.js'
+import { loadDeviceBasePositions, loadIndexedBasePositions } from '../dashboardPositions.js'
 // The vitest env block (vite.config.js) overrides VITE_BASE_POOL_1_ADDRESS away from the
 // hardcoded production default, so the real catalog address must be read at test time rather
 // than hardcoded here (mirrors strategist.crosschain.test.js's BASE_ADDRESS pattern).
-import { BASE_POOL_CATALOG } from '../config.js'
-import { baseOwnerStorageKey } from '../wallet/baseBinding.js'
+import { BASE_POOL_CATALOG } from '../../config.js'
+import { baseOwnerStorageKey } from '../../wallet/baseBinding.js'
 
 const OWNER = 'GUSER'
 const POOL_A = BASE_POOL_CATALOG[0].address
@@ -118,7 +118,7 @@ describe('loadDeviceBasePositions', () => {
 
   it('never reintroduces the retired local-record-only reader as an export', async () => {
     const src = await import('node:fs/promises').then((fs) =>
-      fs.readFile(new URL('./dashboardPositions.js', import.meta.url), 'utf8')
+      fs.readFile(new URL('../dashboardPositions.js', import.meta.url), 'utf8')
     )
     expect(src).not.toMatch(/export\s+async\s+function\s+loadBasePositions/)
   })

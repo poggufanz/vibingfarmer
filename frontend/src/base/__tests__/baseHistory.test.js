@@ -1,6 +1,6 @@
 // frontend/src/base/baseHistory.test.js
 import { describe, it, expect, vi } from 'vitest'
-import { fetchBaseHistory } from './baseHistory.js'
+import { fetchBaseHistory } from '../baseHistory.js'
 
 const K = '0x66fe3bb4ade38dd55504813cb0c8d77f3c7974e9'
 

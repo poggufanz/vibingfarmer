@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   requireCanonicalUserOperationHash,
   requireSuccessfulUserOperation,
-} from './userOpReceipt.js'
+} from '../userOpReceipt.js'
 
 const TX_HASH_MIXED = `0x${'Aa'.repeat(32)}`
 const TX_HASH = TX_HASH_MIXED.toLowerCase()

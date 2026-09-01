@@ -1,6 +1,6 @@
 // frontend/src/base/session.test.js
 import { describe, test, expect, vi } from 'vitest'
-import { reconstructSessionClient } from './session.js'
+import { reconstructSessionClient } from '../session.js'
 
 describe('reconstructSessionClient', () => {
   test('deserializes the approval with the REAL session signer, then wraps it gaslessly', async () => {

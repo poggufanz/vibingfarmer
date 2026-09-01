@@ -1,19 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
-import { executeBaseLeg } from './baseLeg.js'
-import { runFarmFlow } from './crossChainFarm.js'
+import { executeBaseLeg } from '../../baseLeg.js'
+import { runFarmFlow } from '../../crossChainFarm.js'
 import {
   applyBaseLegOutcome,
   needsBaseMandateSetup,
   resolveBaseAvailability,
   setupBaseMandate,
-} from './mergeFlowHelpers.js'
+} from '../../mergeFlowHelpers.js'
 import {
   postFarm,
   postFarmAttach,
   postMandate,
   postUnwindAttach,
   reserveUnwind,
-} from './base/relayerClient.js'
+} from '../relayerClient.js'
 
 describe('legacy Base deployment global execution fence', () => {
   it('settles the Base leg unavailable before mandate reads, quotes, pulls, or burns', async () => {

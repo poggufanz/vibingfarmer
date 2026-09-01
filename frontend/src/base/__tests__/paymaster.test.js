@@ -1,6 +1,6 @@
 // frontend/src/base/paymaster.test.js
 import { describe, test, expect, vi } from 'vitest'
-import { createGaslessKernelClient } from './paymaster.js'
+import { createGaslessKernelClient } from '../paymaster.js'
 
 describe('createGaslessKernelClient', () => {
   test('wires the ZeroDev paymaster into the kernel account client (proven pattern from session-test.mjs)', () => {

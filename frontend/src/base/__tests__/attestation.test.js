@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-vi.mock('./stellar/attestation.js', () => ({
+vi.mock('../../stellar/attestation.js', () => ({
   attestOnChain: vi.fn(),
 }))
 
-import { attestStrategyOnChain, formatAttestation, hashStrategy } from './attestation.js'
-import { attestOnChain } from './stellar/attestation.js'
+import { attestStrategyOnChain, formatAttestation, hashStrategy } from '../../attestation.js'
+import { attestOnChain } from '../../stellar/attestation.js'
 
 const strategy = {
   selected_vaults: [

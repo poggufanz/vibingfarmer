@@ -1,14 +1,14 @@
 // frontend/src/crossChainFarm.test.js
 import { describe, test, expect, vi } from 'vitest'
 
-vi.mock('./base/deploymentFacts.js', async () => {
-  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./base/hardenedDeployment.fixture.js')
+vi.mock('../deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('../hardenedDeployment.fixture.js')
   return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
 })
 
-import { runFarmFlow } from './crossChainFarm.js'
-import { readCctpTransfer } from './cctp/transferJournal.js'
-import { BASE_POOL_CATALOG } from './config.js'
+import { runFarmFlow } from '../../crossChainFarm.js'
+import { readCctpTransfer } from '../../cctp/transferJournal.js'
+import { BASE_POOL_CATALOG } from '../../config.js'
 
 const OWNER = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
 const REQUEST_ID = '11'.repeat(16)

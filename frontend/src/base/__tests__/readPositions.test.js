@@ -1,6 +1,6 @@
 // frontend/src/base/readPositions.test.js
 import { describe, test, it, expect, vi } from 'vitest'
-import { readPositions, readIdleUsdc } from './readPositions.js'
+import { readPositions, readIdleUsdc } from '../readPositions.js'
 
 describe('readPositions', () => {
   test('reads balanceOf then convertToAssets per pool, applying the slippage tolerance', async () => {

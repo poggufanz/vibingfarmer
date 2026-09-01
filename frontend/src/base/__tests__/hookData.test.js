@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest'
 import { StrKey } from '@stellar/stellar-sdk'
-import { buildForwarderHookData, assertHookData, assertStellarStrKey } from './hookData.js'
+import { buildForwarderHookData, assertHookData, assertStellarStrKey } from '../hookData.js'
 
 const VALID_G = 'GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M'
 const VALID_C = 'CAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRDB3V'

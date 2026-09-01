@@ -4,7 +4,7 @@ import {
   materialBaseMandateStatusChange,
   normalizeBaseMandateStatus,
   publicBaseMandateEvidence,
-} from './mandateStatus.js'
+} from '../mandateStatus.js'
 
 const USER_OP_HASH = `0x${'33'.repeat(32)}`
 const TX_HASH = `0x${'44'.repeat(32)}`

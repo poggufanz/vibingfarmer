@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { concatHex, decodeFunctionData, encodeFunctionData } from 'viem'
 import { KernelV3ExecuteAbi } from '@zerodev/sdk'
-import { unwindJobCommitment } from './unwindCommitment.js'
+import { unwindJobCommitment } from '../unwindCommitment.js'
 
 const JOB_ID = 'ab'.repeat(16)
 const COMMITMENT = '0x2a8c851ab65e5f08fe5af4d1b09eaf2bbd7156fe6561f537d30454905de12cb7'

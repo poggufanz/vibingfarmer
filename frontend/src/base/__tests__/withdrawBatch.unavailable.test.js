@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildUnwindCalls, signAndSubmitUnwind } from './withdrawBatch.js'
+import { buildUnwindCalls, signAndSubmitUnwind } from '../withdrawBatch.js'
 
 describe('legacy Base unwind availability fence', () => {
   it('fails before hook validation or approval/call encoding', () => {

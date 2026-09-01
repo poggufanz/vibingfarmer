@@ -1,12 +1,12 @@
 // frontend/src/base/relayerClient.test.js
 import { describe, test, expect, vi } from 'vitest'
 
-vi.mock('./deploymentFacts.js', async () => {
-  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./hardenedDeployment.fixture.js')
+vi.mock('../deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('../hardenedDeployment.fixture.js')
   return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
 })
 
-import * as relayerClient from './relayerClient.js'
+import * as relayerClient from '../relayerClient.js'
 
 const {
   postFarmAttach,
@@ -1816,7 +1816,7 @@ describe('same-origin capability transport', () => {
     vi.stubEnv('VITE_CROSS_RELAYER_BASE', crossOrigin)
     vi.resetModules()
     try {
-      const freshClient = await import('./relayerClient.js')
+      const freshClient = await import('../relayerClient.js')
       const fetchImpl = vi.fn(async () => intentAck())
       await freshClient.postFarm({
         requestId: JOB_ID,
