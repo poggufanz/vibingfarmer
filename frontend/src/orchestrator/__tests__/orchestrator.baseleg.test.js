@@ -11,8 +11,8 @@
 // explicitly forwards this spy into the real executeBaseLeg and its real runFarmFlow.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-vi.mock('./base/deploymentFacts.js', async () => {
-  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./base/hardenedDeployment.fixture.js')
+vi.mock('../../base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('../../base/hardenedDeployment.fixture.js')
   return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
 })
 
@@ -22,7 +22,7 @@ const submitGrantMock = vi.fn()
 const runAgentPullMock = vi.fn()
 const readAllowanceMock = vi.fn()
 const readConfirmedLedgerMock = vi.fn()
-vi.mock('./stellar/grant.js', () => ({
+vi.mock('../../stellar/grant.js', () => ({
   submitGrant: (...a) => submitGrantMock(...a),
   runAgentPull: (...a) => runAgentPullMock(...a),
   readAllowance: (...a) => readAllowanceMock(...a),
@@ -32,18 +32,18 @@ vi.mock('./stellar/grant.js', () => ({
 }))
 
 const readStoredBaseMandateMock = vi.fn()
-vi.mock('./mergeFlowHelpers.js', () => ({
+vi.mock('../../mergeFlowHelpers.js', () => ({
   readStoredBaseMandate: (...a) => readStoredBaseMandateMock(...a),
 }))
 
 const takeReusableAgentMock = vi.fn(async () => null)
 const saveCachedAgentMock = vi.fn()
-vi.mock('./stellar/agentCache.js', () => ({
+vi.mock('../../stellar/agentCache.js', () => ({
   takeReusableAgent: (...a) => takeReusableAgentMock(...a),
   saveCachedAgent: (...a) => saveCachedAgentMock(...a),
 }))
 
-vi.mock('./stellar/sessionKey.js', () => ({
+vi.mock('../../stellar/sessionKey.js', () => ({
   newSessionKey: (secret) => ({
     publicKey: secret ? 'GRESTORED' : 'GFRESH',
     secret: secret ?? 'SFRESH',
@@ -55,7 +55,7 @@ vi.mock('./stellar/sessionKey.js', () => ({
 const readTokenBalanceMock = vi.fn(async () => null)
 const runAgentDepositMock = vi.fn()
 const readVaultSharesMock = vi.fn()
-vi.mock('./stellar/agentDeposit.js', () => ({
+vi.mock('../../stellar/agentDeposit.js', () => ({
   readTokenBalance: (...a) => readTokenBalanceMock(...a),
   runAgentDeposit: (...a) => runAgentDepositMock(...a),
   readVaultShares: (...a) => readVaultSharesMock(...a),
@@ -64,7 +64,7 @@ vi.mock('./stellar/agentDeposit.js', () => ({
 // Router path (default once funding_router is live) — the only path a bridge agent can go
 // through, since deploying one requires the router's kind:Bridge AgentInit, never the legacy
 // per-agent deploy call.
-vi.mock('./stellar/config.js', async (importOriginal) => ({
+vi.mock('../../stellar/config.js', async (importOriginal) => ({
   ...(await importOriginal()),
   SOROBAN_TOKEN_ADDRESS: 'CTOKEN',
   SOROBAN_DECIMALS: 7,
@@ -78,12 +78,12 @@ vi.mock('./stellar/config.js', async (importOriginal) => ({
   // changes nothing for them (mirrors orchestrator.router.test.js's identical addition).
   NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
 }))
-vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
-vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
+vi.mock('../../strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
+vi.mock('../../skills.js', () => ({ saveSkill: vi.fn() }))
 
 const workerInstances = []
 const workerExecuteMock = vi.fn()
-vi.mock('./worker.js', () => ({
+vi.mock('../../worker.js', () => ({
   WorkerAgent: class {
     constructor(c) {
       Object.assign(this, c)
@@ -107,26 +107,26 @@ vi.mock('./worker.js', () => ({
 }))
 
 const executeBaseLegMock = vi.fn()
-vi.mock('./baseLeg.js', async (importOriginal) => {
+vi.mock('../../baseLeg.js', async (importOriginal) => {
   const actual = await importOriginal()
   baseLegHarness.executeReal = actual.executeBaseLeg
   return { ...actual, executeBaseLeg: (...a) => executeBaseLegMock(...a) }
 })
 const runAgentBurnMock = vi.fn()
-vi.mock('./stellar/agentBurn.js', () => ({
+vi.mock('../../stellar/agentBurn.js', () => ({
   runAgentBurn: (...a) => runAgentBurnMock(...a),
 }))
 const readBaseMandateMock = vi.fn()
-vi.mock('./wallet/baseBinding.js', async (importOriginal) => ({
+vi.mock('../../wallet/baseBinding.js', async (importOriginal) => ({
   ...(await importOriginal()),
   readBaseMandate: (...a) => readBaseMandateMock(...a),
 }))
 
 const fetchPreparedExecutionMaterialMock = vi.fn()
-vi.mock('./strategy/reusePreflight.js', () => ({
+vi.mock('../../strategy/reusePreflight.js', () => ({
   fetchPreparedExecutionMaterial: (...a) => fetchPreparedExecutionMaterialMock(...a),
 }))
-vi.mock('./stellar/grantReceiptStore.js', () => ({
+vi.mock('../../stellar/grantReceiptStore.js', () => ({
   buildGrantReceiptV1: (value) => value,
   saveGrantReceipt: vi.fn(),
   fingerprintGrantReceipt: () => 'GRANT-RECEIPT',
@@ -137,7 +137,7 @@ vi.mock('./stellar/grantReceiptStore.js', () => ({
 // loops run unmocked, only the leaf that would otherwise reach `fetch` is replaced, so tests can
 // assert exactly what body was posted and simulate a version-conflict/network failure at will.
 const postReceiptEvidenceMock = vi.fn()
-vi.mock('./stellar/agentIndexReceiptClient.js', () => ({
+vi.mock('../../stellar/agentIndexReceiptClient.js', () => ({
   postReceiptEvidence: (...a) => postReceiptEvidenceMock(...a),
   ReceiptEvidenceError: class ReceiptEvidenceError extends Error {
     constructor(message, opts = {}) {
@@ -151,26 +151,26 @@ vi.mock('./stellar/agentIndexReceiptClient.js', () => ({
   },
 }))
 const readRecoveryReceiptMock = vi.fn()
-vi.mock('./strategy/recoveryClient.js', () => ({
+vi.mock('../../strategy/recoveryClient.js', () => ({
   readRecoveryReceipt: (...args) => readRecoveryReceiptMock(...args),
 }))
 
-import { OrchestratorAgent } from './orchestrator.js'
-import { ReceiptEvidenceError } from './stellar/agentIndexReceiptClient.js'
-import { RelaySubmissionUnknownError } from './stellar/relay.js'
+import { OrchestratorAgent } from '../../orchestrator.js'
+import { ReceiptEvidenceError } from '../../stellar/agentIndexReceiptClient.js'
+import { RelaySubmissionUnknownError } from '../../stellar/relay.js'
 import {
   appendPhase,
   confirmCustody,
   createAllocationReceipt,
-} from './strategy/allocationReceipt.js'
-import { selectRecoveryAction } from '../api/agent-index/recovery.js'
+} from '../../strategy/allocationReceipt.js'
+import { selectRecoveryAction } from '../../../api/agent-index/recovery.js'
 import {
   STELLAR_USDC_SAC,
   STELLAR_TOKEN_MESSENGER_MINTER,
   CCTP_BASE_DOMAIN,
   evmAddrToBytes32,
-} from './stellar/cctpBurn.js'
-import { BASE_POOL_CATALOG } from './config.js'
+} from '../../stellar/cctpBurn.js'
+import { BASE_POOL_CATALOG } from '../../config.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'
 const CANONICAL_JOB_ID = '55'.repeat(16)

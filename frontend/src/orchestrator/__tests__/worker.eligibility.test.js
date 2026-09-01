@@ -1,14 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
 
 // memory.js writes to localStorage (absent in node) — mock it so the failure path returns cleanly.
-vi.mock('./memory.js', () => ({
+vi.mock('../../memory.js', () => ({
   writeMemory: vi.fn(),
   createEntry: (step, status, data = {}, lesson) => ({ step, status, ...data, lesson }),
   buildLesson: () => 'lesson',
 }))
 
-import { WorkerAgent } from './worker.js'
-import { MAX_TOKEN_AGE_MS } from './strategy/eligibilityGate.js'
+import { WorkerAgent } from '../../worker.js'
+import { MAX_TOKEN_AGE_MS } from '../../strategy/eligibilityGate.js'
 
 const NOW = Date.now()
 const goodToken = {

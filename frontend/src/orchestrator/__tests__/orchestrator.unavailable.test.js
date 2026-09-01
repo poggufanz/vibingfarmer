@@ -19,37 +19,37 @@ const calls = vi.hoisted(() => ({
   event: vi.fn(),
 }))
 
-vi.mock('./stellar/sessionKey.js', () => ({
+vi.mock('../../stellar/sessionKey.js', () => ({
   newSessionKey: (...args) => calls.newSessionKey(...args),
 }))
-vi.mock('./stellar/agentDeposit.js', () => ({
+vi.mock('../../stellar/agentDeposit.js', () => ({
   readTokenBalance: (...args) => calls.readTokenBalance(...args),
   readVaultShares: (...args) => calls.readVaultShares(...args),
   runAgentDeposit: (...args) => calls.runAgentDeposit(...args),
 }))
-vi.mock('./wallet/baseBinding.js', () => ({
+vi.mock('../../wallet/baseBinding.js', () => ({
   readBaseMandate: (...args) => calls.readBaseMandate(...args),
 }))
-vi.mock('./stellar/grant.js', () => ({
+vi.mock('../../stellar/grant.js', () => ({
   submitGrant: (...args) => calls.submitGrant(...args),
   runAgentPull: (...args) => calls.runAgentPull(...args),
   readAllowance: (...args) => calls.readAllowance(...args),
   AGENT_KIND_DEPOSIT: 0,
   AGENT_KIND_BRIDGE: 1,
 }))
-vi.mock('./stellar/agentSetup.js', () => ({
+vi.mock('../../stellar/agentSetup.js', () => ({
   deployAgentForSession: (...args) => calls.deployAgentForSession(...args),
   fundAgent: (...args) => calls.fundAgent(...args),
   registryAuthorizeAgent: (...args) => calls.registryAuthorizeAgent(...args),
 }))
-vi.mock('./stellar/agentCache.js', () => ({
+vi.mock('../../stellar/agentCache.js', () => ({
   takeReusableAgent: (...args) => calls.takeReusableAgent(...args),
   saveCachedAgent: (...args) => calls.saveCachedAgent(...args),
 }))
-vi.mock('./stellar/agentIndexReceiptClient.js', () => ({
+vi.mock('../../stellar/agentIndexReceiptClient.js', () => ({
   postReceiptEvidence: (...args) => calls.postReceiptEvidence(...args),
 }))
-vi.mock('./worker.js', () => ({
+vi.mock('../../worker.js', () => ({
   WorkerAgent: class {
     constructor() {
       calls.worker()
@@ -57,13 +57,13 @@ vi.mock('./worker.js', () => ({
   },
   makeAgentId: (index, sessionId) => `${sessionId}:${index}`,
 }))
-vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn() }))
-vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
-vi.mock('./stellar/agentCreatorManifest.js', () => ({
+vi.mock('../../strategist.js', () => ({ generateAgentSkills: vi.fn() }))
+vi.mock('../../skills.js', () => ({ saveSkill: vi.fn() }))
+vi.mock('../../stellar/agentCreatorManifest.js', () => ({
   isLegacyDirectSetupAllowed: vi.fn(() => false),
 }))
 
-import { OrchestratorAgent } from './orchestrator.js'
+import { OrchestratorAgent } from '../../orchestrator.js'
 
 const baseVault = {
   chain: 'base',

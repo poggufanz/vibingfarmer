@@ -9,7 +9,7 @@ const fundAgentMock = vi.fn(async () => ({ hash: 'hF', status: 'SUCCESS' }))
 const registryAuthorizeAgentMock = vi.fn(async () => ({ hash: 'hR', status: 'SUCCESS' }))
 // Option B: one FRESH agent_account deploy per worker — unique address per call.
 const deployAgentForSessionMock = vi.fn()
-vi.mock('./stellar/agentSetup.js', () => ({
+vi.mock('../../stellar/agentSetup.js', () => ({
   deployAgentForSession: (...a) => deployAgentForSessionMock(...a),
   fundAgent: (...a) => fundAgentMock(...a),
   registryAuthorizeAgent: (...a) => registryAuthorizeAgentMock(...a),
@@ -17,12 +17,12 @@ vi.mock('./stellar/agentSetup.js', () => ({
 
 const takeReusableAgentMock = vi.fn(async () => null)
 const saveCachedAgentMock = vi.fn()
-vi.mock('./stellar/agentCache.js', () => ({
+vi.mock('../../stellar/agentCache.js', () => ({
   takeReusableAgent: (...a) => takeReusableAgentMock(...a),
   saveCachedAgent: (...a) => saveCachedAgentMock(...a),
 }))
 
-vi.mock('./stellar/sessionKey.js', () => ({
+vi.mock('../../stellar/sessionKey.js', () => ({
   newSessionKey: (secret) => ({
     publicKey: 'GRESTORED',
     secret,
@@ -33,12 +33,12 @@ vi.mock('./stellar/sessionKey.js', () => ({
 
 // user balance precheck → null (skipped); agent balances → 0n (fund required) unless overridden.
 const readTokenBalanceMock = vi.fn(async () => null)
-vi.mock('./stellar/agentDeposit.js', () => ({
+vi.mock('../../stellar/agentDeposit.js', () => ({
   readTokenBalance: (...a) => readTokenBalanceMock(...a),
 }))
 // USE_FUNDING_ROUTER false → dispatch takes the LEGACY per-agent deploy/fund path exercised by
 // this whole file. The router (single-signature) path is covered by orchestrator.router.test.js.
-vi.mock('./stellar/config.js', async (importOriginal) => ({
+vi.mock('../../stellar/config.js', async (importOriginal) => ({
   ...(await importOriginal()),
   SOROBAN_TOKEN_ADDRESS: 'CTOKEN',
   SOROBAN_DECIMALS: 7,
@@ -50,14 +50,14 @@ vi.mock('./stellar/config.js', async (importOriginal) => ({
 // exactly as before; the production-cutoff behavior itself gets its own describe block that
 // flips this to false per test.
 const isLegacyDirectSetupAllowedMock = vi.fn(() => true)
-vi.mock('./stellar/agentCreatorManifest.js', () => ({
+vi.mock('../../stellar/agentCreatorManifest.js', () => ({
   isLegacyDirectSetupAllowed: (...a) => isLegacyDirectSetupAllowedMock(...a),
 }))
-vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
-vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
+vi.mock('../../strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
+vi.mock('../../skills.js', () => ({ saveSkill: vi.fn() }))
 
 const workerInstances = []
-vi.mock('./worker.js', () => ({
+vi.mock('../../worker.js', () => ({
   WorkerAgent: class {
     constructor(c) {
       Object.assign(this, c)
@@ -76,7 +76,7 @@ vi.mock('./worker.js', () => ({
   makeAgentId: (i, s) => `0x${i}${s}`,
 }))
 
-import { OrchestratorAgent } from './orchestrator.js'
+import { OrchestratorAgent } from '../../orchestrator.js'
 
 describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
   beforeEach(() => {

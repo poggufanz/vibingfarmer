@@ -42,7 +42,7 @@ const MAX_CLOUDFLARE_DEPLOYMENT_PAGES = 100;
 
 const CONTRACT_VERIFICATIONS = Object.freeze({
   "permission-lifetime":
-    "cd frontend && npx vitest run src/strategy/__tests__/permissionWindow.test.js src/strategy/__tests__/flowState.test.js src/stellar/__tests__/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
+    "cd frontend && npx vitest run src/strategy/__tests__/permissionWindow.test.js src/strategy/__tests__/flowState.test.js src/stellar/__tests__/grant.test.js src/orchestrator/__tests__/orchestrator.test.js src/orchestrator/__tests__/orchestrator.router.test.js src/orchestrator/__tests__/orchestrator.baseleg.test.js src/orchestrator/__tests__/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
   "yield-availability":
     "cd frontend && npx vitest run src/strategy/__tests__/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/__tests__/OnboardingFlow.test.jsx src/components/__tests__/VaultDetailPage.test.jsx src/history/__tests__/history.yield.test.js src/components/__tests__/HistoryPanel.test.jsx src/strategy/__tests__/strategist.yield.test.js src/components/__tests__/TxDetailPage.test.jsx",
   "sponsored-network-fee":
@@ -76,10 +76,10 @@ const CONTRACT_EVIDENCE = Object.freeze({
     "frontend/src/stellar/grant.js",
     "frontend/src/stellar/__tests__/grant.test.js",
     "frontend/src/orchestrator.js",
-    "frontend/src/orchestrator.test.js",
-    "frontend/src/orchestrator.router.test.js",
-    "frontend/src/orchestrator.baseleg.test.js",
-    "frontend/src/orchestrator.unavailable.test.js",
+    "frontend/src/orchestrator/__tests__/orchestrator.test.js",
+    "frontend/src/orchestrator/__tests__/orchestrator.router.test.js",
+    "frontend/src/orchestrator/__tests__/orchestrator.baseleg.test.js",
+    "frontend/src/orchestrator/__tests__/orchestrator.unavailable.test.js",
     "frontend/src/components/strategy/ProtectStage.jsx",
     "frontend/src/components/strategy/ProtectStage.test.jsx",
   ]),

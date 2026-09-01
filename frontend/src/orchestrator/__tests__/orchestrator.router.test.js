@@ -18,8 +18,8 @@
 // but not these directly; orchestrator.test.js covers the separate `setupLegacy` (non-router) path.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-vi.mock('./base/deploymentFacts.js', async () => {
-  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('./base/hardenedDeployment.fixture.js')
+vi.mock('../../base/deploymentFacts.js', async () => {
+  const { HARDENED_BASE_DEPLOYMENT_FIXTURE } = await import('../../base/hardenedDeployment.fixture.js')
   return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
 })
 
@@ -31,7 +31,7 @@ const readConfirmedLedgerMock = vi.fn()
 // orchestrator.js's runAgentPullV3) — it must be reachable through THIS mock factory too, never a
 // second vi.mock() for the same specifier.
 const buildAgentPullV3Mock = vi.fn()
-vi.mock('./stellar/grant.js', () => ({
+vi.mock('../../stellar/grant.js', () => ({
   submitGrant: (...a) => submitGrantMock(...a),
   runAgentPull: (...a) => runAgentPullMock(...a),
   readAllowance: (...a) => readAllowanceMock(...a),
@@ -45,7 +45,7 @@ vi.mock('./stellar/grant.js', () => ({
 // (mirroring runAgentPull's own relayer-resolve step) — not needed by any V2 scenario in this file.
 const getRelayerAddressMock = vi.fn()
 const submitViaRelayMock = vi.fn()
-vi.mock('./stellar/relay.js', () => ({
+vi.mock('../../stellar/relay.js', () => ({
   getRelayerAddress: (...a) => getRelayerAddressMock(...a),
   submitViaRelay: (...a) => submitViaRelayMock(...a),
 }))
@@ -54,7 +54,7 @@ vi.mock('./stellar/relay.js', () => ({
 const deployAgentForSessionMock = vi.fn()
 const fundAgentMock = vi.fn()
 const registryAuthorizeAgentMock = vi.fn()
-vi.mock('./stellar/agentSetup.js', () => ({
+vi.mock('../../stellar/agentSetup.js', () => ({
   deployAgentForSession: (...a) => deployAgentForSessionMock(...a),
   fundAgent: (...a) => fundAgentMock(...a),
   registryAuthorizeAgent: (...a) => registryAuthorizeAgentMock(...a),
@@ -63,13 +63,13 @@ vi.mock('./stellar/agentSetup.js', () => ({
 const takeReusableAgentMock = vi.fn(async () => null)
 const saveCachedAgentMock = vi.fn()
 const loadCachedAgentsMock = vi.fn(() => [])
-vi.mock('./stellar/agentCache.js', () => ({
+vi.mock('../../stellar/agentCache.js', () => ({
   takeReusableAgent: (...a) => takeReusableAgentMock(...a),
   saveCachedAgent: (...a) => saveCachedAgentMock(...a),
   loadCachedAgents: (...a) => loadCachedAgentsMock(...a),
 }))
 
-vi.mock('./stellar/sessionKey.js', () => ({
+vi.mock('../../stellar/sessionKey.js', () => ({
   newSessionKey: (secret) => ({
     publicKey: secret ? `GRESTORED-${secret}` : 'GFRESH',
     secret: secret || 'SFRESH',
@@ -79,11 +79,11 @@ vi.mock('./stellar/sessionKey.js', () => ({
 }))
 
 const readTokenBalanceMock = vi.fn(async () => null)
-vi.mock('./stellar/agentDeposit.js', () => ({
+vi.mock('../../stellar/agentDeposit.js', () => ({
   readTokenBalance: (...a) => readTokenBalanceMock(...a),
 }))
 
-vi.mock('./stellar/config.js', async (importOriginal) => ({
+vi.mock('../../stellar/config.js', async (importOriginal) => ({
   ...(await importOriginal()),
   SOROBAN_TOKEN_ADDRESS: 'CTOKEN',
   SOROBAN_DECIMALS: 7,
@@ -101,23 +101,23 @@ vi.mock('./stellar/config.js', async (importOriginal) => ({
 // router branch handles everything. Mocked (not left real) so the "never consulted" assertion
 // below is airtight regardless of the gate's own default.
 const isLegacyDirectSetupAllowedMock = vi.fn(() => false)
-vi.mock('./stellar/agentCreatorManifest.js', () => ({
+vi.mock('../../stellar/agentCreatorManifest.js', () => ({
   isLegacyDirectSetupAllowed: (...a) => isLegacyDirectSetupAllowedMock(...a),
 }))
-vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
-vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
-vi.mock('./mergeFlowHelpers.js', () => ({ readStoredBaseMandate: vi.fn() }))
+vi.mock('../../strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
+vi.mock('../../skills.js', () => ({ saveSkill: vi.fn() }))
+vi.mock('../../mergeFlowHelpers.js', () => ({ readStoredBaseMandate: vi.fn() }))
 
 const preflightPermissionMock = vi.fn()
 const fetchPreparedExecutionMaterialMock = vi.fn()
-vi.mock('./strategy/reusePreflight.js', () => ({
+vi.mock('../../strategy/reusePreflight.js', () => ({
   preflightPermission: (...a) => preflightPermissionMock(...a),
   fetchPreparedExecutionMaterial: (...a) => fetchPreparedExecutionMaterialMock(...a),
 }))
 
 const saveGrantReceiptMock = vi.fn()
 const fingerprintGrantReceiptMock = vi.fn(() => '0xRECEIPTFRESH')
-vi.mock('./stellar/grantReceiptStore.js', () => ({
+vi.mock('../../stellar/grantReceiptStore.js', () => ({
   buildGrantReceiptV1: (p) => ({ version: 1, ...p }),
   saveGrantReceipt: (...a) => saveGrantReceiptMock(...a),
   fingerprintGrantReceipt: (...a) => fingerprintGrantReceiptMock(...a),
@@ -128,7 +128,7 @@ vi.mock('./stellar/grantReceiptStore.js', () => ({
 // dispatch loops run unmocked, so the V3-executionId-in-evidence test below can assert exactly
 // what body was posted.
 const postReceiptEvidenceMock = vi.fn()
-vi.mock('./stellar/agentIndexReceiptClient.js', () => ({
+vi.mock('../../stellar/agentIndexReceiptClient.js', () => ({
   postReceiptEvidence: (...a) => postReceiptEvidenceMock(...a),
   ReceiptEvidenceError: class ReceiptEvidenceError extends Error {
     constructor(message, opts = {}) {
@@ -142,7 +142,7 @@ vi.mock('./stellar/agentIndexReceiptClient.js', () => ({
 
 const workerInstances = []
 const executeCalls = []
-vi.mock('./worker.js', () => ({
+vi.mock('../../worker.js', () => ({
   WorkerAgent: class {
     constructor(c) {
       Object.assign(this, c)
@@ -167,8 +167,8 @@ vi.mock('./worker.js', () => ({
   makeAgentId: (i, s) => `0x${i}${s}`,
 }))
 
-import { OrchestratorAgent } from './orchestrator.js'
-import { PermissionPhaseError } from './strategy/permissionError.js'
+import { OrchestratorAgent } from '../../orchestrator.js'
+import { PermissionPhaseError } from '../../strategy/permissionError.js'
 
 function planAgent(i, units) {
   return {

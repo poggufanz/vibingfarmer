@@ -1,19 +1,19 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 
 // Stellar deposit path is mocked so execute() runs without a chain or relay.
-vi.mock('./stellar/agentDeposit.js', () => ({
+vi.mock('../../stellar/agentDeposit.js', () => ({
   runAgentDeposit: vi.fn(),
   readVaultShares: vi.fn(),
 }))
 // memory.js writes to localStorage (absent in the node test env) — mock it.
-vi.mock('./memory.js', () => ({
+vi.mock('../../memory.js', () => ({
   writeMemory: vi.fn(),
   createEntry: (step, status, data = {}, lesson) => ({ step, status, ...data, lesson }),
   buildLesson: () => 'lesson',
 }))
 
-import { WorkerAgent, makeAgentId, makePlanId } from './worker.js'
-import { runAgentDeposit, readVaultShares } from './stellar/agentDeposit.js'
+import { WorkerAgent, makeAgentId, makePlanId } from '../../worker.js'
+import { runAgentDeposit, readVaultShares } from '../../stellar/agentDeposit.js'
 
 const sessionKey = () => ({
   rawPublicKey: new Uint8Array(32),

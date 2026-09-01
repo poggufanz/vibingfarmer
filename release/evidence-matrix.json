@@ -17,7 +17,7 @@
       "id": "permission-lifetime",
       "status": "proven",
       "owner": "strategy",
-      "verification": "cd frontend && npx vitest run src/strategy/__tests__/permissionWindow.test.js src/strategy/__tests__/flowState.test.js src/stellar/__tests__/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
+      "verification": "cd frontend && npx vitest run src/strategy/__tests__/permissionWindow.test.js src/strategy/__tests__/flowState.test.js src/stellar/__tests__/grant.test.js src/orchestrator/__tests__/orchestrator.test.js src/orchestrator/__tests__/orchestrator.router.test.js src/orchestrator/__tests__/orchestrator.baseleg.test.js src/orchestrator/__tests__/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
       "evidence": [
         "frontend/src/strategy/permissionWindow.js",
         "frontend/src/strategy/__tests__/permissionWindow.test.js",
@@ -26,10 +26,10 @@
         "frontend/src/stellar/grant.js",
         "frontend/src/stellar/__tests__/grant.test.js",
         "frontend/src/orchestrator.js",
-        "frontend/src/orchestrator.test.js",
-        "frontend/src/orchestrator.router.test.js",
-        "frontend/src/orchestrator.baseleg.test.js",
-        "frontend/src/orchestrator.unavailable.test.js",
+        "frontend/src/orchestrator/__tests__/orchestrator.test.js",
+        "frontend/src/orchestrator/__tests__/orchestrator.router.test.js",
+        "frontend/src/orchestrator/__tests__/orchestrator.baseleg.test.js",
+        "frontend/src/orchestrator/__tests__/orchestrator.unavailable.test.js",
         "frontend/src/components/strategy/ProtectStage.jsx",
         "frontend/src/components/strategy/ProtectStage.test.jsx"
       ]
