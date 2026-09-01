@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
-import { TokenIcon, tokenName } from './tokenIcons.jsx'
-import { VF_TESTNET_ISSUER } from '../../trustline.js'
+import { TokenIcon, tokenName } from '../tokenIcons.jsx'
+import { VF_TESTNET_ISSUER } from '../../../trustline.js'
 
 afterEach(() => {
   cleanup()

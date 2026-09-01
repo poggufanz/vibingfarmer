@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
-import { ApproveOverlay } from './ApproveOverlay.jsx'
+import { ApproveOverlay } from '../ApproveOverlay.jsx'
 
 afterEach(cleanup)
 

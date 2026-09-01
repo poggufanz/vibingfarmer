@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
-import SendScreen from './SendScreen.jsx'
+import SendScreen from '../SendScreen.jsx'
 
 // No global RTL auto-cleanup is registered for this project's vitest config
 // (globals: false, no setupFiles), so isolate each test's DOM explicitly.

@@ -8,7 +8,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import ImportScreen from './ImportScreen.jsx'
+import ImportScreen from '../ImportScreen.jsx'
 
 afterEach(cleanup)
 

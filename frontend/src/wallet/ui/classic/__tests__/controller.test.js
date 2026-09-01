@@ -1,29 +1,29 @@
 // frontend/src/wallet/ui/classic/controller.test.js
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { installChromeMock } from '../../testUtils.js'
+import { installChromeMock } from '../../../testUtils.js'
 
 // Partial mocks: keep the real crypto/keypair/session logic (already covered by
 // classicAccount.test.js / send.test.js / prices.test.js / history.test.js), but
 // stub the network-touching leaves so this controller-level suite stays fast and
 // deterministic, and so we can assert the controller passes arguments through
 // verbatim rather than re-testing the underlying modules.
-vi.mock('../../classicAccount.js', async (importOriginal) => {
+vi.mock('../../../classicAccount.js', async (importOriginal) => {
   const actual = await importOriginal()
   return { ...actual, readBalances: vi.fn(), fundTestnet: vi.fn() }
 })
-vi.mock('../../prices.js', async (importOriginal) => {
+vi.mock('../../../prices.js', async (importOriginal) => {
   const actual = await importOriginal()
   return { ...actual, fetchXlmUsd: vi.fn() }
 })
-vi.mock('../../history.js', async (importOriginal) => {
+vi.mock('../../../history.js', async (importOriginal) => {
   const actual = await importOriginal()
   return { ...actual, fetchHistory: vi.fn() }
 })
-vi.mock('../../send.js', async (importOriginal) => {
+vi.mock('../../../send.js', async (importOriginal) => {
   const actual = await importOriginal()
   return { ...actual, previewSend: vi.fn(), sendPayment: vi.fn() }
 })
-vi.mock('../../trustline.js', async (importOriginal) => {
+vi.mock('../../../trustline.js', async (importOriginal) => {
   const actual = await importOriginal()
   return { ...actual, addTrustline: vi.fn() }
 })
@@ -43,12 +43,12 @@ import {
   doSend,
   doAddAsset,
   loadActivity,
-} from './controller.js'
-import { readBalances, fundTestnet } from '../../classicAccount.js'
-import { fetchXlmUsd } from '../../prices.js'
-import { fetchHistory } from '../../history.js'
-import { previewSend, sendPayment } from '../../send.js'
-import { addTrustline } from '../../trustline.js'
+} from '../controller.js'
+import { readBalances, fundTestnet } from '../../../classicAccount.js'
+import { fetchXlmUsd } from '../../../prices.js'
+import { fetchHistory } from '../../../history.js'
+import { previewSend, sendPayment } from '../../../send.js'
+import { addTrustline } from '../../../trustline.js'
 
 beforeEach(() => {
   installChromeMock()

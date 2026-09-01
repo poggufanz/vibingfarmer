@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { AccountPicker } from './AccountPicker.jsx'
+import { AccountPicker } from '../AccountPicker.jsx'
 
 afterEach(cleanup)
 
@@ -14,7 +14,7 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 // Comments stripped first (see WalletShell.test.jsx for why) so this file's own documentation
 // can never accidentally fail its own guard.
 const SOURCE = fs
-  .readFileSync(path.resolve(here, './AccountPicker.jsx'), 'utf8')
+  .readFileSync(path.resolve(here, '../AccountPicker.jsx'), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/\/\/.*$/gm, '')
 

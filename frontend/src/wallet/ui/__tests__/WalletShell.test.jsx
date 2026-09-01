@@ -8,14 +8,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { WalletShell } from './WalletShell.jsx'
+import { WalletShell } from '../WalletShell.jsx'
 import {
   parseCss,
   selectorTokens,
   checkManifestFreshness,
-} from '../../../scripts/generate-wallet-contract-manifest.mjs'
-import { NETWORK_IDS, getNetworkMeta } from '../../design/networks.js'
-import CONTRACT_MANIFEST from './walletContractManifest.generated.json'
+} from '../../../../scripts/generate-wallet-contract-manifest.mjs'
+import { NETWORK_IDS, getNetworkMeta } from '../../../design/networks.js'
+import CONTRACT_MANIFEST from '../walletContractManifest.generated.json'
 
 afterEach(cleanup)
 
@@ -24,10 +24,10 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 // `` `\n\nexport function WalletShell` `` marker in shippedStyleRules()) matches regardless of
 // whether this checkout has the component file checked out with CRLF or LF line endings.
 const RAW_SOURCE = fs
-  .readFileSync(path.resolve(here, './WalletShell.jsx'), 'utf8')
+  .readFileSync(path.resolve(here, '../WalletShell.jsx'), 'utf8')
   .replace(/\r\n/g, '\n')
 const WALLET_CSS = fs
-  .readFileSync(path.resolve(here, '../../../extension/wallet.css'), 'utf8')
+  .readFileSync(path.resolve(here, '../../../../extension/wallet.css'), 'utf8')
   .replace(/\r\n/g, '\n')
 // Structural/checklist guards below check the SHIPPED CODE, not this file's own header comment
 // (which legitimately names the properties it structurally lacks, e.g. "no password prop") --

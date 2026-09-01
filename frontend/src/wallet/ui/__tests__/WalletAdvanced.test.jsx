@@ -9,8 +9,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { WalletAdvanced } from './WalletAdvanced.jsx'
-import { launchRealChromium, buildHarnessHtml, sweep320 } from './testSupport/sweep320.js'
+import { WalletAdvanced } from '../WalletAdvanced.jsx'
+import { launchRealChromium, buildHarnessHtml, sweep320 } from '../testSupport/sweep320.js'
 
 afterEach(cleanup)
 

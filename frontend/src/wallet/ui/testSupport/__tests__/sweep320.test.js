@@ -14,7 +14,7 @@
 // WalletShell.jsx and WalletSettings.test.jsx both document). If sweep320 only checked
 // document-level scrollWidth, both mutated fixtures below would read as a false green.
 import { describe, expect, it } from 'vitest'
-import { sweep320 } from './sweep320.js'
+import { sweep320 } from '../sweep320.js'
 
 const BOX_OPEN = '<div style="width:320px;box-sizing:border-box;overflow-x:hidden;padding:8px">'
 const BOX_CLOSE = '</div>'

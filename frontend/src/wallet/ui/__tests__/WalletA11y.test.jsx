@@ -27,30 +27,30 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
-import { WalletShell } from './WalletShell.jsx'
-import { WalletHome } from './WalletHome.jsx'
-import { WalletOnboarding } from './WalletOnboarding.jsx'
-import { WalletActivity } from './WalletActivity.jsx'
-import { WalletAdvanced } from './WalletAdvanced.jsx'
-import { WalletReceive } from './WalletReceive.jsx'
-import { WalletSettings } from './WalletSettings.jsx'
-import { ApproveOverlay } from './ApproveOverlay.jsx'
-import SendScreen from './classic/SendScreen.jsx'
-import AddAssetScreen from './classic/AddAssetScreen.jsx'
+import { WalletShell } from '../WalletShell.jsx'
+import { WalletHome } from '../WalletHome.jsx'
+import { WalletOnboarding } from '../WalletOnboarding.jsx'
+import { WalletActivity } from '../WalletActivity.jsx'
+import { WalletAdvanced } from '../WalletAdvanced.jsx'
+import { WalletReceive } from '../WalletReceive.jsx'
+import { WalletSettings } from '../WalletSettings.jsx'
+import { ApproveOverlay } from '../ApproveOverlay.jsx'
+import SendScreen from '../classic/SendScreen.jsx'
+import AddAssetScreen from '../classic/AddAssetScreen.jsx'
 import {
   buildApprovalView,
   renderApprovalView,
   SUBMISSION_STATE,
-} from '../../../extension/approvalView.js'
+} from '../../../../extension/approvalView.js'
 import {
   buildCeremonyView,
   renderCeremonyView,
   CEREMONY_STATE,
-} from '../../../extension/ceremonyView.js'
+} from '../../../../extension/ceremonyView.js'
 import {
   REQUIRED_WALLET_ATLAS_SECTIONS,
   WALLET_ATLAS_SECTION_MAP,
-} from '../../../visual/walletFixtureRegistry.js'
+} from '../../../../visual/walletFixtureRegistry.js'
 
 expect.extend(axeMatchers)
 afterEach(cleanup)

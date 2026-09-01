@@ -9,7 +9,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { WalletActivity } from './WalletActivity.jsx'
+import { WalletActivity } from '../WalletActivity.jsx'
 
 afterEach(cleanup)
 

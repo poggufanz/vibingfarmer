@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pickConfirmIndices, checkConfirm } from './backupConfirm.js'
+import { pickConfirmIndices, checkConfirm } from '../backupConfirm.js'
 
 describe('backupConfirm', () => {
   it('picks n unique sorted indices in range', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyImport } from './importValidate.js'
+import { classifyImport } from '../importValidate.js'
 
 describe('classifyImport', () => {
   it('detects a valid secret key', () => {

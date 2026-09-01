@@ -12,14 +12,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { WalletOnboarding } from './WalletOnboarding.jsx'
-import { launchRealChromium, buildHarnessHtml, sweep320 } from './testSupport/sweep320.js'
+import { WalletOnboarding } from '../WalletOnboarding.jsx'
+import { launchRealChromium, buildHarnessHtml, sweep320 } from '../testSupport/sweep320.js'
 
 afterEach(cleanup)
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const POPUP_PATH = path.resolve(here, '../../../extension/popup.jsx')
-const WALLET_CSS_PATH = path.resolve(here, '../../../extension/wallet.css')
+const POPUP_PATH = path.resolve(here, '../../../../extension/popup.jsx')
+const WALLET_CSS_PATH = path.resolve(here, '../../../../extension/wallet.css')
 
 function buildWalletHarnessHtml(bodyHtml) {
   return buildHarnessHtml(bodyHtml).replace(
@@ -71,14 +71,14 @@ function nonNoneAnimationDeclarations(source) {
 }
 
 const SHIPPED_UI_FILES = [
-  path.resolve(here, './WalletShell.jsx'),
-  path.resolve(here, './AccountPicker.jsx'),
-  path.resolve(here, './WalletOnboarding.jsx'),
-  path.resolve(here, './classic/OnboardingScreen.jsx'),
-  path.resolve(here, './classic/CreateScreen.jsx'),
-  path.resolve(here, './classic/ImportScreen.jsx'),
-  path.resolve(here, './classic/BackupScreen.jsx'),
-  path.resolve(here, './classic/UnlockScreen.jsx'),
+  path.resolve(here, '../WalletShell.jsx'),
+  path.resolve(here, '../AccountPicker.jsx'),
+  path.resolve(here, '../WalletOnboarding.jsx'),
+  path.resolve(here, '../classic/OnboardingScreen.jsx'),
+  path.resolve(here, '../classic/CreateScreen.jsx'),
+  path.resolve(here, '../classic/ImportScreen.jsx'),
+  path.resolve(here, '../classic/BackupScreen.jsx'),
+  path.resolve(here, '../classic/UnlockScreen.jsx'),
 ]
 
 describe('WalletOnboarding — first screen: the branch, before backup/recovery instructions diverge', () => {
@@ -296,7 +296,7 @@ describe('WalletOnboarding — success routes to the real handler that selects t
 
 describe('WalletOnboarding — secret material cannot reach shared state (structural)', () => {
   const SOURCE = stripComments(
-    fs.readFileSync(path.resolve(here, './WalletOnboarding.jsx'), 'utf8')
+    fs.readFileSync(path.resolve(here, '../WalletOnboarding.jsx'), 'utf8')
   )
 
   // WalletOnboarding is a pure router: no hook that could accumulate state exists in this file at
@@ -366,7 +366,7 @@ describe('WalletOnboarding — rejection checklist items 5/6/7 across the entire
 
   it('uses one explicit class for each backup progress state', () => {
     const source = stripComments(
-      fs.readFileSync(path.resolve(here, './classic/BackupScreen.jsx'), 'utf8')
+      fs.readFileSync(path.resolve(here, '../classic/BackupScreen.jsx'), 'utf8')
     )
     expect(source).toMatch(/pc-backup-progress--one/)
     expect(source).toMatch(/pc-backup-progress--two/)

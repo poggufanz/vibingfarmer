@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import BackupScreen from './BackupScreen.jsx'
+import BackupScreen from '../BackupScreen.jsx'
 
 describe('BackupScreen', () => {
   it('reveals the phrase and only confirms with correct words', () => {

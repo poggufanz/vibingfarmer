@@ -4,12 +4,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it, expect } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
-import { HonestyLabels } from './HonestyLabels.jsx'
+import { HonestyLabels } from '../HonestyLabels.jsx'
 
 afterEach(cleanup)
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const RAW_SOURCE = fs.readFileSync(path.resolve(here, './HonestyLabels.jsx'), 'utf8')
+const RAW_SOURCE = fs.readFileSync(path.resolve(here, '../HonestyLabels.jsx'), 'utf8')
 // Comments (including this file's own explanation of the item-5 regression, which necessarily
 // says "mono") are stripped first so documentation can never accidentally fail its own guard --
 // same approach as WalletShell.test.jsx/WalletOnboarding.test.jsx.

@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react'
-import AddAssetScreen from './AddAssetScreen.jsx'
-import { KNOWN_ASSETS } from '../../trustline.js'
-import { WalletShell } from '../WalletShell.jsx'
-import { launchRealChromium, buildHarnessHtml, sweep320 } from '../testSupport/sweep320.js'
+import AddAssetScreen from '../AddAssetScreen.jsx'
+import { KNOWN_ASSETS } from '../../../trustline.js'
+import { WalletShell } from '../../WalletShell.jsx'
+import { launchRealChromium, buildHarnessHtml, sweep320 } from '../../testSupport/sweep320.js'
 
 afterEach(() => {
   cleanup()
