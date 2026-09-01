@@ -25,7 +25,7 @@ import {
   saveExitKey,
   loadExitKey,
   clearExitKey,
-} from '../../wallet/exitKey.js'
+} from '../../../wallet/exitKey.js'
 
 const store = {}
 beforeEach(() => {
@@ -68,7 +68,7 @@ describe('generateExitKey / registerExitSigner — still load-bearing for manual
     // too" fails loudly here instead of silently breaking partial withdraw.
     expect(typeof generateExitKey).toBe('function')
     expect(typeof registerExitSigner).toBe('function')
-    const partialWithdrawModule = await import('../../stellar/partialWithdraw.js')
+    const partialWithdrawModule = await import('../../../stellar/partialWithdraw.js')
     expect(typeof partialWithdrawModule.ensureExitSigner).toBe('function')
   })
 })

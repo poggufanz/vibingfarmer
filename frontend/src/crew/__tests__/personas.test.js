@@ -5,7 +5,7 @@ import {
   legacyPersonaSlot,
   personaForOrdinal,
   presentationPersonaForAddress,
-} from './personas.js'
+} from '../personas.js'
 
 const ADDRESS_A = 'CAUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSS3Y4'
 const ADDRESS_B = 'CAVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCVLQ3'

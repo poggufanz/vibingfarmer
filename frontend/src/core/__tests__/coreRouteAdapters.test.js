@@ -6,7 +6,7 @@ import {
   resolveAgentIdentity,
   statusNoticeModel,
   toFreshnessView,
-} from '../design/pocket-crew-foundation.js'
+} from '../../design/pocket-crew-foundation.js'
 import {
   formatCoreAmount,
   normalizeCoreAmount,
@@ -19,7 +19,7 @@ import {
   toLiveVenueView,
   toPermissionCopy,
   toStartProgress,
-} from './coreRouteAdapters.js'
+} from '../coreRouteAdapters.js'
 
 const AMOUNT = { token: 'USDC', units: '9007199254740993', decimals: 7 }
 const CHECKED_AT = '2026-08-10T23:59:00.000Z'

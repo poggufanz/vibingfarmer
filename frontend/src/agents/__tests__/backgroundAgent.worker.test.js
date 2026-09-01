@@ -9,7 +9,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const WORKER_PATH = fileURLToPath(new URL('./backgroundAgent.worker.js', import.meta.url))
+const WORKER_PATH = fileURLToPath(new URL('../backgroundAgent.worker.js', import.meta.url))
 
 async function loadWorker() {
   const posted = []
@@ -19,7 +19,7 @@ async function loadWorker() {
   }
   vi.stubGlobal('self', fakeSelf)
   vi.resetModules()
-  await import('./backgroundAgent.worker.js')
+  await import('../backgroundAgent.worker.js')
   return { fakeSelf, posted }
 }
 

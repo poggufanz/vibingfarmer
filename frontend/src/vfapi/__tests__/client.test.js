@@ -1,7 +1,7 @@
 // frontend/src/vfapi/client.test.js
 // TDD: RED → GREEN. Tests the vfapi thin client over real eligibilityGate.evaluate.
 import { describe, it, expect, vi } from 'vitest'
-import { eligibility, buildUnsignedTx } from './client.js'
+import { eligibility, buildUnsignedTx } from '../client.js'
 
 // Known-rejected fixture: annualizedDistributed / protocolRevenue = 3.0 >= PONZI_RATIO_MAX (1.5)
 // → yieldReality.verdict = 'ponzi' → eligible = false → allow = false.

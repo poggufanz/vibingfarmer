@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { normalizeAmount, toFreshnessView } from './secondaryRouteContracts.js'
+import { normalizeAmount, toFreshnessView } from '../secondaryRouteContracts.js'
 import {
   adaptSecondaryFact,
   toDevelopersPresentation,
@@ -10,7 +10,7 @@ import {
   toReplayPresentation,
   toTxPresentation,
   toVaultPresentation,
-} from './secondaryRouteAdapters.js'
+} from '../secondaryRouteAdapters.js'
 
 const AMOUNT = Object.freeze({ token: 'USDC', units: '1234500', decimals: 6 })
 const CHECKED_AT = '2026-08-11T00:00:00.000Z'

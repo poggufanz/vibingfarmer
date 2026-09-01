@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mapSettledWithConcurrency } from './mapSettledWithConcurrency.js'
+import { mapSettledWithConcurrency } from '../mapSettledWithConcurrency.js'
 
 function deferred() {
   let resolve

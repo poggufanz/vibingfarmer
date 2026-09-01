@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { BASE_PROXY_TRUTH, ECOSYSTEM_CARD_ORDER, createEcosystemModel } from './ecosystemModel.js'
+import { BASE_PROXY_TRUTH, ECOSYSTEM_CARD_ORDER, createEcosystemModel } from '../ecosystemModel.js'
 
 describe('createEcosystemModel', () => {
   it('keeps the catalog in the required presentation order', () => {

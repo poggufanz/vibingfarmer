@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 // frontend/src/dev/devDispatch.test.js
 import { describe, test, expect, vi, afterEach } from 'vitest'
-import { buildScenarioCall, dispatchRawCall, registerDevDispatch } from './devDispatch.js'
-import { YIELD_ROUTER_ADDRESS } from '../base/config.js'
+import { buildScenarioCall, dispatchRawCall, registerDevDispatch } from '../devDispatch.js'
+import { YIELD_ROUTER_ADDRESS } from '../../base/config.js'
 
 afterEach(() => {
   delete window.__vfDevMandateFixture

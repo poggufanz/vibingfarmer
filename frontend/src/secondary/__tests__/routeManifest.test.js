@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SECONDARY_ROUTE_MANIFEST } from './routeManifest.js'
+import { SECONDARY_ROUTE_MANIFEST } from '../routeManifest.js'
 
 describe('secondary route manifest', () => {
   it('enumerates each visual route composition without becoming a router', () => {

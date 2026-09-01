@@ -62,7 +62,7 @@
       "id": "sponsored-network-fee",
       "status": "proven",
       "owner": "copy",
-      "verification": "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history/__tests__/history.yield.test.js src/stellar/__tests__/exit.test.js src/agents/agentController.test.js src/stellar/__tests__/partialWithdraw.test.js src/components/__tests__/TxDetailPage.test.jsx",
+      "verification": "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history/__tests__/history.yield.test.js src/stellar/__tests__/exit.test.js src/agents/__tests__/agentController.test.js src/stellar/__tests__/partialWithdraw.test.js src/components/__tests__/TxDetailPage.test.jsx",
       "evidence": [
         "scripts/ci/public-claim-scan.mjs",
         "scripts/ci/public-claim-scan.test.mjs",
@@ -71,7 +71,7 @@
         "frontend/src/stellar/exit.js",
         "frontend/src/stellar/__tests__/exit.test.js",
         "frontend/src/agents/agentController.js",
-        "frontend/src/agents/agentController.test.js",
+        "frontend/src/agents/__tests__/agentController.test.js",
         "frontend/src/stellar/partialWithdraw.js",
         "frontend/src/stellar/__tests__/partialWithdraw.test.js",
         "frontend/src/components/TxDetailPage.jsx",

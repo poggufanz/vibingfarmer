@@ -4,23 +4,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // the production rollback lever (unset VITE_SOROBAN_EXIT_ROUTER_ADDRESS), so both paths are
 // exercised here. Everything else in config.js stays real — the module graph depends on it.
 let exitRouter = 'CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J'
-vi.mock('../stellar/config.js', async (importOriginal) => ({
+vi.mock('../../stellar/config.js', async (importOriginal) => ({
   ...(await importOriginal()),
   get SOROBAN_EXIT_ROUTER_ADDRESS() {
     return exitRouter
   },
 }))
-vi.mock('../stellar/exit.js', () => ({
+vi.mock('../../stellar/exit.js', () => ({
   ownerWithdraw: vi.fn(async () => ({ hash: 'h1', status: 'SUCCESS' })),
   sweepAgents: vi.fn(async () => ({ swept: [], txHashes: [], errors: [] })),
 }))
-vi.mock('./transactionStore.js', () => ({ saveTransaction: vi.fn() }))
+vi.mock('../transactionStore.js', () => ({ saveTransaction: vi.fn() }))
 
-import { ownerWithdraw, sweepAgents } from '../stellar/exit.js'
+import { ownerWithdraw, sweepAgents } from '../../stellar/exit.js'
 import {
   withdrawFromVault as productionWithdrawFromVault,
   withdrawAllFromVault as productionWithdrawAllFromVault,
-} from './agentController.js'
+} from '../agentController.js'
 
 const USER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const AGENT = 'CDWHNHIHYQ7YSJXFSNVKRJRAJNBS6XXQBGKB5UUFQAEXKFVHMOFKM77A'

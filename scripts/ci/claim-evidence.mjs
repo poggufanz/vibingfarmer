@@ -46,7 +46,7 @@ const CONTRACT_VERIFICATIONS = Object.freeze({
   "yield-availability":
     "cd frontend && npx vitest run src/strategy/__tests__/venueTruth.test.js src/components/strategy/__tests__/PlanStage.test.jsx src/components/__tests__/OnboardingFlow.test.jsx src/components/__tests__/VaultDetailPage.test.jsx src/history/__tests__/history.yield.test.js src/components/__tests__/HistoryPanel.test.jsx src/strategy/__tests__/strategist.yield.test.js src/components/__tests__/TxDetailPage.test.jsx",
   "sponsored-network-fee":
-    "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history/__tests__/history.yield.test.js src/stellar/__tests__/exit.test.js src/agents/agentController.test.js src/stellar/__tests__/partialWithdraw.test.js src/components/__tests__/TxDetailPage.test.jsx",
+    "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history/__tests__/history.yield.test.js src/stellar/__tests__/exit.test.js src/agents/__tests__/agentController.test.js src/stellar/__tests__/partialWithdraw.test.js src/components/__tests__/TxDetailPage.test.jsx",
   "stellar-explorer-counts":
     "cd frontend && npx vitest run src/stellar/__tests__/deploymentFacts.test.js src/components/__tests__/ExplorerPage.test.jsx",
   "candidate-same-commit":
@@ -109,7 +109,7 @@ const CONTRACT_EVIDENCE = Object.freeze({
     "frontend/src/stellar/exit.js",
     "frontend/src/stellar/__tests__/exit.test.js",
     "frontend/src/agents/agentController.js",
-    "frontend/src/agents/agentController.test.js",
+    "frontend/src/agents/__tests__/agentController.test.js",
     "frontend/src/stellar/partialWithdraw.js",
     "frontend/src/stellar/__tests__/partialWithdraw.test.js",
     "frontend/src/components/TxDetailPage.jsx",

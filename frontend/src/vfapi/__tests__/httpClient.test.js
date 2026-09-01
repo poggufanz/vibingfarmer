@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { makeVfClient } from './httpClient.js'
-import { RelaySubmissionUnknownError } from '../stellar/relay.js'
+import { makeVfClient } from '../httpClient.js'
+import { RelaySubmissionUnknownError } from '../../stellar/relay.js'
 
 afterEach(() => vi.unstubAllGlobals())
 
