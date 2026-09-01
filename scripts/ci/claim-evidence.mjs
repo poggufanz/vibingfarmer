@@ -42,13 +42,13 @@ const MAX_CLOUDFLARE_DEPLOYMENT_PAGES = 100;
 
 const CONTRACT_VERIFICATIONS = Object.freeze({
   "permission-lifetime":
-    "cd frontend && npx vitest run src/strategy/__tests__/permissionWindow.test.js src/strategy/__tests__/flowState.test.js src/stellar/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
+    "cd frontend && npx vitest run src/strategy/__tests__/permissionWindow.test.js src/strategy/__tests__/flowState.test.js src/stellar/__tests__/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
   "yield-availability":
     "cd frontend && npx vitest run src/strategy/__tests__/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history/__tests__/history.yield.test.js src/components/HistoryPanel.test.jsx src/strategy/__tests__/strategist.yield.test.js src/components/TxDetailPage.test.jsx",
   "sponsored-network-fee":
-    "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history/__tests__/history.yield.test.js src/stellar/exit.test.js src/agents/agentController.test.js src/stellar/partialWithdraw.test.js src/components/TxDetailPage.test.jsx",
+    "node --test scripts/ci/public-claim-scan.test.mjs && node scripts/ci/public-claim-scan.mjs && cd frontend && npx vitest run src/history/__tests__/history.yield.test.js src/stellar/__tests__/exit.test.js src/agents/agentController.test.js src/stellar/__tests__/partialWithdraw.test.js src/components/TxDetailPage.test.jsx",
   "stellar-explorer-counts":
-    "cd frontend && npx vitest run src/stellar/deploymentFacts.test.js src/components/ExplorerPage.test.jsx",
+    "cd frontend && npx vitest run src/stellar/__tests__/deploymentFacts.test.js src/components/ExplorerPage.test.jsx",
   "candidate-same-commit":
     "CANDIDATE_VERIFICATION_MODE=required CANDIDATE_TAG=$CANDIDATE_TAG CANDIDATE_PREVIEW_URL=$CANDIDATE_PREVIEW_URL CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN node scripts/ci/claim-evidence.mjs",
   "required-checks":
@@ -74,7 +74,7 @@ const CONTRACT_EVIDENCE = Object.freeze({
     "frontend/src/strategy/flowState.js",
     "frontend/src/strategy/__tests__/flowState.test.js",
     "frontend/src/stellar/grant.js",
-    "frontend/src/stellar/grant.test.js",
+    "frontend/src/stellar/__tests__/grant.test.js",
     "frontend/src/orchestrator.js",
     "frontend/src/orchestrator.test.js",
     "frontend/src/orchestrator.router.test.js",
@@ -107,17 +107,17 @@ const CONTRACT_EVIDENCE = Object.freeze({
     "frontend/src/history.js",
     "frontend/src/history/__tests__/history.yield.test.js",
     "frontend/src/stellar/exit.js",
-    "frontend/src/stellar/exit.test.js",
+    "frontend/src/stellar/__tests__/exit.test.js",
     "frontend/src/agents/agentController.js",
     "frontend/src/agents/agentController.test.js",
     "frontend/src/stellar/partialWithdraw.js",
-    "frontend/src/stellar/partialWithdraw.test.js",
+    "frontend/src/stellar/__tests__/partialWithdraw.test.js",
     "frontend/src/components/TxDetailPage.jsx",
     "frontend/src/components/TxDetailPage.test.jsx",
   ]),
   "stellar-explorer-counts": Object.freeze([
     "frontend/src/stellar/deploymentFacts.js",
-    "frontend/src/stellar/deploymentFacts.test.js",
+    "frontend/src/stellar/__tests__/deploymentFacts.test.js",
     "frontend/src/components/ExplorerPage.jsx",
     "frontend/src/components/ExplorerPage.test.jsx",
     "deployments/stellar-testnet.json",
