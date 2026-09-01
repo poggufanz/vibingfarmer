@@ -6,24 +6,24 @@ import { cleanup, render } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
-import LandingHero from './LandingHero.jsx'
-import OnboardingFlow from './OnboardingFlow.jsx'
-import ExplorerPage from './ExplorerPage.jsx'
-import EcosystemPage from './EcosystemPage.jsx'
-import ReplayPage from './ReplayPage.jsx'
-import HistoryPanel from './HistoryPanel.jsx'
-import VaultDetailPage from './VaultDetailPage.jsx'
-import TxDetailPage from './TxDetailPage.jsx'
-import DevelopersLayout from '../developers/DevelopersLayout.jsx'
-import SkillDrawer from './SkillDrawer.jsx'
-import { TweaksPanel } from '../tweaks-panel.jsx'
+import LandingHero from '../LandingHero.jsx'
+import OnboardingFlow from '../OnboardingFlow.jsx'
+import ExplorerPage from '../ExplorerPage.jsx'
+import EcosystemPage from '../EcosystemPage.jsx'
+import ReplayPage from '../ReplayPage.jsx'
+import HistoryPanel from '../HistoryPanel.jsx'
+import VaultDetailPage from '../VaultDetailPage.jsx'
+import TxDetailPage from '../TxDetailPage.jsx'
+import DevelopersLayout from '../../developers/DevelopersLayout.jsx'
+import SkillDrawer from '../SkillDrawer.jsx'
+import { TweaksPanel } from '../../tweaks-panel.jsx'
 import {
   SECONDARY_CLASS_ROUTES,
   SECONDARY_FIXTURE_PAYLOADS,
   SECONDARY_OWNED_CLASSES,
   STELLAR_G_FIXTURE,
   secondaryPayload,
-} from '../../visual/secondaryFixtures.js'
+} from '../../../visual/secondaryFixtures.js'
 
 expect.extend(axeMatchers)
 afterEach(() => {

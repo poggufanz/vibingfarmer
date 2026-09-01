@@ -6,7 +6,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 
-import { DecisionLogPanel } from './agents.jsx'
+import { DecisionLogPanel } from '../../agents.jsx'
 
 afterEach(cleanup)
 

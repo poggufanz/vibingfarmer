@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import SettingsPage from './SettingsPage.jsx'
+import SettingsPage from '../SettingsPage.jsx'
 
 const baseProps = {
   userAddress: null,
@@ -413,7 +413,7 @@ describe('SettingsPage route tab handoff', () => {
 
   it('contains no JSX inline style attributes after route style migration', async () => {
     const file = await readFile(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'SettingsPage.jsx'),
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'SettingsPage.jsx'),
       'utf8'
     )
     expect(file).not.toMatch(/style\s*=|style\s*=\s*\{/)
@@ -421,7 +421,7 @@ describe('SettingsPage route tab handoff', () => {
 
   it('keeps VF Wallet ownership outside the web Settings component', async () => {
     const file = await readFile(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'SettingsPage.jsx'),
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'SettingsPage.jsx'),
       'utf8'
     )
     const vfWalletComponent = ['Wallet', 'Settings'].join('')

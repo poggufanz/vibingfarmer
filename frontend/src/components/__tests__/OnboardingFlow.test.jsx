@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { normalizeAmount } from '../design/pocket-crew-foundation.js'
-import { fetchDeFiLlamaVaults } from '../defiLlama.js'
-import OnboardingFlow from './OnboardingFlow.jsx'
+import { normalizeAmount } from '../../design/pocket-crew-foundation.js'
+import { fetchDeFiLlamaVaults } from '../../defiLlama.js'
+import OnboardingFlow from '../OnboardingFlow.jsx'
 
-vi.mock('../defiLlama.js', () => ({
+vi.mock('../../defiLlama.js', () => ({
   fetchDeFiLlamaVaults: vi.fn(() => Promise.resolve([])),
 }))
 
-vi.mock('../apyHistory.js', () => ({
+vi.mock('../../apyHistory.js', () => ({
   fetchApyHistoryBatch: vi.fn(() => Promise.resolve({})),
 }))
 

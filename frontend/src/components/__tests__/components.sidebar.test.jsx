@@ -7,7 +7,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
-import { Sidebar, TopBar } from './components.jsx'
+import { Sidebar, TopBar } from '../../components.jsx'
 
 afterEach(cleanup)
 
@@ -29,8 +29,8 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 // (src/main.jsx:9-10, visual/main.jsx:38-39) load style.css and THEN pocket-crew.css, so the harness
 // has to do the same to reproduce production. Order matters: pocket-crew.css must come second.
 const LEGACY_STYLESHEET = [
-  fs.readFileSync(path.resolve(here, '../style.css'), 'utf8'),
-  fs.readFileSync(path.resolve(here, 'design/pocket-crew.css'), 'utf8'),
+  fs.readFileSync(path.resolve(here, '../../../style.css'), 'utf8'),
+  fs.readFileSync(path.resolve(here, '../../design/pocket-crew.css'), 'utf8'),
 ]
   .join('\n')
   .replace(/^\uFEFF/, '')
@@ -44,9 +44,9 @@ const CHROMIUM_CANDIDATES = [
   '/snap/bin/chromium',
 ]
 
-const shellSource = fs.readFileSync(path.resolve(here, '../src/app.jsx'), 'utf8')
-const shellStyle = fs.readFileSync(path.resolve(here, '../style.css'), 'utf8')
-const pocketShellStyle = fs.readFileSync(path.resolve(here, 'design/pocket-crew.css'), 'utf8')
+const shellSource = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
+const shellStyle = fs.readFileSync(path.resolve(here, '../../../style.css'), 'utf8')
+const pocketShellStyle = fs.readFileSync(path.resolve(here, '../../design/pocket-crew.css'), 'utf8')
 
 async function launchRealChromium() {
   const { chromium } = await import('playwright-core')

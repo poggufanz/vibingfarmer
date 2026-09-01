@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildSkill, DEPOSITOR_TARGET } from './skills.js'
+import { buildSkill, DEPOSITOR_TARGET } from '../../skills.js'
 
 describe('skill generator single fund path', () => {
   it('generated skill only targets the vault', () => {

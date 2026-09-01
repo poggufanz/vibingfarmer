@@ -2,21 +2,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import VaultDetailPage from './VaultDetailPage.jsx'
+import VaultDetailPage from '../VaultDetailPage.jsx'
 
 const navigateTo = vi.fn()
 const fetchDeFiLlamaVaults = vi.fn()
 const fetchApyHistory = vi.fn()
 
-vi.mock('../router.js', () => ({
+vi.mock('../../router.js', () => ({
   useNavigateTo: () => navigateTo,
 }))
 
-vi.mock('../defiLlama.js', () => ({
+vi.mock('../../defiLlama.js', () => ({
   fetchDeFiLlamaVaults: (...args) => fetchDeFiLlamaVaults(...args),
 }))
 
-vi.mock('../apyHistory.js', () => ({
+vi.mock('../../apyHistory.js', () => ({
   fetchApyHistory: (...args) => fetchApyHistory(...args),
 }))
 

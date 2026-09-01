@@ -2,20 +2,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import HistoryPanel from './HistoryPanel.jsx'
+import HistoryPanel from '../HistoryPanel.jsx'
 
-vi.mock('../history.js', () => ({
+vi.mock('../../history.js', () => ({
   getTransactions: vi.fn(() => []),
   getStrategies: vi.fn(() => []),
   getReasoningLog: vi.fn(() => []),
   clearAllHistory: vi.fn(),
 }))
 
-vi.mock('../base/baseHistory.js', () => ({
+vi.mock('../../base/baseHistory.js', () => ({
   fetchBaseHistory: vi.fn(() => Promise.resolve([])),
 }))
 
-vi.mock('../wallet/baseBinding.js', () => ({
+vi.mock('../../wallet/baseBinding.js', () => ({
   readBaseOwner: vi.fn(() => null),
 }))
 

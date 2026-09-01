@@ -10,7 +10,7 @@ const partialWithdraw = vi.fn(async () => ({
   channel: 'relay',
 }))
 const ensureExitSigner = vi.fn(async () => ({ publicKey: 'GPUB', secret: 'S' }))
-vi.mock('../stellar/partialWithdraw.js', () => ({
+vi.mock('../../stellar/partialWithdraw.js', () => ({
   partialWithdraw: (...a) => partialWithdraw(...a),
   ensureExitSigner: (...a) => ensureExitSigner(...a),
   readAgentScope: async () => ({
@@ -19,24 +19,24 @@ vi.mock('../stellar/partialWithdraw.js', () => ({
   }),
 }))
 const readVaultShares = vi.fn(async () => 100_000_000n) // 10 USDC per agent
-vi.mock('../stellar/agentDeposit.js', () => ({
+vi.mock('../../stellar/agentDeposit.js', () => ({
   readVaultShares: (...a) => readVaultShares(...a),
 }))
-vi.mock('../stellar/vaultReads.js', () => ({ readPricePerShare: async () => 10_000_000n }))
+vi.mock('../../stellar/vaultReads.js', () => ({ readPricePerShare: async () => 10_000_000n }))
 const clearManualExitKey = vi.fn()
-vi.mock('../wallet/exitKey.js', () => ({
+vi.mock('../../wallet/exitKey.js', () => ({
   clearManualExitKey: (...a) => clearManualExitKey(...a),
 }))
 const withdrawAllFromVault = vi.fn()
-vi.mock('../agents/agentController.js', () => ({
+vi.mock('../../agents/agentController.js', () => ({
   withdrawAllFromVault: (...a) => withdrawAllFromVault(...a),
 }))
 const saveTransaction = vi.fn()
-vi.mock('../history.js', () => ({
+vi.mock('../../history.js', () => ({
   saveTransaction: (...a) => saveTransaction(...a),
 }))
 
-import WithdrawModal from './WithdrawModal.jsx'
+import WithdrawModal from '../WithdrawModal.jsx'
 
 afterEach(cleanup)
 

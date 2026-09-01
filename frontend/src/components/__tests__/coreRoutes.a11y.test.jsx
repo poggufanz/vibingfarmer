@@ -8,11 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
-import { MyMoneyRoute } from './money/MyMoneyRoute.jsx'
-import { HowMoneyWorks } from './money/HowMoneyWorks.jsx'
-import { StrategyRoute } from './strategy/StrategyRoute.jsx'
-import { CrewRoute } from './crew/CrewRoute.jsx'
-import SettingsPage from './SettingsPage.jsx'
+import { MyMoneyRoute } from '../money/MyMoneyRoute.jsx'
+import { HowMoneyWorks } from '../money/HowMoneyWorks.jsx'
+import { StrategyRoute } from '../strategy/StrategyRoute.jsx'
+import { CrewRoute } from '../crew/CrewRoute.jsx'
+import SettingsPage from '../SettingsPage.jsx'
 
 expect.extend(axeMatchers)
 afterEach(() => {

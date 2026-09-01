@@ -5,13 +5,13 @@ import { fileURLToPath } from 'node:url'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import LandingHero from './LandingHero.jsx'
-import NavBar from './NavBar.jsx'
+import LandingHero from '../LandingHero.jsx'
+import NavBar from '../NavBar.jsx'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const landingFxSource = fs.readFileSync(path.join(here, 'LandingFx.jsx'), 'utf8')
-const landingCssSource = fs.readFileSync(path.join(here, 'LandingHero.css'), 'utf8')
-const navSource = fs.readFileSync(path.join(here, 'NavBar.jsx'), 'utf8')
+const landingFxSource = fs.readFileSync(path.join(here, '..', 'LandingFx.jsx'), 'utf8')
+const landingCssSource = fs.readFileSync(path.join(here, '..', 'LandingHero.css'), 'utf8')
+const navSource = fs.readFileSync(path.join(here, '..', 'NavBar.jsx'), 'utf8')
 
 let reduceMotion = false
 

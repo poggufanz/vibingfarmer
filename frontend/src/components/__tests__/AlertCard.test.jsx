@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
-import { AlertCard } from './AlertCard.jsx'
+import { AlertCard } from '../AlertCard.jsx'
 
 afterEach(cleanup)
 

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const routeRoot = path.resolve(here)
+const routeRoot = path.resolve(here, '..')
 const read = (file) => fs.readFileSync(path.join(routeRoot, file), 'utf8')
 const foundationCss = fs.readFileSync(path.resolve(routeRoot, '../design/pocket-crew.css'), 'utf8')
 const cssFiles = {

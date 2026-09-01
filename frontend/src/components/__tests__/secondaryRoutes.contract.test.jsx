@@ -18,7 +18,7 @@ import {
   STELLAR_C_FIXTURES,
   STELLAR_G_FIXTURE,
   createSecondaryLoaders,
-} from '../../visual/secondaryFixtures.js'
+} from '../../../visual/secondaryFixtures.js'
 
 const frontendRoot = globalThis.process.cwd()
 const fixtureSource = readFileSync(resolve(frontendRoot, 'visual/secondaryFixtures.js'), 'utf8')

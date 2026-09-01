@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import ReplayPage from './ReplayPage.jsx'
+import ReplayPage from '../ReplayPage.jsx'
 
 afterEach(() => {
   cleanup()

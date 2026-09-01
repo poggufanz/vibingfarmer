@@ -2,18 +2,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import TxDetailPage from './TxDetailPage.jsx'
+import TxDetailPage from '../TxDetailPage.jsx'
 
 const mocks = vi.hoisted(() => ({
   getTransactions: vi.fn(() => []),
   navigateTo: vi.fn(),
 }))
 
-vi.mock('../history.js', () => ({
+vi.mock('../../history.js', () => ({
   getTransactions: (...args) => mocks.getTransactions(...args),
 }))
 
-vi.mock('../router.js', () => ({
+vi.mock('../../router.js', () => ({
   useNavigateTo: () => mocks.navigateTo,
 }))
 

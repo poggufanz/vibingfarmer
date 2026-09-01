@@ -8,8 +8,8 @@ import { describe, test, expect, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
-import { SkillReviewCard } from './skills.jsx'
-import { baseOwnerStorageKey } from './wallet/baseBinding.js'
+import { SkillReviewCard } from '../../skills.jsx'
+import { baseOwnerStorageKey } from '../../wallet/baseBinding.js'
 
 afterEach(() => {
   cleanup()

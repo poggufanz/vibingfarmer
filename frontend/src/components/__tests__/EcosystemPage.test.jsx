@@ -5,8 +5,8 @@ import process from 'node:process'
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import EcosystemPage from './EcosystemPage.jsx'
-import { BASE_PROXY_TRUTH, createEcosystemModel } from '../secondary/ecosystemModel.js'
+import EcosystemPage from '../EcosystemPage.jsx'
+import { BASE_PROXY_TRUTH, createEcosystemModel } from '../../secondary/ecosystemModel.js'
 
 afterEach(() => {
   cleanup()

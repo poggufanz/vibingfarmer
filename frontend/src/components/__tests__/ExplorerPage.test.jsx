@@ -2,20 +2,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { normalizeAmount } from '../design/pocket-crew-foundation.js'
-import manifest from '../../../deployments/stellar-testnet.json'
-import ExplorerPage from './ExplorerPage.jsx'
-import * as vaultReads from '../stellar/vaultReads.js'
+import { normalizeAmount } from '../../design/pocket-crew-foundation.js'
+import manifest from '../../../../deployments/stellar-testnet.json'
+import ExplorerPage from '../ExplorerPage.jsx'
+import * as vaultReads from '../../stellar/vaultReads.js'
 
-vi.mock('../stellar/vaultReads.js', () => ({
+vi.mock('../../stellar/vaultReads.js', () => ({
   readTotalAssets: vi.fn(() => Promise.resolve(null)),
 }))
 
-vi.mock('../history.js', () => ({
+vi.mock('../../history.js', () => ({
   getStrategies: vi.fn(() => []),
 }))
 
-vi.mock('../stellar/client.js', () => ({
+vi.mock('../../stellar/client.js', () => ({
   rpcServer: vi.fn(() =>
     Promise.resolve({
       getLatestLedger: vi.fn(() => Promise.resolve({ sequence: 1000 })),
@@ -23,7 +23,7 @@ vi.mock('../stellar/client.js', () => ({
   ),
 }))
 
-vi.mock('../stellar/events.js', () => ({
+vi.mock('../../stellar/events.js', () => ({
   pollEvents: vi.fn(() => Promise.resolve({ events: [] })),
 }))
 
