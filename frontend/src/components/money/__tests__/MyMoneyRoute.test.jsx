@@ -790,7 +790,10 @@ describe('MyMoneyRoute — checklist item 9: every network mark carries visible 
 // Same launch mechanism PlanStage.test.jsx's G1 guard already uses (jsdom never runs layout --
 // scrollWidth/getBoundingClientRect are inert there) -- reused verbatim rather than re-invented.
 // ---------------------------------------------------------------------------------------------
-const POCKET_CREW_CSS = fs.readFileSync(path.resolve(here, '../../../design/pocket-crew.css'), 'utf8')
+const POCKET_CREW_CSS = fs.readFileSync(
+  path.resolve(here, '../../../design/pocket-crew.css'),
+  'utf8'
+)
 const MY_MONEY_CSS = fs.readFileSync(path.resolve(here, '../my-money.css'), 'utf8')
 const REAL_STYLESHEET = [POCKET_CREW_CSS, MY_MONEY_CSS].join('\n')
 const LEGACY_STYLESHEET = fs.readFileSync(path.resolve(here, '../../../../style.css'), 'utf8')

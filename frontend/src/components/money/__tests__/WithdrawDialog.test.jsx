@@ -824,7 +824,10 @@ describe('WithdrawDialog — canonical full-exit proof gate and Base truth (Task
   })
 
   it('documents the fixed Base USDC source contract for omitted token and decimals', () => {
-    const source = fs.readFileSync(path.resolve(here, '../../../base/dashboardPositions.js'), 'utf8')
+    const source = fs.readFileSync(
+      path.resolve(here, '../../../base/dashboardPositions.js'),
+      'utf8'
+    )
     expect(source).toMatch(
       /const BASE_USDC\s*=\s*['"]0x036CbD53842c5426634e7929541eC2318f3dCF7e['"]/
     )
@@ -1004,7 +1007,10 @@ describe('WithdrawDialog — accessibility', () => {
 // Real-browser 320px layout guard, per dialog state -- same launch mechanism MyMoneyRoute.test.jsx
 // already uses (jsdom never runs layout; scrollWidth/getBoundingClientRect are inert there).
 // ---------------------------------------------------------------------------------------------
-const POCKET_CREW_CSS = fs.readFileSync(path.resolve(here, '../../../design/pocket-crew.css'), 'utf8')
+const POCKET_CREW_CSS = fs.readFileSync(
+  path.resolve(here, '../../../design/pocket-crew.css'),
+  'utf8'
+)
 const MY_MONEY_CSS = fs.readFileSync(path.resolve(here, '../my-money.css'), 'utf8')
 const REAL_STYLESHEET = [POCKET_CREW_CSS, MY_MONEY_CSS].join('\n')
 const LEGACY_STYLESHEET = fs.readFileSync(path.resolve(here, '../../../../style.css'), 'utf8')

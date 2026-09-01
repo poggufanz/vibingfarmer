@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  normalizeRisk,
-  deriveTurbulence,
-  deriveSignals,
-  buildStrategyState,
-} from '../mdp.js'
+import { normalizeRisk, deriveTurbulence, deriveSignals, buildStrategyState } from '../mdp.js'
 
 describe('normalizeRisk', () => {
   it('maps the app-internal "med" to "medium"', () => {

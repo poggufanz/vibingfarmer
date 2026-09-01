@@ -157,7 +157,9 @@ vi.mock('../../strategy/councilReview.js', () => ({
   buildDebateInput: vi.fn(() => ({})),
   councilDebate: vi.fn(async () => ({ verdict: 'keep', citedRules: [] })),
 }))
-vi.mock('../../cctp/resumeTransfers.js', () => ({ resumePendingCctpTransfers: vi.fn(async () => {}) }))
+vi.mock('../../cctp/resumeTransfers.js', () => ({
+  resumePendingCctpTransfers: vi.fn(async () => {}),
+}))
 vi.mock('../../wallet/passkeyBridge.js', async (importOriginal) => ({
   ...(await importOriginal()),
   ensureBaseOwner: vi.fn(),

@@ -936,7 +936,10 @@ describe('hasLiveScopeForVault', () => {
 // ---------------------------------------------------------------------------------------------
 describe('hoisted money-dialog siblings and direct geometry', () => {
   const appSource = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
-  const moneyCss = fs.readFileSync(path.resolve(here, '../../components/money/my-money.css'), 'utf8')
+  const moneyCss = fs.readFileSync(
+    path.resolve(here, '../../components/money/my-money.css'),
+    'utf8'
+  )
 
   function hasClass(node, className) {
     return (

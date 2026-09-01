@@ -367,7 +367,10 @@ describe('RecoveryPanel — accessibility', () => {
 // ---------------------------------------------------------------------------------------------
 // Real-browser 320px layout guard, per state.
 // ---------------------------------------------------------------------------------------------
-const POCKET_CREW_CSS = fs.readFileSync(path.resolve(here, '../../../design/pocket-crew.css'), 'utf8')
+const POCKET_CREW_CSS = fs.readFileSync(
+  path.resolve(here, '../../../design/pocket-crew.css'),
+  'utf8'
+)
 const MY_MONEY_CSS = fs.readFileSync(path.resolve(here, '../my-money.css'), 'utf8')
 const REAL_STYLESHEET = [POCKET_CREW_CSS, MY_MONEY_CSS].join('\n')
 const LEGACY_STYLESHEET = fs.readFileSync(path.resolve(here, '../../../../style.css'), 'utf8')

@@ -1,6 +1,10 @@
 // frontend/src/money/riskWatchStore.test.js
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { recordRecommendation, getRecommendations, clearRecommendations } from '../riskWatchStore.js'
+import {
+  recordRecommendation,
+  getRecommendations,
+  clearRecommendations,
+} from '../riskWatchStore.js'
 
 function stubStorage() {
   const store = {}
