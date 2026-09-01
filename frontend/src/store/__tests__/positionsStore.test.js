@@ -7,13 +7,13 @@ import {
   pickDisplayAgents,
   pickRecoverableVaultAgents,
   buildBulkExitTarget,
-} from './positionsStore.js'
-import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
+} from '../../positionsStore.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS } from '../../stellar/config.js'
 
-vi.mock('./stellar/agentDeposit.js', () => ({ readVaultShares: vi.fn() }))
-vi.mock('./stellar/vaultReads.js', () => ({ readPricePerShare: vi.fn() }))
-import { readVaultShares } from './stellar/agentDeposit.js'
-import { readPricePerShare } from './stellar/vaultReads.js'
+vi.mock('../../stellar/agentDeposit.js', () => ({ readVaultShares: vi.fn() }))
+vi.mock('../../stellar/vaultReads.js', () => ({ readPricePerShare: vi.fn() }))
+import { readVaultShares } from '../../stellar/agentDeposit.js'
+import { readPricePerShare } from '../../stellar/vaultReads.js'
 
 // These two mocks are shared module-level state across every describe block below (vi.mock is
 // per-file, not per-describe). Without a file-level clear, one test's call count/resolved value
@@ -60,7 +60,7 @@ describe('reconcilePositionsFromChain (explicit agent list, no demo-agent defaul
 
   it('never imports SOROBAN_DEMO_AGENT (no address for reconcile to fall back on)', async () => {
     const src = await import('node:fs/promises').then((fs) =>
-      fs.readFile(new URL('./positionsStore.js', import.meta.url), 'utf8')
+      fs.readFile(new URL('../positionsStore.js', import.meta.url), 'utf8')
     )
     expect(src).not.toMatch(/import\s*\{[^}]*SOROBAN_DEMO_AGENT/)
   })
