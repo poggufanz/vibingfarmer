@@ -1,6 +1,5 @@
 /* @vitest-environment jsdom */
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import React from 'react'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 
 const pixiTestState = vi.hoisted(() => ({

@@ -16,7 +16,7 @@ describe('vaultFactsLive', () => {
   beforeEach(() => _test.reset())
 
   it('fetches DeFiLlama TVL per catalog slug and exposes an overlay', async () => {
-    const fetchImpl = vi.fn(async (url) => ({ ok: true, json: async () => 42_000_000 }))
+    const fetchImpl = vi.fn(async (_url) => ({ ok: true, json: async () => 42_000_000 }))
     await primeVaultFacts({ fetchImpl, storage: memStorage(), now: () => 1_000 })
     const overlay = getLiveOverlay('aave-v3')
     expect(overlay.refreshed.tvl).toBe(42_000_000)

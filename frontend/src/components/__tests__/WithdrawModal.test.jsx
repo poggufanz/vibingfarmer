@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import React from 'react'
 
 const partialWithdraw = vi.fn(async () => ({
   redeemed: 20_000_000n,

@@ -379,7 +379,7 @@ describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy
   })
 
   it('requires an explicit connected state before a matching mandate can be ready', async () => {
-    const { connected, ...connectionWithoutState } = connection
+    const { connected: _connected, ...connectionWithoutState } = connection
     const result = resolveBaseAvailability({
       mandate,
       connection: connectionWithoutState,

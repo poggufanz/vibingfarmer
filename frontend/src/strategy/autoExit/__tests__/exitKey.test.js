@@ -18,7 +18,7 @@
 //     → "Legacy auto-exit data" (components/settings/LegacyAutoExitCleanup.jsx). They stay in
 //     wallet/exitKey.js (out of this task's file list) and stay tested here for back-compat
 //     coverage of that inspector's expectations, not because anything still calls them.
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import {
   generateExitKey,
   registerExitSigner,

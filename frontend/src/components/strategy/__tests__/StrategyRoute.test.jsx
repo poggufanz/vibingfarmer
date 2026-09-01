@@ -105,9 +105,9 @@ async function measureRouteAt(bodyHtml) {
 
 const disconnectedBase = { connected: false, healthy: null, mandateView: null, action: null }
 
-const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
+const _OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const TOKEN_ADDR = SOROBAN_TOKEN_ADDRESS
-const BRIDGE_TOKEN_ADDR = STELLAR_USDC_SAC
+const _BRIDGE_TOKEN_ADDR = STELLAR_USDC_SAC
 const NOW = 1_800_000_000
 
 function amount(token, units, decimals = 7) {

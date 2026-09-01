@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolve, SNAPSHOT } from '../vaultFacts.js'
+import { resolve } from '../vaultFacts.js'
 import { CAPTURED_AT } from '../vaultFactsSnapshot.js'
 import { evaluate } from '../eligibilityGate.js'
 

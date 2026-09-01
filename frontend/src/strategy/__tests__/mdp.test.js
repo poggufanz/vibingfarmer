@@ -4,7 +4,6 @@ import {
   deriveTurbulence,
   deriveSignals,
   buildStrategyState,
-  RISK_RANK,
 } from '../mdp.js'
 
 describe('normalizeRisk', () => {
