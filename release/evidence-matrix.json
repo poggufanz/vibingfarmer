@@ -17,12 +17,12 @@
       "id": "permission-lifetime",
       "status": "proven",
       "owner": "strategy",
-      "verification": "cd frontend && npx vitest run src/strategy/permissionWindow.test.js src/strategy/flowState.test.js src/stellar/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
+      "verification": "cd frontend && npx vitest run src/strategy/__tests__/permissionWindow.test.js src/strategy/__tests__/flowState.test.js src/stellar/grant.test.js src/orchestrator.test.js src/orchestrator.router.test.js src/orchestrator.baseleg.test.js src/orchestrator.unavailable.test.js src/components/strategy/ProtectStage.test.jsx",
       "evidence": [
         "frontend/src/strategy/permissionWindow.js",
-        "frontend/src/strategy/permissionWindow.test.js",
+        "frontend/src/strategy/__tests__/permissionWindow.test.js",
         "frontend/src/strategy/flowState.js",
-        "frontend/src/strategy/flowState.test.js",
+        "frontend/src/strategy/__tests__/flowState.test.js",
         "frontend/src/stellar/grant.js",
         "frontend/src/stellar/grant.test.js",
         "frontend/src/orchestrator.js",
@@ -38,10 +38,10 @@
       "id": "yield-availability",
       "status": "proven",
       "owner": "frontend",
-      "verification": "cd frontend && npx vitest run src/strategy/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history/__tests__/history.yield.test.js src/components/HistoryPanel.test.jsx src/strategist.yield.test.js src/components/TxDetailPage.test.jsx",
+      "verification": "cd frontend && npx vitest run src/strategy/__tests__/venueTruth.test.js src/components/strategy/PlanStage.test.jsx src/components/OnboardingFlow.test.jsx src/components/VaultDetailPage.test.jsx src/history/__tests__/history.yield.test.js src/components/HistoryPanel.test.jsx src/strategy/__tests__/strategist.yield.test.js src/components/TxDetailPage.test.jsx",
       "evidence": [
         "frontend/src/strategy/venueTruth.js",
-        "frontend/src/strategy/venueTruth.test.js",
+        "frontend/src/strategy/__tests__/venueTruth.test.js",
         "frontend/src/components/strategy/PlanStage.jsx",
         "frontend/src/components/strategy/PlanStage.test.jsx",
         "frontend/src/components/OnboardingFlow.jsx",
@@ -53,7 +53,7 @@
         "frontend/src/components/HistoryPanel.jsx",
         "frontend/src/components/HistoryPanel.test.jsx",
         "frontend/src/strategist.js",
-        "frontend/src/strategist.yield.test.js",
+        "frontend/src/strategy/__tests__/strategist.yield.test.js",
         "frontend/src/components/TxDetailPage.jsx",
         "frontend/src/components/TxDetailPage.test.jsx"
       ]
