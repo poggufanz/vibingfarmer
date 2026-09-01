@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { open, registerProvider, PROVIDERS } from './OnRamp.js'
+import { open, registerProvider, PROVIDERS } from '../OnRamp.js'
 
 beforeEach(() => {
   for (const k of Object.keys(PROVIDERS)) delete PROVIDERS[k]

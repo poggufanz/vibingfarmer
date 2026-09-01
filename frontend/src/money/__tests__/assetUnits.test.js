@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { I128_MAX, formatAssetUnits, parseAssetUnits } from './assetUnits.js'
+import { I128_MAX, formatAssetUnits, parseAssetUnits } from '../assetUnits.js'
 
 describe('parseAssetUnits', () => {
   // Defect: a smallest-possible Stellar amount can be rounded to zero by a floating-point path.

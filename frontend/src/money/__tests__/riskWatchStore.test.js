@@ -1,6 +1,6 @@
 // frontend/src/money/riskWatchStore.test.js
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { recordRecommendation, getRecommendations, clearRecommendations } from './riskWatchStore.js'
+import { recordRecommendation, getRecommendations, clearRecommendations } from '../riskWatchStore.js'
 
 function stubStorage() {
   const store = {}
@@ -93,7 +93,7 @@ describe('riskWatchStore', () => {
   })
 
   it('exposes no execution capability — the store module has exactly the three storage exports', async () => {
-    const mod = await import('./riskWatchStore.js')
+    const mod = await import('../riskWatchStore.js')
     expect(Object.keys(mod).sort()).toEqual(
       ['clearRecommendations', 'getRecommendations', 'recordRecommendation'].sort()
     )

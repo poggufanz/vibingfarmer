@@ -6,7 +6,7 @@ import {
   classifyLifeboatAutomation,
   describeRiskWatchProvenance,
   KEEPER_HEALTHY_WITHIN_MS,
-} from './automationEvidence.js'
+} from '../automationEvidence.js'
 
 describe('classifyKeeperAutomation', () => {
   it('is unavailable with no events at all — absence of alerts is not evidence of health', () => {

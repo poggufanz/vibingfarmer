@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { open, launchWidget } from './transak.js'
+import { open, launchWidget } from '../transak.js'
 import { Transak as MockTransak } from '@transak/ui-js-sdk'
 
 // Vitest hoists vi.mock() above the imports above, so define the fake class inside the

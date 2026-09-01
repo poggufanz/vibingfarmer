@@ -1,6 +1,6 @@
 // frontend/src/money/myMoneyModel.test.js
 import { describe, it, expect } from 'vitest'
-import { buildMyMoneyModel, choosePrimaryMoneyAction } from './myMoneyModel.js'
+import { buildMyMoneyModel, choosePrimaryMoneyAction } from '../myMoneyModel.js'
 
 const NOW = 10_000_000_000
 

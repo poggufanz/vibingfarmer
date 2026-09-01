@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { open } from './coinbase.js'
-import { PROVIDERS } from './OnRamp.js'
+import { open } from '../coinbase.js'
+import { PROVIDERS } from '../OnRamp.js'
 
 describe('coinbaseBaseOnRamp (documented fallback, spec §9)', () => {
   beforeEach(() => {

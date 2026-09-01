@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
-import { normalizeBaseChildren, readBasePositions } from './baseChildPositions.js'
-import { BASE_CHAIN } from '../base/config.js'
-import { BASE_POOL_CATALOG } from '../config.js'
+import { normalizeBaseChildren, readBasePositions } from '../baseChildPositions.js'
+import { BASE_CHAIN } from '../../base/config.js'
+import { BASE_POOL_CATALOG } from '../../config.js'
 
 const KERNEL = '0xKERNEL'
 const POOL_A = BASE_POOL_CATALOG[0].address

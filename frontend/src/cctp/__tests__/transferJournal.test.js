@@ -5,7 +5,7 @@ import {
   listCctpTransfers,
   readCctpTransfer,
   removeCctpTransfer,
-} from './transferJournal.js'
+} from '../transferJournal.js'
 
 const OWNER = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
 const OTHER_OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'

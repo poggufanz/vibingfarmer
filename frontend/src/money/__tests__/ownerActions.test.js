@@ -17,9 +17,9 @@ import {
   targetStateLabel,
   signaturesForSweep,
   friendlyOwnerActionError,
-} from './ownerActions.js'
-import { MAX_AGENTS_PER_SWEEP } from '../stellar/exit.js'
-import { OwnerActionSubmissionError } from '../stellar/ownerAuthorization.js'
+} from '../ownerActions.js'
+import { MAX_AGENTS_PER_SWEEP } from '../../stellar/exit.js'
+import { OwnerActionSubmissionError } from '../../stellar/ownerAuthorization.js'
 
 const usdc = (units) => ({ token: 'USDC', units: String(units), decimals: 7 })
 

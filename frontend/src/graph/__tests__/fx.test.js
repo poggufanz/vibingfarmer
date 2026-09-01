@@ -8,7 +8,7 @@ import {
   spawnDust,
   stepDust,
   DUST_COUNT,
-} from './fx.js'
+} from '../fx.js'
 
 describe('envelopes', () => {
   it('core pulse stays within 1.00–1.04', () => {

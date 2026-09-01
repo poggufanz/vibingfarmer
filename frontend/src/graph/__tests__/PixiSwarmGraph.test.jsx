@@ -60,11 +60,11 @@ vi.mock('pixi.js', () => ({
   },
 }))
 
-vi.mock('./scene.js', () => ({
+vi.mock('../scene.js', () => ({
   createScene: (...args) => sceneTestMock.createScene(...args),
 }))
 
-import { PixiSwarmGraph } from './PixiSwarmGraph.jsx'
+import { PixiSwarmGraph } from '../PixiSwarmGraph.jsx'
 
 afterEach(() => {
   cleanup()

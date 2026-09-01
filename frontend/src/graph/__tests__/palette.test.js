@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { contrastRatio } from '../design/contrast.js'
-import { THEMES } from '../design/theme.js'
+import { contrastRatio } from '../../design/contrast.js'
+import { THEMES } from '../../design/theme.js'
 import {
   GRAPH_COLOR,
   GRAPH_COLOR_LIGHT,
@@ -13,7 +13,7 @@ import {
   nodeStateOf,
   nodeColor,
   nodeRunning,
-} from './palette.js'
+} from '../palette.js'
 
 const exec = {
   'worker-1': {

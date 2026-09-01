@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { render, screen, cleanup, waitFor } from '@testing-library/react'
-import OnRampButton from './OnRampButton.jsx'
-import { OnRamp } from './OnRamp.js'
+import OnRampButton from '../OnRampButton.jsx'
+import { OnRamp } from '../OnRamp.js'
 
 afterEach(cleanup)
 

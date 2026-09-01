@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
-import { checkpointCctpTransfer, createCctpTransfer, readCctpTransfer } from './transferJournal.js'
-import { resumePendingCctpTransfers } from './resumeTransfers.js'
-import { postFarm } from '../base/relayerClient.js'
+import { checkpointCctpTransfer, createCctpTransfer, readCctpTransfer } from '../transferJournal.js'
+import { resumePendingCctpTransfers } from '../resumeTransfers.js'
+import { postFarm } from '../../base/relayerClient.js'
 
 const OWNER = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
 const REQUEST_ID = '11'.repeat(16)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { custodyForAgent, custodyBreakdownForAgent } from './custody.js'
+import { custodyForAgent, custodyBreakdownForAgent } from '../custody.js'
 
 const KNOWN = (units) => ({ state: 'known', amount: { token: 'USDC', units, decimals: 7 } })
 const UNAVAILABLE = { state: 'unavailable', amount: null }

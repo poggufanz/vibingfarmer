@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { buildGraphData, buildAutofarmGraphData } from './topology.js'
-import { detectMode, layoutGraph, conduitControl, pointOnQuadratic } from './layout.js'
+import { buildGraphData, buildAutofarmGraphData } from '../topology.js'
+import { detectMode, layoutGraph, conduitControl, pointOnQuadratic } from '../layout.js'
 
 const strategy = {
   agents: [

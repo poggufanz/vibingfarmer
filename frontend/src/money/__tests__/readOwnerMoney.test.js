@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
-import { readOwnerMoney, aggregateOwnerPositions } from './readOwnerMoney.js'
+import { readOwnerMoney, aggregateOwnerPositions } from '../readOwnerMoney.js'
 // Real catalog addresses (vite.config.js's test env overrides these away from the hardcoded
 // production defaults — see dashboardPositions.test.js's own note on this pattern), needed
 // because Fix 4 makes the live-read path unknown (not zero) for any pool outside this catalog.
-import { BASE_POOL_CATALOG } from '../config.js'
+import { BASE_POOL_CATALOG } from '../../config.js'
 
 const OWNER = 'GOWNER234567234567234567234567234567234567234567234567AB'
 const NOW = 2_000_000_000_000 // ms

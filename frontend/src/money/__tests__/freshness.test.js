@@ -6,7 +6,7 @@ import {
   nextReconciliationToken,
   isReconciliationCurrent,
   DEFAULT_STALE_AFTER_MS,
-} from './freshness.js'
+} from '../freshness.js'
 
 describe('classifyFreshness', () => {
   it('is unavailable when checkedAt was never set', () => {

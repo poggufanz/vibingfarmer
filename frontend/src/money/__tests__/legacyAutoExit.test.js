@@ -10,10 +10,10 @@ import {
   scanLegacyAutoExit,
   isLegacyAutoExitKey,
   deleteLegacyAutoExitKeys,
-} from './legacyAutoExit.js'
+} from '../legacyAutoExit.js'
 
-const MODULE_PATH = fileURLToPath(new URL('./legacyAutoExit.js', import.meta.url))
-const APP_PATH = fileURLToPath(new URL('../app.jsx', import.meta.url))
+const MODULE_PATH = fileURLToPath(new URL('../legacyAutoExit.js', import.meta.url))
+const APP_PATH = fileURLToPath(new URL('../../app.jsx', import.meta.url))
 
 function stubStorage() {
   const store = {}
@@ -41,7 +41,7 @@ describe('legacyAutoExit — production-safety invariants', () => {
   })
 
   it('exposes exactly the three safe exports — no redeem/transfer/relay/sign capability', async () => {
-    const mod = await import('./legacyAutoExit.js')
+    const mod = await import('../legacyAutoExit.js')
     expect(Object.keys(mod).sort()).toEqual(
       ['deleteLegacyAutoExitKeys', 'isLegacyAutoExitKey', 'scanLegacyAutoExit'].sort()
     )
