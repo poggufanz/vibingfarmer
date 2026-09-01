@@ -2,9 +2,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import OverviewSection from './OverviewSection.jsx'
+import OverviewSection from '../OverviewSection.jsx'
 
-vi.mock('./portalClient.js', () => ({
+vi.mock('../portalClient.js', () => ({
   listKeys: vi.fn(async () => [
     { id: 'a', enabled: 1 },
     { id: 'b', enabled: 0 },

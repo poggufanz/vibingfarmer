@@ -2,14 +2,14 @@
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import KeysSection from './KeysSection.jsx'
-import SkillDrawer from '../components/SkillDrawer.jsx'
-import SkillEditModal from '../components/SkillEditModal.jsx'
-import SkillDetailModal from '../components/SkillDetailModal.jsx'
-import { revokeKey } from './portalClient.js'
-import { clearUserSkill, loadVaultSkill, saveUserSkill } from '../skillLoader.js'
+import KeysSection from '../KeysSection.jsx'
+import SkillDrawer from '../../components/SkillDrawer.jsx'
+import SkillEditModal from '../../components/SkillEditModal.jsx'
+import SkillDetailModal from '../../components/SkillDetailModal.jsx'
+import { revokeKey } from '../portalClient.js'
+import { clearUserSkill, loadVaultSkill, saveUserSkill } from '../../skillLoader.js'
 
-vi.mock('./portalClient.js', () => ({
+vi.mock('../portalClient.js', () => ({
   listKeys: vi.fn(async () => [
     {
       id: 'vfk_1',
@@ -25,7 +25,7 @@ vi.mock('./portalClient.js', () => ({
   revokeKey: vi.fn(async () => true),
 }))
 
-vi.mock('../skillLoader.js', () => ({
+vi.mock('../../skillLoader.js', () => ({
   clearUserSkill: vi.fn(),
   loadVaultSkill: vi.fn(async () => ({ content: '', source: 'default' })),
   saveUserSkill: vi.fn(),

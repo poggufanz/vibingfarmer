@@ -17,8 +17,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import _Withdraw from './Withdraw.jsx'
-import { BASE_CROSS_CHAIN_AVAILABLE } from '../base/config.js'
+import _Withdraw from '../Withdraw.jsx'
+import { BASE_CROSS_CHAIN_AVAILABLE } from '../../base/config.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -31,10 +31,10 @@ const USER_OP_HASH = `0x${'33'.repeat(32)}`
 const UNWIND_TX_HASH = `0x${'77'.repeat(32)}`
 const MINT_TX_HASH = '88'.repeat(32)
 
-vi.mock('../base/withdrawBatch.js', () => ({
+vi.mock('../../base/withdrawBatch.js', () => ({
   signAndSubmitUnwind: (...a) => signAndSubmitUnwind(...a),
 }))
-vi.mock('../base/relayerClient.js', () => ({
+vi.mock('../../base/relayerClient.js', () => ({
   reserveUnwind: (...a) => reserveUnwind(...a),
   postUnwindAttach: (...a) => postUnwindAttach(...a),
   pollUnwindStatus: (...a) => pollUnwindStatus(...a),
@@ -863,8 +863,8 @@ describe('Withdraw (Base full exit) — Task 6 evidence and handoff contract', (
   })
 
   it('keeps the lazy Base overlay on route-owned Pocket Crew classes with no legacy or inline styling', () => {
-    const source = fs.readFileSync(path.resolve(here, './Withdraw.jsx'), 'utf8')
-    const css = fs.readFileSync(path.resolve(here, '../components/money/my-money.css'), 'utf8')
+    const source = fs.readFileSync(path.resolve(here, '../Withdraw.jsx'), 'utf8')
+    const css = fs.readFileSync(path.resolve(here, '../../components/money/my-money.css'), 'utf8')
     const activeCss = css.replace(/\/\*[\s\S]*?\*\//g, '')
     expect(source).not.toMatch(/\b(?:wd-|modal-|grant-receipt|think-spin)/)
     expect(source).not.toMatch(/\bstyle\s*=/)

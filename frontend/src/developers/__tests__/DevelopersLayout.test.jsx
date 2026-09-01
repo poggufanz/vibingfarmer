@@ -2,16 +2,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
-import DevelopersLayout from './DevelopersLayout.jsx'
+import DevelopersLayout from '../DevelopersLayout.jsx'
 
-vi.mock('./portalClient.js', () => ({
+vi.mock('../portalClient.js', () => ({
   signIn: vi.fn(async () => 'JWT'),
   listKeys: vi.fn(async () => []),
   createKey: vi.fn(),
   revokeKey: vi.fn(),
   getUsage: vi.fn(async () => ({ usage: [], cap: 5000, sinceDay: '2026-06-11' })),
 }))
-vi.mock('./walletSign.js', () => ({
+vi.mock('../walletSign.js', () => ({
   connectWallet: vi.fn(async () => ({ address: 'GAAA', signChallenge: async (x) => x })),
 }))
 

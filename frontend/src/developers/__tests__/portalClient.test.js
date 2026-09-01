@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { signIn, listKeys, createKey, revokeKey, getUsage } from './portalClient.js'
+import { signIn, listKeys, createKey, revokeKey, getUsage } from '../portalClient.js'
 
 afterEach(() => vi.unstubAllGlobals())
 

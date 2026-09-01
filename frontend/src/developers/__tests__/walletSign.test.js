@@ -3,14 +3,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Mock the app's wallet plumbing — walletSign must delegate to it instead of
 // importing @creit.tech/stellar-wallets-kit itself (walletKitLoader is the only
 // allowed importer; a direct import broke /developers on kit v2.3.0).
-vi.mock('../stellar/walletKit.js', () => ({
+vi.mock('../../stellar/walletKit.js', () => ({
   connectWallet: vi.fn(async () => 'GCONNECTED'),
   getUserAddress: vi.fn(async () => 'GEXISTING'),
   signTxXdr: vi.fn(async (xdr) => `${xdr}:signed`),
 }))
 
-import { connectWallet } from './walletSign.js'
-import { connectWallet as kitConnect, getUserAddress, signTxXdr } from '../stellar/walletKit.js'
+import { connectWallet } from '../walletSign.js'
+import { connectWallet as kitConnect, getUserAddress, signTxXdr } from '../../stellar/walletKit.js'
 
 beforeEach(() => {
   vi.clearAllMocks()

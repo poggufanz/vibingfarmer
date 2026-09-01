@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import KeysSection from './KeysSection.jsx'
-import { createKey, listKeys, revokeKey } from './portalClient.js'
+import KeysSection from '../KeysSection.jsx'
+import { createKey, listKeys, revokeKey } from '../portalClient.js'
 
-vi.mock('./portalClient.js', () => ({
+vi.mock('../portalClient.js', () => ({
   listKeys: vi.fn(async () => [
     {
       id: 'vfk_1',

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
-import DocsSection from './DocsSection.jsx'
-import { ENDPOINTS } from './docsData.js'
+import DocsSection from '../DocsSection.jsx'
+import { ENDPOINTS } from '../docsData.js'
 
 afterEach(cleanup)
 

@@ -1,17 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import _Withdraw from './Withdraw.jsx'
+import _Withdraw from '../Withdraw.jsx'
 
 const signAndSubmitUnwind = vi.fn()
 const reserveUnwind = vi.fn()
 const postUnwindAttach = vi.fn()
 const pollUnwindStatus = vi.fn()
 
-vi.mock('../base/withdrawBatch.js', () => ({
+vi.mock('../../base/withdrawBatch.js', () => ({
   signAndSubmitUnwind: (...args) => signAndSubmitUnwind(...args),
 }))
-vi.mock('../base/relayerClient.js', () => ({
+vi.mock('../../base/relayerClient.js', () => ({
   reserveUnwind: (...args) => reserveUnwind(...args),
   postUnwindAttach: (...args) => postUnwindAttach(...args),
   pollUnwindStatus: (...args) => pollUnwindStatus(...args),

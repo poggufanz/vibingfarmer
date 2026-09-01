@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
-import UsageSection from './UsageSection.jsx'
+import UsageSection from '../UsageSection.jsx'
 
 const TODAY = new Date().toISOString().slice(0, 10)
 
-vi.mock('./portalClient.js', () => ({
+vi.mock('../portalClient.js', () => ({
   listKeys: vi.fn(async () => [
     { id: 'k1', key_hint: 'vf_test_aa…', enabled: 1, rate_limit: 60 },
     { id: 'k2', key_hint: 'vf_live_bb…', enabled: 1, rate_limit: 120 },
