@@ -36,15 +36,15 @@ import {
   replaceMoneyFetchAbortController,
   toKeeperHeartbeatEvents,
   hasLiveScopeForVault,
-} from './app.jsx'
-import { buildMyMoneyModel } from './money/myMoneyModel.js'
-import { nextReconciliationToken } from './money/freshness.js'
-import { classifyKeeperAutomation } from './money/automationEvidence.js'
-import { readOwnerMoney } from './money/readOwnerMoney.js'
-import { MyMoneyRoute } from './components/money/MyMoneyRoute.jsx'
-import { WithdrawDialog } from './components/money/WithdrawDialog.jsx'
-import { StopAccessDialog } from './components/money/StopAccessDialog.jsx'
-import { RecoveryPanel } from './components/money/RecoveryPanel.jsx'
+} from '../../app.jsx'
+import { buildMyMoneyModel } from '../../money/myMoneyModel.js'
+import { nextReconciliationToken } from '../../money/freshness.js'
+import { classifyKeeperAutomation } from '../../money/automationEvidence.js'
+import { readOwnerMoney } from '../../money/readOwnerMoney.js'
+import { MyMoneyRoute } from '../../components/money/MyMoneyRoute.jsx'
+import { WithdrawDialog } from '../../components/money/WithdrawDialog.jsx'
+import { StopAccessDialog } from '../../components/money/StopAccessDialog.jsx'
+import { RecoveryPanel } from '../../components/money/RecoveryPanel.jsx'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -387,7 +387,7 @@ describe('owner-switch money cancellation — aborts work, not only stale commit
 // this test immediately -- see the report for the insert/remove mutation proof.
 // ---------------------------------------------------------------------------------------------
 describe('[realAddress] reload effect (controller level) — never replays a transaction', () => {
-  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const src = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
 
   function reloadEffectBlock() {
     const start = src.indexOf('MONEY-RELOAD-EFFECT:START')
@@ -458,7 +458,7 @@ describe('moneyFetchArgs — identity-preserving, never substitutes or clones th
 })
 
 describe('refreshMoney (controller level, MM13 M5) — wires the LIVE refs into moneyFetchArgs, not dead literals', () => {
-  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const src = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
 
   function refreshMoneyWiringBlock() {
     const start = src.indexOf('REFRESH-MONEY-WIRING:START')
@@ -710,7 +710,7 @@ describe('loadMoneyCache / saveMoneyCache', () => {
 // imported/used elsewhere in dev-only code.
 // ---------------------------------------------------------------------------------------------
 describe('/home & /agent route source: MyMoneyRoute moved to /home, /agent is now CrewRoute', () => {
-  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const src = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
 
   function routeBlock(routePath) {
     const marker = `path="${routePath}"`
@@ -757,7 +757,7 @@ describe('/home & /agent route source: MyMoneyRoute moved to /home, /agent is no
 // The heavy App component is not rendered here; its source seam and the small clock helper are
 // tested directly so this cannot silently drop explicit nowMs wiring or leak a live interval.
 describe('My Money presentation clock wiring', () => {
-  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const src = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
 
   it('passes the explicit UI presentation clock into the real /home MyMoneyRoute', () => {
     const start = src.indexOf('path="/home"')
@@ -815,7 +815,7 @@ describe('My Money presentation clock wiring', () => {
 // function body must navigate to its OWN distinct destination.
 // ---------------------------------------------------------------------------------------------
 describe('onViewMoney / onViewCrew (Task 10 C2 fix): distinct destinations, never a duplicate', () => {
-  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const src = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
 
   function fnBody(name) {
     const marker = `function ${name}(`
@@ -846,7 +846,7 @@ describe('onViewMoney / onViewCrew (Task 10 C2 fix): distinct destinations, neve
 // scoped to the banner's own JSX block.
 // ---------------------------------------------------------------------------------------------
 describe('session-resumed banner Dismiss button (Task 10 F3 fix)', () => {
-  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const src = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
 
   function bannerBlock() {
     const start = src.indexOf('pc-resumed-banner')
@@ -865,7 +865,7 @@ describe('session-resumed banner Dismiss button (Task 10 F3 fix)', () => {
 // projection/App/Crew tests; this source check only freezes the single route-composition seam.
 // ---------------------------------------------------------------------------------------------
 describe('Crew route composition (Task 18): Sidebar and /agent share one Crew projection', () => {
-  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const src = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
 
   function routeBlock(routePath) {
     const marker = `path="${routePath}"`
@@ -935,8 +935,8 @@ describe('hasLiveScopeForVault', () => {
 // exercises, while the stylesheet assertions pin the route-owned geometry required at 320px.
 // ---------------------------------------------------------------------------------------------
 describe('hoisted money-dialog siblings and direct geometry', () => {
-  const appSource = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
-  const moneyCss = fs.readFileSync(path.resolve(here, './components/money/my-money.css'), 'utf8')
+  const appSource = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
+  const moneyCss = fs.readFileSync(path.resolve(here, '../../components/money/my-money.css'), 'utf8')
 
   function hasClass(node, className) {
     return (
@@ -1013,11 +1013,11 @@ describe('hoisted money-dialog siblings and direct geometry', () => {
 // owns focus, Escape, backdrop, inertness, and body scroll locking; this SSR handoff test freezes
 // the route-owned seam without reimplementing any of those mechanics in app.jsx.
 describe('Task 6 money overlay handoff — one semantic overlay per open state', () => {
-  const appSource = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const appSource = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
   const componentSources = [
-    fs.readFileSync(path.resolve(here, './components/money/WithdrawDialog.jsx'), 'utf8'),
-    fs.readFileSync(path.resolve(here, './components/money/StopAccessDialog.jsx'), 'utf8'),
-    fs.readFileSync(path.resolve(here, './components/money/RecoveryPanel.jsx'), 'utf8'),
+    fs.readFileSync(path.resolve(here, '../../components/money/WithdrawDialog.jsx'), 'utf8'),
+    fs.readFileSync(path.resolve(here, '../../components/money/StopAccessDialog.jsx'), 'utf8'),
+    fs.readFileSync(path.resolve(here, '../../components/money/RecoveryPanel.jsx'), 'utf8'),
   ]
 
   function hasClass(node, className) {

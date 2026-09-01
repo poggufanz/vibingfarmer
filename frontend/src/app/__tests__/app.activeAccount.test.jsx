@@ -25,7 +25,7 @@ const cctpRecovery = vi.hoisted(() => ({
   resume: vi.fn(),
 }))
 
-vi.mock('./components.jsx', async (importOriginal) => {
+vi.mock('../../components.jsx', async (importOriginal) => {
   const actual = await importOriginal()
   const { createElement } = await import('react')
   return {
@@ -37,7 +37,7 @@ vi.mock('./components.jsx', async (importOriginal) => {
   }
 })
 
-vi.mock('./stellar/index.js', () => ({
+vi.mock('../../stellar/index.js', () => ({
   connectActiveAccount: vi.fn(async () => mountedHarness.initialAccount),
   onActiveAccountChange: vi.fn((listener) => {
     mountedHarness.accountListener = listener
@@ -49,11 +49,11 @@ vi.mock('./stellar/index.js', () => ({
   subscribeAgentRevoked: vi.fn(() => () => {}),
 }))
 
-vi.mock('./cctp/resumeTransfers.js', () => ({
+vi.mock('../../cctp/resumeTransfers.js', () => ({
   resumePendingCctpTransfers: (...args) => cctpRecovery.resume(...args),
 }))
 
-vi.mock('./components/strategy/StrategyRoute.jsx', async () => {
+vi.mock('../../components/strategy/StrategyRoute.jsx', async () => {
   const { createElement } = await import('react')
   return {
     StrategyRoute: (props) => {
@@ -72,7 +72,7 @@ vi.mock('./components/strategy/StrategyRoute.jsx', async () => {
   }
 })
 
-vi.mock('./components/money/MyMoneyRoute.jsx', async (importOriginal) => {
+vi.mock('../../components/money/MyMoneyRoute.jsx', async (importOriginal) => {
   const actual = await importOriginal()
   const { createElement } = await import('react')
   return {
@@ -88,7 +88,7 @@ vi.mock('./components/money/MyMoneyRoute.jsx', async (importOriginal) => {
   }
 })
 
-vi.mock('./components/crew/CrewRoute.jsx', async () => {
+vi.mock('../../components/crew/CrewRoute.jsx', async () => {
   const { createElement } = await import('react')
   return {
     CrewRoute: (props) => {
@@ -98,7 +98,7 @@ vi.mock('./components/crew/CrewRoute.jsx', async () => {
   }
 })
 
-vi.mock('./components/money/WithdrawDialog.jsx', async (importOriginal) => {
+vi.mock('../../components/money/WithdrawDialog.jsx', async (importOriginal) => {
   const actual = await importOriginal()
   const { createElement } = await import('react')
   return {
@@ -110,7 +110,7 @@ vi.mock('./components/money/WithdrawDialog.jsx', async (importOriginal) => {
   }
 })
 
-vi.mock('./components/money/StopAccessDialog.jsx', async (importOriginal) => {
+vi.mock('../../components/money/StopAccessDialog.jsx', async (importOriginal) => {
   const actual = await importOriginal()
   const { createElement } = await import('react')
   return {
@@ -122,7 +122,7 @@ vi.mock('./components/money/StopAccessDialog.jsx', async (importOriginal) => {
   }
 })
 
-vi.mock('./components/money/RecoveryPanel.jsx', async (importOriginal) => {
+vi.mock('../../components/money/RecoveryPanel.jsx', async (importOriginal) => {
   const actual = await importOriginal()
   const { createElement } = await import('react')
   return {
@@ -137,11 +137,11 @@ vi.mock('./components/money/RecoveryPanel.jsx', async (importOriginal) => {
 // The production manifest hashes frozen JSON at module load, which currently fails in this
 // suite's jsdom realm with `expected Uint8Array`. Keep that static-data boundary inert here; the
 // App/orchestrator behavior under test does not consult legacy direct-setup policy.
-vi.mock('./stellar/agentCreatorManifest.js', () => ({
+vi.mock('../../stellar/agentCreatorManifest.js', () => ({
   isLegacyDirectSetupAllowed: vi.fn(() => false),
 }))
 
-vi.mock('./orchestrator.js', async (importOriginal) => {
+vi.mock('../../orchestrator.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
     ...actual,
@@ -160,7 +160,7 @@ vi.mock('./orchestrator.js', async (importOriginal) => {
   }
 })
 
-vi.mock('./strategy/reusePreflight.js', async (importOriginal) => ({
+vi.mock('../../strategy/reusePreflight.js', async (importOriginal) => ({
   ...(await importOriginal()),
   preflightPermission: vi.fn(async (input) => ({
     mode: 'fresh',
@@ -172,40 +172,40 @@ vi.mock('./strategy/reusePreflight.js', async (importOriginal) => ({
   toPermissionDecisionView: vi.fn((value) => value),
 }))
 
-vi.mock('./stellar/vaultReads.js', () => ({
+vi.mock('../../stellar/vaultReads.js', () => ({
   readTotalShares: vi.fn(async () => 0n),
   readPricePerShare: vi.fn(async () => null),
   readLifeboatState: vi.fn(async () => null),
 }))
-vi.mock('./stellar/lifeboat.js', async (importOriginal) => ({
+vi.mock('../../stellar/lifeboat.js', async (importOriginal) => ({
   ...(await importOriginal()),
   grantMandate: vi.fn(async () => ({ hash: 'HMANDATE', status: 'SUCCESS' })),
 }))
-vi.mock('./strategy/vaultFactsLive.js', () => ({ primeVaultFacts: vi.fn(async () => {}) }))
-vi.mock('./strategy/councilReview.js', () => ({
+vi.mock('../../strategy/vaultFactsLive.js', () => ({ primeVaultFacts: vi.fn(async () => {}) }))
+vi.mock('../../strategy/councilReview.js', () => ({
   buildCouncilInput: vi.fn(() => ({})),
   councilReview: vi.fn(async () => ({ verdict: 'keep', resolvedBy: 'test', citedRules: [] })),
   buildDebateInput: vi.fn(() => ({})),
   councilDebate: vi.fn(async () => ({ verdict: 'keep', citedRules: [] })),
 }))
-vi.mock('./stellar/events.js', () => ({
+vi.mock('../../stellar/events.js', () => ({
   queryAgentsByOwner: vi.fn(async () => []),
   discoverAgentsFromHorizon: vi.fn(async () => []),
   discoverAgentsFromVault: vi.fn(async () => []),
 }))
-vi.mock('./stellar/scopeRehydrate.js', () => ({ rehydrateScopes: vi.fn(async () => []) }))
-vi.mock('./base/dashboardPositions.js', () => ({
+vi.mock('../../stellar/scopeRehydrate.js', () => ({ rehydrateScopes: vi.fn(async () => []) }))
+vi.mock('../../base/dashboardPositions.js', () => ({
   loadDeviceBasePositions: vi.fn(async () => []),
   loadIndexedBasePositions: vi.fn(async () => []),
 }))
-vi.mock('./base/readPositions.js', () => ({
+vi.mock('../../base/readPositions.js', () => ({
   readIdleUsdc: vi.fn(),
 }))
-vi.mock('./wallet/passkeyBridge.js', async (importOriginal) => ({
+vi.mock('../../wallet/passkeyBridge.js', async (importOriginal) => ({
   ...(await importOriginal()),
   ensureBaseOwner: vi.fn(),
 }))
-vi.mock('./screens/Withdraw.jsx', async () => {
+vi.mock('../../screens/Withdraw.jsx', async () => {
   const { createElement } = await import('react')
   return {
     default: () => {
@@ -214,49 +214,49 @@ vi.mock('./screens/Withdraw.jsx', async () => {
     },
   }
 })
-vi.mock('./stellar/keeperEvents.js', () => ({ fetchKeeperEvents: vi.fn(async () => []) }))
-vi.mock('./positionsStore.js', async (importOriginal) => ({
+vi.mock('../../stellar/keeperEvents.js', () => ({ fetchKeeperEvents: vi.fn(async () => []) }))
+vi.mock('../../positionsStore.js', async (importOriginal) => ({
   ...(await importOriginal()),
   reconcilePositionsFromChain: vi.fn(async () => null),
 }))
-vi.mock('./stellar/ownerDiscovery.js', () => ({
+vi.mock('../../stellar/ownerDiscovery.js', () => ({
   discoverOwnerScopes: vi.fn(),
 }))
-vi.mock('./money/readOwnerMoney.js', async (importOriginal) => ({
+vi.mock('../../money/readOwnerMoney.js', async (importOriginal) => ({
   ...(await importOriginal()),
   readOwnerMoney: vi.fn(),
 }))
-vi.mock('./stellar/partialWithdraw.js', () => ({
+vi.mock('../../stellar/partialWithdraw.js', () => ({
   ensureExitSigner: vi.fn(),
   partialWithdraw: vi.fn(),
 }))
-vi.mock('./stellar/exit.js', async (importOriginal) => ({
+vi.mock('../../stellar/exit.js', async (importOriginal) => ({
   ...(await importOriginal()),
   sweepAgents: vi.fn(),
 }))
-vi.mock('./base/relayerClient.js', async (importOriginal) => ({
+vi.mock('../../base/relayerClient.js', async (importOriginal) => ({
   ...(await importOriginal()),
   getMandateStatus: vi.fn(),
 }))
-vi.mock('./wallet/baseBinding.js', async (importOriginal) => {
+vi.mock('../../wallet/baseBinding.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
     ...actual,
     readBaseMandate: vi.fn((...args) => actual.readBaseMandate(...args)),
   }
 })
-vi.mock('./mergeFlowHelpers.js', async (importOriginal) => {
+vi.mock('../../mergeFlowHelpers.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
     ...actual,
     buildBaseLegContext: vi.fn((...args) => actual.buildBaseLegContext(...args)),
   }
 })
-vi.mock('./strategy/mergedCatalog.js', async (importOriginal) => ({
+vi.mock('../../strategy/mergedCatalog.js', async (importOriginal) => ({
   ...(await importOriginal()),
   checkRelayerHealth: vi.fn(async () => true),
 }))
-vi.mock('./stellar/agentDeposit.js', async (importOriginal) => ({
+vi.mock('../../stellar/agentDeposit.js', async (importOriginal) => ({
   ...(await importOriginal()),
   readTokenBalance: vi.fn(async () => 10n),
 }))
@@ -265,25 +265,25 @@ import App, {
   createActiveAccountEpochStore,
   createEpochBoundRun,
   composeV3Decision,
-} from './app.jsx'
-import { bindBaseLegCustodyDeps, reconcileBaseLegEpochCustody } from './orchestrator.js'
-import { normalizeStrategyPlan } from './strategy/planModel.js'
-import { preflightPermission } from './strategy/reusePreflight.js'
-import { discoverOwnerScopes } from './stellar/ownerDiscovery.js'
-import { readOwnerMoney } from './money/readOwnerMoney.js'
-import { ensureExitSigner, partialWithdraw } from './stellar/partialWithdraw.js'
-import { sweepAgents } from './stellar/exit.js'
-import { revokeAgentOnChain } from './stellar/index.js'
-import { getMandateStatus } from './base/relayerClient.js'
-import { baseMandateStorageKey, readBaseMandate } from './wallet/baseBinding.js'
-import { buildBaseLegContext } from './mergeFlowHelpers.js'
-import { BASE_POOL_CATALOG } from './config.js'
-import { readLifeboatState } from './stellar/vaultReads.js'
-import { grantMandate } from './stellar/lifeboat.js'
-import { loadDeviceBasePositions, loadIndexedBasePositions } from './base/dashboardPositions.js'
-import { readIdleUsdc } from './base/readPositions.js'
-import { ensureBaseOwner } from './wallet/passkeyBridge.js'
-import { connectActiveAccount } from './stellar/index.js'
+} from '../../app.jsx'
+import { bindBaseLegCustodyDeps, reconcileBaseLegEpochCustody } from '../../orchestrator.js'
+import { normalizeStrategyPlan } from '../../strategy/planModel.js'
+import { preflightPermission } from '../../strategy/reusePreflight.js'
+import { discoverOwnerScopes } from '../../stellar/ownerDiscovery.js'
+import { readOwnerMoney } from '../../money/readOwnerMoney.js'
+import { ensureExitSigner, partialWithdraw } from '../../stellar/partialWithdraw.js'
+import { sweepAgents } from '../../stellar/exit.js'
+import { revokeAgentOnChain } from '../../stellar/index.js'
+import { getMandateStatus } from '../../base/relayerClient.js'
+import { baseMandateStorageKey, readBaseMandate } from '../../wallet/baseBinding.js'
+import { buildBaseLegContext } from '../../mergeFlowHelpers.js'
+import { BASE_POOL_CATALOG } from '../../config.js'
+import { readLifeboatState } from '../../stellar/vaultReads.js'
+import { grantMandate } from '../../stellar/lifeboat.js'
+import { loadDeviceBasePositions, loadIndexedBasePositions } from '../../base/dashboardPositions.js'
+import { readIdleUsdc } from '../../base/readPositions.js'
+import { ensureBaseOwner } from '../../wallet/passkeyBridge.js'
+import { connectActiveAccount } from '../../stellar/index.js'
 
 const G = Object.freeze({
   version: 1,
@@ -425,7 +425,7 @@ function deferred() {
 
 async function prepareLargeOwnerActionRead() {
   const { readOwnerMoney: actualReadOwnerMoney } = await vi.importActual(
-    './money/readOwnerMoney.js'
+    '../../money/readOwnerMoney.js'
   )
   const agentAddress = 'CAGENT1'
   const amount = { token: 'USDC', units: '10000000000000000', decimals: 7 }
@@ -1188,7 +1188,7 @@ describe('active account application state', () => {
 
   it('aborts a 501-row action reconciliation on account replacement before queued RPCs start', async () => {
     const { readOwnerMoney: actualReadOwnerMoney } = await vi.importActual(
-      './money/readOwnerMoney.js'
+      '../../money/readOwnerMoney.js'
     )
     const agentAddress = 'CAGENT1'
     const amount = { token: 'USDC', units: '10000000000000000', decimals: 7 }

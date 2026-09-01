@@ -7,7 +7,7 @@ import {
   checkCircleUsdcFunding,
   checkStoredBaseMandate,
   buildBaseLegContext,
-} from './mergeFlowHelpers.js'
+} from '../../mergeFlowHelpers.js'
 
 describe('merge flow helpers', () => {
   // Strategy Task 13 (decision log #22, obligation D): the two `resolveBaseAvailability`

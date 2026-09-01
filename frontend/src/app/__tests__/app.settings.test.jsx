@@ -71,7 +71,7 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
-vi.mock('./components/SettingsPage.jsx', async () => {
+vi.mock('../../components/SettingsPage.jsx', async () => {
   const { createElement } = await import('react')
   return {
     default: (props) => {
@@ -81,7 +81,7 @@ vi.mock('./components/SettingsPage.jsx', async () => {
   }
 })
 
-vi.mock('./stellar/index.js', () => ({
+vi.mock('../../stellar/index.js', () => ({
   connectActiveAccount: vi.fn(async () => harness.account),
   onActiveAccountChange: vi.fn((listener) => {
     harness.accountListener = listener
@@ -93,78 +93,78 @@ vi.mock('./stellar/index.js', () => ({
   subscribeAgentRevoked: vi.fn(() => () => {}),
 }))
 
-vi.mock('./stellar/vaultReads.js', () => ({
+vi.mock('../../stellar/vaultReads.js', () => ({
   readTotalShares: vi.fn(async () => 0n),
   readPricePerShare: vi.fn(async () => null),
   readLifeboatState: vi.fn(async () => null),
 }))
 
-vi.mock('./stellar/events.js', () => ({
+vi.mock('../../stellar/events.js', () => ({
   queryAgentsByOwner: vi.fn(async () => []),
   discoverAgentsFromHorizon: vi.fn(async () => []),
   discoverAgentsFromVault: vi.fn(async () => []),
 }))
 
-vi.mock('./stellar/scopeRehydrate.js', () => ({ rehydrateScopes: vi.fn(async () => []) }))
-vi.mock('./stellar/keeperEvents.js', () => ({ fetchKeeperEvents: vi.fn(async () => []) }))
-vi.mock('./positionsStore.js', async (importOriginal) => ({
+vi.mock('../../stellar/scopeRehydrate.js', () => ({ rehydrateScopes: vi.fn(async () => []) }))
+vi.mock('../../stellar/keeperEvents.js', () => ({ fetchKeeperEvents: vi.fn(async () => []) }))
+vi.mock('../../positionsStore.js', async (importOriginal) => ({
   ...(await importOriginal()),
   reconcilePositionsFromChain: vi.fn(async () => null),
 }))
-vi.mock('./base/dashboardPositions.js', () => ({
+vi.mock('../../base/dashboardPositions.js', () => ({
   loadDeviceBasePositions: vi.fn(async () => []),
   loadIndexedBasePositions: vi.fn(async () => ({ status: 'empty', accounts: [] })),
 }))
-vi.mock('./base/readPositions.js', () => ({ readIdleUsdc: vi.fn() }))
-vi.mock('./money/readOwnerMoney.js', () => ({
+vi.mock('../../base/readPositions.js', () => ({ readIdleUsdc: vi.fn() }))
+vi.mock('../../money/readOwnerMoney.js', () => ({
   readOwnerMoney: vi.fn(async () => ({ status: 'complete', owner: null, agents: [] })),
   aggregateOwnerPositions: vi.fn(() => []),
 }))
-vi.mock('./stellar/ownerDiscovery.js', () => ({ discoverOwnerScopes: vi.fn() }))
-vi.mock('./stellar/partialWithdraw.js', () => ({
+vi.mock('../../stellar/ownerDiscovery.js', () => ({ discoverOwnerScopes: vi.fn() }))
+vi.mock('../../stellar/partialWithdraw.js', () => ({
   ensureExitSigner: vi.fn(),
   partialWithdraw: vi.fn(),
 }))
-vi.mock('./stellar/exit.js', () => ({ sweepAgents: vi.fn() }))
-vi.mock('./base/relayerClient.js', async (importOriginal) => ({
+vi.mock('../../stellar/exit.js', () => ({ sweepAgents: vi.fn() }))
+vi.mock('../../base/relayerClient.js', async (importOriginal) => ({
   ...(await importOriginal()),
   // Every call goes through the spy so an assertion can name the exact refresh that made it;
   // the queued per-owner response is applied inside the spy, never as a path around it.
   getMandateStatus: (...args) => harness.getMandateStatus(...args),
 }))
-vi.mock('./strategy/mergedCatalog.js', async (importOriginal) => ({
+vi.mock('../../strategy/mergedCatalog.js', async (importOriginal) => ({
   ...(await importOriginal()),
   checkRelayerHealth: (...args) => harness.checkRelayerHealth(...args),
 }))
-vi.mock('./stellar/agentDeposit.js', async (importOriginal) => ({
+vi.mock('../../stellar/agentDeposit.js', async (importOriginal) => ({
   ...(await importOriginal()),
   readTokenBalance: vi.fn(async () => 0n),
 }))
-vi.mock('./wallet/baseBinding.js', async (importOriginal) => {
+vi.mock('../../wallet/baseBinding.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
     ...actual,
     readBaseMandate: vi.fn((owner) => harness.mandateRecords.get(owner) || null),
   }
 })
-vi.mock('./stellar/agentCreatorManifest.js', () => ({
+vi.mock('../../stellar/agentCreatorManifest.js', () => ({
   isLegacyDirectSetupAllowed: vi.fn(() => false),
 }))
-vi.mock('./strategy/vaultFactsLive.js', () => ({ primeVaultFacts: vi.fn(async () => {}) }))
-vi.mock('./strategy/councilReview.js', () => ({
+vi.mock('../../strategy/vaultFactsLive.js', () => ({ primeVaultFacts: vi.fn(async () => {}) }))
+vi.mock('../../strategy/councilReview.js', () => ({
   buildCouncilInput: vi.fn(() => ({})),
   councilReview: vi.fn(async () => ({ verdict: 'keep', resolvedBy: 'test', citedRules: [] })),
   buildDebateInput: vi.fn(() => ({})),
   councilDebate: vi.fn(async () => ({ verdict: 'keep', citedRules: [] })),
 }))
-vi.mock('./cctp/resumeTransfers.js', () => ({ resumePendingCctpTransfers: vi.fn(async () => {}) }))
-vi.mock('./wallet/passkeyBridge.js', async (importOriginal) => ({
+vi.mock('../../cctp/resumeTransfers.js', () => ({ resumePendingCctpTransfers: vi.fn(async () => {}) }))
+vi.mock('../../wallet/passkeyBridge.js', async (importOriginal) => ({
   ...(await importOriginal()),
   ensureBaseOwner: vi.fn(),
 }))
-vi.mock('./screens/Withdraw.jsx', () => ({ default: () => null }))
+vi.mock('../../screens/Withdraw.jsx', () => ({ default: () => null }))
 
-import App from './app.jsx'
+import App from '../../app.jsx'
 
 beforeEach(() => {
   localStorage.clear()
@@ -256,7 +256,7 @@ describe('App Settings composition seam', () => {
 
   it('keeps the Settings refresh bridge explicitly bound to the active account seam', async () => {
     const source = await readFile(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'app.jsx'),
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../app.jsx'),
       'utf8'
     )
     expect(source).toMatch(/onRefresh=\{\(\) => refreshBaseView\(activeAccount\)\}/)

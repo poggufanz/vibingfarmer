@@ -6,16 +6,16 @@ import {
   createAccountScopedRecoveryConfig,
   createRecoveryActionRunner,
   projectBaseOutcomeRecovery,
-} from './app.jsx'
-import { StartStage as _StartStage } from './components/strategy/StartStage.jsx'
-import { projectRecoveryReceipt } from './strategy/receiptProjection.js'
-import { createBaseRecoveryActionRunner } from './strategy/baseRecoveryClient.js'
-import { baseRecoveryIdentityKey } from './strategy/baseRecoveryIdentity.js'
+} from '../../app.jsx'
+import { StartStage as _StartStage } from '../../components/strategy/StartStage.jsx'
+import { projectRecoveryReceipt } from '../../strategy/receiptProjection.js'
+import { createBaseRecoveryActionRunner } from '../../strategy/baseRecoveryClient.js'
+import { baseRecoveryIdentityKey } from '../../strategy/baseRecoveryIdentity.js'
 import {
   appendPhase,
   confirmCustody,
   createAllocationReceipt,
-} from './strategy/allocationReceipt.js'
+} from '../../strategy/allocationReceipt.js'
 
 afterEach(cleanup)
 
