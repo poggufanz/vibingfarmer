@@ -8,7 +8,7 @@
 // Crew's semantic tokens so it re-themes with the rest of the app.
 
 import { useEffect, useState } from 'react'
-import { getStrategies } from '../history.js'
+import { getStrategies } from '../history/history.js'
 import { SOROBAN_DECIMALS } from '../stellar/config.js'
 import { readTotalAssets } from '../stellar/vaultReads.js'
 import { NETWORK_IDS } from '../design/networks.js'

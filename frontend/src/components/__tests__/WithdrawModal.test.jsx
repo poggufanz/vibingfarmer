@@ -31,7 +31,7 @@ vi.mock('../../agents/agentController.js', () => ({
   withdrawAllFromVault: (...a) => withdrawAllFromVault(...a),
 }))
 const saveTransaction = vi.fn()
-vi.mock('../../history.js', () => ({
+vi.mock('../../history/history.js', () => ({
   saveTransaction: (...a) => saveTransaction(...a),
 }))
 

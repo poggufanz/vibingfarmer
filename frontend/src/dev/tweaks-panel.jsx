@@ -1,5 +1,5 @@
 import React from 'react'
-import { Icon } from './components.jsx'
+import { Icon } from '../components.jsx'
 import './tweaks-panel.css'
 
 // tweaks-panel.jsx

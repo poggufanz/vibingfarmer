@@ -1,7 +1,7 @@
 // SkillDetailModal.jsx
 // Read-only human-readable skill detail. Opens from "View details" on a skill card.
 import { Icon } from '../components.jsx'
-import { translateSkill, formatProtocol } from '../skills.jsx'
+import { translateSkill, formatProtocol } from '../skills/skills.jsx'
 import { Dialog, StatusNotice } from './pocket/Primitives.jsx'
 import './SecondaryDialogs.css'
 

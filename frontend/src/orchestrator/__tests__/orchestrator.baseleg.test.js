@@ -80,7 +80,7 @@ vi.mock('../../stellar/config.js', async (importOriginal) => ({
   NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
 }))
 vi.mock('../../strategy/strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
-vi.mock('../../skills.js', () => ({ saveSkill: vi.fn() }))
+vi.mock('../../skills/skills.js', () => ({ saveSkill: vi.fn() }))
 
 const workerInstances = []
 const workerExecuteMock = vi.fn()

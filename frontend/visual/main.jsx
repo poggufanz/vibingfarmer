@@ -94,7 +94,7 @@ import {
   TweakSlider,
   TweakToggle,
   TweaksPanel,
-} from '../src/tweaks-panel.jsx'
+} from '../src/dev/tweaks-panel.jsx'
 import {
   BASE_HEX_FIXTURES,
   SECONDARY_CLASS_ROUTES,

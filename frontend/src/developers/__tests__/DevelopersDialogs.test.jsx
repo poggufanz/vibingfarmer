@@ -7,7 +7,7 @@ import SkillDrawer from '../../components/SkillDrawer.jsx'
 import SkillEditModal from '../../components/SkillEditModal.jsx'
 import SkillDetailModal from '../../components/SkillDetailModal.jsx'
 import { revokeKey } from '../portalClient.js'
-import { clearUserSkill, loadVaultSkill, saveUserSkill } from '../../skillLoader.js'
+import { clearUserSkill, loadVaultSkill, saveUserSkill } from '../../skills/skillLoader.js'
 
 vi.mock('../portalClient.js', () => ({
   listKeys: vi.fn(async () => [
@@ -25,7 +25,7 @@ vi.mock('../portalClient.js', () => ({
   revokeKey: vi.fn(async () => true),
 }))
 
-vi.mock('../../skillLoader.js', () => ({
+vi.mock('../../skills/skillLoader.js', () => ({
   clearUserSkill: vi.fn(),
   loadVaultSkill: vi.fn(async () => ({ content: '', source: 'default' })),
   saveUserSkill: vi.fn(),

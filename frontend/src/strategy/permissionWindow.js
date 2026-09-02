@@ -1,4 +1,4 @@
-import { hashStrategy } from '../attestation.js'
+import { hashStrategy } from './attestation.js'
 import { hash } from '@stellar/stellar-sdk'
 import { canonicalizeStrategy } from './canonicalStrategy.js'
 

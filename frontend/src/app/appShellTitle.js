@@ -8,7 +8,7 @@
 // (/explorer, /ecosystem, /replay) render regardless of wallet/onboarding state (checked before
 // every gate in app.jsx), so they must be checked first here too -- otherwise a fresh,
 // not-yet-connected visitor on e.g. /explorer sees Explorer content under a "Welcome" tab title.
-import { routeTitle } from './components/pocket/RouteFocus.jsx'
+import { routeTitle } from '../components/pocket/RouteFocus.jsx'
 
 const STANDALONE_PUBLIC_PATHS = new Set(['/explorer', '/ecosystem', '/replay'])
 

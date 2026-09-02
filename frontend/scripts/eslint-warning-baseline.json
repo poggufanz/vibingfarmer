@@ -224,13 +224,6 @@
     "count": 1
   },
   {
-    "relativePath": "src/attestation.js",
-    "ruleId": "no-console",
-    "messageId": "unexpected",
-    "message": "Unexpected console statement.",
-    "count": 1
-  },
-  {
     "relativePath": "src/components/AgentActionPreview.jsx",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
@@ -301,6 +294,13 @@
     "count": 1
   },
   {
+    "relativePath": "src/design/ui.js",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'STEP_IDS' is assigned a value but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
     "relativePath": "src/graph/PixiSwarmGraph.jsx",
     "ruleId": "no-console",
     "messageId": "unexpected",
@@ -350,21 +350,28 @@
     "count": 4
   },
   {
-    "relativePath": "src/skillLoader.js",
+    "relativePath": "src/screens/__tests__/OnboardingFlow.test.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'fetchApyHistoryBatch' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/skills/skillLoader.js",
     "ruleId": "no-console",
     "messageId": "unexpected",
     "message": "Unexpected console statement.",
     "count": 4
   },
   {
-    "relativePath": "src/skillLoader.js",
+    "relativePath": "src/skills/skillLoader.js",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
     "message": "'_' is defined but never used.",
     "count": 1
   },
   {
-    "relativePath": "src/skills.jsx",
+    "relativePath": "src/skills/skills.jsx",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
     "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
@@ -386,6 +393,13 @@
   },
   {
     "relativePath": "src/stellar/scopeRehydrate.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/strategy/attestation.js",
     "ruleId": "no-console",
     "messageId": "unexpected",
     "message": "Unexpected console statement.",
@@ -467,13 +481,6 @@
     "messageId": "unexpected",
     "message": "Unexpected console statement.",
     "count": 16
-  },
-  {
-    "relativePath": "src/ui.js",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'STEP_IDS' is assigned a value but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
   },
   {
     "relativePath": "src/wallet/mandate.js",

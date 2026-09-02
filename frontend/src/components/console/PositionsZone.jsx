@@ -3,7 +3,7 @@ import ZoneFrame from './ZoneFrame.jsx'
 import WithdrawModal from '../WithdrawModal.jsx'
 import { agoText } from './consoleUtils.js'
 import { toDisplay } from '../../stellar/format.js'
-import { pickVaultAgentsForExit } from '../../positionsStore.js'
+import { pickVaultAgentsForExit } from '../../store/positionsStore.js'
 
 export default function PositionsZone({
   positions = {},

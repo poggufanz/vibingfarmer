@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hashStrategy } from '../../attestation.js'
+import { hashStrategy } from '../attestation.js'
 import { bindPlanToPermissionWindow } from '../permissionWindow.js'
 
 function makePlan({ expiries = [101, 202] } = {}) {

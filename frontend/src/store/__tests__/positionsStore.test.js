@@ -7,7 +7,7 @@ import {
   pickDisplayAgents,
   pickRecoverableVaultAgents,
   buildBulkExitTarget,
-} from '../../positionsStore.js'
+} from '../positionsStore.js'
 import { SOROBAN_ACTIVE_VAULT_ADDRESS } from '../../stellar/config.js'
 
 vi.mock('../../stellar/agentDeposit.js', () => ({ readVaultShares: vi.fn() }))

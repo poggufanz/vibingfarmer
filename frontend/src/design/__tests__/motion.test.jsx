@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useCountUp } from '../../motion.js'
+import { useCountUp } from '../motion.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -74,7 +74,7 @@ describe('useCountUp', () => {
 // under reduced motion, the agent-network graph actually halting when its disclosure closes) is
 // covered in e2e/pocket-crew.visual.spec.js, which alone can measure it.
 describe('My Money -- no component in this surface animates a value (Step 3)', () => {
-  const MONEY_DIR = path.resolve(here, '../money')
+  const MONEY_DIR = path.resolve(here, '../../components/money')
   const FILES = [
     'MyMoneyRoute.jsx',
     'MoneyHero.jsx',

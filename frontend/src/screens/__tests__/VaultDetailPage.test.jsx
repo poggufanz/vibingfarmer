@@ -8,7 +8,7 @@ const navigateTo = vi.fn()
 const fetchDeFiLlamaVaults = vi.fn()
 const fetchApyHistory = vi.fn()
 
-vi.mock('../../router.js', () => ({
+vi.mock('../../app/router.js', () => ({
   useNavigateTo: () => navigateTo,
 }))
 
@@ -16,7 +16,7 @@ vi.mock('../../strategy/defiLlama.js', () => ({
   fetchDeFiLlamaVaults: (...args) => fetchDeFiLlamaVaults(...args),
 }))
 
-vi.mock('../../apyHistory.js', () => ({
+vi.mock('../../history/apyHistory.js', () => ({
   fetchApyHistory: (...args) => fetchApyHistory(...args),
 }))
 

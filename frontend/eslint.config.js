@@ -75,7 +75,7 @@ export default [
   {
     files: [
       'src/agents/exitExecutor.js',
-      'src/attestation.js',
+      'src/strategy/attestation.js',
       'src/base/withdrawBatch.js',
       'src/screens/ExplorerPage.jsx',
       'src/stellar/agentDeposit.js',

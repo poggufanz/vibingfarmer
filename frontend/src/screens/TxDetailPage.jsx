@@ -4,8 +4,8 @@
 // for the Secondary presentation adapter; the source record and its verification remain intact.
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { getTransactions } from '../history.js'
-import { useNavigateTo } from '../router.js'
+import { getTransactions } from '../history/history.js'
+import { useNavigateTo } from '../app/router.js'
 import { toTxPresentation } from '../secondary/secondaryRouteAdapters.js'
 import { formatTokenUnits } from '../secondary/secondaryRouteContracts.js'
 import { NETWORK_IDS, getNetworkMeta } from '../design/networks.js'

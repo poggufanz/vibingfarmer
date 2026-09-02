@@ -4,7 +4,7 @@ vi.mock('../../stellar/attestation.js', () => ({
   attestOnChain: vi.fn(),
 }))
 
-import { attestStrategyOnChain, formatAttestation, hashStrategy } from '../../attestation.js'
+import { attestStrategyOnChain, formatAttestation, hashStrategy } from '../attestation.js'
 import { attestOnChain } from '../../stellar/attestation.js'
 
 const strategy = {

@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import HistoryPanel from '../HistoryPanel.jsx'
 
-vi.mock('../../history.js', () => ({
+vi.mock('../../history/history.js', () => ({
   getTransactions: vi.fn(() => []),
   getStrategies: vi.fn(() => []),
   getReasoningLog: vi.fn(() => []),

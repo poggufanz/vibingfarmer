@@ -58,7 +58,7 @@ vi.mock('../worker.js', () => ({
   makeAgentId: (index, sessionId) => `${sessionId}:${index}`,
 }))
 vi.mock('../../strategy/strategist.js', () => ({ generateAgentSkills: vi.fn() }))
-vi.mock('../../skills.js', () => ({ saveSkill: vi.fn() }))
+vi.mock('../../skills/skills.js', () => ({ saveSkill: vi.fn() }))
 vi.mock('../../stellar/agentCreatorManifest.js', () => ({
   isLegacyDirectSetupAllowed: vi.fn(() => false),
 }))

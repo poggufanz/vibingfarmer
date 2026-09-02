@@ -10,9 +10,9 @@
 // own skills.render.test.jsx tests it directly, and TweaksPanel's devMode-gated `jumpTo` can still
 // reach it), never presented as a user fallback.
 import React, { useState, useMemo } from 'react'
-import SkillDetailModal from './components/SkillDetailModal.jsx'
-import SkillEditModal from './components/SkillEditModal.jsx'
-import { readBaseOwner } from './wallet/baseBinding.js'
+import SkillDetailModal from '../components/SkillDetailModal.jsx'
+import SkillEditModal from '../components/SkillEditModal.jsx'
+import { readBaseOwner } from '../wallet/baseBinding.js'
 
 /* ---------- Protocol display names ---------- */
 const PROTOCOL_NAMES = {

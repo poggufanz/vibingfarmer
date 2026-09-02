@@ -92,7 +92,7 @@ const CONTRACT_EVIDENCE = Object.freeze({
     "frontend/src/screens/__tests__/OnboardingFlow.test.jsx",
     "frontend/src/screens/VaultDetailPage.jsx",
     "frontend/src/screens/__tests__/VaultDetailPage.test.jsx",
-    "frontend/src/history.js",
+    "frontend/src/history/history.js",
     "frontend/src/history/__tests__/history.yield.test.js",
     "frontend/src/screens/HistoryPanel.jsx",
     "frontend/src/screens/__tests__/HistoryPanel.test.jsx",
@@ -104,7 +104,7 @@ const CONTRACT_EVIDENCE = Object.freeze({
   "sponsored-network-fee": Object.freeze([
     "scripts/ci/public-claim-scan.mjs",
     "scripts/ci/public-claim-scan.test.mjs",
-    "frontend/src/history.js",
+    "frontend/src/history/history.js",
     "frontend/src/history/__tests__/history.yield.test.js",
     "frontend/src/stellar/exit.js",
     "frontend/src/stellar/__tests__/exit.test.js",

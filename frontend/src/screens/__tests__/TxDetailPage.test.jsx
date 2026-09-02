@@ -9,11 +9,11 @@ const mocks = vi.hoisted(() => ({
   navigateTo: vi.fn(),
 }))
 
-vi.mock('../../history.js', () => ({
+vi.mock('../../history/history.js', () => ({
   getTransactions: (...args) => mocks.getTransactions(...args),
 }))
 
-vi.mock('../../router.js', () => ({
+vi.mock('../../app/router.js', () => ({
   useNavigateTo: () => mocks.navigateTo,
 }))
 

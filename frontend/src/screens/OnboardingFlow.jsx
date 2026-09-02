@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react'
 import { YieldLine } from '../components/SignatureMark.jsx'
 import { fetchDeFiLlamaVaults } from '../strategy/defiLlama.js'
-import { fetchApyHistoryBatch } from '../apyHistory.js'
+import { fetchApyHistoryBatch } from '../history/apyHistory.js'
 import { VAULT_CATALOG } from '../config.js'
 import { NETWORK_IDS } from '../design/networks.js'
 import { toOnboardingPresentation } from '../secondary/secondaryRouteAdapters.js'

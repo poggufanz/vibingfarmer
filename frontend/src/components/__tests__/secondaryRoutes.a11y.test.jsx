@@ -16,7 +16,7 @@ import VaultDetailPage from '../../screens/VaultDetailPage.jsx'
 import TxDetailPage from '../../screens/TxDetailPage.jsx'
 import DevelopersLayout from '../../developers/DevelopersLayout.jsx'
 import SkillDrawer from '../SkillDrawer.jsx'
-import { TweaksPanel } from '../../tweaks-panel.jsx'
+import { TweaksPanel } from '../../dev/tweaks-panel.jsx'
 import {
   SECONDARY_CLASS_ROUTES,
   SECONDARY_FIXTURE_PAYLOADS,

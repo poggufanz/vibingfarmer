@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { AlertCard } from './AlertCard.jsx'
 import AgentActionPreview from './AgentActionPreview.jsx'
-import { loadSettings } from '../settingsStore.js'
+import { loadSettings } from '../store/settingsStore.js'
 import { Icon } from '../components.jsx'
 
 export default function NotificationCenter({

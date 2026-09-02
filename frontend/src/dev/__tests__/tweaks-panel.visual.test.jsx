@@ -4,11 +4,11 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { TweaksPanel } from '../../tweaks-panel.jsx'
+import { TweaksPanel } from '../tweaks-panel.jsx'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const panelCss = fs.readFileSync(path.join(here, '../../tweaks-panel.css'), 'utf8')
-const panelSource = fs.readFileSync(path.join(here, '../../tweaks-panel.jsx'), 'utf8')
+const panelCss = fs.readFileSync(path.join(here, '../tweaks-panel.css'), 'utf8')
+const panelSource = fs.readFileSync(path.join(here, '../tweaks-panel.jsx'), 'utf8')
 
 afterEach(cleanup)
 

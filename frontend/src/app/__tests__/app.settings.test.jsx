@@ -71,7 +71,7 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
-vi.mock('../../components/SettingsPage.jsx', async () => {
+vi.mock('../../screens/SettingsPage.jsx', async () => {
   const { createElement } = await import('react')
   return {
     default: (props) => {
@@ -107,7 +107,7 @@ vi.mock('../../stellar/events.js', () => ({
 
 vi.mock('../../stellar/scopeRehydrate.js', () => ({ rehydrateScopes: vi.fn(async () => []) }))
 vi.mock('../../stellar/keeperEvents.js', () => ({ fetchKeeperEvents: vi.fn(async () => []) }))
-vi.mock('../../positionsStore.js', async (importOriginal) => ({
+vi.mock('../../store/positionsStore.js', async (importOriginal) => ({
   ...(await importOriginal()),
   reconcilePositionsFromChain: vi.fn(async () => null),
 }))

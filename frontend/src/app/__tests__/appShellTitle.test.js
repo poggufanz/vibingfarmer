@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveDocumentTitle } from '../../appShellTitle.js'
+import { resolveDocumentTitle } from '../appShellTitle.js'
 
 describe('resolveDocumentTitle', () => {
   it('gives the standalone public pages their own title for a fresh, not-yet-connected, not-skipped-landing visitor', () => {

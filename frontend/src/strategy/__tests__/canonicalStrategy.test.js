@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { canonicalizeStrategy } from '../canonicalStrategy.js'
-import { hashStrategy } from '../../attestation.js'
+import { hashStrategy } from '../attestation.js'
 import { normalizeStrategyPlan } from '../planModel.js'
 import { normalizeVenue } from '../venueTruth.js'
 

@@ -1,6 +1,6 @@
 import { WorkerAgent, makeAgentId } from './worker.js'
 import { generateAgentSkills } from '../strategy/strategist.js'
-import { saveSkill } from '../skills.js'
+import { saveSkill } from '../skills/skills.js'
 import { deployAgentForSession, fundAgent, registryAuthorizeAgent } from '../stellar/agentSetup.js'
 import {
   submitGrant,

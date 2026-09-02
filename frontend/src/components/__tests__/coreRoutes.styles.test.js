@@ -186,7 +186,7 @@ describe('Core route stylesheet ownership', () => {
       'money/TechnicalMoneyDetails.jsx',
       'strategy/StrategyRoute.jsx',
       'crew/CrewRoute.jsx',
-      'SettingsPage.jsx',
+      '../screens/SettingsPage.jsx',
     ]) {
       expect(read(file), `${file} must not use inline styles`).not.toMatch(/<style\b|\bstyle\s*=/i)
     }

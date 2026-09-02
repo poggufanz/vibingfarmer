@@ -12,9 +12,14 @@ import {
   VenueTruth,
 } from '../components/pocket/Primitives.jsx'
 import { NetworkRoute } from '../components/pocket/NetworkIdentity.jsx'
-import { getTransactions, getStrategies, getReasoningLog, clearAllHistory } from '../history.js'
-import { loadSettings } from '../settingsStore.js'
-import { useNavigateTo } from '../router.js'
+import {
+  getTransactions,
+  getStrategies,
+  getReasoningLog,
+  clearAllHistory,
+} from '../history/history.js'
+import { loadSettings } from '../store/settingsStore.js'
+import { useNavigateTo } from '../app/router.js'
 import { fetchBaseHistory } from '../base/baseHistory.js'
 import { readBaseOwner } from '../wallet/baseBinding.js'
 import './HistoryPanel.css'

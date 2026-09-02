@@ -11,7 +11,7 @@ vi.mock('../../stellar/vaultReads.js', () => ({
   readTotalAssets: vi.fn(() => Promise.resolve(null)),
 }))
 
-vi.mock('../../history.js', () => ({
+vi.mock('../../history/history.js', () => ({
   getStrategies: vi.fn(() => []),
 }))
 

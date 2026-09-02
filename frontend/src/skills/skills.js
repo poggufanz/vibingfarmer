@@ -1,6 +1,6 @@
 // Skill file generator + localStorage persistence + editor UI
 
-import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/config.js'
 
 const SKILLS_STORAGE_KEY = 'yv_skills'
 

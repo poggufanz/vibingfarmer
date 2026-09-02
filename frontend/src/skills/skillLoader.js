@@ -4,7 +4,7 @@
 //
 // NOTE: the default lives in src/ so it is imported with Vite's `?raw` suffix
 // (bundled, always available). A fetch() against src/ paths would 404 in Vite.
-import defaultSkill from './skills/default/vault-advisor.md?raw'
+import defaultSkill from './default/vault-advisor.md?raw'
 
 const USER_SKILL_PATH = '/skills/user/vault-advisor.md' // optional: only if hosted in public/
 const LOCALSTORAGE_KEY = 'yv_user_skill'

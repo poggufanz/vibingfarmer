@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Icon } from '../components.jsx'
-import { loadVaultSkill, saveUserSkill, clearUserSkill } from '../skillLoader.js'
+import { loadVaultSkill, saveUserSkill, clearUserSkill } from '../skills/skillLoader.js'
 import { Dialog, StatusNotice } from './pocket/Primitives.jsx'
 import './SecondaryDialogs.css'
 

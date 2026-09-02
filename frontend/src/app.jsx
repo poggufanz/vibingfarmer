@@ -10,7 +10,7 @@ import React, {
   useReducer as useRed,
 } from 'react'
 import { lazy, Suspense } from 'react'
-import { isDevMode } from './devFlag.js'
+import { isDevMode } from './dev/devFlag.js'
 import { assignCrewPersona } from './crew/personas.js'
 import { resumePendingCctpTransfers } from './cctp/resumeTransfers.js'
 import {
@@ -43,10 +43,10 @@ import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
 import { buildStrategyViewModel } from './strategy/planModel.js'
 import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from './stellar/grant.js'
 import { RouteFocus, SkipLink } from './components/pocket/RouteFocus.jsx'
-import { resolveDocumentTitle } from './appShellTitle.js'
+import { resolveDocumentTitle } from './app/appShellTitle.js'
 import { shortAddr } from './screens.jsx'
 import { MemoryModal, makeInitialExecState } from './agents.jsx'
-import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel.jsx'
+import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './dev/tweaks-panel.jsx'
 import { applyTheme, isLightTheme, normalizeTheme } from './design/theme.js'
 import { buildCrewPersonas } from './crew/buildCrewPersonas.js'
 
@@ -121,7 +121,7 @@ import {
   pickRecoverableVaultAgents,
   mergePositions,
   applyChainPositions,
-} from './positionsStore.js'
+} from './store/positionsStore.js'
 import { getViewAsAddress } from './dev/viewAs.js'
 import {
   diffMarket,
@@ -131,7 +131,7 @@ import {
 } from './strategy/councilMonitor.js'
 import SkillDrawer from './components/SkillDrawer.jsx'
 import HistoryPanel from './screens/HistoryPanel.jsx'
-import { saveTransaction } from './history.js'
+import { saveTransaction } from './history/history.js'
 import {
   startBackgroundAgent,
   stopBackgroundAgent,
@@ -183,8 +183,8 @@ const EcosystemPage = lazy(() => import('./screens/EcosystemPage.jsx'))
 const ReplayPage = lazy(() => import('./screens/ReplayPage.jsx'))
 const DevelopersLayout = lazy(() => import('./developers/DevelopersLayout.jsx'))
 import SettingsPage from './screens/SettingsPage.jsx'
-import { loadSettings, saveSetting } from './settingsStore.js'
-import { clearUserSkill } from './skillLoader.js'
+import { loadSettings, saveSetting } from './store/settingsStore.js'
+import { clearUserSkill } from './skills/skillLoader.js'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import VaultDetailPage from './screens/VaultDetailPage.jsx'
 import TxDetailPage from './screens/TxDetailPage.jsx'

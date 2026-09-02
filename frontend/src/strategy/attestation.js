@@ -7,8 +7,8 @@
 // never attestStrategyOnChain -- so it never touches a wallet or provider.
 
 import { hash } from '@stellar/stellar-sdk' // sync sha256 (already a dep — no ethers)
-import { attestOnChain } from './stellar/attestation.js'
-import { canonicalizeStrategy } from './strategy/canonicalStrategy.js'
+import { attestOnChain } from '../stellar/attestation.js'
+import { canonicalizeStrategy } from './canonicalStrategy.js'
 
 /**
  * Hash a strategy plan into a deterministic 0x-prefixed 32-byte hex string. Synchronous,

@@ -13,13 +13,13 @@ import {
   VAULT_CATALOG,
   BASE_POOL_CATALOG,
 } from '../config.js'
-import { loadVaultSkill } from '../skillLoader.js'
+import { loadVaultSkill } from '../skills/skillLoader.js'
 import { toBaseUnits } from '../stellar/format.js'
 import { fetchMarketContext } from './marketSearch.js'
 import { runStrategyFetchDag } from './fetchDag.js'
 import { saveStrategy, saveReasoning } from '../history/history.js'
 import { loadSettings } from '../store/settingsStore.js'
-import { hashStrategy } from '../attestation.js'
+import { hashStrategy } from './attestation.js'
 import { buildStrategyState, enforceActionSpace, scoreReward, riskCeiling } from './mdp.js'
 import { expandAgentSlots } from './planModel.js'
 import { venueYield } from './venueTruth.js'

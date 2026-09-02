@@ -9,15 +9,15 @@ import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
 } from '../stellar/config.js'
-import { loadSettings, saveSetting, SETTINGS_DEFAULTS, t } from '../settingsStore.js'
+import { loadSettings, saveSetting, SETTINGS_DEFAULTS, t } from '../store/settingsStore.js'
 import {
   getHistorySummary,
   clearTransactions,
   clearStrategies,
   clearReasoningLog,
   clearAllHistory,
-} from '../history.js'
-import { fmtRemaining } from '../ui.js'
+} from '../history/history.js'
+import { fmtRemaining } from '../design/ui.js'
 import { NETWORK_IDS } from '../design/networks.js'
 import LegacyAutoExitCleanup from '../components/settings/LegacyAutoExitCleanup.jsx'
 import { getTokenUsageHistory, clearTokenUsageHistory } from '../strategy/strategist.js'

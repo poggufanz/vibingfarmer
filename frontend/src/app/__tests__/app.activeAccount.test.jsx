@@ -141,7 +141,7 @@ vi.mock('../../stellar/agentCreatorManifest.js', () => ({
   isLegacyDirectSetupAllowed: vi.fn(() => false),
 }))
 
-vi.mock('../../orchestrator.js', async (importOriginal) => {
+vi.mock('../../orchestrator/orchestrator.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
     ...actual,
@@ -215,7 +215,7 @@ vi.mock('../../screens/Withdraw.jsx', async () => {
   }
 })
 vi.mock('../../stellar/keeperEvents.js', () => ({ fetchKeeperEvents: vi.fn(async () => []) }))
-vi.mock('../../positionsStore.js', async (importOriginal) => ({
+vi.mock('../../store/positionsStore.js', async (importOriginal) => ({
   ...(await importOriginal()),
   reconcilePositionsFromChain: vi.fn(async () => null),
 }))
