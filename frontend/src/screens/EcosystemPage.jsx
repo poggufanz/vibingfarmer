@@ -2,13 +2,18 @@
 // The catalog model is presentation-only; any settled read remains an injected input owned by
 // the route caller and passes through the Secondary adapter before it reaches the primitives.
 import { useNavigate } from 'react-router-dom'
-import NavBar from './NavBar.jsx'
+import NavBar from '../components/NavBar.jsx'
 import { ECOSYSTEM } from '../landing/LandingHero.jsx'
 import { NETWORK_IDS } from '../design/networks.js'
 import { toEcosystemPresentation } from '../secondary/secondaryRouteAdapters.js'
 import { createEcosystemModel } from '../secondary/ecosystemModel.js'
-import { NetworkBadge, NetworkRoute } from './pocket/NetworkIdentity.jsx'
-import { StageShell, StatusNotice, TechnicalDetails, VenueTruth } from './pocket/Primitives.jsx'
+import { NetworkBadge, NetworkRoute } from '../components/pocket/NetworkIdentity.jsx'
+import {
+  StageShell,
+  StatusNotice,
+  TechnicalDetails,
+  VenueTruth,
+} from '../components/pocket/Primitives.jsx'
 import './EcosystemPage.css'
 
 const STANDARDS = [

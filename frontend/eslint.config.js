@@ -77,7 +77,7 @@ export default [
       'src/agents/exitExecutor.js',
       'src/attestation.js',
       'src/base/withdrawBatch.js',
-      'src/components/ExplorerPage.jsx',
+      'src/screens/ExplorerPage.jsx',
       'src/stellar/agentDeposit.js',
       'src/stellar/cctpBurn.js',
       'src/stellar/client.js',

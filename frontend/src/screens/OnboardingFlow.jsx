@@ -4,14 +4,14 @@
 // Screen 2: how it works (shown after connect, before Step 01).
 // Self-fetches DeFiLlama data so the source can be inspected with zero wallet interaction.
 import { useState, useEffect } from 'react'
-import { YieldLine } from './SignatureMark.jsx'
+import { YieldLine } from '../components/SignatureMark.jsx'
 import { fetchDeFiLlamaVaults } from '../strategy/defiLlama.js'
 import { fetchApyHistoryBatch } from '../apyHistory.js'
 import { VAULT_CATALOG } from '../config.js'
 import { NETWORK_IDS } from '../design/networks.js'
 import { toOnboardingPresentation } from '../secondary/secondaryRouteAdapters.js'
-import { StatusNotice, TechnicalDetails, VenueTruth } from './pocket/Primitives.jsx'
-import { NetworkBadge } from './pocket/NetworkIdentity.jsx'
+import { StatusNotice, TechnicalDetails, VenueTruth } from '../components/pocket/Primitives.jsx'
+import { NetworkBadge } from '../components/pocket/NetworkIdentity.jsx'
 import './OnboardingFlow.css'
 import { venueYield } from '../strategy/venueTruth.js'
 

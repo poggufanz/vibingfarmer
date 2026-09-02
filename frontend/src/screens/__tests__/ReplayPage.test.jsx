@@ -186,11 +186,11 @@ describe('ReplayPage', () => {
 describe('ReplayPage geometry motion contract', () => {
   it('uses synchronous chart geometry and no layout transitions or GSAP tweens', () => {
     const jsx = readFileSync(
-      resolve(globalThis.process.cwd(), 'src/components/ReplayPage.jsx'),
+      resolve(globalThis.process.cwd(), 'src/screens/ReplayPage.jsx'),
       'utf8'
     )
     const css = readFileSync(
-      resolve(globalThis.process.cwd(), 'src/components/ReplayPage.css'),
+      resolve(globalThis.process.cwd(), 'src/screens/ReplayPage.css'),
       'utf8'
     )
     const source = `${jsx}\n${css}`

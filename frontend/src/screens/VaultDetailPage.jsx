@@ -9,8 +9,13 @@ import { useNavigateTo } from '../router.js'
 import { normalizeCoreAmount } from '../core/coreRouteAdapters.js'
 import { toVaultPresentation } from '../secondary/secondaryRouteAdapters.js'
 import { NETWORK_IDS } from '../design/networks.js'
-import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from './pocket/Primitives.jsx'
-import { NetworkRoute } from './pocket/NetworkIdentity.jsx'
+import {
+  MoneyFigure,
+  StatusNotice,
+  TechnicalDetails,
+  VenueTruth,
+} from '../components/pocket/Primitives.jsx'
+import { NetworkRoute } from '../components/pocket/NetworkIdentity.jsx'
 import './VaultDetailPage.css'
 import { venueYield } from '../strategy/venueTruth.js'
 

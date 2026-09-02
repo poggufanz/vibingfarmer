@@ -19,14 +19,14 @@ import {
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
 import { NETWORK_IDS } from '../design/networks.js'
-import LegacyAutoExitCleanup from './settings/LegacyAutoExitCleanup.jsx'
+import LegacyAutoExitCleanup from '../components/settings/LegacyAutoExitCleanup.jsx'
 import { getTokenUsageHistory, clearTokenUsageHistory } from '../strategy/strategist.js'
-import { BrandLockup } from './pocket/BrandLockup.jsx'
-import { CreditsAbout } from './pocket/CreditsAbout.jsx'
-import { Dialog } from './pocket/Primitives.jsx'
-import { NetworkBadge } from './pocket/NetworkIdentity.jsx'
-import BaseMandateManager from './settings/BaseMandateManager.jsx'
-import './settings/settings.css'
+import { BrandLockup } from '../components/pocket/BrandLockup.jsx'
+import { CreditsAbout } from '../components/pocket/CreditsAbout.jsx'
+import { Dialog } from '../components/pocket/Primitives.jsx'
+import { NetworkBadge } from '../components/pocket/NetworkIdentity.jsx'
+import BaseMandateManager from '../components/settings/BaseMandateManager.jsx'
+import '../components/settings/settings.css'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 

@@ -111,8 +111,8 @@ describe('EcosystemPage', () => {
   })
 
   it('keeps the diagram statically comprehensible without forbidden visual declarations', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/components/EcosystemPage.jsx'), 'utf8')
-    const css = readFileSync(resolve(process.cwd(), 'src/components/EcosystemPage.css'), 'utf8')
+    const source = readFileSync(resolve(process.cwd(), 'src/screens/EcosystemPage.jsx'), 'utf8')
+    const css = readFileSync(resolve(process.cwd(), 'src/screens/EcosystemPage.css'), 'utf8')
 
     expect(source).not.toMatch(/IntersectionObserver|feGaussianBlur|stroke-dasharray|is-visible/iu)
     expect(css).not.toMatch(/blur|dash|pulse|@keyframes|animation/iu)

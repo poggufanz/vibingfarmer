@@ -5,8 +5,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { toHistoryPresentation } from '../secondary/secondaryRouteAdapters.js'
 import { NETWORK_IDS } from '../design/networks.js'
-import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from './pocket/Primitives.jsx'
-import { NetworkRoute } from './pocket/NetworkIdentity.jsx'
+import {
+  MoneyFigure,
+  StatusNotice,
+  TechnicalDetails,
+  VenueTruth,
+} from '../components/pocket/Primitives.jsx'
+import { NetworkRoute } from '../components/pocket/NetworkIdentity.jsx'
 import { getTransactions, getStrategies, getReasoningLog, clearAllHistory } from '../history.js'
 import { loadSettings } from '../settingsStore.js'
 import { useNavigateTo } from '../router.js'

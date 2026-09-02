@@ -76,13 +76,13 @@ import {
 } from '../src/stellar/cctpBurn.js'
 import { VF_TESTNET_ISSUER } from '../src/wallet/trustline.js'
 import LandingHero from '../src/landing/LandingHero.jsx'
-import OnboardingFlow from '../src/components/OnboardingFlow.jsx'
-import ExplorerPage from '../src/components/ExplorerPage.jsx'
-import EcosystemPage from '../src/components/EcosystemPage.jsx'
-import ReplayPage from '../src/components/ReplayPage.jsx'
-import HistoryPanel from '../src/components/HistoryPanel.jsx'
-import VaultDetailPage from '../src/components/VaultDetailPage.jsx'
-import TxDetailPage from '../src/components/TxDetailPage.jsx'
+import OnboardingFlow from '../src/screens/OnboardingFlow.jsx'
+import ExplorerPage from '../src/screens/ExplorerPage.jsx'
+import EcosystemPage from '../src/screens/EcosystemPage.jsx'
+import ReplayPage from '../src/screens/ReplayPage.jsx'
+import HistoryPanel from '../src/screens/HistoryPanel.jsx'
+import VaultDetailPage from '../src/screens/VaultDetailPage.jsx'
+import TxDetailPage from '../src/screens/TxDetailPage.jsx'
 import DevelopersLayout from '../src/developers/DevelopersLayout.jsx'
 import KeysSection from '../src/developers/KeysSection.jsx'
 import UsageSection from '../src/developers/UsageSection.jsx'
@@ -187,7 +187,7 @@ const CrewRoute = lazy(() =>
   import('../src/components/crew/CrewRoute.jsx').then((m) => ({ default: m.CrewRoute }))
 )
 const SettingsPageRoute = lazy(() =>
-  import('../src/components/SettingsPage.jsx').then((m) => ({ default: m.default }))
+  import('../src/screens/SettingsPage.jsx').then((m) => ({ default: m.default }))
 )
 const WithdrawRoute = lazy(() =>
   Promise.all([

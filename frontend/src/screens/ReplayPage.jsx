@@ -11,10 +11,10 @@
 // Aesthetic: matches ExplorerPage — dark canvas, single accent, mono for raw values only.
 
 import { useEffect, useState } from 'react'
-import NavBar from './NavBar.jsx'
+import NavBar from '../components/NavBar.jsx'
 import { toDisplay } from '../stellar/format.js'
 import { toReplayPresentation } from '../secondary/secondaryRouteAdapters.js'
-import { StatusNotice, TechnicalDetails } from './pocket/Primitives.jsx'
+import { StatusNotice, TechnicalDetails } from '../components/pocket/Primitives.jsx'
 import './ReplayPage.css'
 
 const GROUND_URL = '/data/replay-usdc-depeg.json'

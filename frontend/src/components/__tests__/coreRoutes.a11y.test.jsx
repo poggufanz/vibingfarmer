@@ -12,7 +12,7 @@ import { MyMoneyRoute } from '../money/MyMoneyRoute.jsx'
 import { HowMoneyWorks } from '../money/HowMoneyWorks.jsx'
 import { StrategyRoute } from '../strategy/StrategyRoute.jsx'
 import { CrewRoute } from '../crew/CrewRoute.jsx'
-import SettingsPage from '../SettingsPage.jsx'
+import SettingsPage from '../../screens/SettingsPage.jsx'
 
 expect.extend(axeMatchers)
 afterEach(() => {

@@ -14,8 +14,8 @@ import { readTotalAssets } from '../stellar/vaultReads.js'
 import { NETWORK_IDS } from '../design/networks.js'
 import { formatCoreAmount, normalizeCoreAmount } from '../core/coreRouteAdapters.js'
 import { toExplorerPresentation } from '../secondary/secondaryRouteAdapters.js'
-import { StatusNotice, TechnicalDetails } from './pocket/Primitives.jsx'
-import { NetworkRoute } from './pocket/NetworkIdentity.jsx'
+import { StatusNotice, TechnicalDetails } from '../components/pocket/Primitives.jsx'
+import { NetworkRoute } from '../components/pocket/NetworkIdentity.jsx'
 import {
   EXTERNAL_PROTOCOL_COUNT,
   FIRST_PARTY_DEPLOYMENT_COUNT,
@@ -23,7 +23,7 @@ import {
   STATIC_ADDRESS_COUNT,
   STELLAR_STATIC_DEPLOYMENTS,
 } from '../stellar/deploymentFacts.js'
-import NavBar from './NavBar.jsx'
+import NavBar from '../components/NavBar.jsx'
 import './ExplorerPage.css'
 
 /* ----------------------------- constants ----------------------------- */

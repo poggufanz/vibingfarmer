@@ -273,27 +273,6 @@
     "count": 1
   },
   {
-    "relativePath": "src/components/SettingsPage.jsx",
-    "ruleId": "no-console",
-    "messageId": "unexpected",
-    "message": "Unexpected console statement.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/components/SettingsPage.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/components/SettingsPage.jsx",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'e' is defined but never used.",
-    "count": 4
-  },
-  {
     "relativePath": "src/components/SignatureMark.jsx",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
@@ -348,6 +327,27 @@
     "messageId": "unexpected",
     "message": "Unexpected console statement.",
     "count": 1
+  },
+  {
+    "relativePath": "src/screens/SettingsPage.jsx",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/screens/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'React' is defined but never used. Allowed unused vars must match /^_/u.",
+    "count": 1
+  },
+  {
+    "relativePath": "src/screens/SettingsPage.jsx",
+    "ruleId": "no-unused-vars",
+    "messageId": "unusedVar",
+    "message": "'e' is defined but never used.",
+    "count": 4
   },
   {
     "relativePath": "src/skillLoader.js",
