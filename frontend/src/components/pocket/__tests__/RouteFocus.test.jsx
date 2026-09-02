@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { Suspense, lazy } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { RouteFocus, SkipLink, routeLabel, routeTitle } from '../RouteFocus.jsx'
@@ -278,6 +278,8 @@ describe('RouteFocus inside a Suspense boundary (first client-side visit to a la
 
     resolveLazy()
     const main = await screen.findByRole('main')
-    expect(document.activeElement).toBe(main)
+    await waitFor(() => {
+      expect(document.activeElement).toBe(main)
+    })
   })
 })
