@@ -1,43 +1,43 @@
 import { WorkerAgent, makeAgentId } from './worker.js'
-import { generateAgentSkills } from './strategist.js'
-import { saveSkill } from './skills.js'
-import { deployAgentForSession, fundAgent, registryAuthorizeAgent } from './stellar/agentSetup.js'
+import { generateAgentSkills } from '../strategist.js'
+import { saveSkill } from '../skills.js'
+import { deployAgentForSession, fundAgent, registryAuthorizeAgent } from '../stellar/agentSetup.js'
 import {
   submitGrant,
   runAgentPull,
   readAllowance,
   AGENT_KIND_DEPOSIT,
   AGENT_KIND_BRIDGE,
-} from './stellar/grant.js'
-import { saveCachedAgent, takeReusableAgent } from './stellar/agentCache.js'
-import { newSessionKey } from './stellar/sessionKey.js'
-import { readTokenBalance, readVaultShares, runAgentDeposit } from './stellar/agentDeposit.js'
+} from '../stellar/grant.js'
+import { saveCachedAgent, takeReusableAgent } from '../stellar/agentCache.js'
+import { newSessionKey } from '../stellar/sessionKey.js'
+import { readTokenBalance, readVaultShares, runAgentDeposit } from '../stellar/agentDeposit.js'
 import {
   STELLAR_USDC_SAC,
   STELLAR_TOKEN_MESSENGER_MINTER,
   CCTP_BASE_DOMAIN,
   ZERO32,
   evmAddrToBytes32,
-} from './stellar/cctpBurn.js'
-import { deriveCctpTransferUnits, toBaseUnits } from './stellar/format.js'
-import { readBaseMandate } from './wallet/baseBinding.js'
+} from '../stellar/cctpBurn.js'
+import { deriveCctpTransferUnits, toBaseUnits } from '../stellar/format.js'
+import { readBaseMandate } from '../wallet/baseBinding.js'
 import {
   SOROBAN_TOKEN_ADDRESS,
   SOROBAN_DECIMALS,
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   USE_FUNDING_ROUTER,
-} from './stellar/config.js'
-import { isLegacyDirectSetupAllowed } from './stellar/agentCreatorManifest.js'
-import { PermissionPhaseError } from './strategy/permissionError.js'
-import { capturePermissionWindow } from './strategy/permissionWindow.js'
-import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
+} from '../stellar/config.js'
+import { isLegacyDirectSetupAllowed } from '../stellar/agentCreatorManifest.js'
+import { PermissionPhaseError } from '../strategy/permissionError.js'
+import { capturePermissionWindow } from '../strategy/permissionWindow.js'
+import { buildDispatchReceipt } from '../strategy/dispatchSummary.js'
 import {
   activeAccountSubmissionUnknown,
   assertActiveAccountBoundary,
   assertActiveOwner,
-} from './stellar/activeAccount.js'
-import { getActiveAccount } from './stellar/walletKit.js'
-import { assertBaseCrossChainAvailable } from './base/config.js'
+} from '../stellar/activeAccount.js'
+import { getActiveAccount } from '../stellar/walletKit.js'
+import { assertBaseCrossChainAvailable } from '../base/config.js'
 // Task 6 chunk C1 -- the real AllocationReceiptV2 evidence producer (Chunk A) and its authenticated
 // transport (Chunk B), both closed/reviewed. Neither import pulls in `./stellar/config.js` or
 // `./stellar/agentCache.js` (allocationReceipt.js has NO imports at all; agentIndexReceiptClient.js
@@ -47,9 +47,9 @@ import {
   createAllocationReceipt,
   appendPhase,
   confirmCustody,
-} from './strategy/allocationReceipt.js'
-import { postReceiptEvidence } from './stellar/agentIndexReceiptClient.js'
-import { selectRecoveryAction } from '../api/agent-index/recovery.js'
+} from '../strategy/allocationReceipt.js'
+import { postReceiptEvidence } from '../stellar/agentIndexReceiptClient.js'
+import { selectRecoveryAction } from '../../api/agent-index/recovery.js'
 // NOTE (Strategy Task 7): every OTHER new dependency this file needed for the permission-locked
 // path (`./strategy/reusePreflight.js`, `./stellar/grantReceiptStore.js`, and `readConfirmedLedger`
 // from `./stellar/grant.js`, plus `loadCachedAgents`/`SOROBAN_FUNDING_ROUTER_ADDRESS`) is imported
@@ -307,7 +307,7 @@ function createEvidenceRecorder({
     // Dynamic for the same reason as the permission-locked imports above: legacy orchestrator
     // tests mock a deliberately narrow agentCache module, while recoveryClient's default resolver
     // imports loadCachedAgents only when this failure path is actually reached.
-    const { readRecoveryReceipt } = await import('./strategy/recoveryClient.js')
+    const { readRecoveryReceipt } = await import('../strategy/recoveryClient.js')
     return readRecoveryReceipt({
       networkId: RECEIPT_NETWORK_ID,
       owner,
@@ -573,7 +573,7 @@ async function recoveryRelayError(result, operation) {
         : 'The Stellar relay is unavailable before submission.'
     )
   }
-  const { RelaySubmissionUnknownError } = await import('./stellar/relay.js')
+  const { RelaySubmissionUnknownError } = await import('../stellar/relay.js')
   return new RelaySubmissionUnknownError(
     `The ${operation} relay returned an unproved outcome (${result.status || 'malformed'}).`,
     result
@@ -589,7 +589,7 @@ export function bindBaseLegCustodyDeps({
   getCurrentActiveAccount = getActiveAccount,
   signal,
   runAgentPullFn = runAgentPull,
-  loadRunAgentBurn = async () => (await import('./stellar/agentBurn.js')).runAgentBurn,
+  loadRunAgentBurn = async () => (await import('../stellar/agentBurn.js')).runAgentBurn,
 }) {
   let epochCustody = null
   const rememberUnknownCustody = (error) => {
@@ -1066,7 +1066,7 @@ export class OrchestratorAgent {
         }
         let confirmation
         try {
-          const { readConfirmedLedger } = await import('./stellar/grant.js')
+          const { readConfirmedLedger } = await import('../stellar/grant.js')
           confirmation = await move(() => readConfirmedLedger({ hash: txHash }))
         } catch (error) {
           if (/not confirmed|not found/i.test(error?.message || ''))
@@ -1131,7 +1131,7 @@ export class OrchestratorAgent {
   }
 
   async readRecoveryAllocation(identity) {
-    const { readRecoveryReceipt } = await import('./strategy/recoveryClient.js')
+    const { readRecoveryReceipt } = await import('../strategy/recoveryClient.js')
     return readRecoveryReceipt(identity)
   }
 
@@ -2079,11 +2079,11 @@ export class OrchestratorAgent {
         signal: this.signal,
       })
     check()
-    const { getRelayerAddress, submitViaRelay } = await import('./stellar/relay.js')
+    const { getRelayerAddress, submitViaRelay } = await import('../stellar/relay.js')
     const relayer = await getRelayerAddress()
     check()
     if (!relayer) return null
-    const { buildAgentPullV3 } = await import('./stellar/grant.js')
+    const { buildAgentPullV3 } = await import('../stellar/grant.js')
     const { xdr } = await buildAgentPullV3({
       permissionId,
       executionId,
@@ -2180,7 +2180,7 @@ export class OrchestratorAgent {
    * @returns {Promise<{revalidated:object, credentialByAllocation:Map}>}
    */
   async revalidateReuse(strategyPlan, permissionDecision, planAgents) {
-    const { loadCachedAgents } = await import('./stellar/agentCache.js')
+    const { loadCachedAgents } = await import('../stellar/agentCache.js')
     // Task 5 chunk B: a V3 decision (permissionGrantV3.proveReusablePermission's shape) carries
     // its originally-picked set as `executions[]`, not V2's `agents[]` — there is no `agents`
     // field on a V3 decision at all. Both shapes carry `{allocationId, agentAddress, ...}`, so
@@ -2220,7 +2220,7 @@ export class OrchestratorAgent {
       }
     })
 
-    const { preflightPermission } = await import('./strategy/reusePreflight.js')
+    const { preflightPermission } = await import('../strategy/reusePreflight.js')
     let revalidated
     try {
       revalidated = await preflightPermission({
@@ -2411,7 +2411,7 @@ export class OrchestratorAgent {
     const reviewedByAllocation = new Map(
       (permissionDecision.reviewedAgentInits || []).map((r) => [r.allocationId, r])
     )
-    const { fetchPreparedExecutionMaterial } = await import('./strategy/reusePreflight.js')
+    const { fetchPreparedExecutionMaterial } = await import('../strategy/reusePreflight.js')
     this.assertCurrentAccount()
 
     const agentInits = workers.map((w) => {
@@ -2488,7 +2488,7 @@ export class OrchestratorAgent {
       })
     }
 
-    const { readConfirmedLedger } = await import('./stellar/grant.js')
+    const { readConfirmedLedger } = await import('../stellar/grant.js')
     let confirmedLedger
     let confirmedAt
     try {
@@ -2524,9 +2524,9 @@ export class OrchestratorAgent {
     // that event IS the "permission is now active" signal a caller (app.jsx) waits on, so the
     // receipt must already be durable when it fires.
     const { buildGrantReceiptV1, saveGrantReceipt, fingerprintGrantReceipt } =
-      await import('./stellar/grantReceiptStore.js')
+      await import('../stellar/grantReceiptStore.js')
     this.assertCurrentAccount()
-    const { SOROBAN_FUNDING_ROUTER_ADDRESS } = await import('./stellar/config.js')
+    const { SOROBAN_FUNDING_ROUTER_ADDRESS } = await import('../stellar/config.js')
     this.assertCurrentAccount()
     const receipt = buildGrantReceiptV1({
       runId: strategyPlan.runId,
@@ -2941,7 +2941,7 @@ export class OrchestratorAgent {
     const baseEvidence =
       baseLeg?.allocations?.length > 0
         ? baseLeg.allocations
-        : baseVaults.map((vault, index) => {
+        : baseVaults.map((vault) => {
             const { baseTargetUnits6 } = deriveCctpTransferUnits(totalAmount * vault.allocation)
             return {
               amount: { token: 'USDC', units: String(baseTargetUnits6), decimals: 6 },

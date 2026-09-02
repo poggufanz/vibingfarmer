@@ -107,7 +107,7 @@ vi.mock('../../stellar/agentCreatorManifest.js', () => ({
 }))
 vi.mock('../../strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
 vi.mock('../../skills.js', () => ({ saveSkill: vi.fn() }))
-vi.mock('../../mergeFlowHelpers.js', () => ({ readStoredBaseMandate: vi.fn() }))
+vi.mock('../mergeFlowHelpers.js', () => ({ readStoredBaseMandate: vi.fn() }))
 
 const preflightPermissionMock = vi.fn()
 const fetchPreparedExecutionMaterialMock = vi.fn()
@@ -143,7 +143,7 @@ vi.mock('../../stellar/agentIndexReceiptClient.js', () => ({
 
 const workerInstances = []
 const executeCalls = []
-vi.mock('../../worker.js', () => ({
+vi.mock('../worker.js', () => ({
   WorkerAgent: class {
     constructor(c) {
       Object.assign(this, c)
@@ -168,7 +168,7 @@ vi.mock('../../worker.js', () => ({
   makeAgentId: (i, s) => `0x${i}${s}`,
 }))
 
-import { OrchestratorAgent } from '../../orchestrator.js'
+import { OrchestratorAgent } from '../orchestrator.js'
 import { PermissionPhaseError } from '../../strategy/permissionError.js'
 
 function planAgent(i, units) {

@@ -75,7 +75,7 @@ const CONTRACT_EVIDENCE = Object.freeze({
     "frontend/src/strategy/__tests__/flowState.test.js",
     "frontend/src/stellar/grant.js",
     "frontend/src/stellar/__tests__/grant.test.js",
-    "frontend/src/orchestrator.js",
+    "frontend/src/orchestrator/orchestrator.js",
     "frontend/src/orchestrator/__tests__/orchestrator.test.js",
     "frontend/src/orchestrator/__tests__/orchestrator.router.test.js",
     "frontend/src/orchestrator/__tests__/orchestrator.baseleg.test.js",

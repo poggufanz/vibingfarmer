@@ -33,7 +33,7 @@ vi.mock('../../stellar/grant.js', () => ({
 }))
 
 const readStoredBaseMandateMock = vi.fn()
-vi.mock('../../mergeFlowHelpers.js', () => ({
+vi.mock('../mergeFlowHelpers.js', () => ({
   readStoredBaseMandate: (...a) => readStoredBaseMandateMock(...a),
 }))
 
@@ -84,7 +84,7 @@ vi.mock('../../skills.js', () => ({ saveSkill: vi.fn() }))
 
 const workerInstances = []
 const workerExecuteMock = vi.fn()
-vi.mock('../../worker.js', () => ({
+vi.mock('../worker.js', () => ({
   WorkerAgent: class {
     constructor(c) {
       Object.assign(this, c)
@@ -108,7 +108,7 @@ vi.mock('../../worker.js', () => ({
 }))
 
 const executeBaseLegMock = vi.fn()
-vi.mock('../../baseLeg.js', async (importOriginal) => {
+vi.mock('../baseLeg.js', async (importOriginal) => {
   const actual = await importOriginal()
   baseLegHarness.executeReal = actual.executeBaseLeg
   return { ...actual, executeBaseLeg: (...a) => executeBaseLegMock(...a) }
@@ -156,7 +156,7 @@ vi.mock('../../strategy/recoveryClient.js', () => ({
   readRecoveryReceipt: (...args) => readRecoveryReceiptMock(...args),
 }))
 
-import { OrchestratorAgent } from '../../orchestrator.js'
+import { OrchestratorAgent } from '../orchestrator.js'
 import { ReceiptEvidenceError } from '../../stellar/agentIndexReceiptClient.js'
 import { RelaySubmissionUnknownError } from '../../stellar/relay.js'
 import {

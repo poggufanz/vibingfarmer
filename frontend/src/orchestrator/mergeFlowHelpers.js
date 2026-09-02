@@ -3,31 +3,31 @@
 // strategy step tells the strategist about Base availability, and what the dispatch step tells
 // the orchestrator about the connected wallet's Base leg signer. Extracted so both are unit-
 // testable without rendering the 126KB app.jsx.
-import { isVfWallet, ensureBaseOwner as defaultEnsureBaseOwner } from './wallet/passkeyBridge.js'
-import { createMandate as defaultCreateMandate } from './wallet/mandate.js'
+import { isVfWallet, ensureBaseOwner as defaultEnsureBaseOwner } from '../wallet/passkeyBridge.js'
+import { createMandate as defaultCreateMandate } from '../wallet/mandate.js'
 import {
   postMandate as defaultPostMandate,
   waitForMandateActivation as defaultWaitForMandateActivation,
-} from './base/relayerClient.js'
-import { BASE_POOL_CATALOG } from './config.js'
+} from '../base/relayerClient.js'
+import { BASE_POOL_CATALOG } from '../config.js'
 import {
   BASE_CROSS_CHAIN_AVAILABLE,
   BASE_CROSS_CHAIN_UNAVAILABLE_REASON,
   assertBaseCrossChainAvailable,
-} from './base/config.js'
+} from '../base/config.js'
 import {
   baseOwnerStorageKey,
   baseMandateStorageKey,
   readBaseOwner,
   readBaseMandate,
   validateBaseMandate,
-} from './wallet/baseBinding.js'
-import { toBaseMandateView } from './strategy/baseMandateView.js'
+} from '../wallet/baseBinding.js'
+import { toBaseMandateView } from '../strategy/baseMandateView.js'
 import {
   isVerifiedBaseMandateStatus,
   materialBaseMandateStatusChange,
   publicBaseMandateEvidence,
-} from './base/mandateStatus.js'
+} from '../base/mandateStatus.js'
 
 export function baseMandateRequiresReview(previous, next) {
   return (

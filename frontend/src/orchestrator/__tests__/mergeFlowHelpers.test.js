@@ -17,7 +17,7 @@ import {
   needsBaseMandateSetup,
   resolveBaseAvailability,
   baseMandateRequiresReview,
-} from '../../mergeFlowHelpers.js'
+} from '../mergeFlowHelpers.js'
 import { toBaseMandateView } from '../../strategy/baseMandateView.js'
 import { readBaseMandate, readBaseOwner, validateBaseMandate } from '../../wallet/baseBinding.js'
 

@@ -6,7 +6,7 @@ vi.mock('../deploymentFacts.js', async () => {
   return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
 })
 
-import { runFarmFlow } from '../../crossChainFarm.js'
+import { runFarmFlow } from '../../orchestrator/crossChainFarm.js'
 import { readCctpTransfer } from '../../cctp/transferJournal.js'
 import { BASE_POOL_CATALOG } from '../../config.js'
 

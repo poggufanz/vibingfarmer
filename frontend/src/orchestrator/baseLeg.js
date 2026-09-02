@@ -14,19 +14,19 @@
 import {
   getMandateStatus as defaultGetMandateStatus,
   quantizeAllocations,
-} from './base/relayerClient.js'
+} from '../base/relayerClient.js'
 import { runFarmFlow as defaultRunFarmFlow } from './crossChainFarm.js'
-import { runAgentPull as defaultRunAgentPull } from './stellar/grant.js'
-import { runAgentBurn as defaultRunAgentBurn } from './stellar/agentBurn.js'
-import { evmAddrToBytes32 } from './stellar/cctpBurn.js'
-import { deriveCctpTransferUnits } from './stellar/format.js'
-import { BASE_POOL_CATALOG } from './config.js'
-import { estimateMinShares as defaultEstimateMinShares } from './base/quotes.js'
-import { defaultMakePublicClient } from './wallet/passkeyBase.js'
-import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
-import { isVerifiedBaseMandateStatus } from './base/mandateStatus.js'
-import { BASE_CROSS_CHAIN_AVAILABLE, BASE_CROSS_CHAIN_UNAVAILABLE_REASON } from './base/config.js'
-import { requireBaseRecoveryIdentity } from './strategy/baseRecoveryIdentity.js'
+import { runAgentPull as defaultRunAgentPull } from '../stellar/grant.js'
+import { runAgentBurn as defaultRunAgentBurn } from '../stellar/agentBurn.js'
+import { evmAddrToBytes32 } from '../stellar/cctpBurn.js'
+import { deriveCctpTransferUnits } from '../stellar/format.js'
+import { BASE_POOL_CATALOG } from '../config.js'
+import { estimateMinShares as defaultEstimateMinShares } from '../base/quotes.js'
+import { defaultMakePublicClient } from '../wallet/passkeyBase.js'
+import { readBaseMandate, validateBaseMandate } from '../wallet/baseBinding.js'
+import { isVerifiedBaseMandateStatus } from '../base/mandateStatus.js'
+import { BASE_CROSS_CHAIN_AVAILABLE, BASE_CROSS_CHAIN_UNAVAILABLE_REASON } from '../base/config.js'
+import { requireBaseRecoveryIdentity } from '../strategy/baseRecoveryIdentity.js'
 
 const PUBLIC_SENSITIVE =
   /secret|private|capability|bearer|authorization|cookie|wallet|passkey|signedxdr|approval|session/i

@@ -5,7 +5,7 @@ vi.mock('../deploymentFacts.js', async () => {
   return { RECORDED_BASE_DEPLOYMENT: HARDENED_BASE_DEPLOYMENT_FIXTURE }
 })
 
-import { executeBaseLeg } from '../../baseLeg.js'
+import { executeBaseLeg } from '../../orchestrator/baseLeg.js'
 import { buildDispatchReceipt } from '../../strategy/dispatchSummary.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'

@@ -57,7 +57,7 @@ vi.mock('../../strategist.js', () => ({ generateAgentSkills: vi.fn(async () => (
 vi.mock('../../skills.js', () => ({ saveSkill: vi.fn() }))
 
 const workerInstances = []
-vi.mock('../../worker.js', () => ({
+vi.mock('../worker.js', () => ({
   WorkerAgent: class {
     constructor(c) {
       Object.assign(this, c)
@@ -76,7 +76,7 @@ vi.mock('../../worker.js', () => ({
   makeAgentId: (i, s) => `0x${i}${s}`,
 }))
 
-import { OrchestratorAgent } from '../../orchestrator.js'
+import { OrchestratorAgent } from '../orchestrator.js'
 
 describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
   beforeEach(() => {

@@ -5,14 +5,14 @@ vi.mock('../../stellar/agentDeposit.js', () => ({
   runAgentDeposit: vi.fn(),
   readVaultShares: vi.fn(),
 }))
-// memory.js writes to localStorage (absent in the node test env) — mock it.
-vi.mock('../../memory.js', () => ({
+// memory writes to localStorage (absent in the node test env) — mock it.
+vi.mock('../../store/memory.js', () => ({
   writeMemory: vi.fn(),
   createEntry: (step, status, data = {}, lesson) => ({ step, status, ...data, lesson }),
   buildLesson: () => 'lesson',
 }))
 
-import { WorkerAgent, makeAgentId, makePlanId } from '../../worker.js'
+import { WorkerAgent, makeAgentId, makePlanId } from '../worker.js'
 import { runAgentDeposit, readVaultShares } from '../../stellar/agentDeposit.js'
 
 const sessionKey = () => ({

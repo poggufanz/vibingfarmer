@@ -364,13 +364,6 @@
     "count": 1
   },
   {
-    "relativePath": "src/orchestrator.js",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'index' is defined but never used. Allowed unused args must match /^_/u.",
-    "count": 1
-  },
-  {
     "relativePath": "src/skillLoader.js",
     "ruleId": "no-console",
     "messageId": "unexpected",

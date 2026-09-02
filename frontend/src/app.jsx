@@ -65,7 +65,7 @@ import {
 } from './stellar/events.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
-import { OrchestratorAgent } from './orchestrator.js'
+import { OrchestratorAgent } from './orchestrator/orchestrator.js'
 import {
   readRecoveryReceipt,
   requestRecoveryAction,
@@ -101,7 +101,7 @@ import {
   applyBaseLegOutcome,
   mapBaseLegEvent,
   baseMandateRequiresReview,
-} from './mergeFlowHelpers.js'
+} from './orchestrator/mergeFlowHelpers.js'
 import { getMandateStatus } from './base/relayerClient.js'
 import { readBaseOwner, baseOwnerStorageKey, readBaseMandate } from './wallet/baseBinding.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'

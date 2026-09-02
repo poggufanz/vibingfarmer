@@ -6,11 +6,11 @@
 // error is caught at its stage and re-thrown with an onEvent('farm-failed', {stage, ...}) fired
 // first, so the UI always has a clear, staged failure reason (§7: a mid-flow failure surfaces a
 // clear error and leaves funds recoverable).
-import { signAndSubmitStellarBurn } from './stellar/cctpBurn.js'
-import { postFarm, postFarmAttach, pollFarmStatus } from './base/relayerClient.js'
-import { BASE_POOL_CATALOG } from './config.js'
-import { assertBaseCrossChainAvailable } from './base/config.js'
-import { createCctpTransfer, checkpointCctpTransfer } from './cctp/transferJournal.js'
+import { signAndSubmitStellarBurn } from '../stellar/cctpBurn.js'
+import { postFarm, postFarmAttach, pollFarmStatus } from '../base/relayerClient.js'
+import { BASE_POOL_CATALOG } from '../config.js'
+import { assertBaseCrossChainAvailable } from '../base/config.js'
+import { createCctpTransfer, checkpointCctpTransfer } from '../cctp/transferJournal.js'
 
 const CCTP_STELLAR_DOMAIN = 27
 const REQUEST_ID = /^[0-9a-f]{32}$/

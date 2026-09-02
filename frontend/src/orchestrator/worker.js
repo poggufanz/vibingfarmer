@@ -5,11 +5,11 @@
 // expiry / revoke are enforced on-chain by AgentAccount.__check_auth — the worker never moves the
 // user's funds outside that pre-authorized, capped scope. (Funding + authorize are done up-front
 // by the orchestrator; redeem/exit is the owner's owner_withdraw call.)
-import { newSessionKey } from './stellar/sessionKey.js'
-import { runAgentDeposit, readVaultShares } from './stellar/agentDeposit.js'
-import { writeMemory, createEntry, buildLesson } from './memory.js'
-import { createSubmitGate } from './strategy/submitGate.js'
-import { MAX_TOKEN_AGE_MS } from './strategy/eligibilityGate.js'
+import { newSessionKey } from '../stellar/sessionKey.js'
+import { runAgentDeposit, readVaultShares } from '../stellar/agentDeposit.js'
+import { writeMemory, createEntry, buildLesson } from '../store/memory.js'
+import { createSubmitGate } from '../strategy/submitGate.js'
+import { MAX_TOKEN_AGE_MS } from '../strategy/eligibilityGate.js'
 
 export class WorkerAgent {
   /**

@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { executeBaseLeg } from '../../baseLeg.js'
-import { runFarmFlow } from '../../crossChainFarm.js'
+import { executeBaseLeg } from '../../orchestrator/baseLeg.js'
+import { runFarmFlow } from '../../orchestrator/crossChainFarm.js'
 import {
   applyBaseLegOutcome,
   needsBaseMandateSetup,
   resolveBaseAvailability,
   setupBaseMandate,
-} from '../../mergeFlowHelpers.js'
+} from '../../orchestrator/mergeFlowHelpers.js'
 import {
   postFarm,
   postFarmAttach,

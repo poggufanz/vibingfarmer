@@ -245,7 +245,7 @@ vi.mock('../../wallet/baseBinding.js', async (importOriginal) => {
     readBaseMandate: vi.fn((...args) => actual.readBaseMandate(...args)),
   }
 })
-vi.mock('../../mergeFlowHelpers.js', async (importOriginal) => {
+vi.mock('../../orchestrator/mergeFlowHelpers.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
     ...actual,
@@ -266,7 +266,10 @@ import App, {
   createEpochBoundRun,
   composeV3Decision,
 } from '../../app.jsx'
-import { bindBaseLegCustodyDeps, reconcileBaseLegEpochCustody } from '../../orchestrator.js'
+import {
+  bindBaseLegCustodyDeps,
+  reconcileBaseLegEpochCustody,
+} from '../../orchestrator/orchestrator.js'
 import { normalizeStrategyPlan } from '../../strategy/planModel.js'
 import { preflightPermission } from '../../strategy/reusePreflight.js'
 import { discoverOwnerScopes } from '../../stellar/ownerDiscovery.js'
@@ -276,7 +279,7 @@ import { sweepAgents } from '../../stellar/exit.js'
 import { revokeAgentOnChain } from '../../stellar/index.js'
 import { getMandateStatus } from '../../base/relayerClient.js'
 import { baseMandateStorageKey, readBaseMandate } from '../../wallet/baseBinding.js'
-import { buildBaseLegContext } from '../../mergeFlowHelpers.js'
+import { buildBaseLegContext } from '../../orchestrator/mergeFlowHelpers.js'
 import { BASE_POOL_CATALOG } from '../../config.js'
 import { readLifeboatState } from '../../stellar/vaultReads.js'
 import { grantMandate } from '../../stellar/lifeboat.js'

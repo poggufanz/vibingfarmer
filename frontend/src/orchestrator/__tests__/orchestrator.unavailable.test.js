@@ -49,7 +49,7 @@ vi.mock('../../stellar/agentCache.js', () => ({
 vi.mock('../../stellar/agentIndexReceiptClient.js', () => ({
   postReceiptEvidence: (...args) => calls.postReceiptEvidence(...args),
 }))
-vi.mock('../../worker.js', () => ({
+vi.mock('../worker.js', () => ({
   WorkerAgent: class {
     constructor() {
       calls.worker()
@@ -63,7 +63,7 @@ vi.mock('../../stellar/agentCreatorManifest.js', () => ({
   isLegacyDirectSetupAllowed: vi.fn(() => false),
 }))
 
-import { OrchestratorAgent } from '../../orchestrator.js'
+import { OrchestratorAgent } from '../orchestrator.js'
 
 const baseVault = {
   chain: 'base',
