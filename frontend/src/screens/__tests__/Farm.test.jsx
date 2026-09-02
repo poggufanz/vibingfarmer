@@ -7,10 +7,10 @@ import Farm from '../Farm.jsx'
 afterEach(cleanup) // @testing-library/react v16 does not auto-clean; unmount between tests
 
 vi.mock('../../orchestrator/crossChainFarm.js', () => ({ runFarmFlow: vi.fn() }))
-vi.mock('../../strategist.js', () => ({ allocateBasePools: vi.fn() }))
+vi.mock('../../strategy/strategist.js', () => ({ allocateBasePools: vi.fn() }))
 
 import { runFarmFlow } from '../../orchestrator/crossChainFarm.js'
-import { allocateBasePools } from '../../strategist.js'
+import { allocateBasePools } from '../../strategy/strategist.js'
 
 describe('Farm screen', () => {
   test('shows the AI allocation preview, then runs the farm flow on "Start Farming" and shows progress', async () => {

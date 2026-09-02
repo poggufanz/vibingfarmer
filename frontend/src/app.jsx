@@ -56,7 +56,7 @@ import {
   revokeAgentOnChain,
   subscribeAgentRevoked,
 } from './stellar/index.js'
-import { generateStrategy } from './strategist.js'
+import { generateStrategy } from './strategy/strategist.js'
 import { toDisplay, toBaseUnits } from './stellar/format.js'
 import {
   queryAgentsByOwner,
@@ -211,7 +211,7 @@ import {
   riskComplianceVerdict,
   validatorVerdict,
   askStrategistJson,
-} from './strategist.js'
+} from './strategy/strategist.js'
 import {
   councilReview,
   buildCouncilInput,

@@ -2,10 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { normalizeAmount } from '../../design/pocket-crew-foundation.js'
-import { fetchDeFiLlamaVaults } from '../../defiLlama.js'
+import { fetchDeFiLlamaVaults } from '../../strategy/defiLlama.js'
 import OnboardingFlow from '../OnboardingFlow.jsx'
 
-vi.mock('../../defiLlama.js', () => ({
+vi.mock('../../strategy/defiLlama.js', () => ({
   fetchDeFiLlamaVaults: vi.fn(() => Promise.resolve([])),
 }))
 

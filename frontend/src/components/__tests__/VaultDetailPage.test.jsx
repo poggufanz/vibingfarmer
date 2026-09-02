@@ -12,7 +12,7 @@ vi.mock('../../router.js', () => ({
   useNavigateTo: () => navigateTo,
 }))
 
-vi.mock('../../defiLlama.js', () => ({
+vi.mock('../../strategy/defiLlama.js', () => ({
   fetchDeFiLlamaVaults: (...args) => fetchDeFiLlamaVaults(...args),
 }))
 

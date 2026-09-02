@@ -53,7 +53,7 @@ const isLegacyDirectSetupAllowedMock = vi.fn(() => true)
 vi.mock('../../stellar/agentCreatorManifest.js', () => ({
   isLegacyDirectSetupAllowed: (...a) => isLegacyDirectSetupAllowedMock(...a),
 }))
-vi.mock('../../strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
+vi.mock('../../strategy/strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
 vi.mock('../../skills.js', () => ({ saveSkill: vi.fn() }))
 
 const workerInstances = []

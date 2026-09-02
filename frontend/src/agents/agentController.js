@@ -6,7 +6,7 @@
 
 import { ownerWithdraw, sweepAgents } from '../stellar/exit.js'
 import { SOROBAN_EXIT_ROUTER_ADDRESS } from '../stellar/config.js'
-import { classifyRisk } from '../strategist.js'
+import { classifyRisk } from '../strategy/strategist.js'
 import { assertActiveAccountBoundary, assertActiveOwner } from '../stellar/activeAccount.js'
 import { getActiveAccount } from '../stellar/walletKit.js'
 

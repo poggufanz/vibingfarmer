@@ -2,10 +2,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { runFetchDag } from '../fetchDag.js'
 
-vi.mock('../../defiLlama.js', () => ({
+vi.mock('../defiLlama.js', () => ({
   fetchDeFiLlamaVaults: vi.fn(async () => [{ address: '0xV', apy: 5 }]),
 }))
-vi.mock('../../positionsStore.js', () => ({
+vi.mock('../../store/positionsStore.js', () => ({
   reconcilePositionsFromChain: vi.fn(async () => ({ '0xV': { balance: '1000000' } })),
 }))
 vi.mock('../gasSnapshot.js', () => ({

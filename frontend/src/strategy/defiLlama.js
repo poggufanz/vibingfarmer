@@ -4,7 +4,7 @@
 // Ethereum-mainnet yield data, but every deposit executes on our single Soroban testnet vault).
 // Never throws — returns fallback catalog on any failure.
 
-import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/config.js'
 
 const DEFILLAMA_ENDPOINT = 'https://yields.llama.fi/pools'
 const DEFILLAMA_TIMEOUT_MS = 10000

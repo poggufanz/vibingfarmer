@@ -9,11 +9,11 @@ const fakes = vi.hoisted(() => ({
   saveStrategy: vi.fn(),
 }))
 
-vi.mock('../../history.js', () => ({
+vi.mock('../../history/history.js', () => ({
   saveReasoning: (...args) => fakes.saveReasoning(...args),
   saveStrategy: (...args) => fakes.saveStrategy(...args),
 }))
-vi.mock('../../settingsStore.js', () => ({
+vi.mock('../../store/settingsStore.js', () => ({
   loadSettings: () => fakes.loadSettings(),
 }))
 vi.mock('../fetchDag.js', () => ({
@@ -23,7 +23,7 @@ vi.mock('../mergedCatalog.js', () => ({
   buildMergedCatalog: (...args) => fakes.buildMergedCatalog(...args),
 }))
 
-import { generateStrategy } from '../../strategist.js'
+import { generateStrategy } from '../strategist.js'
 
 const liveApy = 6.2
 const sharedAddress = SOROBAN_ACTIVE_VAULT_ADDRESS

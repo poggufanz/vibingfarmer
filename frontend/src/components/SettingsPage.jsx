@@ -20,7 +20,7 @@ import {
 import { fmtRemaining } from '../ui.js'
 import { NETWORK_IDS } from '../design/networks.js'
 import LegacyAutoExitCleanup from './settings/LegacyAutoExitCleanup.jsx'
-import { getTokenUsageHistory, clearTokenUsageHistory } from '../strategist.js'
+import { getTokenUsageHistory, clearTokenUsageHistory } from '../strategy/strategist.js'
 import { BrandLockup } from './pocket/BrandLockup.jsx'
 import { CreditsAbout } from './pocket/CreditsAbout.jsx'
 import { Dialog } from './pocket/Primitives.jsx'

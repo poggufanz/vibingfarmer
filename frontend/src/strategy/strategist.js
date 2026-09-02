@@ -12,18 +12,17 @@ import {
   AI_PROXY_URL,
   VAULT_CATALOG,
   BASE_POOL_CATALOG,
-} from './config.js'
-import { loadVaultSkill } from './skillLoader.js'
-import { toBaseUnits } from './stellar/format.js'
+} from '../config.js'
+import { loadVaultSkill } from '../skillLoader.js'
+import { toBaseUnits } from '../stellar/format.js'
 import { fetchMarketContext } from './marketSearch.js'
-import { fetchDeFiLlamaVaults } from './defiLlama.js'
-import { runStrategyFetchDag } from './strategy/fetchDag.js'
-import { saveStrategy, saveReasoning } from './history.js'
-import { loadSettings } from './settingsStore.js'
-import { hashStrategy } from './attestation.js'
-import { buildStrategyState, enforceActionSpace, scoreReward, riskCeiling } from './strategy/mdp.js'
-import { expandAgentSlots } from './strategy/planModel.js'
-import { venueYield } from './strategy/venueTruth.js'
+import { runStrategyFetchDag } from './fetchDag.js'
+import { saveStrategy, saveReasoning } from '../history/history.js'
+import { loadSettings } from '../store/settingsStore.js'
+import { hashStrategy } from '../attestation.js'
+import { buildStrategyState, enforceActionSpace, scoreReward, riskCeiling } from './mdp.js'
+import { expandAgentSlots } from './planModel.js'
+import { venueYield } from './venueTruth.js'
 
 const DISPLAY_PROSE_RULE =
   'Write user-facing prose as one plain sentence in sentence case. Do not use em dashes, en dashes, middle dots, emoji, headings, hype, or filler.'
@@ -313,7 +312,7 @@ export async function generateStrategy({
 
   // Real DeFiLlama vaults when available, else the static VAULT_CATALOG; merged with the
   // chain-tagged Base pool catalog when the cross-chain relayer is up (baseAvailableResolved).
-  const { buildMergedCatalog } = await import('./strategy/mergedCatalog.js')
+  const { buildMergedCatalog } = await import('./mergedCatalog.js')
   const vaultData = buildMergedCatalog({ baseAvailable: baseAvailableResolved, liveVaults })
   const vaultDataSource = liveVaults && liveVaults.length > 0 ? 'defiLlama' : 'fallback'
   const dataSource =
@@ -1154,7 +1153,7 @@ function buildBasePoolSkill(pool, amount) {
  * @param {{ amount: number, riskLevel: 'low'|'medium'|'high', nPools: number }} params
  * @returns {Promise<Array<{ pool: string, protocol: string, amount: number, minShares: bigint, expectedApy: number, riskTier: string, skill: object }>>}
  */
-export async function allocateBasePools({ amount, riskLevel, nPools }) {
+export async function allocateBasePools({ amount, riskLevel: _riskLevel, nPools }) {
   const safeNPools = Math.min(nPools, BASE_POOL_CATALOG.length)
   const pools = BASE_POOL_CATALOG.slice(0, safeNPools)
   const perPool = amount / pools.length

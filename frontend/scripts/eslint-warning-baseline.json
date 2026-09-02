@@ -322,13 +322,6 @@
     "count": 1
   },
   {
-    "relativePath": "src/defiLlama.js",
-    "ruleId": "no-console",
-    "messageId": "unexpected",
-    "message": "Unexpected console statement.",
-    "count": 5
-  },
-  {
     "relativePath": "src/graph/PixiSwarmGraph.jsx",
     "ruleId": "no-console",
     "messageId": "unexpected",
@@ -348,13 +341,6 @@
     "messageId": "unexpected",
     "message": "Unexpected console statement.",
     "count": 1
-  },
-  {
-    "relativePath": "src/marketSearch.js",
-    "ruleId": "no-console",
-    "messageId": "unexpected",
-    "message": "Unexpected console statement.",
-    "count": 3
   },
   {
     "relativePath": "src/money/riskWatchStore.js",
@@ -406,27 +392,6 @@
     "count": 1
   },
   {
-    "relativePath": "src/strategist.js",
-    "ruleId": "no-console",
-    "messageId": "unexpected",
-    "message": "Unexpected console statement.",
-    "count": 16
-  },
-  {
-    "relativePath": "src/strategist.js",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'fetchDeFiLlamaVaults' is defined but never used. Allowed unused vars must match /^_/u.",
-    "count": 1
-  },
-  {
-    "relativePath": "src/strategist.js",
-    "ruleId": "no-unused-vars",
-    "messageId": "unusedVar",
-    "message": "'riskLevel' is defined but never used. Allowed unused args must match /^_/u.",
-    "count": 1
-  },
-  {
     "relativePath": "src/strategy/councilMonitor.js",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
@@ -455,6 +420,13 @@
     "count": 3
   },
   {
+    "relativePath": "src/strategy/defiLlama.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 5
+  },
+  {
     "relativePath": "src/strategy/dispatchSummary.js",
     "ruleId": "no-unused-vars",
     "messageId": "unusedVar",
@@ -469,6 +441,13 @@
     "count": 1
   },
   {
+    "relativePath": "src/strategy/marketSearch.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 3
+  },
+  {
     "relativePath": "src/strategy/reflector.js",
     "ruleId": "no-console",
     "messageId": "unexpected",
@@ -481,6 +460,13 @@
     "messageId": "unexpected",
     "message": "Unexpected console statement.",
     "count": 4
+  },
+  {
+    "relativePath": "src/strategy/strategist.js",
+    "ruleId": "no-console",
+    "messageId": "unexpected",
+    "message": "Unexpected console statement.",
+    "count": 16
   },
   {
     "relativePath": "src/ui.js",

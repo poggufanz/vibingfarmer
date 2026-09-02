@@ -5,7 +5,7 @@
 // Self-fetches DeFiLlama data so the source can be inspected with zero wallet interaction.
 import { useState, useEffect } from 'react'
 import { YieldLine } from './SignatureMark.jsx'
-import { fetchDeFiLlamaVaults } from '../defiLlama.js'
+import { fetchDeFiLlamaVaults } from '../strategy/defiLlama.js'
 import { fetchApyHistoryBatch } from '../apyHistory.js'
 import { VAULT_CATALOG } from '../config.js'
 import { NETWORK_IDS } from '../design/networks.js'

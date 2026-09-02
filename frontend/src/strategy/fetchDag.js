@@ -11,8 +11,8 @@
 // can't express that ordering; the layered runner can, and stays parallel where it
 // can (4 fetches at ~max(latency) instead of sum).
 
-import { fetchDeFiLlamaVaults } from '../defiLlama.js'
-import { reconcilePositionsFromChain } from '../positionsStore.js'
+import { fetchDeFiLlamaVaults } from './defiLlama.js'
+import { reconcilePositionsFromChain } from '../store/positionsStore.js'
 import { fetchGasSnapshot } from './gasSnapshot.js'
 import { deriveSignals } from './mdp.js'
 

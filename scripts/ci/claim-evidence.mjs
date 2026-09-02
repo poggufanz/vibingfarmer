@@ -96,7 +96,7 @@ const CONTRACT_EVIDENCE = Object.freeze({
     "frontend/src/history/__tests__/history.yield.test.js",
     "frontend/src/components/HistoryPanel.jsx",
     "frontend/src/components/__tests__/HistoryPanel.test.jsx",
-    "frontend/src/strategist.js",
+    "frontend/src/strategy/strategist.js",
     "frontend/src/strategy/__tests__/strategist.yield.test.js",
     "frontend/src/components/TxDetailPage.jsx",
     "frontend/src/components/__tests__/TxDetailPage.test.jsx",

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { validateStrategyResponse } from '../../strategist.js'
+import { validateStrategyResponse } from '../strategist.js'
 import { buildMergedCatalog } from '../mergedCatalog.js'
 import { BASE_POOL_CATALOG } from '../../config.js'
 

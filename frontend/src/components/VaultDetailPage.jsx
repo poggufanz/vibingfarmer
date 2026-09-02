@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { VAULT_CATALOG } from '../config.js'
-import { fetchDeFiLlamaVaults } from '../defiLlama.js'
+import { fetchDeFiLlamaVaults } from '../strategy/defiLlama.js'
 import { fetchApyHistory } from '../apyHistory.js'
 import { calcApyStats, generateSparkline } from '../sparkline.js'
 import { useNavigateTo } from '../router.js'

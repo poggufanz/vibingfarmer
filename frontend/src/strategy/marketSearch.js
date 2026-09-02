@@ -2,7 +2,7 @@
 // Fetches real-time DeFi market context via Tavily before strategy generation.
 // Output is injected into Venice AI system prompt as live market intelligence.
 
-import { loadSettings } from './settingsStore.js'
+import { loadSettings } from '../store/settingsStore.js'
 
 // BYOK-first: when the user pastes a Tavily key in Settings we call Tavily
 // directly from the browser with their key. Otherwise we hit the host proxy,
