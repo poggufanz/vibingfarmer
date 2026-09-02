@@ -177,7 +177,7 @@ import { nextReconciliationToken, isReconciliationCurrent } from './money/freshn
 import { sweepAgents } from './stellar/exit.js'
 import { ensureExitSigner, partialWithdraw } from './stellar/partialWithdraw.js'
 import { assertCurrentActiveAccount } from './stellar/activeAccount.js'
-const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
+const LandingHero = lazy(() => import('./landing/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
 const EcosystemPage = lazy(() => import('./components/EcosystemPage.jsx'))
 const ReplayPage = lazy(() => import('./components/ReplayPage.jsx'))

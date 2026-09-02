@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import NavBar from './NavBar.jsx'
+import NavBar from '../components/NavBar.jsx'
 import LandingFx from './LandingFx.jsx'
 import './LandingHero.css'
 

@@ -75,7 +75,7 @@ import {
   CCTP_BASE_DOMAIN,
 } from '../src/stellar/cctpBurn.js'
 import { VF_TESTNET_ISSUER } from '../src/wallet/trustline.js'
-import LandingHero from '../src/components/LandingHero.jsx'
+import LandingHero from '../src/landing/LandingHero.jsx'
 import OnboardingFlow from '../src/components/OnboardingFlow.jsx'
 import ExplorerPage from '../src/components/ExplorerPage.jsx'
 import EcosystemPage from '../src/components/EcosystemPage.jsx'

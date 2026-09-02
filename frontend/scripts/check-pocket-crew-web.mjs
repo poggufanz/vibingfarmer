@@ -14,9 +14,9 @@ const DEFAULT_ROOT = resolve(HERE, '..')
 // fixtures, and dormant feature code owned by another worker. Every path here is relative to the
 // frontend root and is intentionally production-only.
 export const WEB_PRODUCTION_FILES = Object.freeze([
-  'src/components/LandingHero.css',
-  'src/components/LandingHero.jsx',
-  'src/components/LandingFx.jsx',
+  'src/landing/LandingHero.css',
+  'src/landing/LandingHero.jsx',
+  'src/landing/LandingFx.jsx',
   'src/components/NavBar.jsx',
   'src/components/NavBar.css',
   'src/components/OnboardingFlow.jsx',
