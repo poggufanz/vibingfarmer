@@ -80,4 +80,45 @@ describe('/api/vf/keys', () => {
     await vfRouter(mk('DELETE', '/keys', { id }, other), res)
     expect(res.statusCode).toBe(404)
   })
+
+  it('caps self-chosen rateLimit per scope sensitivity (submit 600 -> 400, market 600 ok)', async () => {
+    const jwtRate = await signJwt({ sub: 'GRATE' }, 'keys-test-secret-000', 3600)
+    let res = mockRes()
+    await vfRouter(mk('POST', '/keys', { scopes: ['submit'], env: 'test', rateLimit: 600 }, jwtRate), res)
+    expect(res.statusCode).toBe(400)
+    res = mockRes()
+    await vfRouter(mk('POST', '/keys', { scopes: ['market'], env: 'test', rateLimit: 600 }, jwtRate), res)
+    expect(res.statusCode).toBe(200)
+    res = mockRes()
+    await vfRouter(mk('POST', '/keys', { scopes: ['market', 'submit'], env: 'test', rateLimit: 61 }, jwtRate), res)
+    expect(res.statusCode).toBe(400)
+  })
+  it('403 once the owner key cap is reached', async () => {
+    process.env.VF_MAX_KEYS_PER_OWNER = '2'
+    try {
+      const jwtCap = await signJwt({ sub: 'GCAP' }, 'keys-test-secret-000', 3600)
+      for (let i = 0; i < 2; i += 1) {
+        const res = mockRes()
+        await vfRouter(mk('POST', '/keys', { scopes: ['market'], env: 'test' }, jwtCap), res)
+        expect(res.statusCode).toBe(200)
+      }
+      const res = mockRes()
+      await vfRouter(mk('POST', '/keys', { scopes: ['market'], env: 'test' }, jwtCap), res)
+      expect(res.statusCode).toBe(403)
+      expect(JSON.parse(res.body)).toEqual({ error: 'Key limit reached' })
+    } finally {
+      delete process.env.VF_MAX_KEYS_PER_OWNER
+    }
+  })
+  it('throttles rapid issuance per session with 429 + Retry-After', async () => {
+    const jwtT = await signJwt({ sub: 'GTHROTTLE' }, 'keys-test-secret-000', 3600)
+    let last
+    for (let i = 0; i < 11; i += 1) {
+      const res = mockRes()
+      await vfRouter(mk('POST', '/keys', { scopes: ['market'], env: 'test' }, jwtT), res)
+      last = res
+    }
+    expect(last.statusCode).toBe(429)
+    expect(Number(last.headers['Retry-After'])).toBeGreaterThan(0)
+  })
 })

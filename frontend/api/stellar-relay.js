@@ -20,7 +20,8 @@
 //   { action: 'wallet' }            → { address }           (relayer pubkey — fund it)
 //   { action: 'submit', xdr }       → { hash, status }      (fee-bump + submit + poll)
 
-import { applyCors, rateLimit } from './_guard.js'
+import { applyCors } from './_guard.js'
+import { durableRateLimit, RATE_LIMIT_UPSERT_SQL } from './durableRateLimit.js'
 import { StrKey } from '@stellar/stellar-sdk'
 import {
   agentCapabilityFor,
@@ -224,6 +225,19 @@ export function loadStellarRelayConfig(env = process.env) {
 }
 
 // ─── warm-process replay guard, keyed by inner-tx hash (hex) ───
+// PER-ISOLATE scope: each serverless isolate keeps its own Map (≤ SEEN_MAX entries, 30-min
+// TTL, pruned on overflow). Within one isolate a legit client retry NEVER re-broadcasts:
+// a 'done' entry returns the cached outcome with `duplicate: true`, and an 'in-flight'
+// entry throws RelaySubmissionUnknownError (HTTP 409) instead of submitting again — so a
+// timeout/refresh double-click sponsors the fee at most once per isolate.
+// A retry landing on a DIFFERENT isolate is not short-circuited here. That residual
+// double-sponsor is bounded, not eliminated: every isolate still passes the durable
+// per-IP limit and the global sponsor backstop in the handler below, which converge on
+// one D1 counter (≤ STELLAR_RELAY_GLOBAL_MAX sponsored submits/day across ALL isolates).
+// No D1 idempotency write on the submit path by design: feeBumpAndSubmit stays a pure,
+// side-effect-free function (heavily unit-tested), and a D1 write per submit would add
+// hot-path latency to every sponsored transaction for a bound the daily backstop already
+// enforces. Revisit only if per-day sponsor spend approaches the backstop.
 const _seen = new Map() // innerHash → { state:'in-flight'|'done', out?, at }
 const SEEN_MAX = 5000
 const SEEN_TTL_MS = 30 * 60_000
@@ -768,18 +782,144 @@ function bad(res, msg) {
   return res.end(JSON.stringify({ error: msg }))
 }
 
+// ─── Durable sponsor backstops (D1) ───
+// Every sponsored submit burns ~0.1 XLM of treasury funds (FEE_MARGIN), so this handler
+// is the cost-bearing path. Both gates below converge on ONE D1 counter
+// (vf_cross_rate_limits) shared by all isolates — the per-isolate in-memory Map they
+// replace let an isolate fan-out multiply the effective limit.
+//
+// Fixed-window note: the windows are ALIGNED (floor(now / windowMs) * windowMs), which is
+// what makes isolates converge, but alignment does not remove the classic fixed-window
+// ~2x boundary burst (15 at the end of one minute + 15 at the start of the next). The
+// per-IP tier bounds the sustained rate; the BINDING treasury bound is the global daily
+// backstop (worst case ~2x GLOBAL_MAX submits across a day boundary ≈ 200 XLM).
+export const STELLAR_RELAY_PER_IP_BUCKET = 'stellar-relay'
+export const STELLAR_RELAY_PER_IP_MAX = 15
+export const STELLAR_RELAY_PER_IP_WINDOW_MS = 60_000
+export const STELLAR_RELAY_GLOBAL_BUCKET = 'stellar-relay:global'
+export const STELLAR_RELAY_GLOBAL_KEY = '__global__'
+// Testnet-calibrated: ≤1000 sponsored submits/day ≈ ≤100 XLM/day worst case at
+// 0.1 XLM/submit. Revisit (and fund the relayer account) before any mainnet use.
+export const STELLAR_RELAY_GLOBAL_MAX = 1000
+export const STELLAR_RELAY_GLOBAL_WINDOW_MS = 24 * 60 * 60 * 1000
+
+function sponsorHasPagesEnv(req) {
+  return req?.env !== undefined && req?.env !== null && typeof req.env === 'object'
+}
+
+function sponsorProduction(req) {
+  const env = sponsorHasPagesEnv(req) ? req.env : process.env
+  const nodeEnv = String(env?.NODE_ENV ?? '').toLowerCase()
+  const vercelEnv = String(env?.VERCEL_ENV ?? '').toLowerCase()
+  return nodeEnv === 'production' || nodeEnv === 'staging' || vercelEnv === 'production'
+}
+
+function ensureRelayRetryAfter(res, fallback = 60) {
+  // durableRateLimit's fail-closed 503 carries no Retry-After; every 429/503 on this
+  // cost-bearing path must include one so clients back off instead of hammering.
+  try {
+    if (typeof res.getHeader === 'function' && res.getHeader('Retry-After') != null) return
+  } catch {
+    // Fall through to the plain-object header shape used by unit-test doubles.
+  }
+  const headers = res?.headers
+  if (headers && (headers['Retry-After'] != null || headers['retry-after'] != null)) return
+  res.setHeader('Retry-After', String(Math.max(1, Math.ceil(fallback))))
+}
+
+function sponsorUnavailable(res) {
+  res.statusCode = 503
+  res.setHeader('Content-Type', 'application/json')
+  res.setHeader('Retry-After', '60')
+  res.end(JSON.stringify({ error: 'Sponsor limit unavailable' }))
+  return false
+}
+
+function validSponsorGlobalRow(row, windowStartMs) {
+  if (!row || row.route_bucket !== STELLAR_RELAY_GLOBAL_BUCKET) return false
+  if (row.client_ip !== STELLAR_RELAY_GLOBAL_KEY) return false
+  const windowStart = Number(row.window_start_ms)
+  const count = Number(row.request_count)
+  const updatedAt = Number(row.updated_at_ms)
+  if (!Number.isSafeInteger(windowStart) || windowStart < 0) return false
+  if (!Number.isSafeInteger(count) || count < 1) return false
+  if (!Number.isSafeInteger(updatedAt) || updatedAt < 0) return false
+  if (windowStart % STELLAR_RELAY_GLOBAL_WINDOW_MS !== 0) return false
+  // The requested window, or an existing newer window preserved across clock rollback
+  // (which the atomic upsert already incremented — never a fresh row from the future).
+  if (windowStart !== windowStartMs && !(windowStart > windowStartMs && count >= 2)) return false
+  return true
+}
+
+/**
+ * Global daily sponsor backstop: at most STELLAR_RELAY_GLOBAL_MAX sponsored submits/day
+ * across ALL client IPs and isolates (one D1 row). Denied (budget exhausted) and
+ * fail-closed (no VF_DB in Pages/prod/staging, D1 error, malformed row) responses are
+ * 503 with Retry-After. Plain non-production Vite development without a D1 binding
+ * passes (the durable per-IP gate's memory fallback still bounds local abuse).
+ * A denied request still consumed its increment — conservative toward blocking, and the
+ * next UTC-day window resets the budget.
+ */
+export async function checkSponsorGlobalLimit(req, res, { now = Date.now } = {}) {
+  const db = sponsorHasPagesEnv(req) ? req.env?.VF_DB : process.env.VF_DB
+  if (!db) {
+    if (sponsorHasPagesEnv(req) || sponsorProduction(req)) return sponsorUnavailable(res)
+    return true
+  }
+  const nowMs = Number(now())
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) return sponsorUnavailable(res)
+  const windowStartMs =
+    Math.floor(nowMs / STELLAR_RELAY_GLOBAL_WINDOW_MS) * STELLAR_RELAY_GLOBAL_WINDOW_MS
+  let row
+  try {
+    row = await db
+      .prepare(RATE_LIMIT_UPSERT_SQL)
+      .bind(STELLAR_RELAY_GLOBAL_BUCKET, STELLAR_RELAY_GLOBAL_KEY, windowStartMs, nowMs)
+      .first()
+    if (!validSponsorGlobalRow(row, windowStartMs)) throw new Error('malformed sponsor row')
+  } catch {
+    return sponsorUnavailable(res)
+  }
+  if (Number(row.request_count) > STELLAR_RELAY_GLOBAL_MAX) {
+    const retryAfter = Math.max(
+      1,
+      Math.ceil((Number(row.window_start_ms) + STELLAR_RELAY_GLOBAL_WINDOW_MS - nowMs) / 1000)
+    )
+    res.statusCode = 503
+    res.setHeader('Content-Type', 'application/json')
+    res.setHeader('Retry-After', String(retryAfter))
+    res.end(JSON.stringify({ error: 'Sponsor budget exhausted' }))
+    return false
+  }
+  return true
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.statusCode = 405
     return res.end(JSON.stringify({ error: 'Method not allowed' }))
   }
   if (!applyCors(req, res)) return
-  if (!rateLimit(req, res, { max: 15, windowMs: 60_000, bucket: 'stellar-relay' })) return
+  // ≤15/min/IP, durable across isolates (one D1 counter per IP — an isolate fan-out can
+  // no longer multiply the allowance). See the fixed-window note above for the residual
+  // ~2x boundary burst; the global backstop below is the binding treasury bound.
+  if (
+    !(await durableRateLimit(req, res, {
+      max: STELLAR_RELAY_PER_IP_MAX,
+      windowMs: STELLAR_RELAY_PER_IP_WINDOW_MS,
+      bucket: STELLAR_RELAY_PER_IP_BUCKET,
+    }))
+  ) {
+    ensureRelayRetryAfter(res)
+    return
+  }
+  if (!(await checkSponsorGlobalLimit(req, res))) return
   res.setHeader('Content-Type', 'application/json')
 
   const secret = RELAYER_SECRET()
   if (!secret) {
     res.statusCode = 503
+    res.setHeader('Retry-After', '60')
     return res.end(JSON.stringify({ error: 'Stellar relay not configured', configured: false }))
   }
 

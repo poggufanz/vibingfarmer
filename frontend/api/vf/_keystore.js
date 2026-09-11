@@ -62,7 +62,7 @@ export async function verifyKey(store, plaintext, nowMs = Date.now()) {
   if (!row) return { ok: false, reason: 'unknown' }
   if (!row.enabled) return { ok: false, reason: 'revoked' }
   if (row.expires_at && nowMs / 1000 > row.expires_at) return { ok: false, reason: 'expired' }
-  return { ok: true, keyId: row.id, scopes: JSON.parse(row.scopes), rateLimit: row.rate_limit }
+  return { ok: true, keyId: row.id, owner: row.owner, scopes: JSON.parse(row.scopes), rateLimit: row.rate_limit }
 }
 
 export async function revokeKey(store, id, owner) {

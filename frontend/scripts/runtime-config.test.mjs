@@ -203,16 +203,20 @@ describe('runtime commands and Wrangler bindings', () => {
 })
 
 describe('ordered migrations', () => {
-  it('requires contiguous 0001 through 0010 and applies the real chain', () => {
+  it('requires contiguous 0001 through 0011 and applies the real chain', () => {
     const files = migrationFiles()
     const numbers = files.map((name) => Number(name.slice(0, 4)))
-    expect(numbers).toEqual(Array.from({ length: 10 }, (_, index) => index + 1))
+    expect(numbers).toEqual(Array.from({ length: 11 }, (_, index) => index + 1))
     const db = new DatabaseSync(':memory:')
     apply(db, files)
     const row = db
       .prepare(RATE_LIMIT_UPSERT_SQL)
       .get('vf-cross:GET /config', '198.51.100.7', 0, 10_000)
     expect(row.request_count).toBe(1)
+    // 0011 (sponsor-path faucet accounting) applies in the same chain.
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE name = 'vf_faucet_daily_spend'").get()
+    ).toBeTruthy()
   })
 
   it('keeps pre-0008 data while layering recovery and rate-limit migrations', () => {

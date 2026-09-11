@@ -63,4 +63,18 @@ describe('GET /usage', () => {
     expect(typeof body.cap).toBe('number')
     expect(body.sinceDay <= today).toBe(true)
   })
+
+  it('throttles polling per session with 429 + Retry-After', async () => {
+    const polling = await signJwt({ sub: 'G_POLL' }, 'usage-test-secret-000', 3600)
+    let res
+    for (let i = 0; i < 61; i += 1) {
+      res = makeRes()
+      await usage(
+        { method: 'GET', headers: { authorization: 'Bearer ' + polling }, url: '/api/vf/usage' },
+        res
+      )
+    }
+    expect(res.statusCode).toBe(429)
+    expect(Number(res.headers['Retry-After'])).toBeGreaterThan(0)
+  })
 })

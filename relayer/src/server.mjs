@@ -367,6 +367,67 @@ export function withProxyKeyAuth(handler, key, { compare = timingSafeEqual } = {
   };
 }
 
+// Second-layer ingress throttle for the relayer HTTP surface. The Cloudflare
+// vf-cross proxy already enforces durable per-route tiers upstream; this local
+// per-IP fixed-window limiter bounds what a single direct caller can push into
+// body parsing, auth comparison, and the bounded work queues. 429 + Retry-After
+// on excess. OPTIONS preflights are exempt (no body/auth is processed for them).
+// Env: RELAYER_INGRESS_MAX_PER_MIN (default 60), RELAYER_INGRESS_WINDOW_MS
+// (default 60000, floor 1000). Malformed values fall back to the defaults.
+export function ingressLimitFromEnv(env = process.env) {
+  const max = Number(env?.RELAYER_INGRESS_MAX_PER_MIN ?? 60);
+  const windowMs = Number(env?.RELAYER_INGRESS_WINDOW_MS ?? 60_000);
+  return {
+    max: Number.isSafeInteger(max) && max >= 1 ? max : 60,
+    windowMs: Number.isSafeInteger(windowMs) && windowMs >= 1000 ? windowMs : 60_000,
+  };
+}
+
+export function clientIpOf(req) {
+  const forwarded = typeof req.headers?.['x-forwarded-for'] === 'string'
+    ? req.headers['x-forwarded-for'].split(',')[0].trim()
+    : '';
+  if (forwarded) return forwarded;
+  const remote = req.socket?.remoteAddress;
+  return typeof remote === 'string' && remote ? remote : 'unknown';
+}
+
+export function createIngressLimiter({ max = 60, windowMs = 60_000, now = Date.now } = {}) {
+  const buckets = new Map();
+  const MAX_BUCKETS = 5000;
+  return function ingressLimit(req, res) {
+    if (req.method === 'OPTIONS') return true;
+    const key = clientIpOf(req);
+    const t = now();
+    if (buckets.size > MAX_BUCKETS) {
+      for (const [k, v] of buckets) if (t >= v.resetAt) buckets.delete(k);
+    }
+    const entry = buckets.get(key);
+    if (!entry || t >= entry.resetAt) {
+      buckets.set(key, { count: 1, resetAt: t + windowMs });
+      return true;
+    }
+    if (entry.count >= max) {
+      const retryAfter = Math.max(1, Math.ceil((entry.resetAt - t) / 1000));
+      res.statusCode = 429;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Retry-After', String(retryAfter));
+      res.end(JSON.stringify({ error: 'Too many requests' }));
+      return false;
+    }
+    entry.count += 1;
+    return true;
+  };
+}
+
+export function withIngressLimit(handler, options = {}) {
+  const allow = createIngressLimiter(options);
+  return async function ingressLimited(req, res) {
+    if (!allow(req, res)) return undefined;
+    return handler(req, res);
+  };
+}
+
 function deriveActivePoolTargets(baseCrossChainAvailable, allowedPools, hardenedDeployment, catalog) {
   if (!baseCrossChainAvailable) return new Map();
   const recordedPools = hardenedDeployment?.pools?.enabled;
@@ -1640,10 +1701,13 @@ export function createRelayerServer(
     publicRuntime: runtimeConfig.publicRuntime,
     logger,
   });
-  const handler = withProxyKeyAuth(router, {
-    current: runtimeConfig.proxyKey,
-    previous: runtimeConfig.proxyKeyPrevious,
-  });
+  const handler = withIngressLimit(
+    withProxyKeyAuth(router, {
+      current: runtimeConfig.proxyKey,
+      previous: runtimeConfig.proxyKeyPrevious,
+    }),
+    ingressLimitFromEnv()
+  );
 
   async function listen(port) {
     const reconcileCctpRelays = ({ limit = recoveryLimit } = {}) =>
