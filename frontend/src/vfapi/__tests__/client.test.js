@@ -2,6 +2,12 @@
 // TDD: RED → GREEN. Tests the vfapi thin client over real eligibilityGate.evaluate.
 import { describe, it, expect, vi } from 'vitest'
 import { eligibility, buildUnsignedTx } from '../client.js'
+import { CAPTURED_AT } from '../../strategy/vaultFactsSnapshot.js'
+
+// nowMs derived from the snapshot capture date so the snapshot stays inside both
+// MAX_FACT_AGE_MS and the clock-skew guard regardless of when CAPTURED_AT is bumped
+// (same convention as vaultFacts.test.js; a fixed literal rots every recapture).
+const NOW = CAPTURED_AT + 3 * 86_400_000
 
 // Known-rejected fixture: annualizedDistributed / protocolRevenue = 3.0 >= PONZI_RATIO_MAX (1.5)
 // → yieldReality.verdict = 'ponzi' → eligible = false → allow = false.
@@ -38,11 +44,10 @@ describe('vfapi thin client', () => {
   })
 
   it('resolves snapshot facts from the protocol slug when facts are omitted', async () => {
-    // Fixed nowMs (3 days after the snapshot CAPTURED_AT) keeps freshness deterministic.
     const out = await eligibility({
       vault: 'blend-usdc',
       amount: 100n,
-      nowMs: Date.parse('2026-07-01T00:00:00Z'),
+      nowMs: NOW,
     })
     expect(out.allow).toBe(true)
     expect(out.verdict.protocol).toBe('blend-usdc')

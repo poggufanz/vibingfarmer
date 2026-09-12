@@ -7,6 +7,7 @@ import {
   MAX_FACT_AGE_MS,
   factPresent,
   allRequiredFactsPresent,
+  maxAgeFor,
 } from '../eligibilityGate.js'
 
 import { yieldReality, securityScore, evaluate } from '../eligibilityGate.js'
@@ -37,6 +38,12 @@ describe('weights + presence', () => {
     expect(
       factPresent({ value: 5, source: 'snapshot', asOf: NOW - MAX_FACT_AGE_MS - 1 }, NOW)
     ).toBe(false)
+  })
+  it('a future-stamped field beyond clock skew is absent (bogus, never fresh)', () => {
+    expect(factPresent({ value: 5, source: 'snapshot', asOf: NOW + 61_000 }, NOW)).toBe(false)
+  })
+  it('a field within clock skew still counts as present', () => {
+    expect(factPresent({ value: 5, source: 'snapshot', asOf: NOW + 1_000 }, NOW)).toBe(true)
   })
   it('allRequiredFactsPresent: each required fact absent ALONE fails', () => {
     for (const k of REQUIRED_FACTS) {
@@ -195,19 +202,30 @@ describe('evaluate boundary + fail-closed extras', () => {
     expect(v.eligible).toBe(false)
     expect(v.reasons.join(' ')).toMatch(/governance key could not be verified/i)
   })
-  it('each required fact stale ALONE => fail-closed reject with the staleness reason', () => {
+  it('each required fact stale past its OWN window => fail-closed reject with staleness reason', () => {
     for (const k of REQUIRED_FACTS) {
       const facts = mk({
-        [k]: { value: mk()[k].value, source: 'snapshot', asOf: NOW2 - MAX_FACT_AGE_MS - 1 },
+        [k]: { value: mk()[k].value, source: 'snapshot', asOf: NOW2 - maxAgeFor(k) - 1 },
       })
       const v = evaluate({ protocol: 'b', facts }, NOW2)
       expect(v.eligible).toBe(false)
       expect(v.reasons.join(' ')).toMatch(/Required data is missing or outdated/)
     }
   })
+  it('a curated fact past the measured window but inside its own window stays present', () => {
+    const asOf = NOW2 - MAX_FACT_AGE_MS - 1
+    expect(factPresent({ value: 'audited', source: 'snapshot', asOf }, NOW2, 'audit')).toBe(true)
+    expect(factPresent({ value: 1, source: 'snapshot', asOf }, NOW2, 'tvl')).toBe(false)
+  })
+  it('unknown field names fail closed to the measured window', () => {
+    expect(maxAgeFor('something-new')).toBe(MAX_FACT_AGE_MS)
+  })
   it('audit value "none" yields the distinct audit-gate reason', () => {
     const v = evaluate(
-      { protocol: 'b', facts: mk({ audit: { value: 'none', source: 'snapshot', asOf: NOW2 } }) },
+      {
+        protocol: 'b',
+        facts: mk({ audit: { value: 'none', source: 'snapshot', asOf: NOW2 } }),
+      },
       NOW2
     )
     expect(v.eligible).toBe(false)

@@ -23,3 +23,14 @@ describe('provenance integrity', () => {
     expect(r.facts.tvl).toEqual({ value: 100, source: 'snapshot', asOf: 1 })
   })
 })
+
+describe('snapshot carried-forward markers', () => {
+  it('base-leg entries disclose carried-forward provenance in meta', async () => {
+    const { SNAPSHOT } = await import('../vaultFactsSnapshot.js')
+    for (const slug of ['aave-v3-base', 'morpho-blue-base', 'moonwell-base']) {
+      expect(SNAPSHOT[slug].meta.provenance).toBe('carried-forward')
+    }
+    // Live-measured venues carry no such marker.
+    expect(SNAPSHOT['blend-usdc'].meta.provenance).toBeUndefined()
+  })
+})

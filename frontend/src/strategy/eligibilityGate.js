@@ -11,6 +11,16 @@ export const TVL_WEIGHT = 0.4
 export const ADMIN_WEIGHT = 0.3
 export const ADMIN_LEVELS = { timelock_multisig: 1.0, multisig: 0.7, timelock: 0.5, eoa: 0.0 }
 export const MAX_FACT_AGE_MS = 30 * 86_400_000
+// Curated/slow-moving facts go stale far slower than measured ones — tvl genuinely goes
+// stale in a month, an audit status does not (durable fix for the CAPTURED_AT timebomb:
+// re-stamping one constant every 30d). Horizon matches AGE_CAP_DAYS (180d).
+// Fail-safe directions: a stale ageDays UNDERSTATES age (lower ageSig, lower score);
+// audit/adminKey/oracleType/poolClass change rarely and have no live API to refresh them.
+export const CURATED_FACT_AGE_MS = 180 * 86_400_000
+const CURATED_FACTS = new Set(['audit', 'adminKey', 'oracleType', 'poolClass', 'ageDays'])
+// Real client/chain clock skew is seconds, not hours — an asOf further in the future than
+// this is bogus data, not a fresh fact. Mirrors money/freshness.js MAX_CLOCK_SKEW_MS.
+export const MAX_CLOCK_SKEW_MS = 60 * 1000
 export const MAX_TOKEN_AGE_MS = 15 * 60_000
 export const MIN_COLLATERAL_LIQUIDITY_USD = 250_000
 export const MAX_SUPPLIER_CONCENTRATION_PCT = 40
@@ -27,18 +37,28 @@ export const REQUIRED_FACTS = [
   'oracleType',
   'collateralLiquidityDepthUsd',
   'poolClass',
-  'supplierConcentrationPct',
 ]
+export function maxAgeFor(fieldName) {
+  return CURATED_FACTS.has(fieldName) ? CURATED_FACT_AGE_MS : MAX_FACT_AGE_MS
+}
 
-/** A fact field is present iff it has a non-null value and is not stale. */
-export function factPresent(field, nowMs) {
+/** A fact field is present iff it has a non-null value and is not stale under its own window. */
+export function factPresent(field, nowMs, fieldName) {
   if (!field || field.value == null) return false
   if (typeof field.asOf !== 'number') return false
-  return nowMs - field.asOf <= MAX_FACT_AGE_MS
+  const age = nowMs - field.asOf
+  if (!Number.isFinite(age) || age < -MAX_CLOCK_SKEW_MS) return false
+  return age <= maxAgeFor(fieldName)
 }
 
 export function allRequiredFactsPresent(facts, nowMs) {
-  return REQUIRED_FACTS.every((k) => factPresent(facts?.[k], nowMs))
+  return REQUIRED_FACTS.every((k) => factPresent(facts?.[k], nowMs, k))
+}
+
+/** Absolute expiry of a fact field (null when unknowable) — lets callers warn BEFORE closure. */
+export function factExpiresAt(field, fieldName) {
+  if (!field || typeof field.asOf !== 'number') return null
+  return field.asOf + maxAgeFor(fieldName)
 }
 
 function pos(field) {

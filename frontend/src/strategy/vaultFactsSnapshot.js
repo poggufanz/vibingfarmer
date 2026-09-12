@@ -37,10 +37,13 @@
 //   STILL OWED, and no script can do it (refreshVaultFacts.mjs prints these as manual work):
 //   oracleType from the Blend pool page, collateralLiquidityDepthUsd from DEX depth, poolClass
 //   from the Blend UI, supplierConcentrationPct from the pool's top-supplier share.
-//
-// This buys exactly MAX_FACT_AGE_MS (30 days) of validity from CAPTURED_AT before the gate closes
-// again. Nothing warns beforehand. The durable fix is a per-fact-type window -- tvl genuinely goes
-// stale in a month, an audit status does not -- rather than re-stamping this constant every cycle.
+// This bought MAX_FACT_AGE_MS (30 days) of validity per recapture. DURABLE FIX LANDED:
+// eligibilityGate.js now enforces per-fact-type windows (measured 30d, curated 180d via
+// CURATED_FACT_AGE_MS) instead of one window for all facts, so a recapture only needs to
+// re-affirm the MEASURED fields; qualitative facts ride the long window. factExpiresAt()
+// exposes each field's absolute expiry so callers can warn BEFORE closure. Base-leg entries
+// carry meta.provenance 'carried-forward' (estimates, never live-measured).
+
 export const CAPTURED_AT = Date.parse('2026-09-01T00:00:00Z')
 
 const f = (value) => ({ value, source: 'snapshot', asOf: CAPTURED_AT })
@@ -104,7 +107,7 @@ export const SNAPSHOT = {
       poolClass: f('curated'), // copied from 'aave-v3'
       supplierConcentrationPct: f(18),
     },
-    meta: { label: 'Aave v3 (Base)' },
+    meta: { label: 'Aave v3 (Base)', provenance: 'carried-forward' },
   },
   'morpho-blue-base': {
     facts: {
@@ -119,7 +122,7 @@ export const SNAPSHOT = {
       poolClass: f('curated'), // copied from 'morpho-blue'
       supplierConcentrationPct: f(22),
     },
-    meta: { label: 'Morpho Blue (Base)' },
+    meta: { label: 'Morpho Blue (Base)', provenance: 'carried-forward' },
   },
   'moonwell-base': {
     facts: {
@@ -134,7 +137,7 @@ export const SNAPSHOT = {
       poolClass: f('curated'),
       supplierConcentrationPct: f(30),
     },
-    meta: { label: 'Moonwell (Base)' },
+    meta: { label: 'Moonwell (Base)', provenance: 'carried-forward' },
   },
   // Controlled demo fixture — illustrates rejection. NOT a real vault.
   hyperfarm: {

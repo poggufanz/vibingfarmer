@@ -1,5 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
+  loadPersistedPositions,
+  persistPositions,
+  loadDeployedAgents,
+  saveDeployedAgents,
   mergePositions,
   applyChainPositions,
   reconcilePositionsFromChain,
@@ -269,5 +273,53 @@ describe('applyChainPositions (authoritative)', () => {
   it('does NOT prune a vault absent from the chain map (read failed, not a withdrawal)', () => {
     const next = applyChainPositions({ '0xA': { balance: '1000000' } }, {})
     expect(next['0xA'].balance).toBe('1000000')
+  })
+})
+
+describe('positions persistence (versioned envelopes)', () => {
+  let store
+  let prevLocalStorage
+  beforeEach(() => {
+    store = new Map()
+    prevLocalStorage = globalThis.localStorage
+    globalThis.localStorage = {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => void store.set(k, String(v)),
+      removeItem: (k) => void store.delete(k),
+    }
+  })
+  afterEach(() => {
+    globalThis.localStorage = prevLocalStorage
+  })
+
+  it('round-trips positions and agents with a schema version stamp', () => {
+    persistPositions('GOWNER', { CVAULT: { balance: '5' } })
+    expect(loadPersistedPositions('gowner')).toEqual({ CVAULT: { balance: '5' } })
+    saveDeployedAgents('GOWNER', ['CAGENT'])
+    expect(loadDeployedAgents('gowner')).toEqual(['CAGENT'])
+    const raw = JSON.parse(store.get('yv_positions_gowner'))
+    expect(raw.__schemaVersion).toBe(1)
+    expect(raw.savedAt).toEqual(expect.any(Number))
+  })
+
+  it('a foreign-version envelope is a miss, never trusted data', () => {
+    store.set('yv_positions_gowner', JSON.stringify({ __schemaVersion: 999, data: { C: {} } }))
+    store.set('yv_agents_gowner', JSON.stringify({ __schemaVersion: 999, data: ['CX'] }))
+    expect(loadPersistedPositions('GOWNER')).toEqual({})
+    expect(loadDeployedAgents('GOWNER')).toEqual([])
+  })
+
+  it('a corrupt entry degrades to empty rather than throwing', () => {
+    store.set('yv_positions_gowner', '{not json')
+    store.set('yv_agents_gowner', '{not json')
+    expect(loadPersistedPositions('GOWNER')).toEqual({})
+    expect(loadDeployedAgents('GOWNER')).toEqual([])
+  })
+
+  it('pre-versioning bare shapes are accepted once (no snapshot loss on upgrade)', () => {
+    store.set('yv_positions_gowner', JSON.stringify({ CVAULT: { balance: '5' } }))
+    store.set('yv_agents_gowner', JSON.stringify(['CAGENT']))
+    expect(loadPersistedPositions('GOWNER')).toEqual({ CVAULT: { balance: '5' } })
+    expect(loadDeployedAgents('GOWNER')).toEqual(['CAGENT'])
   })
 })

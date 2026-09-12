@@ -14,7 +14,11 @@ export function createRefPrices(env, { fetchImpl = fetch, now = () => Date.now()
   return async function refPrices() {
     if (env.LIFEBOAT_REF_PRICE) return [Number(env.LIFEBOAT_REF_PRICE)];
     if (!env.LIFEBOAT_REF_URLS) return null;
-    if (cache && now() - cache.at < CACHE_MS) return cache.prices;
+    if (cache && Number.isFinite(cache.at)) {
+      const age = now() - cache.at
+      // Future-stamped cache (clock skew) is a miss, never current.
+      if (age >= 0 && age < CACHE_MS) return cache.prices
+    }
 
     const entries = env.LIFEBOAT_REF_URLS.split(',').filter(Boolean).map((raw) => {
       const hash = raw.indexOf('#');

@@ -24,11 +24,25 @@ const VAULT_NAME = 'VFUSD Yield Vault'
 const keyFor = (addr) => `yv_positions_${String(addr).toLowerCase()}`
 const agentsKeyFor = (addr) => `yv_agents_${String(addr).toLowerCase()}`
 
+const POSITIONS_CACHE_SCHEMA_VERSION = 1
+
+/** Unwrap a versioned envelope; unknown/missing versions are a miss, never trusted data. */
+function unwrapVersioned(raw, fallback) {
+  if (!raw || typeof raw !== 'object') return fallback
+  if (raw.__schemaVersion !== POSITIONS_CACHE_SCHEMA_VERSION) return fallback
+  return raw.data ?? fallback
+}
+
 /** Restore last-known positions for an address from localStorage (sync, instant). */
 export function loadPersistedPositions(address) {
   if (!address) return {}
   try {
-    return JSON.parse(localStorage.getItem(keyFor(address)) || '{}') || {}
+    const parsed = JSON.parse(localStorage.getItem(keyFor(address)) || '{}') || {}
+    // Back-compat: pre-versioning entries were the bare positions map. A bare map has
+    // vault-address keys, never __schemaVersion; accept it once so existing installs do
+    // not lose their snapshot, but never partially trust an unknown version.
+    if (parsed.__schemaVersion === undefined && typeof parsed === 'object') return parsed
+    return unwrapVersioned(parsed, {})
   } catch {
     return {}
   }
@@ -38,7 +52,14 @@ export function loadPersistedPositions(address) {
 export function persistPositions(address, positions) {
   if (!address) return
   try {
-    localStorage.setItem(keyFor(address), JSON.stringify(positions || {}))
+    localStorage.setItem(
+      keyFor(address),
+      JSON.stringify({
+        __schemaVersion: POSITIONS_CACHE_SCHEMA_VERSION,
+        savedAt: Date.now(),
+        data: positions || {},
+      })
+    )
   } catch {
     // localStorage unavailable/full — non-fatal, positions still live in memory.
   }
@@ -48,7 +69,11 @@ export function persistPositions(address, positions) {
 export function loadDeployedAgents(address) {
   if (!address) return []
   try {
-    return JSON.parse(localStorage.getItem(agentsKeyFor(address)) || '[]') || []
+    const parsed = JSON.parse(localStorage.getItem(agentsKeyFor(address)) || '[]')
+    // Back-compat: pre-versioning entries were the bare address array.
+    if (Array.isArray(parsed)) return parsed
+    const data = unwrapVersioned(parsed, null)
+    return Array.isArray(data) ? data : []
   } catch {
     return []
   }
@@ -58,7 +83,14 @@ export function loadDeployedAgents(address) {
 export function saveDeployedAgents(address, agents) {
   if (!address) return
   try {
-    localStorage.setItem(agentsKeyFor(address), JSON.stringify(agents || []))
+    localStorage.setItem(
+      agentsKeyFor(address),
+      JSON.stringify({
+        __schemaVersion: POSITIONS_CACHE_SCHEMA_VERSION,
+        savedAt: Date.now(),
+        data: agents || [],
+      })
+    )
   } catch {
     // non-fatal
   }
