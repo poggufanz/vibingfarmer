@@ -12,7 +12,7 @@
 // caller-supplied list (Pocket Crew My Money Task 6): no address is ever guessed, so an omitted
 // or empty list reads nothing rather than silently substituting a demo/seeded agent.
 
-import { SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/config.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS, SOROBAN_DECIMALS } from '../stellar/config.js'
 import { readVaultShares } from '../stellar/agentDeposit.js'
 import { readPricePerShare } from '../stellar/vaultReads.js'
 
@@ -96,6 +96,239 @@ export function saveDeployedAgents(address, agents) {
   }
 }
 
+// --- Honest-PnL deposit ledger (P0 G1) -------------------------------------------
+// Cost basis for the "Earned" card: one entry per confirmed Stellar vault deposit:
+// `{ agent, shares, assetsIn, ppsAtDeposit, txHash }`. Every field is either proved by
+// a deposit flow that already ran or null — never estimated:
+// - `assetsIn` (canonical 7-dp units): the reviewed allocation a success confirms moved.
+//   The sanctioned producer is `projectDepositHints` below (receipt amount, rescaled
+//   without truncation); `reconcilePositionsFromChain`'s `deposits` hints must already
+//   carry this form.
+// - `shares` + `ppsAtDeposit`: the same on-chain reads reconcile already performs
+//   (per-agent shares + live `price_per_share`), stamped at record time.
+// - `txHash`: the deposit transaction hash, for the stellar.expert link.
+// Entries are append-only per deposit (a repeat funding appends, deduped by agent+txHash,
+// so Σ assetsIn stays the true cumulative principal) and are PRUNED only when the chain
+// proves their agent holds zero shares (fully exited — no unrealized PnL left to attribute).
+// `readOwnerMoney.js` reports `earned: unavailable` unless a non-empty ledger AND live PPS
+// (all vault legs known) both exist.
+
+const depositLedgerKeyFor = (addr) => `yv_deposit_ledger_${String(addr).toLowerCase()}`
+const UINT_RE = /^[0-9]+$/
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.length > 0
+}
+
+/** A ledger entry is valid when it names a real agent and a positive 7-dp principal. */
+function isValidLedgerEntry(entry) {
+  if (!entry || typeof entry !== 'object') return false
+  if (!isNonEmptyString(entry.agent)) return false
+  if (typeof entry.assetsIn !== 'string' || !UINT_RE.test(entry.assetsIn)) return false
+  try {
+    if (BigInt(entry.assetsIn) <= 0n) return false
+  } catch {
+    return false
+  }
+  if (entry.shares != null && (typeof entry.shares !== 'string' || !UINT_RE.test(entry.shares)))
+    return false
+  if (
+    entry.ppsAtDeposit != null &&
+    (typeof entry.ppsAtDeposit !== 'string' || !UINT_RE.test(entry.ppsAtDeposit))
+  )
+    return false
+  if (entry.txHash != null && !isNonEmptyString(entry.txHash)) return false
+  return true
+}
+
+function normalizeLedgerEntry(entry) {
+  return {
+    agent: entry.agent,
+    shares: entry.shares ?? null,
+    assetsIn: entry.assetsIn,
+    ppsAtDeposit: entry.ppsAtDeposit ?? null,
+    txHash: entry.txHash ?? null,
+  }
+}
+
+function sanitizeLedger(data) {
+  if (!Array.isArray(data)) return []
+  return data.filter(isValidLedgerEntry).map(normalizeLedgerEntry)
+}
+
+/** Restore the deposit ledger for an address (sync). Miss/corrupt/version → `[]`, never null. */
+export function loadDepositLedger(address) {
+  if (!address) return []
+  try {
+    const parsed = JSON.parse(localStorage.getItem(depositLedgerKeyFor(address)) || '[]')
+    // Back-compat: pre-versioning entries were the bare array; accept once.
+    if (Array.isArray(parsed)) return sanitizeLedger(parsed)
+    const data = unwrapVersioned(parsed, null)
+    return Array.isArray(data) ? sanitizeLedger(data) : []
+  } catch {
+    return []
+  }
+}
+
+function saveDepositLedger(address, ledger) {
+  if (!address) return
+  try {
+    localStorage.setItem(
+      depositLedgerKeyFor(address),
+      JSON.stringify({
+        __schemaVersion: POSITIONS_CACHE_SCHEMA_VERSION,
+        savedAt: Date.now(),
+        data: ledger || [],
+      })
+    )
+  } catch {
+    // localStorage unavailable/full — non-fatal, the returned ledger still serves this call.
+  }
+}
+
+/**
+ * Pure append: returns the next ledger array (a repeat funding appends; nothing is edited
+ * in place). A hint whose agent+txHash already exists only backfills null shares/pps fields
+ * (the "recorded before the deposit mined" case) and never duplicates principal. A hint
+ * without txHash dedupes on the exact agent+assetsIn pair. Invalid hints are ignored.
+ */
+function appendLedgerEntry(ledger, entry) {
+  if (!isValidLedgerEntry(entry)) return ledger
+  const next = [...ledger]
+  const agentLower = entry.agent.toLowerCase()
+  const incumbent =
+    entry.txHash != null
+      ? next.find((e) => e.agent.toLowerCase() === agentLower && e.txHash === entry.txHash)
+      : next.find((e) => e.agent.toLowerCase() === agentLower && e.assetsIn === entry.assetsIn)
+  if (incumbent) {
+    if (incumbent.shares == null && entry.shares != null) incumbent.shares = entry.shares
+    if (incumbent.ppsAtDeposit == null && entry.ppsAtDeposit != null)
+      incumbent.ppsAtDeposit = entry.ppsAtDeposit
+    return next
+  }
+  next.push(normalizeLedgerEntry(entry))
+  return next
+}
+
+/**
+ * Pure prune: drops entries whose agent the chain just proved holds zero shares (fully
+ * exited — realized, no longer unrealized). Agents with a failed read (absent from
+ * `readByAgent`) or with a hint in THIS call (just funded, possibly not yet mined) are
+ * always kept: only proven-zero exits prune, never a guess.
+ */
+function pruneExitedAgents(ledger, readByAgent, hintedAgents) {
+  return ledger.filter((entry) => {
+    const lower = entry.agent.toLowerCase()
+    if (hintedAgents.has(lower)) return true
+    if (!readByAgent.has(lower)) return true
+    return readByAgent.get(lower) > 0n
+  })
+}
+
+/**
+ * Reconcile-time ledger maintenance (module-private): stamps `deposits` hints with the
+ * per-agent shares + live PPS the caller already read, then prunes fully-exited agents.
+ * No hints and an empty ledger → no-op (no localStorage churn on every poll). A hint for
+ * an agent whose read failed is skipped (shares must be observed, never invented).
+ */
+function maintainDepositLedger(address, { agents, results, pps, deposits }) {
+  const hints = Array.isArray(deposits) ? deposits : []
+  let ledger = loadDepositLedger(address)
+  if (ledger.length === 0 && hints.length === 0) return ledger
+  const readByAgent = new Map()
+  ;(agents || []).forEach((agent, i) => {
+    const r = results?.[i]
+    if (r?.status === 'fulfilled' && r.value != null) {
+      try {
+        readByAgent.set(String(agent).toLowerCase(), BigInt(r.value))
+      } catch {
+        // Non-integer share read — not a balance we can stamp or prune on; skip the agent.
+      }
+    }
+  })
+  const hintedAgents = new Set()
+  for (const hint of hints) {
+    if (!hint || typeof hint.agent !== 'string' || hint.agent.length === 0) continue
+    const lower = hint.agent.toLowerCase()
+    hintedAgents.add(lower)
+    if (!readByAgent.has(lower)) continue
+    ledger = appendLedgerEntry(ledger, {
+      agent: hint.agent,
+      shares: readByAgent.get(lower).toString(),
+      assetsIn: hint.assetsIn,
+      ppsAtDeposit: pps != null ? String(pps) : null,
+      txHash: hint.txHash ?? null,
+    })
+  }
+  ledger = pruneExitedAgents(ledger, readByAgent, hintedAgents)
+  saveDepositLedger(address, ledger)
+  return ledger
+}
+
+/**
+ * Record one deposit-ledger entry for an address. Persists (localStorage) and returns the
+ * updated ledger. Invalid entries are ignored (the stored ledger is returned unchanged).
+ */
+export function recordDepositLedger(address, entry) {
+  if (!address) return []
+  const ledger = loadDepositLedger(address)
+  const next = appendLedgerEntry(ledger, entry)
+  if (next !== ledger) saveDepositLedger(address, next)
+  return next
+}
+
+/**
+ * Rescale a receipt `{ token, units, decimals }` amount to canonical 7-dp units without
+ * truncation. Returns the units string, or null when the amount is missing, non-integer,
+ * non-positive, or FINER than canonical (rescaling down would silently destroy money —
+ * rejected, never truncated).
+ */
+function canonicalizeTo7dp(amount) {
+  if (!amount || typeof amount.units !== 'string' || !UINT_RE.test(amount.units)) return null
+  if (!Number.isInteger(amount.decimals) || amount.decimals < 0) return null
+  const delta = SOROBAN_DECIMALS - amount.decimals
+  if (delta < 0) return null
+  try {
+    const units = BigInt(amount.units) * 10n ** BigInt(delta)
+    return units > 0n ? units.toString() : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Pure projection: dispatch receipt → deposit-ledger hints (`[{ agent, assetsIn, txHash }]`).
+ * Only succeeded Stellar-vault allocations produce hints (Base legs never carry
+ * `stellar-vault` custody, so they can never match); the agent address is joined from the
+ * orchestrator results by allocationId. Anything unprovable (failed leg, missing agent,
+ * unrescalable amount) yields no hint — the ledger stays honest by omission.
+ * @param {{ allocations?: Array, results?: Array }} input
+ * @returns {Array<{ agent: string, assetsIn: string, txHash: string|null }>}
+ */
+export function projectDepositHints({ allocations, results } = {}) {
+  const agentByAllocation = new Map()
+  for (const result of results || []) {
+    if (!result || typeof result.allocationId !== 'string') continue
+    if (agentByAllocation.has(result.allocationId)) continue
+    if (isNonEmptyString(result.agentAddress))
+      agentByAllocation.set(result.allocationId, result.agentAddress)
+  }
+  const hints = []
+  for (const allocation of allocations || []) {
+    if (!allocation || allocation.executionStatus !== 'succeeded') continue
+    if (allocation.custody?.location !== 'stellar-vault') continue
+    if (typeof allocation.allocationId !== 'string') continue
+    const agent = agentByAllocation.get(allocation.allocationId)
+    if (!isNonEmptyString(agent)) continue
+    const assetsIn = canonicalizeTo7dp(allocation.amount)
+    if (assetsIn == null) continue
+    const txHash = isNonEmptyString(allocation.txHash) ? allocation.txHash : null
+    hints.push({ agent, assetsIn, txHash })
+  }
+  return hints
+}
+
+
 /**
  * Reconcile positions against the Stellar vault. Sums the vault-share balance across
  * every agent the user funded (shares are i128 base units, 7-dp). Returns a positions
@@ -118,10 +351,14 @@ export function saveDeployedAgents(address, agents) {
  * (Object.keys/entries/spread/JSON.stringify all skip a non-enumerable property).
  *
  * @param {string} address - connected user wallet (kept for caller/localStorage compat)
- * @param {{ agents?: string[], server?: object }} [opts]
+ * @param {{ agents?: string[], server?: object, deposits?: Array<{ agent: string, assetsIn: string, txHash?: string|null }> }} [opts]
+ *   `deposits` (optional) carries the cost-basis hints for deposits that just confirmed
+ *   (see `projectDepositHints`): each hint's `assetsIn` is stamped into the deposit ledger
+ *   together with the per-agent shares + live PPS this call already read. The positions map
+ *   itself is untouched by hints — they only feed the ledger side channel.
  * @returns {Promise<Object|null>}
  */
-export async function reconcilePositionsFromChain(address, { agents, server } = {}) {
+export async function reconcilePositionsFromChain(address, { agents, server, deposits } = {}) {
   if (!address) return null
   if (!Array.isArray(agents) || agents.length === 0) return null
 
@@ -144,8 +381,9 @@ export async function reconcilePositionsFromChain(address, { agents, server } = 
   // seed path already uses. pps read failure → null (keep the cached snapshot; a 1:1 guess
   // would silently misreport value).
   let assets = 0n
+  let pps = null
   if (total > 0n) {
-    const pps = await readPricePerShare(SOROBAN_ACTIVE_VAULT_ADDRESS, { server })
+    pps = await readPricePerShare(SOROBAN_ACTIVE_VAULT_ADDRESS, { server })
     if (pps == null) return null
     assets = (total * pps) / PPS_SCALE
   }
@@ -167,6 +405,11 @@ export async function reconcilePositionsFromChain(address, { agents, server } = 
     })),
     enumerable: false,
   })
+  // P0 G1 ledger side channel: stamp just-confirmed deposit hints with the shares + PPS
+  // read above, and prune agents the chain proves fully exited. The positions map returned
+  // below is byte-identical with or without hints — this only touches the ledger key.
+  maintainDepositLedger(address, { agents, results, pps, deposits })
+
   return positions
 }
 

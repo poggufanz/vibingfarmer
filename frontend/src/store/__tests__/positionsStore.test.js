@@ -4,6 +4,9 @@ import {
   persistPositions,
   loadDeployedAgents,
   saveDeployedAgents,
+  loadDepositLedger,
+  recordDepositLedger,
+  projectDepositHints,
   mergePositions,
   applyChainPositions,
   reconcilePositionsFromChain,
@@ -321,5 +324,240 @@ describe('positions persistence (versioned envelopes)', () => {
     store.set('yv_agents_gowner', JSON.stringify(['CAGENT']))
     expect(loadPersistedPositions('GOWNER')).toEqual({ CVAULT: { balance: '5' } })
     expect(loadDeployedAgents('GOWNER')).toEqual(['CAGENT'])
+  })
+})
+
+// P0 G1 honest-PnL deposit ledger: cost basis is only ever written from proved deposit data
+// (reviewed allocation + observed shares/PPS + real tx hash), never estimated. Same Map-backed
+// localStorage stub pattern as the versioned-envelopes suite above.
+describe('deposit ledger (honest-PnL cost basis)', () => {
+  let store
+  let prevLocalStorage
+  beforeEach(() => {
+    store = new Map()
+    prevLocalStorage = globalThis.localStorage
+    globalThis.localStorage = {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => void store.set(k, String(v)),
+      removeItem: (k) => void store.delete(k),
+    }
+  })
+  afterEach(() => {
+    globalThis.localStorage = prevLocalStorage
+  })
+
+  it('starts empty and round-trips entries with a schema version stamp', () => {
+    expect(loadDepositLedger('GOWNER')).toEqual([])
+    const ledger = recordDepositLedger('GOWNER', {
+      agent: 'CAGENT1',
+      shares: '1000000000',
+      assetsIn: '1000000000',
+      ppsAtDeposit: '10000000',
+      txHash: 'HASH1',
+    })
+    expect(ledger).toEqual([
+      {
+        agent: 'CAGENT1',
+        shares: '1000000000',
+        assetsIn: '1000000000',
+        ppsAtDeposit: '10000000',
+        txHash: 'HASH1',
+      },
+    ])
+    expect(loadDepositLedger('gowner')).toEqual(ledger)
+    const raw = JSON.parse(store.get('yv_deposit_ledger_gowner'))
+    expect(raw.__schemaVersion).toBe(1)
+  })
+
+  it('rejects invalid entries without persisting anything', () => {
+    expect(recordDepositLedger('GOWNER', null)).toEqual([])
+    expect(recordDepositLedger('GOWNER', { agent: '', assetsIn: '100' })).toEqual([])
+    expect(recordDepositLedger('GOWNER', { agent: 'CA', assetsIn: '0' })).toEqual([])
+    expect(recordDepositLedger('GOWNER', { agent: 'CA', assetsIn: '-5' })).toEqual([])
+    expect(recordDepositLedger('GOWNER', { agent: 'CA', assetsIn: '1.5' })).toEqual([])
+    expect(recordDepositLedger('GOWNER', { agent: 'CA' })).toEqual([])
+    expect(loadDepositLedger('GOWNER')).toEqual([])
+    expect(store.has('yv_deposit_ledger_gowner')).toBe(false)
+  })
+
+  it('a corrupt ledger degrades to [] rather than throwing', () => {
+    store.set('yv_deposit_ledger_gowner', '{not json')
+    expect(loadDepositLedger('GOWNER')).toEqual([])
+  })
+
+  it('dedupes a repeat hint by agent+txHash, backfilling null shares/pps instead', () => {
+    recordDepositLedger('GOWNER', { agent: 'CAGENT1', assetsIn: '1000000000', txHash: 'HASH1' })
+    const ledger = recordDepositLedger('GOWNER', {
+      agent: 'cagent1',
+      shares: '1000000000',
+      assetsIn: '1000000000',
+      ppsAtDeposit: '10000000',
+      txHash: 'HASH1',
+    })
+    expect(ledger).toHaveLength(1)
+    expect(ledger[0]).toEqual({
+      agent: 'CAGENT1',
+      shares: '1000000000',
+      assetsIn: '1000000000',
+      ppsAtDeposit: '10000000',
+      txHash: 'HASH1',
+    })
+  })
+
+  it('appends a repeat funding of the same agent as a new entry (new txHash)', () => {
+    recordDepositLedger('GOWNER', { agent: 'CAGENT1', assetsIn: '1000000000', txHash: 'HASH1' })
+    const ledger = recordDepositLedger('GOWNER', {
+      agent: 'CAGENT1',
+      assetsIn: '500000000',
+      txHash: 'HASH2',
+    })
+    expect(ledger).toHaveLength(2)
+    expect(ledger.map((e) => e.assetsIn)).toEqual(['1000000000', '500000000'])
+  })
+})
+
+describe('projectDepositHints (receipt → ledger hints)', () => {
+  const stellarSucceeded = (over = {}) => ({
+    allocationId: 'run-1:deposit:0',
+    amount: { token: 'USDC', units: '1000000000', decimals: 7 },
+    executionStatus: 'succeeded',
+    custody: { location: 'stellar-vault' },
+    txHash: 'DEPHASH',
+    ...over,
+  })
+  const results = [{ allocationId: 'run-1:deposit:0', agentAddress: 'CAGENT1' }]
+
+  it('projects one hint per succeeded stellar-vault allocation joined by allocationId', () => {
+    expect(projectDepositHints({ allocations: [stellarSucceeded()], results })).toEqual([
+      { agent: 'CAGENT1', assetsIn: '1000000000', txHash: 'DEPHASH' },
+    ])
+  })
+
+  it('rescales a 6-dp receipt amount to canonical 7-dp without truncation', () => {
+    const out = projectDepositHints({
+      allocations: [
+        stellarSucceeded({ amount: { token: 'USDC', units: '1000000', decimals: 6 } }),
+      ],
+      results,
+    })
+    expect(out).toEqual([{ agent: 'CAGENT1', assetsIn: '10000000', txHash: 'DEPHASH' }])
+  })
+
+  it('yields no hint for anything unprovable — failed legs, base custody, missing agents, finer-than-canonical amounts', () => {
+    expect(
+      projectDepositHints({
+        allocations: [
+          stellarSucceeded({ allocationId: 'x', executionStatus: 'failed' }),
+          stellarSucceeded({ allocationId: 'y', custody: { location: 'base-proxy' } }),
+          stellarSucceeded({ allocationId: 'z' }), // no result row → no agent
+          stellarSucceeded({
+            allocationId: 'w',
+            amount: { token: 'USDC', units: '10000000', decimals: 8 },
+          }),
+          stellarSucceeded({ allocationId: 'v', amount: { token: 'USDC', units: '0', decimals: 7 } }),
+        ],
+        results,
+      })
+    ).toEqual([])
+  })
+
+  it('keeps the hint (with a null txHash) when the allocation carries no tx hash', () => {
+    expect(
+      projectDepositHints({ allocations: [stellarSucceeded({ txHash: null })], results })
+    ).toEqual([{ agent: 'CAGENT1', assetsIn: '1000000000', txHash: null }])
+  })
+})
+
+describe('reconcilePositionsFromChain (deposit-ledger side channel)', () => {
+  let store
+  let prevLocalStorage
+  beforeEach(() => {
+    store = new Map()
+    prevLocalStorage = globalThis.localStorage
+    globalThis.localStorage = {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => void store.set(k, String(v)),
+      removeItem: (k) => void store.delete(k),
+    }
+  })
+  afterEach(() => {
+    globalThis.localStorage = prevLocalStorage
+  })
+
+  it('stamps deposit hints with the live per-agent shares + PPS, leaving the positions map shape untouched', async () => {
+    readVaultShares.mockImplementation(async (agent) => (agent === 'CAGENT1' ? 100_0000000n : 0n))
+    readPricePerShare.mockResolvedValue(10_500_000n) // pps = 1.05
+    const out = await reconcilePositionsFromChain('GOWNER', {
+      agents: ['CAGENT1'],
+      deposits: [{ agent: 'CAGENT1', assetsIn: '1000000000', txHash: 'HASH1' }],
+    })
+    // Positions map itself is byte-identical with or without hints.
+    expect(out[SOROBAN_ACTIVE_VAULT_ADDRESS]).toEqual({
+      vaultName: 'VFUSD Yield Vault',
+      balance: '1050000000',
+      shares: '1000000000',
+      unclaimedRewards: '0',
+    })
+    expect(loadDepositLedger('GOWNER')).toEqual([
+      {
+        agent: 'CAGENT1',
+        shares: '1000000000',
+        assetsIn: '1000000000',
+        ppsAtDeposit: '10500000',
+        txHash: 'HASH1',
+      },
+    ])
+  })
+
+  it('skips hints for agents whose read failed — shares are observed, never invented', async () => {
+    readVaultShares.mockImplementation(async (agent) => {
+      if (agent === 'CFAIL') throw new Error('rpc down')
+      return 100_0000000n
+    })
+    readPricePerShare.mockResolvedValue(10_000_000n)
+    await reconcilePositionsFromChain('GOWNER', {
+      agents: ['CGOOD', 'CFAIL'],
+      deposits: [
+        { agent: 'CGOOD', assetsIn: '1000000000', txHash: 'HASH-GOOD' },
+        { agent: 'CFAIL', assetsIn: '1000000000', txHash: 'HASH-FAIL' },
+      ],
+    })
+    expect(loadDepositLedger('GOWNER')).toEqual([
+      {
+        agent: 'CGOOD',
+        shares: '1000000000',
+        assetsIn: '1000000000',
+        ppsAtDeposit: '10000000',
+        txHash: 'HASH-GOOD',
+      },
+    ])
+  })
+
+  it('prunes fully-exited (proven zero-share) agents without hints, but keeps failed reads and hinted agents', async () => {
+    recordDepositLedger('GOWNER', { agent: 'CEXITED', assetsIn: '1000000000', txHash: 'H1' })
+    recordDepositLedger('GOWNER', { agent: 'CUNREADABLE', assetsIn: '1000000000', txHash: 'H2' })
+    recordDepositLedger('GOWNER', { agent: 'CREFUNDED', assetsIn: '500000000', txHash: 'H3' })
+    readVaultShares.mockImplementation(async (agent) => {
+      if (agent === 'CUNREADABLE') throw new Error('rpc down')
+      if (agent === 'CEXITED') return 0n
+      return 50_0000000n
+    })
+    readPricePerShare.mockResolvedValue(10_000_000n)
+    await reconcilePositionsFromChain('GOWNER', {
+      agents: ['CEXITED', 'CUNREADABLE', 'CREFUNDED', 'CHELPER'],
+      deposits: [{ agent: 'CREFUNDED', assetsIn: '500000000', txHash: 'H3' }],
+    })
+    // CEXITED pruned (proven zero, no hint); CUNREADABLE kept (read failed — never prune on a
+    // guess); CREFUNDED kept + backfilled (hinted this call, possibly not yet mined).
+    const ledger = loadDepositLedger('GOWNER')
+    expect(ledger.map((e) => e.agent).sort()).toEqual(['CREFUNDED', 'CUNREADABLE'])
+    expect(ledger.find((e) => e.agent === 'CREFUNDED').shares).toBe('500000000')
+  })
+
+  it('leaves storage alone when there are no hints and no ledger (no poll-time churn)', async () => {
+    readVaultShares.mockResolvedValue(100_0000000n)
+    readPricePerShare.mockResolvedValue(10_000_000n)
+    await reconcilePositionsFromChain('GOWNER', { agents: ['CAGENT1'] })
+    expect(store.has('yv_deposit_ledger_gowner')).toBe(false)
   })
 })

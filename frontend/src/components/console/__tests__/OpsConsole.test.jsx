@@ -107,3 +107,20 @@ describe('OpsConsole', () => {
     expect(screen.getByTestId('withdraw-capability').textContent).toBe('freighter')
   })
 })
+
+describe('OpsConsole live-APR threading (P0 #2)', () => {
+  it('threads liveApr into both the keeper and positions zones', () => {
+    render(
+      <OpsConsole
+        {...props}
+        liveApr={{ state: 'live', aprPct: 4.16, asOf: NOW }}
+        ppsHistory={[]}
+      />
+    )
+    expect(screen.getByText('Live supply APY 4.16%')).toBeTruthy()
+    expect(screen.getByText('Blend pool live APY 4.16%')).toBeTruthy()
+    expect(
+      screen.getByText('Trailing APY — 7d: unavailable, 30d: unavailable')
+    ).toBeTruthy()
+  })
+})

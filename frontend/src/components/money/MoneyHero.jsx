@@ -134,12 +134,13 @@ function heroFigureState(model, freshness) {
   return { kind: 'unavailable' }
 }
 
-// Earned/APY may only ever be shown with valid, positive evidence (brief: "earned/APY appears
-// only with valid evidence") -- aggregateOwnerPositions (readOwnerMoney.js:519-525) hardcodes
-// `earned: { state: 'unavailable', amount: null }` today (no principal/share-price history is
-// tracked yet), so this branch is dead in production until that changes; it is still implemented
-// faithfully against the documented MoneySnapshot shape (myMoneyModel.js:14-39) rather than
-// dropped, and is exercised here via injected model fixtures.
+// Earned appears only with valid evidence (brief: "earned/APY appears only with valid
+// evidence") -- aggregateOwnerPositions reports `earned: known` solely from the deposit
+// ledger's cost basis versus the live vault value (readOwnerMoney.js's computeEarned:
+// non-empty ledger + complete discovery + every vault leg known + positive live value),
+// otherwise the exact `{ state: 'unavailable', amount: null }` shape below stays silent.
+// A known loss carries `loss: true` with the UNSIGNED magnitude (the amount pipeline is
+// unsigned-only) — the row below prefixes the minus sign itself.
 function hasValidEarned(model) {
   if (model.earned?.state !== 'known' || model.earned.amount == null) return false
   try {
@@ -148,6 +149,43 @@ function hasValidEarned(model) {
   } catch {
     return false
   }
+}
+
+// Same stellar.expert tx-URL convention RecoveryPanel.jsx already uses for submissions.
+const STELLAR_EXPERT_TX = 'https://stellar.expert/explorer/testnet/tx/'
+
+// Same first6…last4 truncation PositionList.jsx already renders for addresses.
+function shortTxHash(hash) {
+  return typeof hash === 'string' && hash.length > 12
+    ? `${hash.slice(0, 6)}…${hash.slice(-4)}`
+    : hash
+}
+
+// One explorer link per deposit that proved the earned figure's cost basis. Deposits without
+// a txHash carry no link (never a guessed URL) — the Earned row above still stands on its own.
+function EarnedDepositLinks({ deposits }) {
+  const linked = (deposits ?? []).filter(
+    (d) => d != null && typeof d.txHash === 'string' && d.txHash.length > 0
+  )
+  if (linked.length === 0) return null
+  return (
+    <p>
+      Basis:{' '}
+      {linked.map((d, i) => (
+        <span key={`${d.txHash}:${i}`}>
+          {i > 0 ? ' ' : null}
+          <a
+            href={`${STELLAR_EXPERT_TX}${d.txHash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={d.txHash}
+          >
+            {shortTxHash(d.txHash)}
+          </a>
+        </span>
+      ))}
+    </p>
+  )
 }
 
 function liveYieldView(model) {
@@ -212,7 +250,13 @@ export function MoneyHero({
               Earning {yieldView.apy}% APY{isStale(model) ? ' (stale)' : ''}
             </p>
           )}
-          {hasValidEarned(model) && <p>Earned {formatCoreAmount(model.earned.amount)}</p>}
+          {hasValidEarned(model) && (
+            <p>
+              Earned {model.earned.loss ? '-' : ''}
+              {formatCoreAmount(model.earned.amount)} <span>(unrealized, sebelum fee/slippage)</span>
+            </p>
+          )}
+          {hasValidEarned(model) && <EarnedDepositLinks deposits={model.earned.deposits} />}
 
           {model.state === 'problem' && (
             <StatusNotice state="danger" title="Action needed">

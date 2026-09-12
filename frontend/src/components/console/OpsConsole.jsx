@@ -36,6 +36,8 @@ export default function OpsConsole({
   positions = {},
   vaultMeta = {},
   lastUpdated = null,
+  liveApr = null,
+  ppsHistory = [],
   userAddress = null,
   activeAccount = null,
   withdrawEnabled = true,
@@ -109,6 +111,7 @@ export default function OpsConsole({
         positions={positions}
         vaultMeta={vaultMeta}
         lastUpdated={lastUpdated}
+        liveApr={liveApr}
         nowMs={now}
         userAddress={userAddress}
         activeAccount={activeAccount}
@@ -121,6 +124,8 @@ export default function OpsConsole({
         events={keeper.events || []}
         pricePerShare={keeper.pricePerShare}
         strategies={keeper.strategies || []}
+        liveApr={keeper.liveApr ?? liveApr}
+        ppsHistory={keeper.ppsHistory ?? ppsHistory}
         nowMs={now}
       />
       <MonitorZone

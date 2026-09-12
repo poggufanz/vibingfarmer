@@ -91,6 +91,7 @@ import {
 import { fetchKeeperEvents } from './stellar/keeperEvents.js'
 import { rehydrateScopes } from './stellar/scopeRehydrate.js'
 import { readPricePerShare, readLifeboatState, readTotalShares } from './stellar/vaultReads.js'
+import { recordPpsSample } from './history/ppsHistory.js'
 import { grantMandate } from './stellar/lifeboat.js'
 import { signWithTimeout } from './stellar/agentSetup.js'
 import {
@@ -117,6 +118,8 @@ import {
   persistPositions,
   loadDeployedAgents,
   saveDeployedAgents,
+  loadDepositLedger,
+  projectDepositHints,
   reconcilePositionsFromChain,
   pickRecoverableVaultAgents,
   mergePositions,
@@ -1068,10 +1071,20 @@ export async function fetchMyMoneySnapshot({
   now = Date.now(),
   discoverScopes = discoverOwnerScopes,
   readMoney = readOwnerMoney,
+  loadLedger = loadDepositLedger,
   signal,
 }) {
   const discovery = await discoverScopes(signal ? { owner, signal } : { owner })
-  const reads = await readMoney({ owner, discovery, now, ...(signal ? { signal } : {}) })
+  // P0 G1 honest-PnL cost basis: the local deposit ledger for this owner. A miss/empty
+  // ledger fails closed to earned:unavailable inside readOwnerMoney — never a guess.
+  const depositLedger = loadLedger(owner)
+  const reads = await readMoney({
+    owner,
+    discovery,
+    now,
+    depositLedger,
+    ...(signal ? { signal } : {}),
+  })
   return { discovery, money: buildMoneySnapshot(reads) }
 }
 
@@ -1450,6 +1463,11 @@ const App = () => {
   // Agent addresses saved from the last orchestrator run (dev-branch discovery path) —
   // fallback source when scopes haven't rehydrated and localStorage cache is empty.
   const deployedAgentsRef = useR([])
+  // P0 G1 honest-PnL: cost-basis hints projected from the last dispatch receipt, consumed
+  // once by handleExecDone's reconcile (which stamps them with live shares+PPS into the
+  // deposit ledger). A ref, not state: never rendered, only threaded into the post-deposit
+  // chain read. Appending across runs is safe — the ledger dedupes by agent+txHash.
+  const pendingDepositHintsRef = useR([])
 
   // Real Web3 state
   // Dev-only read-as override: /agent?as=G... opens the console with that address's chain
@@ -1854,6 +1872,10 @@ const App = () => {
         const pps = await readPricePerShare(SOROBAN_AUTOFARM_VAULT_ADDRESS)
         if (alive && isCurrent()) {
           setAutofarmReads({ pricePerShare: pps == null ? null : toDisplay(pps).toFixed(4) })
+          // P0 #2: feed the local PPS series for the KeeperZone trailing-APY sparkline.
+          // recordPpsSample never throws and throttles to one sample per 15 min, so this
+          // adds no RPC and no unbounded growth to the 15s tick.
+          recordPpsSample(SOROBAN_AUTOFARM_VAULT_ADDRESS, pps)
         }
       } catch (e) {
         // transient RPC failure — the next 15s tick retries; panel keeps its last-known reads
@@ -3106,7 +3128,9 @@ const App = () => {
     const { owner, discovery, signal } = assertMoneyActionContext(actionContext)
     return () => {
       assertMoneyActionContext(actionContext)
-      return readOwnerMoney({ owner, discovery, now: Date.now(), signal })
+      // P0 G1: same cost-basis threading as fetchMyMoneySnapshot above.
+      const depositLedger = loadDepositLedger(owner)
+      return readOwnerMoney({ owner, discovery, now: Date.now(), depositLedger, signal })
     }
   }
 
@@ -4069,6 +4093,20 @@ const App = () => {
         })
       }
       setRunReceipt(receipt)
+      // P0 G1 honest-PnL: project cost-basis hints for succeeded Stellar deposits so
+      // handleExecDone's reconcile can stamp them with live shares+PPS into the deposit
+      // ledger. Best-effort and append-only (deduped by agent+txHash downstream) — a
+      // projection failure only costs the Earned row (unavailable), never this run.
+      try {
+        const hints = projectDepositHints({
+          allocations: receipt.allocations,
+          results: summary.results || [],
+        })
+        if (hints.length > 0)
+          pendingDepositHintsRef.current = [...pendingDepositHintsRef.current, ...hints]
+      } catch {
+        // ignore — missing cost basis fails closed to earned:unavailable downstream.
+      }
       if (summary.baseLeg) {
         const outcome = applyBaseLegOutcome(summary.baseLeg, { stellarOwner: realAddress })
         if (outcome) addLog(outcome)
@@ -4381,13 +4419,20 @@ const App = () => {
 
   // Chain balances can lag 1-2 blocks after a deposit. Retry until at least one
   // vault reports a non-zero balance, then trust the on-chain numbers.
-  async function reconcileWithRetry(address, maxAttempts = 3, delayMs = 3000, agents) {
+  async function reconcileWithRetry(address, maxAttempts = 3, delayMs = 3000, agents, deposits) {
     const agentList = agents?.length ? agents : undefined
+    // P0 G1: cost-basis hints for the deposit ledger (stamped with live shares+PPS inside
+    // reconcilePositionsFromChain). Passed on EVERY attempt — reconcile dedupes by
+    // agent+txHash, so retries can never double-count principal.
+    const depositHints = Array.isArray(deposits) && deposits.length > 0 ? deposits : undefined
     for (let i = 0; i < maxAttempts; i++) {
       let result = null
       try {
         result = agentList
-          ? await reconcilePositionsFromChain(address, { agents: agentList })
+          ? await reconcilePositionsFromChain(
+              address,
+              depositHints ? { agents: agentList, deposits: depositHints } : { agents: agentList }
+            )
           : await reconcilePositions(address)
       } catch {
         result = null
@@ -4437,8 +4482,20 @@ const App = () => {
     // If chain is available, use authoritative balances (can move up or down).
     // If chain unavailable (RPC down / tx not yet mined), ADD seed into existing
     // positions — these are confirmed new deposits, so we sum, not take max.
-    const chain = await reconcileWithRetry(realAddress, 3, 3000, deployedAgentsRef.current)
+    // P0 G1: hand the dispatch receipt's cost-basis hints to the chain read so the deposit
+    // ledger is stamped with live shares+PPS. Consumed only once the chain proves current
+    // (a failed reconcile keeps the hints for the next run's read — missing basis fails
+    // closed to earned:unavailable, never a guess).
+    const depositHints = pendingDepositHintsRef.current
+    const chain = await reconcileWithRetry(
+      realAddress,
+      3,
+      3000,
+      deployedAgentsRef.current,
+      depositHints
+    )
     assertCurrent()
+    if (chain && depositHints.length > 0) pendingDepositHintsRef.current = []
     if (chain) {
       const finalPositions = mergePositions(seedPositions, chain)
       if (Object.keys(finalPositions).length > 0) {

@@ -483,6 +483,48 @@
   border-bottom: 1px solid var(--pc-line);
 }
 
+/* P0 G3 pool-safety panel: definition-list rows mirroring .pc-candidate-row's own rhythm
+ * (14px row padding, hairline separators). Single minmax column by construction — every
+ * value is short and all prose wraps, so the 320px layout guard holds without exceptions. */
+.pc-pool-safety-list {
+  margin: 0 0 var(--pc-space-3);
+  padding: 0;
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-pool-safety-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--pc-space-1);
+  padding-block: 14px;
+  border-bottom: 1px solid var(--pc-line);
+}
+
+.pc-pool-safety-row dt {
+  margin: 0;
+  font-weight: 650;
+}
+
+.pc-pool-safety-row dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pc-pool-safety-source,
+.pc-pool-safety-note {
+  font-size: var(--pc-type-body-small);
+  color: var(--pc-muted);
+}
+
+.pc-dominant--decision .pc-pool-safety-source,
+.pc-dominant--decision .pc-pool-safety-note {
+  color: var(--pc-owned-muted);
+}
+
+.pc-pool-safety-wrap .pc-button {
+  margin-bottom: var(--pc-space-6);
+}
+
 .pc-candidate-dot {
   display: block;
   width: 10px;

@@ -85,3 +85,34 @@ describe('PositionsZone', () => {
     expect(screen.queryByText(/\/day/)).toBeNull()
   })
 })
+
+describe('PositionsZone live Blend APY banner (P0 #2)', () => {
+  it('shows the live pool APY with freshness above the snapshot rows', () => {
+    render(
+      <PositionsZone
+        {...props}
+        liveApr={{ state: 'live', aprPct: 5.25, asOf: props.lastUpdated }}
+      />
+    )
+    expect(screen.getByText('Blend pool live APY 5.25%')).toBeTruthy()
+    expect(screen.getByText(/updated 0s ago/)).toBeTruthy()
+    expect(screen.getByText(/8.2% APY/)).toBeTruthy() // per-row snapshot untouched
+  })
+
+  it('fails soft to unavailable when the reserve read fails — never a fake number', () => {
+    render(
+      <PositionsZone
+        {...props}
+        liveApr={{ state: 'unavailable', aprPct: null, asOf: null }}
+      />
+    )
+    expect(screen.getByText('Live APY unavailable')).toBeTruthy()
+    expect(screen.queryByText(/Blend pool live APY/)).toBeNull()
+  })
+
+  it('renders no banner when no live read has been attempted yet', () => {
+    render(<PositionsZone {...props} />)
+    expect(screen.queryByText(/Blend pool live APY/)).toBeNull()
+    expect(screen.queryByText('Live APY unavailable')).toBeNull()
+  })
+})

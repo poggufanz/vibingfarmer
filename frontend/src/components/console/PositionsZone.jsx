@@ -1,3 +1,5 @@
+// Live Blend supply-APR envelope: { state: 'live'|'unavailable', aprPct, asOf } — see
+// KeeperZone.jsx. Rendered as a zone-level banner; per-row snapshot APY below is untouched.
 import { useEffect, useState } from 'react'
 import ZoneFrame from './ZoneFrame.jsx'
 import WithdrawModal from '../WithdrawModal.jsx'
@@ -9,6 +11,7 @@ export default function PositionsZone({
   positions = {},
   vaultMeta = {},
   lastUpdated = null,
+  liveApr = null,
   nowMs,
   userAddress,
   activeAccount,
@@ -48,6 +51,17 @@ export default function PositionsZone({
       className="console-positions"
       meta={lastUpdated ? agoText(lastUpdated, nowMs) : null}
     >
+      {liveApr != null &&
+        (liveApr.state === 'live' && Number.isFinite(liveApr.aprPct) ? (
+          <div className="pos-live-apr mono" role="status">
+            <span className="txt">Blend pool live APY {liveApr.aprPct.toFixed(2)}%</span>{' '}
+            <span className="meta">updated {agoText(liveApr.asOf, nowMs)}</span>
+          </div>
+        ) : (
+          <div className="pos-live-apr mono" role="status">
+            <span className="txt">Live APY unavailable</span>
+          </div>
+        ))}
       {list.length === 0 ? (
         <div className="zone-empty">
           No active positions.
