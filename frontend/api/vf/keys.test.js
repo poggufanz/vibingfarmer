@@ -84,13 +84,22 @@ describe('/api/vf/keys', () => {
   it('caps self-chosen rateLimit per scope sensitivity (submit 600 -> 400, market 600 ok)', async () => {
     const jwtRate = await signJwt({ sub: 'GRATE' }, 'keys-test-secret-000', 3600)
     let res = mockRes()
-    await vfRouter(mk('POST', '/keys', { scopes: ['submit'], env: 'test', rateLimit: 600 }, jwtRate), res)
+    await vfRouter(
+      mk('POST', '/keys', { scopes: ['submit'], env: 'test', rateLimit: 600 }, jwtRate),
+      res
+    )
     expect(res.statusCode).toBe(400)
     res = mockRes()
-    await vfRouter(mk('POST', '/keys', { scopes: ['market'], env: 'test', rateLimit: 600 }, jwtRate), res)
+    await vfRouter(
+      mk('POST', '/keys', { scopes: ['market'], env: 'test', rateLimit: 600 }, jwtRate),
+      res
+    )
     expect(res.statusCode).toBe(200)
     res = mockRes()
-    await vfRouter(mk('POST', '/keys', { scopes: ['market', 'submit'], env: 'test', rateLimit: 61 }, jwtRate), res)
+    await vfRouter(
+      mk('POST', '/keys', { scopes: ['market', 'submit'], env: 'test', rateLimit: 61 }, jwtRate),
+      res
+    )
     expect(res.statusCode).toBe(400)
   })
   it('403 once the owner key cap is reached', async () => {

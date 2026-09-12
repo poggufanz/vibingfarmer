@@ -119,32 +119,59 @@ describe('requireJwt', () => {
   })
 })
 
-
 describe('daily-budget fairness', () => {
   it('503 carries Retry-After and the per-owner cap shelters other owners', async () => {
     process.env.VF_GLOBAL_DAILY_CAP = '5000'
     process.env.VF_OWNER_DAILY_CAP = '2'
     const a = (
-      await issueKey(store, { owner: 'GAAA', scopes: ['market'], rateLimit: 100, env: 'test', expiresAt: null })
+      await issueKey(store, {
+        owner: 'GAAA',
+        scopes: ['market'],
+        rateLimit: 100,
+        env: 'test',
+        expiresAt: null,
+      })
     ).key
     const b = (
-      await issueKey(store, { owner: 'GBBB', scopes: ['market'], rateLimit: 100, env: 'test', expiresAt: null })
+      await issueKey(store, {
+        owner: 'GBBB',
+        scopes: ['market'],
+        rateLimit: 100,
+        env: 'test',
+        expiresAt: null,
+      })
     ).key
-    expect(await requireVfKey(reqWith('Bearer ' + a), mockRes(), store, { scope: 'market', nowMs: now })).not.toBeNull()
-    expect(await requireVfKey(reqWith('Bearer ' + a), mockRes(), store, { scope: 'market', nowMs: now })).not.toBeNull()
+    expect(
+      await requireVfKey(reqWith('Bearer ' + a), mockRes(), store, { scope: 'market', nowMs: now })
+    ).not.toBeNull()
+    expect(
+      await requireVfKey(reqWith('Bearer ' + a), mockRes(), store, { scope: 'market', nowMs: now })
+    ).not.toBeNull()
     const res = mockRes()
-    expect(await requireVfKey(reqWith('Bearer ' + a), res, store, { scope: 'market', nowMs: now })).toBeNull()
+    expect(
+      await requireVfKey(reqWith('Bearer ' + a), res, store, { scope: 'market', nowMs: now })
+    ).toBeNull()
     expect(res.statusCode).toBe(503)
     expect(Number(res.headers['Retry-After'])).toBeGreaterThan(0)
-    expect(await requireVfKey(reqWith('Bearer ' + b), mockRes(), store, { scope: 'market', nowMs: now })).not.toBeNull()
+    expect(
+      await requireVfKey(reqWith('Bearer ' + b), mockRes(), store, { scope: 'market', nowMs: now })
+    ).not.toBeNull()
   })
   it('owner over cap returns 503 without consuming the shared global budget', async () => {
     process.env.VF_GLOBAL_DAILY_CAP = '5000'
     process.env.VF_OWNER_DAILY_CAP = '1'
     const a = (
-      await issueKey(store, { owner: 'GAAA', scopes: ['market'], rateLimit: 100, env: 'test', expiresAt: null })
+      await issueKey(store, {
+        owner: 'GAAA',
+        scopes: ['market'],
+        rateLimit: 100,
+        env: 'test',
+        expiresAt: null,
+      })
     ).key
-    expect(await requireVfKey(reqWith('Bearer ' + a), mockRes(), store, { scope: 'market', nowMs: now })).not.toBeNull()
+    expect(
+      await requireVfKey(reqWith('Bearer ' + a), mockRes(), store, { scope: 'market', nowMs: now })
+    ).not.toBeNull()
     let globalBumps = 0
     const origBump = store.counters.bump.bind(store.counters)
     store.counters.bump = async (k, w) => {
@@ -152,7 +179,9 @@ describe('daily-budget fairness', () => {
       return origBump(k, w)
     }
     const res = mockRes()
-    expect(await requireVfKey(reqWith('Bearer ' + a), res, store, { scope: 'market', nowMs: now })).toBeNull()
+    expect(
+      await requireVfKey(reqWith('Bearer ' + a), res, store, { scope: 'market', nowMs: now })
+    ).toBeNull()
     expect(res.statusCode).toBe(503)
     expect(Number(res.headers['Retry-After'])).toBeGreaterThan(0)
     expect(globalBumps).toBe(0)

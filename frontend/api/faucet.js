@@ -110,10 +110,7 @@ function spendRowValid(row, expectedRecipient, windowStartMs) {
 
 async function compensateSpend(db, recipient, windowStartMs, amountNum, nowMs) {
   try {
-    await db
-      .prepare(FAUCET_COMPENSATE_SQL)
-      .bind(amountNum, nowMs, recipient, windowStartMs)
-      .run()
+    await db.prepare(FAUCET_COMPENSATE_SQL).bind(amountNum, nowMs, recipient, windowStartMs).run()
   } catch {
     // Best-effort rollback: a leftover over-count fails safe toward blocking, never
     // toward overspend, and never leaks D1 details to the caller.
@@ -130,14 +127,17 @@ export async function reserveSpendDurable(to, amount, { db, now = Date.now() } =
   const nowMs = Number(now)
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error('faucet spend clock invalid')
   const amountNum = Number(amount)
-  if (!Number.isSafeInteger(amountNum) || amountNum <= 0) throw new Error('faucet spend amount invalid')
+  if (!Number.isSafeInteger(amountNum) || amountNum <= 0)
+    throw new Error('faucet spend amount invalid')
   const windowStartMs = Math.floor(nowMs / DAY_MS) * DAY_MS
   const recipient = String(to)
-  if (!recipient || recipient === FAUCET_GLOBAL_SPEND_KEY) throw new Error('faucet spend recipient invalid')
+  if (!recipient || recipient === FAUCET_GLOBAL_SPEND_KEY)
+    throw new Error('faucet spend recipient invalid')
   const reserve = async (key) =>
     db.prepare(FAUCET_SPEND_UPSERT_SQL).bind(key, windowStartMs, amountNum, nowMs).first()
   const recRow = await reserve(recipient)
-  if (!spendRowValid(recRow, recipient, windowStartMs)) throw new Error('faucet spend row malformed')
+  if (!spendRowValid(recRow, recipient, windowStartMs))
+    throw new Error('faucet spend row malformed')
   if (BigInt(recRow.total_base_units) > PER_RECIPIENT_DAILY_CAP) {
     await compensateSpend(db, recipient, Number(recRow.window_start_ms), amountNum, nowMs)
     return { ok: false, scope: 'recipient', retryAfterSecs: faucetDayRetryAfter(nowMs) }
@@ -149,7 +149,13 @@ export async function reserveSpendDurable(to, amount, { db, now = Date.now() } =
   }
   if (BigInt(gloRow.total_base_units) > GLOBAL_DAILY_CAP) {
     await compensateSpend(db, recipient, Number(recRow.window_start_ms), amountNum, nowMs)
-    await compensateSpend(db, FAUCET_GLOBAL_SPEND_KEY, Number(gloRow.window_start_ms), amountNum, nowMs)
+    await compensateSpend(
+      db,
+      FAUCET_GLOBAL_SPEND_KEY,
+      Number(gloRow.window_start_ms),
+      amountNum,
+      nowMs
+    )
     return { ok: false, scope: 'global', retryAfterSecs: faucetDayRetryAfter(nowMs) }
   }
   return { ok: true }

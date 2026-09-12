@@ -2151,7 +2151,9 @@ describe('sponsor backstop (durable per-IP tier + global daily cap)', () => {
     }
     // Both isolates converged on ONE global row with count 2.
     const row = db.sqlite
-      .prepare('SELECT request_count FROM vf_cross_rate_limits WHERE route_bucket = ? AND client_ip = ?')
+      .prepare(
+        'SELECT request_count FROM vf_cross_rate_limits WHERE route_bucket = ? AND client_ip = ?'
+      )
       .get(STELLAR_RELAY_GLOBAL_BUCKET, STELLAR_RELAY_GLOBAL_KEY)
     expect(row.request_count).toBe(2)
   })
@@ -2165,7 +2167,13 @@ describe('sponsor backstop (durable per-IP tier + global daily cap)', () => {
       .prepare(
         'INSERT INTO vf_cross_rate_limits (route_bucket, client_ip, window_start_ms, request_count, updated_at_ms) VALUES (?,?,?,?,?)'
       )
-      .run(STELLAR_RELAY_GLOBAL_BUCKET, STELLAR_RELAY_GLOBAL_KEY, windowStart, STELLAR_RELAY_GLOBAL_MAX, now)
+      .run(
+        STELLAR_RELAY_GLOBAL_BUCKET,
+        STELLAR_RELAY_GLOBAL_KEY,
+        windowStart,
+        STELLAR_RELAY_GLOBAL_MAX,
+        now
+      )
     const res = sponsorRes()
     expect(await checkSponsorGlobalLimit(sponsorReq(db), res, { now: () => now })).toBe(false)
     expect(res.statusCode).toBe(503)
@@ -2178,7 +2186,11 @@ describe('sponsor backstop (durable per-IP tier + global daily cap)', () => {
       // Pages request without the VF_DB binding.
       { method: 'POST', headers: { 'cf-connecting-ip': '198.51.100.33' }, env: {} },
       // Plain production runtime without any binding.
-      { method: 'POST', headers: { 'x-real-ip': '198.51.100.34' }, env: { NODE_ENV: 'production' } },
+      {
+        method: 'POST',
+        headers: { 'x-real-ip': '198.51.100.34' },
+        env: { NODE_ENV: 'production' },
+      },
     ]) {
       const res = sponsorRes()
       expect(await checkSponsorGlobalLimit(req, res, { now: () => 1_700_000_000_000 })).toBe(false)

@@ -173,7 +173,9 @@ describe('dispenseToken (cap + transfer)', () => {
         build: () => ({ sign: vi.fn() }),
       }
     }),
-    Contract: vi.fn(function () { return { call: vi.fn(() => ({})) } }),
+    Contract: vi.fn(function () {
+      return { call: vi.fn(() => ({})) }
+    }),
     Address: { fromString: () => ({ toScVal: () => ({}) }) },
     xdr: {
       ScVal: { scvI128: () => ({}) },
@@ -375,7 +377,11 @@ describe('faucet handler durable gating', () => {
     const res = pagesRes()
     // No VF_DB anywhere and no secret: the durable per-IP gate fails closed first.
     await handler(
-      { method: 'POST', headers: { origin: 'http://localhost:5173', 'x-real-ip': '10.9.9.9' }, body: {} },
+      {
+        method: 'POST',
+        headers: { origin: 'http://localhost:5173', 'x-real-ip': '10.9.9.9' },
+        body: {},
+      },
       res
     )
     expect(res.statusCode).toBe(503)
