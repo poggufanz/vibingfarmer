@@ -1638,3 +1638,30 @@ describe('/api/agent-index owner pagination adapter', () => {
     expect(out.body).toEqual({ error: 'Invalid limit' })
   })
 })
+
+describe('/api/agent-index public read durability', () => {
+  const receiptQuery = () =>
+    'action=receipt&network=' +
+    NETWORK +
+    '&owner=' +
+    OWNER +
+    '&execution=execution-route-1&allocation=allocation-route-1'
+
+  it('rate limits public receipt reads in the durable public-read bucket before store access', async () => {
+    let out
+    for (let attempt = 0; attempt < 241; attempt += 1) {
+      const req = mockReq({ url: '/api/agent-index?' + receiptQuery(), ip: '203.0.113.250' })
+      delete req.headers.authorization
+      out = await call(req)
+    }
+    expect(out.res.statusCode).toBe(429)
+    expect(Number(out.res.headers['Retry-After'])).toBeGreaterThan(0)
+    expect(mocked.store.readExecutionReceipt).toHaveBeenCalledTimes(240)
+  })
+
+  it('marks successful public receipt reads cacheable', async () => {
+    const out = await call(mockReq({ url: '/api/agent-index?' + receiptQuery() }))
+    expect(out.res.statusCode).toBe(200)
+    expect(out.res.headers['Cache-Control']).toBe('public, max-age=15')
+  })
+})

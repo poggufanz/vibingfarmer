@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   createHash,
@@ -15,9 +17,23 @@ import {
   STELLAR_RELAY_FACTS,
   _clearSeen,
   assertRelayableTransaction,
+  checkSponsorGlobalLimit,
+  STELLAR_RELAY_PER_IP_BUCKET,
+  STELLAR_RELAY_PER_IP_MAX,
+  STELLAR_RELAY_PER_IP_WINDOW_MS,
+  STELLAR_RELAY_GLOBAL_BUCKET,
+  STELLAR_RELAY_GLOBAL_KEY,
+  STELLAR_RELAY_GLOBAL_MAX,
+  STELLAR_RELAY_GLOBAL_WINDOW_MS,
 } from './stellar-relay.js'
 import * as relayApi from './stellar-relay.js'
 import { submitViaRelay as submitViaRelayClient } from '../src/stellar/relay.js'
+
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
+const CROSS_MIGRATION = readFileSync(
+  new URL('../migrations/0010_vf_cross_rate_limits.sql', import.meta.url),
+  'utf8'
+)
 
 const PASS = 'Test SDF Network ; September 2015'
 const SECRET = 'SABCD' // never parsed — Keypair.fromSecret is faked below
@@ -2049,5 +2065,182 @@ describe('assertRelayableTransaction — real XDR (round-tripped through the act
         getWasmHash: async () => AGENT_HASH,
       })
     ).rejects.toThrow(RelayError)
+  })
+})
+
+// ─── Durable sponsor backstops (one D1 counter across isolates) ───
+
+function sponsorD1({ migrated = true } = {}) {
+  const sqlite = new DatabaseSync(':memory:')
+  if (migrated) sqlite.exec(CROSS_MIGRATION)
+  const d1 = {
+    sqlite,
+    prepare(sql) {
+      return {
+        bind(...params) {
+          return {
+            async first() {
+              return sqlite.prepare(sql).get(...params)
+            },
+            async run() {
+              return sqlite.prepare(sql).run(...params)
+            },
+          }
+        },
+      }
+    },
+  }
+  return d1
+}
+
+function sponsorReq(db, { ip = '198.51.100.31' } = {}) {
+  return {
+    method: 'POST',
+    headers: { origin: 'https://relay.test', 'cf-connecting-ip': ip },
+    body: {},
+    env: { VF_DB: db, NODE_ENV: 'production' },
+  }
+}
+
+function sponsorRes() {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: '',
+    setHeader(k, v) {
+      this.headers[k] = v
+    },
+    end(s) {
+      this.body = s ?? ''
+      return this
+    },
+  }
+}
+
+function retryAfterOf(res) {
+  const raw = res.headers['Retry-After'] ?? res.headers['retry-after']
+  return Number(raw)
+}
+
+describe('sponsor backstop (durable per-IP tier + global daily cap)', () => {
+  const OLD_ENV = { ...process.env }
+  afterEach(() => {
+    process.env = { ...OLD_ENV }
+    vi.restoreAllMocks()
+  })
+
+  it('freezes the per-IP tier: ≤15/min/IP on the stellar-relay bucket', () => {
+    expect(STELLAR_RELAY_PER_IP_BUCKET).toBe('stellar-relay')
+    expect(STELLAR_RELAY_PER_IP_MAX).toBeLessThanOrEqual(15)
+    expect(STELLAR_RELAY_PER_IP_WINDOW_MS).toBe(60_000)
+    // The global backstop is the binding treasury bound: 1000 submits/day ≈ 100 XLM/day.
+    expect(STELLAR_RELAY_GLOBAL_BUCKET).toBe('stellar-relay:global')
+    expect(STELLAR_RELAY_GLOBAL_KEY).toBe('__global__')
+    expect(STELLAR_RELAY_GLOBAL_MAX).toBe(1000)
+    expect(STELLAR_RELAY_GLOBAL_WINDOW_MS).toBe(24 * 60 * 60 * 1000)
+  })
+
+  it('allows sponsors under the global daily cap on a shared D1 counter', async () => {
+    const db = sponsorD1()
+    const now = 1_700_000_000_000
+    for (const ip of ['198.51.100.31', '198.51.100.32']) {
+      const res = sponsorRes()
+      expect(await checkSponsorGlobalLimit(sponsorReq(db, { ip }), res, { now: () => now })).toBe(
+        true
+      )
+    }
+    // Both isolates converged on ONE global row with count 2.
+    const row = db.sqlite
+      .prepare(
+        'SELECT request_count FROM vf_cross_rate_limits WHERE route_bucket = ? AND client_ip = ?'
+      )
+      .get(STELLAR_RELAY_GLOBAL_BUCKET, STELLAR_RELAY_GLOBAL_KEY)
+    expect(row.request_count).toBe(2)
+  })
+
+  it('denies over the global cap with 503 + Retry-After (treasury bound)', async () => {
+    const db = sponsorD1()
+    const now = 1_700_000_000_000
+    const windowStart =
+      Math.floor(now / STELLAR_RELAY_GLOBAL_WINDOW_MS) * STELLAR_RELAY_GLOBAL_WINDOW_MS
+    db.sqlite
+      .prepare(
+        'INSERT INTO vf_cross_rate_limits (route_bucket, client_ip, window_start_ms, request_count, updated_at_ms) VALUES (?,?,?,?,?)'
+      )
+      .run(
+        STELLAR_RELAY_GLOBAL_BUCKET,
+        STELLAR_RELAY_GLOBAL_KEY,
+        windowStart,
+        STELLAR_RELAY_GLOBAL_MAX,
+        now
+      )
+    const res = sponsorRes()
+    expect(await checkSponsorGlobalLimit(sponsorReq(db), res, { now: () => now })).toBe(false)
+    expect(res.statusCode).toBe(503)
+    expect(retryAfterOf(res)).toBeGreaterThanOrEqual(1)
+    expect(JSON.parse(res.body)).toMatchObject({ error: 'Sponsor budget exhausted' })
+  })
+
+  it('fails closed without D1 in production and Pages (503 + Retry-After, no fallback)', async () => {
+    for (const req of [
+      // Pages request without the VF_DB binding.
+      { method: 'POST', headers: { 'cf-connecting-ip': '198.51.100.33' }, env: {} },
+      // Plain production runtime without any binding.
+      {
+        method: 'POST',
+        headers: { 'x-real-ip': '198.51.100.34' },
+        env: { NODE_ENV: 'production' },
+      },
+    ]) {
+      const res = sponsorRes()
+      expect(await checkSponsorGlobalLimit(req, res, { now: () => 1_700_000_000_000 })).toBe(false)
+      expect(res.statusCode).toBe(503)
+      expect(retryAfterOf(res)).toBeGreaterThanOrEqual(1)
+    }
+  })
+
+  it('passes plain non-production development without D1 (per-IP memory fallback still applies)', async () => {
+    delete process.env.VF_DB
+    const res = sponsorRes()
+    expect(
+      await checkSponsorGlobalLimit(
+        { method: 'POST', headers: { 'x-real-ip': '198.51.100.35' } },
+        res,
+        { now: () => 1_700_000_000_000 }
+      )
+    ).toBe(true)
+  })
+
+  it('fails closed when the rate-limit migration has not run', async () => {
+    const db = sponsorD1({ migrated: false })
+    const res = sponsorRes()
+    expect(
+      await checkSponsorGlobalLimit(sponsorReq(db), res, { now: () => 1_700_000_000_000 })
+    ).toBe(false)
+    expect(res.statusCode).toBe(503)
+    expect(retryAfterOf(res)).toBeGreaterThanOrEqual(1)
+  })
+
+  it('fails closed on a malformed D1 row without leaking details', async () => {
+    const db = {
+      prepare: () => ({
+        bind: () => ({
+          first: async () => ({
+            route_bucket: 'wrong-bucket',
+            client_ip: STELLAR_RELAY_GLOBAL_KEY,
+            window_start_ms: 0,
+            request_count: 1,
+            updated_at_ms: 1_700_000_000_000,
+          }),
+        }),
+      }),
+    }
+    const res = sponsorRes()
+    expect(
+      await checkSponsorGlobalLimit(sponsorReq(db), res, { now: () => 1_700_000_000_000 })
+    ).toBe(false)
+    expect(res.statusCode).toBe(503)
+    expect(res.body).not.toContain('wrong-bucket')
+    expect(retryAfterOf(res)).toBeGreaterThanOrEqual(1)
   })
 })

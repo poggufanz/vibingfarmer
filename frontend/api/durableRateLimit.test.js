@@ -332,6 +332,11 @@ describe('durable limiter route policies', () => {
     expect(resolveAgentIndexCrossLimit({ method: 'GET', action: 'base-child-evidence' }).max).toBe(
       240
     )
+    expect(resolveAgentIndexCrossLimit({ method: 'GET', action: 'receipt' }).max).toBe(240)
+    expect(resolveAgentIndexCrossLimit({ method: 'GET', action: 'receipt' }).bucket).toBe(
+      'agent-index:GET receipt'
+    )
+    expect(resolveAgentIndexCrossLimit({ method: 'GET', action: 'read' }).max).toBe(240)
     expect(resolveAgentIndexCrossLimit({ method: 'POST', action: 'not-real' })).toBeNull()
   })
 })

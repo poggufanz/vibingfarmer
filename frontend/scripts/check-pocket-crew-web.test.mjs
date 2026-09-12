@@ -46,20 +46,20 @@ test('reports each retired style declaration after stripping explanatory comment
 
 test('rejects embedded style tags only in production route sources', () => {
   assert.ok(
-    codes('<style>{legacy}</style>', 'src/components/ExplorerPage.jsx').includes('EMBEDDED_STYLE')
+    codes('<style>{legacy}</style>', 'src/screens/ExplorerPage.jsx').includes('EMBEDDED_STYLE')
   )
-  assert.deepEqual(codes('<style>{fixture}</style>', 'src/components/ExplorerPage.test.jsx'), [])
+  assert.deepEqual(codes('<style>{fixture}</style>', 'src/screens/__tests__/ExplorerPage.test.jsx'), [])
   assert.deepEqual(codes('<style>{wallet}</style>', 'src/wallet/ui/WalletShell.jsx'), [])
   assert.deepEqual(codes('<style>{extension}</style>', 'extension/popup.jsx'), [])
 })
 
 test('checks quoted inline layer values while ignoring ordinary strings', () => {
   assert.ok(
-    codes('<div style={{ zIndex: "30" }} />', 'src/components/ExplorerPage.jsx').includes(
+    codes('<div style={{ zIndex: "30" }} />', 'src/screens/ExplorerPage.jsx').includes(
       'LAYER_LITERAL'
     )
   )
-  assert.deepEqual(codes('const copy = "zIndex: 30"', 'src/components/ExplorerPage.jsx'), [])
+  assert.deepEqual(codes('const copy = "zIndex: 30"', 'src/screens/ExplorerPage.jsx'), [])
 })
 
 test('allows named state-bearing progress animation but still rejects ambient infinite animation', () => {

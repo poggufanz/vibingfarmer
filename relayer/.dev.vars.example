@@ -51,3 +51,7 @@ SMOKE_SESSION_PRIVKEY=0xFILL_ME_EPHEMERAL_SESSION_KEY
 # SMOKE_OWNER_PRIVKEY=0x...
 # Generate by running: node --env-file=.dev.vars smoke/mint-mandate.mjs  (paste its output line here)
 SMOKE_SESSION_APPROVAL=FILL_ME_RUN_smoke/mint-mandate.mjs_TO_GENERATE
+
+# ─── Ingress throttle (second-layer per-IP fixed window; optional, defaults apply when unset) ───
+RELAYER_INGRESS_MAX_PER_MIN=60      # max requests per IP per window
+RELAYER_INGRESS_WINDOW_MS=60000     # window length in ms (floor 1000)

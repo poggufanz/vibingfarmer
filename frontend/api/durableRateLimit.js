@@ -26,6 +26,8 @@ const AGENT_INDEX_CROSS_TIERS = new Map([
   ['POST base-child-intent-batch', EDGE_LIMITS.strictWrite],
   ['POST base-child-evidence', EDGE_LIMITS.strictWrite],
   ['GET base-child-evidence', EDGE_LIMITS.publicRead],
+  ['GET receipt', EDGE_LIMITS.publicRead],
+  ['GET read', EDGE_LIMITS.publicRead],
   ['POST base-recovery-request', EDGE_LIMITS.strictWrite],
   ['POST base-recovery-claim', EDGE_LIMITS.strictWrite],
   ['POST base-recovery-renew', EDGE_LIMITS.strictWrite],

@@ -1,11 +1,28 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import handler, {
   dispenseToken,
   CAP_BASE_UNITS,
   effectiveAmount,
   reserveDaily,
+  reserveSpendDurable,
+  faucetDayRetryAfter,
+  FAUCET_GLOBAL_SPEND_KEY,
+  GLOBAL_DAILY_CAP,
   PER_RECIPIENT_DAILY_CAP,
 } from './faucet.js'
+
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
+const FAUCET_MIGRATION = readFileSync(
+  new URL('../migrations/0011_faucet_daily_spend.sql', import.meta.url),
+  'utf8'
+)
+// Handler-level tests also pass the durable per-IP gate, which needs the 0010 table.
+const CROSS_MIGRATION = readFileSync(
+  new URL('../migrations/0010_vf_cross_rate_limits.sql', import.meta.url),
+  'utf8'
+)
 
 const tok = (n) => BigInt(n) * 10n ** 7n
 
@@ -145,16 +162,20 @@ describe('reserveDaily (daily caps)', () => {
 describe('dispenseToken (cap + transfer)', () => {
   const sdk = {
     Keypair: { fromSecret: () => ({ publicKey: () => 'GDEPLOYER', sign: vi.fn() }) },
-    TransactionBuilder: vi.fn(() => ({
-      addOperation() {
-        return this
-      },
-      setTimeout() {
-        return this
-      },
-      build: () => ({ sign: vi.fn() }),
-    })),
-    Contract: vi.fn(() => ({ call: vi.fn(() => ({})) })),
+    TransactionBuilder: vi.fn(function () {
+      return {
+        addOperation() {
+          return this
+        },
+        setTimeout() {
+          return this
+        },
+        build: () => ({ sign: vi.fn() }),
+      }
+    }),
+    Contract: vi.fn(function () {
+      return { call: vi.fn(() => ({})) }
+    }),
     Address: { fromString: () => ({ toScVal: () => ({}) }) },
     xdr: {
       ScVal: { scvI128: () => ({}) },
@@ -192,5 +213,178 @@ describe('dispenseToken (cap + transfer)', () => {
     expect(out.hash).toBe('FHASH')
     // The i128 op was built with the capped value, not the requested one:
     expect(sdk.xdr.Uint64.fromString).toHaveBeenCalledWith(CAP_BASE_UNITS.toString())
+  })
+})
+
+// ─── Durable daily-spend accounting (D1, migration 0011) ───
+
+// Minimal D1-shaped wrapper over node:sqlite (same idiom as durableRateLimit.test.js),
+// exposing the raw handle for total assertions.
+function faucetD1WithSqlite({ migrated = true } = {}) {
+  const sqlite = new DatabaseSync(':memory:')
+  if (migrated) sqlite.exec(CROSS_MIGRATION + '\n' + FAUCET_MIGRATION)
+  return {
+    sqlite,
+    prepare(sql) {
+      return {
+        bind(...params) {
+          return {
+            async first() {
+              return sqlite.prepare(sql).get(...params)
+            },
+            async run() {
+              return sqlite.prepare(sql).run(...params)
+            },
+          }
+        },
+      }
+    },
+  }
+}
+
+function spendTotal(db, recipient) {
+  return db.sqlite
+    .prepare('SELECT total_base_units FROM vf_faucet_daily_spend WHERE recipient = ?')
+    .get(recipient)?.total_base_units
+}
+
+describe('reserveSpendDurable (D1 daily caps)', () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const T = 1_700_000_000_000 // a fixed instant; aligned UTC-day windows converge on it
+
+  it('reserves within caps and converges on one counter across calls', async () => {
+    const db = faucetD1WithSqlite()
+    expect(await reserveSpendDurable('rD1', tok(100), { db, now: T })).toEqual({ ok: true })
+    expect(await reserveSpendDurable('rD1', tok(200), { db, now: T })).toEqual({ ok: true })
+    // A second "isolate" (fresh call, same D1) sees the same total: 100 + 200 = 300.
+    expect(spendTotal(db, 'rD1')).toBe(Number(tok(300)))
+    expect(spendTotal(db, FAUCET_GLOBAL_SPEND_KEY)).toBe(Number(tok(300)))
+  })
+
+  it('denies over the per-recipient cap and records nothing for the denied request', async () => {
+    const db = faucetD1WithSqlite()
+    expect(await reserveSpendDurable('rD2', tok(100), { db, now: T })).toEqual({ ok: true })
+    const denied = await reserveSpendDurable('rD2', tok(250), { db, now: T })
+    expect(denied.ok).toBe(false)
+    expect(denied.scope).toBe('recipient')
+    expect(denied.retryAfterSecs).toBeGreaterThanOrEqual(1)
+    // Compensation rolled the denied 250 back: the recipient still holds exactly 100.
+    expect(spendTotal(db, 'rD2')).toBe(Number(tok(100)))
+    expect(spendTotal(db, FAUCET_GLOBAL_SPEND_KEY)).toBe(Number(tok(100)))
+  })
+
+  it('denies over the global cap and rolls back the recipient reservation', async () => {
+    const db = faucetD1WithSqlite()
+    for (let i = 0; i < 16; i++) {
+      expect(await reserveSpendDurable(`gD${i}`, PER_RECIPIENT_DAILY_CAP, { db, now: T })).toEqual({
+        ok: true,
+      })
+    }
+    // 16 × 300 = 4800 ≤ 5000; one more 300 trips the global ceiling.
+    const denied = await reserveSpendDurable('gD16', PER_RECIPIENT_DAILY_CAP, { db, now: T })
+    expect(denied.ok).toBe(false)
+    expect(denied.scope).toBe('global')
+    // The denied recipient holds nothing (compensated back to zero) and the global total
+    // is untouched at 4800.
+    expect(spendTotal(db, 'gD16')).toBe(0)
+    expect(spendTotal(db, FAUCET_GLOBAL_SPEND_KEY)).toBe(Number(tok(4800)))
+  })
+
+  it('starts a new aligned window on the next UTC day', async () => {
+    const db = faucetD1WithSqlite()
+    const windowStart = Math.floor(T / DAY) * DAY
+    expect(await reserveSpendDurable('rD3', PER_RECIPIENT_DAILY_CAP, { db, now: T })).toEqual({
+      ok: true,
+    })
+    expect(await reserveSpendDurable('rD3', tok(1), { db, now: T })).toMatchObject({ ok: false })
+    // Next aligned day: the same recipient may spend the full cap again.
+    expect(
+      await reserveSpendDurable('rD3', PER_RECIPIENT_DAILY_CAP, { db, now: windowStart + DAY + 1 })
+    ).toEqual({ ok: true })
+  })
+
+  it('fails closed (throws) when the 0011 migration has not run', async () => {
+    const db = faucetD1WithSqlite({ migrated: false })
+    await expect(reserveSpendDurable('rD4', tok(1), { db, now: T })).rejects.toThrow()
+  })
+
+  it('refuses the global key as a recipient (row-key collision guard)', async () => {
+    const db = faucetD1WithSqlite()
+    await expect(
+      reserveSpendDurable(FAUCET_GLOBAL_SPEND_KEY, tok(1), { db, now: T })
+    ).rejects.toThrow()
+  })
+
+  it('caps are unchanged: 100/tx, 300/recipient/day, 5000 global/day', () => {
+    expect(CAP_BASE_UNITS).toBe(tok(100))
+    expect(PER_RECIPIENT_DAILY_CAP).toBe(tok(300))
+    expect(GLOBAL_DAILY_CAP).toBe(tok(5000))
+    expect(faucetDayRetryAfter(T)).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('faucet handler durable gating', () => {
+  const OLD_ENV = { ...process.env }
+  afterEach(() => {
+    process.env = { ...OLD_ENV }
+    vi.restoreAllMocks()
+  })
+
+  function pagesReq(db, { ip = '198.51.100.21', body } = {}) {
+    return {
+      method: 'POST',
+      headers: { origin: 'http://localhost:5173', 'cf-connecting-ip': ip },
+      body,
+      env: { VF_DB: db, ALLOWED_ORIGIN: 'http://localhost:5173' },
+    }
+  }
+
+  function pagesRes() {
+    return {
+      statusCode: 200,
+      headers: {},
+      body: '',
+      setHeader(k, v) {
+        this.headers[k] = v
+      },
+      end(s) {
+        this.body = s ?? ''
+        return this
+      },
+    }
+  }
+
+  it('429 + Retry-After when the durable daily cap is reached (no dispense attempted)', async () => {
+    process.env.VF_FAUCET_SECRET = 'SSECRET'
+    process.env.SOROBAN_TOKEN_ADDRESS = 'CTOKEN'
+    const db = faucetD1WithSqlite()
+    const to = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
+    const now = Date.now()
+    // Prefill the recipient to its 300 cap directly in D1 (3 × 100).
+    for (let i = 0; i < 3; i++) {
+      expect(await reserveSpendDurable(to, tok(100), { db, now })).toEqual({ ok: true })
+    }
+    const res = pagesRes()
+    await handler(pagesReq(db, { body: { action: 'dispense', to } }), res)
+    expect(res.statusCode).toBe(429)
+    expect(Number(res.headers['Retry-After'])).toBeGreaterThanOrEqual(1)
+    expect(JSON.parse(res.body)).toMatchObject({ error: 'Daily faucet cap reached' })
+  })
+
+  it('503 + Retry-After fail-closed without D1 in production (no memory fallback)', async () => {
+    process.env.NODE_ENV = 'production'
+    delete process.env.VF_DB
+    const res = pagesRes()
+    // No VF_DB anywhere and no secret: the durable per-IP gate fails closed first.
+    await handler(
+      {
+        method: 'POST',
+        headers: { origin: 'http://localhost:5173', 'x-real-ip': '10.9.9.9' },
+        body: {},
+      },
+      res
+    )
+    expect(res.statusCode).toBe(503)
+    expect(Number(res.headers['Retry-After'])).toBeGreaterThanOrEqual(1)
   })
 })

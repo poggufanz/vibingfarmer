@@ -1,0 +1,125 @@
+import { describe, it, expect } from 'vitest'
+import { contrastRatio } from '../../design/contrast.js'
+import { THEMES } from '../../design/theme.js'
+import {
+  GRAPH_COLOR,
+  GRAPH_COLOR_LIGHT,
+  GROUP_BASE,
+  GROUP_BASE_LIGHT,
+  NODE_R,
+  hexToNum,
+  paletteFor,
+  computeOrchestratorState,
+  nodeStateOf,
+  nodeColor,
+  nodeRunning,
+} from '../palette.js'
+
+const exec = {
+  'worker-1': {
+    status: 'running',
+    steps: { swap: 'skipped', approve: 'confirmed', deposit: 'running' },
+  },
+  'worker-2': {
+    status: 'confirmed',
+    steps: { swap: 'skipped', approve: 'confirmed', deposit: 'confirmed' },
+  },
+}
+
+describe('hexToNum', () => {
+  it('converts #DFF56C to 0xdff56c', () => {
+    expect(hexToNum('#DFF56C')).toBe(0xdff56c)
+  })
+})
+
+describe('paletteFor', () => {
+  it('switches state palette by theme', () => {
+    expect(paletteFor(false).state).toBe(GRAPH_COLOR)
+    expect(paletteFor(true).state).toBe(GRAPH_COLOR_LIGHT)
+    expect(paletteFor('bone-paper').state).toBe(GRAPH_COLOR_LIGHT)
+    expect(paletteFor('acid-yield').state).toBe(GRAPH_COLOR)
+    expect(paletteFor(false).line).toBe(GRAPH_COLOR.skipped)
+    expect(paletteFor(true).line).toBe(GRAPH_COLOR_LIGHT.skipped)
+    expect(paletteFor(true).current).toBe('#17251F')
+  })
+})
+
+describe('graph palette collisions and contrast (spec review finding 3)', () => {
+  it('never lets the graph line color go hardcoded/theme-blind again', () => {
+    expect(paletteFor(true).line).not.toBe(paletteFor(false).line)
+  })
+
+  it('keeps the Forest skipped/line color at or above the 3:1 graphical threshold on both surfaces', () => {
+    expect(contrastRatio(GRAPH_COLOR.skipped, THEMES.forest.canvas)).toBeGreaterThanOrEqual(3)
+    expect(contrastRatio(GRAPH_COLOR.skipped, THEMES.forest.workspace)).toBeGreaterThanOrEqual(3)
+  })
+
+  it('keeps skipped visually distinct from idle in every theme', () => {
+    expect(GRAPH_COLOR.skipped).not.toBe(GRAPH_COLOR.idle)
+    expect(GRAPH_COLOR_LIGHT.skipped).not.toBe(GRAPH_COLOR_LIGHT.idle)
+  })
+
+  it('never lets an idle orchestrator/vault look like a running/confirmed/failed node', () => {
+    ;[
+      [GROUP_BASE, GRAPH_COLOR],
+      [GROUP_BASE_LIGHT, GRAPH_COLOR_LIGHT],
+    ].forEach(([group, state]) => {
+      ;['orchestrator', 'vault'].forEach((kind) => {
+        expect(group[kind]).not.toBe(state.running)
+        expect(group[kind]).not.toBe(state.confirmed)
+        expect(group[kind]).not.toBe(state.failed)
+      })
+    })
+  })
+
+  it('keeps the keeper and pool group colors distinct', () => {
+    expect(GROUP_BASE.pool).not.toBe(GROUP_BASE.keeper)
+    expect(GROUP_BASE_LIGHT.pool).not.toBe(GROUP_BASE_LIGHT.keeper)
+  })
+})
+
+describe('computeOrchestratorState', () => {
+  it('running wins over confirmed, failed wins over all, empty = idle', () => {
+    expect(computeOrchestratorState(exec)).toBe('running')
+    expect(computeOrchestratorState({ a: { status: 'confirmed' } })).toBe('confirmed')
+    expect(computeOrchestratorState({ a: { status: 'failed' }, b: { status: 'running' } })).toBe(
+      'failed'
+    )
+    expect(computeOrchestratorState({})).toBe('idle')
+  })
+})
+
+describe('nodeStateOf / nodeColor / nodeRunning', () => {
+  const palette = paletteFor(false)
+  it('worker takes its exec status', () => {
+    expect(nodeStateOf({ kind: 'worker', agentId: 'worker-1' }, exec)).toBe('running')
+    expect(nodeRunning({ kind: 'worker', agentId: 'worker-1' }, exec)).toBe(true)
+  })
+  it('step takes its per-step state (skipped supported)', () => {
+    expect(nodeStateOf({ kind: 'step', agentId: 'worker-1', stepId: 'swap' }, exec)).toBe('skipped')
+    expect(nodeColor({ kind: 'step', agentId: 'worker-1', stepId: 'swap' }, exec, palette)).toBe(
+      GRAPH_COLOR.skipped
+    )
+  })
+  it('strategy-vault follows the deposit step', () => {
+    expect(nodeStateOf({ kind: 'vault', agentId: 'worker-2' }, exec)).toBe('confirmed')
+    expect(nodeColor({ kind: 'vault', agentId: 'worker-2' }, exec, palette)).toBe(
+      GRAPH_COLOR.confirmed
+    )
+  })
+  it('idle orchestrator/vault use group base colors, idle worker uses state idle', () => {
+    expect(nodeColor({ kind: 'orchestrator' }, {}, palette)).toBe(GROUP_BASE.orchestrator)
+    expect(nodeColor({ kind: 'vault', agentId: 'x' }, {}, palette)).toBe(GROUP_BASE.vault)
+    expect(nodeColor({ kind: 'worker', agentId: 'x' }, {}, palette)).toBe(GRAPH_COLOR.idle)
+  })
+  it('keeper/strategy/pool are static group colors and never running', () => {
+    expect(nodeStateOf({ kind: 'keeper' }, exec)).toBe('static')
+    expect(nodeColor({ kind: 'pool' }, exec, palette)).toBe(GROUP_BASE.pool)
+    expect(nodeRunning({ kind: 'strategy' }, exec)).toBe(false)
+  })
+  it('NODE_R covers every kind', () => {
+    ;['orchestrator', 'worker', 'step', 'vault', 'keeper', 'strategy', 'pool'].forEach((k) =>
+      expect(NODE_R[k]).toBeGreaterThan(0)
+    )
+  })
+})

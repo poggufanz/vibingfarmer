@@ -25,7 +25,7 @@
   // `wrangler pages secret put` / dashboard, never here.
   "vars": {
     "NODE_ENV": "production",
-    "ALLOWED_ORIGIN": "https://vibing-farmer.pages.dev",
+    "ALLOWED_ORIGIN": "https://vibing-farmer.pages.dev,https://vibingfarmer.xyz",
     "ALLOWED_EXTENSION_ORIGINS": "",
     "SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org",
     "STELLAR_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",

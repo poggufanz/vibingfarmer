@@ -2,8 +2,8 @@
 // Manual withdraw from a single active position. Reuses the app's modal tokens.
 import React, { useState, useEffect, useRef } from 'react'
 import { withdrawAllFromVault } from '../agents/agentController.js'
-import { saveTransaction } from '../history.js'
-import { loadSettings, t } from '../settingsStore.js'
+import { saveTransaction } from '../history/history.js'
+import { loadSettings, t } from '../store/settingsStore.js'
 import { toDisplay, toBaseUnits } from '../stellar/format.js'
 import { SOROBAN_EXIT_ROUTER_ADDRESS } from '../stellar/config.js'
 import { partialWithdraw, ensureExitSigner, readAgentScope } from '../stellar/partialWithdraw.js'

@@ -64,6 +64,8 @@ VF_AUTH_SIGNING_KEY=S...        # server SEP-10 signing keypair secret (testnet)
 VF_JWT_SECRET=change-me-32-chars-min
 VF_HOME_DOMAIN=localhost:5173   # SEP-10 home_domain / web_auth_domain
 VF_GLOBAL_DAILY_CAP=5000        # global upstream budget per scope per day
+VF_MAX_KEYS_PER_OWNER=10        # cap on active API keys per owner
+VF_OWNER_DAILY_CAP=1000         # per-owner daily budget per scope (fairness)
 
 # ─── On-ramp widget (SP4, read by /api/onramp-session) ───
 # Server-only. Get keys from the Transak Partner Dashboard: https://dashboard.transak.com
@@ -108,7 +110,10 @@ AGENT_INDEX_REPORTER_SECRET=
 # Signs read-only owner pagination cursors. Server-only; use at least 32 random bytes.
 AGENT_INDEX_CURSOR_SECRET=
 
-# D1 binding: these routes need the `VF_DB` binding (see wrangler.jsonc) with migrations 0001-0007
+# D1 binding: these routes need the `VF_DB` binding (see wrangler.jsonc) with migrations 0001-0011
 # applied. Migration 0007 adds the immutable membership guard and owner-page index. Migrations 0005
 # (execution receipts) and 0006 (base child intents) are required before a production relayer can
-# boot — see "Release prerequisites" in GETTING_STARTED.md.
+# boot — see "Release prerequisites" in GETTING_STARTED.md. Migration 0010 adds the
+# vf_cross_rate_limits table (durable per-route limiter). Migration 0011 adds the
+# vf_faucet_daily_spend table (faucet daily cap); run `npx wrangler d1 migrations apply vf-gate --remote`
+# before prod deploy, otherwise the faucet fails closed with 503.

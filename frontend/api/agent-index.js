@@ -32,6 +32,11 @@ import { scanRpcEventsPage } from './agent-index/indexer.js'
 import { createOwnerReadCursorCodec } from './agent-index/readCursor.js'
 import { rateLimit } from './_guard.js'
 import { durableRateLimit, resolveAgentIndexCrossLimit } from './durableRateLimit.js'
+
+// Public GETs are durable-limited (shared D1 row per IP+route, not per-isolate
+// memory) and cheaply cacheable: all three serve on-chain-derived or committed
+// store reads, so a short public max-age absorbs polling amplification.
+const PUBLIC_GET_CACHE = 'public, max-age=15'
 import { symbolScVal } from '../src/stellar/scval.js'
 import { readContract } from '../src/stellar/client.js'
 import { NETWORK_PASSPHRASE as TRANSACTION_NETWORK_PASSPHRASE } from '../src/stellar/config.js'
@@ -367,8 +372,6 @@ export default async function handler(req, res, { rateLimitImpl = durableRateLim
 
   if (req.method === 'GET' && action === 'receipt') {
     res.setHeader('Access-Control-Allow-Origin', '*')
-    if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-receipt-read' }))
-      return
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
     const out = await handleReceiptRead({
       networkId: url.searchParams.get('network') || '',
@@ -378,6 +381,7 @@ export default async function handler(req, res, { rateLimitImpl = durableRateLim
       allocationId: url.searchParams.get('allocation') || '',
       store,
     })
+    if (out.status === 200) res.setHeader('Cache-Control', PUBLIC_GET_CACHE)
     return json(res, out.status, out.body)
   }
 
@@ -399,12 +403,17 @@ export default async function handler(req, res, { rateLimitImpl = durableRateLim
       configuredNetworkId: network.networkId,
       store,
     })
+    if (out.status === 200) res.setHeader('Cache-Control', PUBLIC_GET_CACHE)
     return json(res, out.status, out.body)
   }
 
   if (req.method === 'GET') {
     res.setHeader('Access-Control-Allow-Origin', '*') // public, read-only, on-chain-derived data
-    if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-read' })) return
+    // Plain reads carry no action param, so the top limiter-before-auth block misses
+    // them: resolve the durable 'GET read' tier (publicRead 240/min) explicitly here,
+    // still before any store/RPC work.
+    const readPolicy = resolveAgentIndexCrossLimit({ method: 'GET', action: 'read' })
+    if (readPolicy && !(await rateLimitImpl(req, res, readPolicy))) return
     const networkId = url.searchParams.get('network') || ''
     const owner = url.searchParams.get('owner') || ''
     const limitParam = url.searchParams.get('limit')
@@ -425,6 +434,7 @@ export default async function handler(req, res, { rateLimitImpl = durableRateLim
       cursor: cursorParam ?? undefined,
       cursorCodec,
     })
+    if (out.status === 200) res.setHeader('Cache-Control', PUBLIC_GET_CACHE)
     return json(res, out.status, out.body)
   }
 

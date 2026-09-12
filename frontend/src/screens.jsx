@@ -12,7 +12,7 @@
 // orchestrator/activity-log/keeper cluster).
 import React, { useState, useEffect } from 'react'
 import { Icon } from './components.jsx'
-import { loadSettings, t } from './settingsStore.js'
+import { loadSettings, t } from './store/settingsStore.js'
 import { readTotalShares } from './stellar/vaultReads.js'
 import { validateAmountInput, validateExecutionAllocations } from './strategy/amountValidation.js'
 import { expandAgentSlots } from './strategy/planModel.js'

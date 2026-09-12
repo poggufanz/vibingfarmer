@@ -10,7 +10,7 @@ import React, {
   useReducer as useRed,
 } from 'react'
 import { lazy, Suspense } from 'react'
-import { isDevMode } from './devFlag.js'
+import { isDevMode } from './dev/devFlag.js'
 import { assignCrewPersona } from './crew/personas.js'
 import { resumePendingCctpTransfers } from './cctp/resumeTransfers.js'
 import {
@@ -43,10 +43,10 @@ import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
 import { buildStrategyViewModel } from './strategy/planModel.js'
 import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from './stellar/grant.js'
 import { RouteFocus, SkipLink } from './components/pocket/RouteFocus.jsx'
-import { resolveDocumentTitle } from './appShellTitle.js'
+import { resolveDocumentTitle } from './app/appShellTitle.js'
 import { shortAddr } from './screens.jsx'
 import { MemoryModal, makeInitialExecState } from './agents.jsx'
-import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel.jsx'
+import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './dev/tweaks-panel.jsx'
 import { applyTheme, isLightTheme, normalizeTheme } from './design/theme.js'
 import { buildCrewPersonas } from './crew/buildCrewPersonas.js'
 
@@ -56,7 +56,7 @@ import {
   revokeAgentOnChain,
   subscribeAgentRevoked,
 } from './stellar/index.js'
-import { generateStrategy } from './strategist.js'
+import { generateStrategy } from './strategy/strategist.js'
 import { toDisplay, toBaseUnits } from './stellar/format.js'
 import {
   queryAgentsByOwner,
@@ -64,8 +64,8 @@ import {
   discoverAgentsFromVault,
 } from './stellar/events.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
-import OnboardingFlow from './components/OnboardingFlow.jsx'
-import { OrchestratorAgent } from './orchestrator.js'
+import OnboardingFlow from './screens/OnboardingFlow.jsx'
+import { OrchestratorAgent } from './orchestrator/orchestrator.js'
 import {
   readRecoveryReceipt,
   requestRecoveryAction,
@@ -101,7 +101,7 @@ import {
   applyBaseLegOutcome,
   mapBaseLegEvent,
   baseMandateRequiresReview,
-} from './mergeFlowHelpers.js'
+} from './orchestrator/mergeFlowHelpers.js'
 import { getMandateStatus } from './base/relayerClient.js'
 import { readBaseOwner, baseOwnerStorageKey, readBaseMandate } from './wallet/baseBinding.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'
@@ -121,7 +121,7 @@ import {
   pickRecoverableVaultAgents,
   mergePositions,
   applyChainPositions,
-} from './positionsStore.js'
+} from './store/positionsStore.js'
 import { getViewAsAddress } from './dev/viewAs.js'
 import {
   diffMarket,
@@ -130,8 +130,8 @@ import {
   saveSnapshot,
 } from './strategy/councilMonitor.js'
 import SkillDrawer from './components/SkillDrawer.jsx'
-import HistoryPanel from './components/HistoryPanel.jsx'
-import { saveTransaction } from './history.js'
+import HistoryPanel from './screens/HistoryPanel.jsx'
+import { saveTransaction } from './history/history.js'
 import {
   startBackgroundAgent,
   stopBackgroundAgent,
@@ -177,17 +177,17 @@ import { nextReconciliationToken, isReconciliationCurrent } from './money/freshn
 import { sweepAgents } from './stellar/exit.js'
 import { ensureExitSigner, partialWithdraw } from './stellar/partialWithdraw.js'
 import { assertCurrentActiveAccount } from './stellar/activeAccount.js'
-const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
-const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
-const EcosystemPage = lazy(() => import('./components/EcosystemPage.jsx'))
-const ReplayPage = lazy(() => import('./components/ReplayPage.jsx'))
+const LandingHero = lazy(() => import('./landing/LandingHero.jsx'))
+const ExplorerPage = lazy(() => import('./screens/ExplorerPage.jsx'))
+const EcosystemPage = lazy(() => import('./screens/EcosystemPage.jsx'))
+const ReplayPage = lazy(() => import('./screens/ReplayPage.jsx'))
 const DevelopersLayout = lazy(() => import('./developers/DevelopersLayout.jsx'))
-import SettingsPage from './components/SettingsPage.jsx'
-import { loadSettings, saveSetting } from './settingsStore.js'
-import { clearUserSkill } from './skillLoader.js'
+import SettingsPage from './screens/SettingsPage.jsx'
+import { loadSettings, saveSetting } from './store/settingsStore.js'
+import { clearUserSkill } from './skills/skillLoader.js'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import VaultDetailPage from './components/VaultDetailPage.jsx'
-import TxDetailPage from './components/TxDetailPage.jsx'
+import VaultDetailPage from './screens/VaultDetailPage.jsx'
+import TxDetailPage from './screens/TxDetailPage.jsx'
 
 import { toSummary as scopeSummary } from './strategy/permissionScope.js'
 import { buildStrategyState, enforceActionSpace, scoreReward } from './strategy/mdp.js'
@@ -211,7 +211,7 @@ import {
   riskComplianceVerdict,
   validatorVerdict,
   askStrategistJson,
-} from './strategist.js'
+} from './strategy/strategist.js'
 import {
   councilReview,
   buildCouncilInput,

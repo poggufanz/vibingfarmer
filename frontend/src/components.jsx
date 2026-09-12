@@ -3,8 +3,8 @@
    ============================================ */
 import React from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { getSidebarPath } from './router.js'
-import { t } from './settingsStore.js'
+import { getSidebarPath } from './app/router.js'
+import { t } from './store/settingsStore.js'
 import { BrandLockup } from './components/pocket/BrandLockup.jsx'
 import { NetworkBadge } from './components/pocket/NetworkIdentity.jsx'
 import { NETWORK_IDS } from './design/networks.js'

@@ -1,4 +1,4 @@
-import { riskComplianceVerdict, validatorVerdict } from '../strategist.js'
+import { riskComplianceVerdict, validatorVerdict } from './strategist.js'
 import {
   buildDebateInput,
   DEBATE_SYSTEM,

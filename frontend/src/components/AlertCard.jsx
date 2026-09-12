@@ -3,7 +3,7 @@
 // (NotificationCenter) can import it WITHOUT pulling the whole dashboard into the
 // main chunk — that import is what blocked lazy-loading AgentDashboard.
 import { useState } from 'react'
-import { t } from '../settingsStore.js'
+import { t } from '../store/settingsStore.js'
 import { Icon } from '../components.jsx'
 
 const ALERT_META = {

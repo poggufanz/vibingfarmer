@@ -26,6 +26,7 @@ beforeEach(async () => {
   now = Date.now()
   process.env.VF_JWT_SECRET = 'test-jwt-secret-0000'
   process.env.VF_GLOBAL_DAILY_CAP = '5000'
+  process.env.VF_OWNER_DAILY_CAP = '1000'
   ;({ key } = await issueKey(store, {
     owner: 'GAAA',
     scopes: ['market'],
@@ -103,6 +104,7 @@ describe('requireVfKey', () => {
       await requireVfKey(reqWith(`Bearer ${k2}`), res, store, { scope: 'market', nowMs: now })
     ).toBeNull()
     expect(res.statusCode).toBe(503)
+    expect(Number(res.headers['Retry-After'])).toBeGreaterThan(0)
   })
 })
 
@@ -114,5 +116,87 @@ describe('requireJwt', () => {
     const res = mockRes()
     expect(await requireJwt(reqWith('Bearer nope'), res)).toBeNull()
     expect(res.statusCode).toBe(401)
+  })
+})
+
+describe('daily-budget fairness', () => {
+  it('503 carries Retry-After and the per-owner cap shelters other owners', async () => {
+    process.env.VF_GLOBAL_DAILY_CAP = '5000'
+    process.env.VF_OWNER_DAILY_CAP = '2'
+    const a = (
+      await issueKey(store, {
+        owner: 'GAAA',
+        scopes: ['market'],
+        rateLimit: 100,
+        env: 'test',
+        expiresAt: null,
+      })
+    ).key
+    const b = (
+      await issueKey(store, {
+        owner: 'GBBB',
+        scopes: ['market'],
+        rateLimit: 100,
+        env: 'test',
+        expiresAt: null,
+      })
+    ).key
+    expect(
+      await requireVfKey(reqWith('Bearer ' + a), mockRes(), store, { scope: 'market', nowMs: now })
+    ).not.toBeNull()
+    expect(
+      await requireVfKey(reqWith('Bearer ' + a), mockRes(), store, { scope: 'market', nowMs: now })
+    ).not.toBeNull()
+    const res = mockRes()
+    expect(
+      await requireVfKey(reqWith('Bearer ' + a), res, store, { scope: 'market', nowMs: now })
+    ).toBeNull()
+    expect(res.statusCode).toBe(503)
+    expect(Number(res.headers['Retry-After'])).toBeGreaterThan(0)
+    expect(
+      await requireVfKey(reqWith('Bearer ' + b), mockRes(), store, { scope: 'market', nowMs: now })
+    ).not.toBeNull()
+  })
+  it('owner over cap returns 503 without consuming the shared global budget', async () => {
+    process.env.VF_GLOBAL_DAILY_CAP = '5000'
+    process.env.VF_OWNER_DAILY_CAP = '1'
+    const a = (
+      await issueKey(store, {
+        owner: 'GAAA',
+        scopes: ['market'],
+        rateLimit: 100,
+        env: 'test',
+        expiresAt: null,
+      })
+    ).key
+    expect(
+      await requireVfKey(reqWith('Bearer ' + a), mockRes(), store, { scope: 'market', nowMs: now })
+    ).not.toBeNull()
+    let globalBumps = 0
+    const origBump = store.counters.bump.bind(store.counters)
+    store.counters.bump = async (k, w) => {
+      if (String(k).startsWith('__global:')) globalBumps++
+      return origBump(k, w)
+    }
+    const res = mockRes()
+    expect(
+      await requireVfKey(reqWith('Bearer ' + a), res, store, { scope: 'market', nowMs: now })
+    ).toBeNull()
+    expect(res.statusCode).toBe(503)
+    expect(Number(res.headers['Retry-After'])).toBeGreaterThan(0)
+    expect(globalBumps).toBe(0)
+  })
+})
+
+describe('requireJwt throttle', () => {
+  it('429 + Retry-After past the per-session limit', async () => {
+    const token = await signJwt({ sub: 'GAAA' }, 'test-jwt-secret-0000', 3600)
+    const opts = { max: 2, bucket: 'test-jwt-throttle' }
+    expect(await requireJwt(reqWith('Bearer ' + token), mockRes(), opts)).not.toBeNull()
+    expect(await requireJwt(reqWith('Bearer ' + token), mockRes(), opts)).not.toBeNull()
+    const res = mockRes()
+    expect(await requireJwt(reqWith('Bearer ' + token), res, opts)).toBeNull()
+    expect(res.statusCode).toBe(429)
+    expect(Number(res.headers['Retry-After'])).toBeGreaterThan(0)
   })
 })

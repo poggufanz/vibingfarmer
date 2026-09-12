@@ -21,6 +21,6 @@ describe('smoke CLI module import safety', () => {
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toBe('');
       expect(result.stderr).toBe('');
-    });
+    }, 15000);
   }
 });

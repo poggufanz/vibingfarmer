@@ -26,8 +26,8 @@ import {
   validateAmountInput,
   validateExecutionAllocations,
 } from '../../strategy/amountValidation.js'
-import { needsBaseMandateSetup } from '../../mergeFlowHelpers.js'
-import { hashStrategy } from '../../attestation.js'
+import { needsBaseMandateSetup } from '../../orchestrator/mergeFlowHelpers.js'
+import { hashStrategy } from '../../strategy/attestation.js'
 import { SOROBAN_DECIMALS, SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
 import { personaForOrdinal } from '../../crew/personas.js'
 import { parseAssetUnits } from '../../money/assetUnits.js'
