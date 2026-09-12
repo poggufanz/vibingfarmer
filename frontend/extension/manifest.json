@@ -21,10 +21,13 @@
   "background": { "service_worker": "background.js" },
   "host_permissions": [
     "http://localhost:5173/*",
+    "http://127.0.0.1:5173/*",
     "http://127.0.0.1:8788/*",
     "http://localhost:8788/*",
     "https://vibing-farmer.pages.dev/*",
     "https://*.vibing-farmer.pages.dev/*",
+    "https://vibingfarmer.xyz/*",
+    "https://www.vibingfarmer.xyz/*",
     "https://soroban-testnet.stellar.org/*",
     "https://friendbot.stellar.org/*"
   ],
@@ -36,10 +39,13 @@
     {
       "matches": [
         "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*",
         "http://127.0.0.1:8788/*",
         "http://localhost:8788/*",
         "https://vibing-farmer.pages.dev/*",
-        "https://*.vibing-farmer.pages.dev/*"
+        "https://*.vibing-farmer.pages.dev/*",
+        "https://vibingfarmer.xyz/*",
+        "https://www.vibingfarmer.xyz/*"
       ],
       "js": ["providerInject.js"],
       "world": "MAIN",
@@ -48,10 +54,13 @@
     {
       "matches": [
         "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*",
         "http://127.0.0.1:8788/*",
         "http://localhost:8788/*",
         "https://vibing-farmer.pages.dev/*",
-        "https://*.vibing-farmer.pages.dev/*"
+        "https://*.vibing-farmer.pages.dev/*",
+        "https://vibingfarmer.xyz/*",
+        "https://www.vibingfarmer.xyz/*"
       ],
       "js": ["providerBridge.js"],
       "run_at": "document_start"

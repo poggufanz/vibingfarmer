@@ -32,7 +32,7 @@ export function WalletShell({
       <div className="pc-wallet-shell">
         <header className="pc-wallet-header">
           <span className="pc-brand-lockup pc-brand-lockup--compact">
-            <img src="./vibing_farmer.logo.svg" alt="" />
+            <img src="/vibing_farmer.logo.svg" alt="" />
             VF Wallet
           </span>
           <span className="pc-network-badge">Stellar testnet</span>

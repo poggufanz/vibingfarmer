@@ -1,17 +1,41 @@
 import { NETWORK_PASSPHRASE, SOROBAN_RPC_URL, RELAY_PROXY_URL } from '../stellar/config.js'
 
-// RP-ID = the WebAuthn relying-party domain. Web app: 'localhost' (a valid registrable domain
-// that matches its origin). Extension: a chrome-extension:// origin REJECTS any explicit rpId
+// RP-ID = the WebAuthn relying-party domain. WebAuthn requires rpId to equal the origin's own
+// domain (or a parent suffix of it): a hardcoded default passes on localhost but fails every
+// passkey ceremony on any deployed domain. The default therefore follows the serving page
+// (location.hostname) — one Pages build serves pages.dev AND custom domains, so no build-time
+// value can be right on both. Explicit VITE_VF_RP_ID still wins (use `origin`/empty for
+// origin-default). Extension: a chrome-extension:// origin REJECTS any explicit rpId
 // ("<id> is an invalid domain"), so build with VITE_VF_RP_ID=origin (or empty) → RP_ID undefined
 // → rpId is omitted and Chrome defaults the relying party to the extension's own origin (the only
 // rpId a chrome-extension page can use). Applies to BOTH the register and sign WebAuthn calls,
 // since SAK reads rpId from this config (account.js makeKit → new SmartAccountKit(WALLET_CONFIG)).
-// Runtime guard, not just build-time: an unset VITE_VF_RP_ID defaults to 'localhost', and a
+// Runtime guard, not just build-time: an unset VITE_VF_RP_ID used to default to 'localhost', and a
 // packed extension built that way shipped an explicit rpId — Chrome then failed every ceremony
 // with "<extension-id> is an invalid domain". Extension origin ⇒ force undefined regardless of env.
 const isExtensionOrigin =
   typeof location !== 'undefined' && location.protocol === 'chrome-extension:'
-const rawRpId = import.meta.env?.VITE_VF_RP_ID ?? 'localhost'
+// Canonical RP_ID: the apex (strip ONE leading `www.`). WebAuthn accepts an rpId equal to the
+// origin's host or a PARENT SUFFIX of it, so the apex `vibingfarmer.xyz` is valid on BOTH
+// vibingfarmer.xyz and www.vibingfarmer.xyz — one passkey works on both. The reverse is NOT
+// true: rpId `www.vibingfarmer.xyz` would fail on the apex, so `www.` must never survive into
+// the default. Same pattern as base/config.js (ZeroDev side); explicit VITE_VF_RP_ID still wins
+// verbatim below.
+function canonicalRpId(hostname) {
+  return hostname.replace(/^www\./i, '')
+}
+// Serving-origin default (see header): keeps localhost working while fixing deployed domains.
+// Non-DOM runtimes (Node/vitest, workers without a location) keep the old 'localhost' value.
+function defaultRpId() {
+  try {
+    if (typeof location !== 'undefined' && location.hostname)
+      return canonicalRpId(location.hostname)
+  } catch {
+    // No readable location here — fall through to the localhost default below.
+  }
+  return 'localhost'
+}
+const rawRpId = import.meta.env?.VITE_VF_RP_ID ?? defaultRpId()
 export const RP_ID = !isExtensionOrigin && rawRpId && rawRpId !== 'origin' ? rawRpId : undefined
 export const RP_NAME = 'Vibing Farmer'
 

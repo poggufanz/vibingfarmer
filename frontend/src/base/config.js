@@ -263,11 +263,35 @@ function requireAddress(name, value) {
 
 export const ZERODEV_PROJECT_ID = import.meta.env?.VITE_ZERODEV_PROJECT_ID || ''
 export const ZERODEV_PASSKEY_SERVER_URL = import.meta.env?.VITE_ZERODEV_PASSKEY_SERVER_URL || ''
-// The rp.id the ZeroDev dashboard registered for this project's passkey server. The hosted
-// server ignores client-sent rpID, so this is the scope EVERY ceremony must use — see
-// wallet/passkeyBase.js signWithRpId for why sign-side needs it spelled out.
+// The rp scope every ceremony must share — see wallet/passkeyBase.js signWithRpId for why the
+// sign side needs it spelled out. Origin-aware default (same pattern as wallet/config.js): one
+// Pages build serves pages.dev AND the custom domain, so no baked value is right on both.
+// Canonical RP_ID is the apex (strip ONE leading `www.`): WebAuthn accepts an rpId equal to the
+// origin's host or a PARENT SUFFIX of it, so apex `vibingfarmer.xyz` is valid on BOTH
+// vibingfarmer.xyz and www.vibingfarmer.xyz — one passkey works on both, while a `www.` rpId
+// would fail on the apex. Explicit VITE_ZERODEV_PASSKEY_RP_ID still wins verbatim; `origin` (or
+// empty) plus any chrome-extension:// origin force undefined so the ceremony defaults to the
+// caller origin instead of shipping an invalid explicit domain. Non-DOM runtimes (Node/vitest,
+// workers) fall back to 'localhost', never a baked production domain.
+const isZeroDevExtensionOrigin =
+  typeof location !== 'undefined' && location.protocol === 'chrome-extension:'
+function canonicalZeroDevRpId(hostname) {
+  return hostname.replace(/^www\./i, '')
+}
+function defaultZeroDevRpId() {
+  try {
+    if (typeof location !== 'undefined' && location.hostname)
+      return canonicalZeroDevRpId(location.hostname)
+  } catch {
+    // No readable location here — fall through to the localhost default below.
+  }
+  return 'localhost'
+}
+const rawZeroDevRpId = import.meta.env?.VITE_ZERODEV_PASSKEY_RP_ID ?? defaultZeroDevRpId()
 export const ZERODEV_PASSKEY_RP_ID =
-  import.meta.env?.VITE_ZERODEV_PASSKEY_RP_ID || 'vibing-farmer.pages.dev'
+  !isZeroDevExtensionOrigin && rawZeroDevRpId && rawZeroDevRpId !== 'origin'
+    ? rawZeroDevRpId
+    : undefined
 export const BASE_SEPOLIA_RPC_URL =
   import.meta.env?.VITE_BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org'
 
