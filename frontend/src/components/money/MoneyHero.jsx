@@ -253,7 +253,8 @@ export function MoneyHero({
           {hasValidEarned(model) && (
             <p>
               Earned {model.earned.loss ? '-' : ''}
-              {formatCoreAmount(model.earned.amount)} <span>(unrealized, sebelum fee/slippage)</span>
+              {formatCoreAmount(model.earned.amount)}{' '}
+              <span>(unrealized, sebelum fee/slippage)</span>
             </p>
           )}
           {hasValidEarned(model) && <EarnedDepositLinks deposits={model.earned.deposits} />}

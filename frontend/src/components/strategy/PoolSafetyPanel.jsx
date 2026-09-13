@@ -9,7 +9,11 @@
 // is an explicit read-only refresh (live utilization + any newly primed TVL overlay).
 // Every fetch failure degrades row-by-row to "Unavailable" — the panel always renders.
 import { useState } from 'react'
-import { POOL_SAFETY_LABEL, initialPoolSafetyView, loadPoolSafety } from '../../strategy/poolSafety.js'
+import {
+  POOL_SAFETY_LABEL,
+  initialPoolSafetyView,
+  loadPoolSafety,
+} from '../../strategy/poolSafety.js'
 
 /** YYYY-MM-DD UTC; null when the timestamp is not a finite number (the row omits it). */
 function formatAsOf(asOf) {
@@ -31,8 +35,8 @@ export function PoolSafetyPanel({ safety }) {
         Pool safety · {safety.poolLabel}
       </h2>
       <p className="pc-section-sub">
-        What the background check verified, and where each figure came from. Anything that cannot
-        be verified shows as unavailable — never a guess.
+        What the background check verified, and where each figure came from. Anything that cannot be
+        verified shows as unavailable — never a guess.
       </p>
       <dl className="pc-pool-safety-list">
         {safety.rows.map((row) => {
@@ -61,7 +65,11 @@ export function PoolSafetyPanel({ safety }) {
  * Stateful mount: snapshot first paint, explicit read-only refresh. `loadSafety` is injectable
  * (tests never touch the network); every failure keeps the current rows.
  */
-export function PoolSafetySection({ protocol, poolLabel = POOL_SAFETY_LABEL, loadSafety = loadPoolSafety }) {
+export function PoolSafetySection({
+  protocol,
+  poolLabel = POOL_SAFETY_LABEL,
+  loadSafety = loadPoolSafety,
+}) {
   const [safety, setSafety] = useState(() =>
     initialPoolSafetyView({ ...(protocol ? { protocol } : {}), poolLabel })
   )

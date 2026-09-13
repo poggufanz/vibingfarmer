@@ -148,7 +148,11 @@ describe('readPoolUtilization (live reserve read)', () => {
 
   it('fails soft to null on RPC failure or an empty pool (never a 0% guess)', async () => {
     await expect(
-      readPoolUtilization({ readContractImpl: async () => { throw new Error('rpc down') } })
+      readPoolUtilization({
+        readContractImpl: async () => {
+          throw new Error('rpc down')
+        },
+      })
     ).resolves.toBeNull()
     await expect(
       readPoolUtilization({ readContractImpl: async () => reserve(0, 0) })
@@ -176,8 +180,12 @@ describe('loadPoolSafety (composer)', () => {
 
   it('never throws: a failed resolve still yields an all-unavailable view', async () => {
     const view = await loadPoolSafety({
-      resolveImpl: () => { throw new Error('no eligibility facts') },
-      readContractImpl: async () => { throw new Error('rpc down') },
+      resolveImpl: () => {
+        throw new Error('no eligibility facts')
+      },
+      readContractImpl: async () => {
+        throw new Error('rpc down')
+      },
     })
     expect(view.rows).toHaveLength(8)
     for (const row of view.rows) expect(row.value).toBeNull()

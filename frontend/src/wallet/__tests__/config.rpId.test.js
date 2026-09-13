@@ -28,7 +28,7 @@ describe('wallet RP_ID origin default', () => {
     expect(mod.makeWalletConfig().rpId).toBe('vibingfarmer.xyz')
   })
 
-  it("strips a leading www. so www + apex share one passkey (vibingfarmer.xyz)", async () => {
+  it('strips a leading www. so www + apex share one passkey (vibingfarmer.xyz)', async () => {
     const mod = await freshConfig({
       location: { hostname: 'www.vibingfarmer.xyz', protocol: 'https:' },
     })

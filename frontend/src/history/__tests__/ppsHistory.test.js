@@ -107,7 +107,12 @@ describe('recordPpsSample', () => {
     expect(loadPpsSeries(VAULT, { storage: memStorage({ [key]: '{"t":1}' }) })).toEqual([])
     expect(
       loadPpsSeries(VAULT, {
-        storage: memStorage({ [key]: JSON.stringify([{ t: 'x', pps: '10' }, { t: 1, pps: '-3' }]) }),
+        storage: memStorage({
+          [key]: JSON.stringify([
+            { t: 'x', pps: '10' },
+            { t: 1, pps: '-3' },
+          ]),
+        }),
       })
     ).toEqual([])
   })

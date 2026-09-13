@@ -435,9 +435,7 @@ describe('projectDepositHints (receipt → ledger hints)', () => {
 
   it('rescales a 6-dp receipt amount to canonical 7-dp without truncation', () => {
     const out = projectDepositHints({
-      allocations: [
-        stellarSucceeded({ amount: { token: 'USDC', units: '1000000', decimals: 6 } }),
-      ],
+      allocations: [stellarSucceeded({ amount: { token: 'USDC', units: '1000000', decimals: 6 } })],
       results,
     })
     expect(out).toEqual([{ agent: 'CAGENT1', assetsIn: '10000000', txHash: 'DEPHASH' }])
@@ -454,7 +452,10 @@ describe('projectDepositHints (receipt → ledger hints)', () => {
             allocationId: 'w',
             amount: { token: 'USDC', units: '10000000', decimals: 8 },
           }),
-          stellarSucceeded({ allocationId: 'v', amount: { token: 'USDC', units: '0', decimals: 7 } }),
+          stellarSucceeded({
+            allocationId: 'v',
+            amount: { token: 'USDC', units: '0', decimals: 7 },
+          }),
         ],
         results,
       })

@@ -153,7 +153,12 @@ export function WalletSettings({
             `.pc-button`) with `min-height: var(--pc-touch-target)` gives the link a real 44px tap
             area while keeping `white-space` at its normal default -- the text still wraps freely
             at 320px, so the overflow this link was originally written to dodge does not return. */}
-        <a className="pc-external-link" href={resolveVfWebAppUrl()} target="_blank" rel="noreferrer">
+        <a
+          className="pc-external-link"
+          href={resolveVfWebAppUrl()}
+          target="_blank"
+          rel="noreferrer"
+        >
           Manage Base mandate on the web app
         </a>
       </div>

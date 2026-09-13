@@ -58,9 +58,7 @@ describe('PoolSafetyPanel — partial data', () => {
     render(<PoolSafetyPanel safety={buildPoolSafetyView({ facts: null, utilization: null })} />)
     // 8 rows, all unavailable — including the structurally-unavailable backstop row.
     expect(screen.getAllByText('Unavailable')).toHaveLength(8)
-    expect(
-      screen.getByText(/No on-chain backstop read is wired yet/)
-    ).toBeTruthy()
+    expect(screen.getByText(/No on-chain backstop read is wired yet/)).toBeTruthy()
   })
 
   it('renders nothing when safety itself is absent', () => {
@@ -88,7 +86,9 @@ describe('PoolSafetySection — explicit live refresh', () => {
   })
 
   it('a failed live fetch keeps the snapshot rows — the review never crashes', async () => {
-    const loadSafety = vi.fn(async () => { throw new Error('rpc down') })
+    const loadSafety = vi.fn(async () => {
+      throw new Error('rpc down')
+    })
     render(<PoolSafetySection loadSafety={loadSafety} />)
     fireEvent.click(screen.getByRole('button', { name: /Refresh live figures/ }))
     // Still the snapshot TVL afterwards (findByText retries through the async refresh).

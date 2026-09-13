@@ -97,7 +97,11 @@ export function formatUtilizationBps(bps) {
  * @param {{ facts?: object|null, poolLabel?: string, utilization?: { bps:number, asOf:number|null }|null }} input
  * @returns {{ poolLabel:string, rows:PoolSafetyRow[] }}
  */
-export function buildPoolSafetyView({ facts = null, poolLabel = POOL_SAFETY_LABEL, utilization = null } = {}) {
+export function buildPoolSafetyView({
+  facts = null,
+  poolLabel = POOL_SAFETY_LABEL,
+  utilization = null,
+} = {}) {
   const tvl = typeof facts?.tvl?.value === 'number' ? formatUsdCompact(facts.tvl.value) : null
   const utilizationText =
     utilization && typeof utilization.bps === 'number'
@@ -218,7 +222,10 @@ function safeResolve(protocol) {
 }
 
 /** Snapshot-only first paint for the panel: zero I/O, so mounting never hits the network. */
-export function initialPoolSafetyView({ protocol = POOL_SAFETY_PROTOCOL, poolLabel = POOL_SAFETY_LABEL } = {}) {
+export function initialPoolSafetyView({
+  protocol = POOL_SAFETY_PROTOCOL,
+  poolLabel = POOL_SAFETY_LABEL,
+} = {}) {
   const resolved = safeResolve(protocol)
   return buildPoolSafetyView({ facts: resolved?.facts ?? null, poolLabel, utilization: null })
 }

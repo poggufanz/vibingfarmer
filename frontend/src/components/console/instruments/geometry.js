@@ -102,8 +102,7 @@ export function ppsSparklineGeometry(values, { width, height, maxPoints = 60 } =
   const max = Math.max(...sampled)
   const span = max - min
   const x = (i) => (sampled.length === 1 ? width / 2 : (i / (sampled.length - 1)) * width)
-  const y = (v) =>
-    span === 0 ? midY : Math.round(height - 4 - ((v - min) / span) * (height - 8))
+  const y = (v) => (span === 0 ? midY : Math.round(height - 4 - ((v - min) / span) * (height - 8)))
   let d = `M${round2(x(0))},${y(sampled[0])}`
   for (let i = 1; i < sampled.length; i++) d += ` L${round2(x(i))},${y(sampled[i])}`
   return { path: d, empty: false }

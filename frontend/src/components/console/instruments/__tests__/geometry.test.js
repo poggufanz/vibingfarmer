@@ -1,6 +1,12 @@
 // frontend/src/components/console/instruments/geometry.test.js
 import { describe, it, expect } from 'vitest'
-import { ekgGeometry, dialGeometry, radarBlipPoints, gaugeRatio, ppsSparklineGeometry } from '../geometry.js'
+import {
+  ekgGeometry,
+  dialGeometry,
+  radarBlipPoints,
+  gaugeRatio,
+  ppsSparklineGeometry,
+} from '../geometry.js'
 
 describe('ekgGeometry', () => {
   it('builds a path with one beat per row, newest at the right', () => {

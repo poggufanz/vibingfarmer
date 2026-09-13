@@ -5,16 +5,19 @@
 // renders a flat baseline labelled as "no history yet" — never a fabricated curve.
 import { ppsSparklineGeometry } from './geometry.js'
 
-export default function Sparkline({ values = [], width = 260, height = 56, label = 'Price per share' }) {
+export default function Sparkline({
+  values = [],
+  width = 260,
+  height = 56,
+  label = 'Price per share',
+}) {
   const g = ppsSparklineGeometry(values, { width, height })
   const n = (values || []).filter(Number.isFinite).length
   return (
     <svg
       className="instrument"
       role="img"
-      aria-label={
-        g.empty ? `${label}, no history yet` : `${label} history, ${n} samples`
-      }
+      aria-label={g.empty ? `${label}, no history yet` : `${label} history, ${n} samples`}
       viewBox={`0 0 ${width} ${height}`}
       width="100%"
       height={height}

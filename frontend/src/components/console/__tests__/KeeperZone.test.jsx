@@ -93,7 +93,9 @@ describe('KeeperZone live Blend APY + PPS sparkline (P0 #2)', () => {
     expect(expected7).not.toBeNull()
     expect(expected30).not.toBeNull()
     expect(
-      screen.getByText(`Trailing APY — 7d: ${expected7.toFixed(2)}%, 30d: ${expected30.toFixed(2)}%`)
+      screen.getByText(
+        `Trailing APY — 7d: ${expected7.toFixed(2)}%, 30d: ${expected30.toFixed(2)}%`
+      )
     ).toBeTruthy()
   })
 

@@ -12,7 +12,14 @@ import { selectPpsWindow, trailingApyPct, ppsDisplayValues } from '../../history
 const fmtTrailing = (v) => (v == null ? 'unavailable' : `${v.toFixed(2)}%`)
 const shortHash = (h) => (h ? `${h.slice(0, 8)}…${h.slice(-6)}` : '')
 
-export default function KeeperZone({ events = [], pricePerShare = null, strategies = [], liveApr = null, ppsHistory = [], nowMs }) {
+export default function KeeperZone({
+  events = [],
+  pricePerShare = null,
+  strategies = [],
+  liveApr = null,
+  ppsHistory = [],
+  nowMs,
+}) {
   const engaged = strategies.length > 0 && pricePerShare != null
   const aprs = strategies.map((s) => s.aprPct).filter((a) => Number.isFinite(a))
   const apr = aprs.length ? Math.max(...aprs) : null

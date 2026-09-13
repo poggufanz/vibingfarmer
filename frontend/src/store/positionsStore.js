@@ -328,7 +328,6 @@ export function projectDepositHints({ allocations, results } = {}) {
   return hints
 }
 
-
 /**
  * Reconcile positions against the Stellar vault. Sums the vault-share balance across
  * every agent the user funded (shares are i128 base units, 7-dp). Returns a positions

@@ -35,7 +35,8 @@ function defaultStorage() {
   }
 }
 
-const storageKey = (vaultAddress) => `${PPS_STORAGE_PREFIX}${String(vaultAddress || '').toUpperCase()}`
+const storageKey = (vaultAddress) =>
+  `${PPS_STORAGE_PREFIX}${String(vaultAddress || '').toUpperCase()}`
 
 function validSample(s) {
   return (

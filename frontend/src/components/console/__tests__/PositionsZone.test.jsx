@@ -101,10 +101,7 @@ describe('PositionsZone live Blend APY banner (P0 #2)', () => {
 
   it('fails soft to unavailable when the reserve read fails — never a fake number', () => {
     render(
-      <PositionsZone
-        {...props}
-        liveApr={{ state: 'unavailable', aprPct: null, asOf: null }}
-      />
+      <PositionsZone {...props} liveApr={{ state: 'unavailable', aprPct: null, asOf: null }} />
     )
     expect(screen.getByText('Live APY unavailable')).toBeTruthy()
     expect(screen.queryByText(/Blend pool live APY/)).toBeNull()
