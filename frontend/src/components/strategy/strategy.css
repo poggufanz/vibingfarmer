@@ -177,14 +177,11 @@
 .pc-strategy-amount {
   width: 100%;
 
-  /* Was `border: 0` + a bare 2px underline on a transparent background, with no placeholder on the
-   * element either (PlanStage.jsx now supplies one). Rendered, that is a 434x120px transparent area
-   * carrying nothing at all: no boundary, no fill, no hint text -- zero signal that it is typeable,
-   * which is why it reads as plain text rather than a field. The 120px height is NOT a defect and is
-   * left alone: it follows `--pc-type-money` (76px), which the visual contract locks. */
+  /* Uniform bordered rounded box: 1px color-mix ring on all four sides with full
+   * control radius. Earlier this was a 3-sided open-bottom shape; the contract is
+   * a closed box, so no `border-bottom: 0` and no square `0 0` bottom corners. */
   border: 1px solid color-mix(in srgb, currentcolor 26%, transparent);
-  border-bottom: 2px solid currentcolor;
-  border-radius: var(--pc-radius-control) var(--pc-radius-control) 0 0;
+  border-radius: var(--pc-radius-control);
   padding: var(--pc-space-2) var(--pc-space-4) var(--pc-space-3);
   background: color-mix(in srgb, currentcolor 5%, transparent);
   color: currentcolor;
