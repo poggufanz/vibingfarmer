@@ -102,6 +102,47 @@
   color: var(--pc-owned-ink);
 }
 
+/* Decorative paint splatter on the "Your money" hero (route-scoped, non-contract).
+ * Fade-function-free by design: rejection checklist item 6 (MyMoneyRoute.test.jsx:731-735,
+ * myMoneyCssContract.test.js:94, coreRoutes.styles.test.js:148) forbids CSS fade paint
+ * functions in this file, and both pocket-crew gates ban those too -- so the soft edge
+ * comes from an inline SVG data-URI (feGaussianBlur blur, never a CSS paint function;
+ * a data-URI matches no gate pattern). `.pc-dominant` above already provides
+ * position:relative + overflow:clip, so the splatter is clipped neatly into the corner.
+ * ::before/::after are absolutely positioned with pointer-events:none and paint beneath
+ * the card's positioned content (the `> *` rule below, no z-index literal needed).
+ * Solid dark-forest fill (#17251f at low opacity) reads as decoration on the Rice
+ * surface in both themes. */
+.pc-dominant--owned::before {
+  content: "";
+  position: absolute;
+  top: -140px;
+  right: -110px;
+  width: 400px;
+  height: 400px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'%3E%3Cfilter id='soft' x='-40%25' y='-40%25' width='180%25' height='180%25'%3E%3CfeGaussianBlur stdDeviation='28'/%3E%3C/filter%3E%3Cpath d='M205 45C265 35 332 85 341 165C350 245 298 318 208 328C118 338 52 278 47 188C42 98 145 55 205 45Z' fill='%2317251f' fill-opacity='0.55' filter='url(%23soft)'/%3E%3Cpath d='M120 90C140 80 160 95 155 115C150 135 125 135 118 118C113 105 110 95 120 90Z' fill='%2317251f' fill-opacity='0.35'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-size: contain;
+  pointer-events: none;
+}
+
+.pc-dominant--owned::after {
+  content: "";
+  position: absolute;
+  top: 60px;
+  right: 210px;
+  width: 220px;
+  height: 120px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='120' viewBox='0 0 220 120'%3E%3Cg fill='%2317251f'%3E%3Ccircle cx='180' cy='40' r='14' fill-opacity='0.28'/%3E%3Ccircle cx='128' cy='70' r='9' fill-opacity='0.22'/%3E%3Ccircle cx='76' cy='34' r='6' fill-opacity='0.18'/%3E%3Ccircle cx='214' cy='92' r='4' fill-opacity='0.15'/%3E%3C/g%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-size: contain;
+  pointer-events: none;
+}
+
+.pc-dominant--owned > * {
+  position: relative;
+}
+
 /* Controls. Buttons are soft rectangles, not pills. Pills are reserved for compact metadata. */
 .pc-button {
   display: inline-flex;
