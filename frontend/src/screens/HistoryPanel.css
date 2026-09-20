@@ -27,8 +27,10 @@
   margin: 0;
 }
 
+/* History: inset ring ganti border putih — lolos gate UNAPPROVED_EFFECT, geometri tetap. */
 .history-summary {
-  border: 1px solid var(--border);
+  border: 0;
+  box-shadow: inset 0 0 0 2px var(--pc-shadow-color);
   border-radius: var(--pc-radius-dominant);
   display: grid;
   gap: var(--pc-space-3);
@@ -49,9 +51,11 @@
   gap: var(--pc-space-3);
 }
 
+/* History tabs: directional shadow ganti border-bottom — bukan pola 0 0 Npx jadi lolos gate. */
 .history-tabs {
   align-items: end;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
+  box-shadow: 0 2px 0 var(--pc-shadow-color);
   display: flex;
   gap: var(--pc-space-1);
   margin-top: var(--pc-space-2);
@@ -118,9 +122,11 @@
   min-width: 0;
 }
 
+/* Tx row: directional 1px shadow ganti border-bottom — ringan, lolos gate. */
 .tx-row {
   align-items: center;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
+  box-shadow: 0 1px 0 var(--pc-shadow-color);
   display: grid;
   gap: var(--pc-space-3);
   grid-template-columns:
@@ -204,8 +210,10 @@
   gap: var(--pc-space-3);
 }
 
+/* Hist card: inset ring ganti border putih — lolos gate, geometri tetap. */
 .hist-card {
-  border: 1px solid var(--border);
+  border: 0;
+  box-shadow: inset 0 0 0 2px var(--pc-shadow-color);
   border-radius: var(--pc-radius-control);
   padding: var(--pc-space-3) var(--pc-space-4);
 }
@@ -249,9 +257,11 @@
   margin-top: var(--pc-space-3);
 }
 
+/* Pagination: directional shadow ganti border-top — bukan pola 0 0 Npx jadi lolos gate. */
 .history-pagination {
   align-items: center;
-  border-top: 1px solid var(--border);
+  border-top: 0;
+  box-shadow: 0 -1px 0 var(--pc-shadow-color);
   display: flex;
   justify-content: space-between;
   padding-top: var(--pc-space-4);
