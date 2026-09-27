@@ -6,10 +6,11 @@ const USDC_UNIT = 10_000_000n // Stellar USDC has 7 decimals
 
 export const formatApr = (bps) => (bps == null ? '--' : `${(bps / 100).toFixed(2)}%`)
 
+export const wholeUsdc = (units) => (units + USDC_UNIT / 2n) / USDC_UNIT
+
 export function formatTvl(units) {
   if (units == null) return '--'
-  const whole = (units + USDC_UNIT / 2n) / USDC_UNIT
-  return `${whole.toLocaleString('en-US')} USDC`
+  return `${wholeUsdc(units).toLocaleString('en-US')} USDC`
 }
 
 export function useLandingStats() {
