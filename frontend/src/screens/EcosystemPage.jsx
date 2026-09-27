@@ -3,7 +3,7 @@
 // the route caller and passes through the Secondary adapter before it reaches the primitives.
 import { useNavigate } from 'react-router-dom'
 import NavBar from '../components/NavBar.jsx'
-import { ECOSYSTEM } from '../landing/LandingHero.jsx'
+import { ECOSYSTEM } from '../landing/ecosystem.js'
 import { NETWORK_IDS } from '../design/networks.js'
 import { toEcosystemPresentation } from '../secondary/secondaryRouteAdapters.js'
 import { createEcosystemModel } from '../secondary/ecosystemModel.js'
