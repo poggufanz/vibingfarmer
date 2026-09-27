@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { MOTION, gsap, useGSAP, useScroller } from '../motion/gsap.js'
+import { MOTION, gsap, useGSAP, scrollerOf } from '../motion/gsap.js'
 import FieldArt, { FIELD_FILL, PLOT_WIDTH } from './FieldArt.jsx'
 import './vibe-forever.css'
 
@@ -41,6 +41,10 @@ const GRANT_DX = -144
 const grantDy = (i) => 220 - (96 + i * 84)
 const FAILED = 2
 
+// The pinned stage needs three columns (width) and a 100vh frame that still fits the art and its
+// "not live data" caption (height). Anything smaller keeps the readable list.
+const STAGE = { motion: MOTION, wide: '(min-width: 860px)', tall: '(min-height: 640px)' }
+
 function beatSwap(tl, beats, ticks, i, at) {
   tl.to(beats[i - 1], { opacity: 0, y: -16, duration: 0.4 }, at)
     .fromTo(beats[i], { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4 }, `${at}+=0.2`)
@@ -48,26 +52,34 @@ function beatSwap(tl, beats, ticks, i, at) {
     .to(ticks[i], { opacity: 1, duration: 0.2 }, at)
 }
 
-function scrubStage(root, scroller) {
+function scrubStage(root) {
+  const scroller = scrollerOf(root)
   const q = gsap.utils.selector(root)
   const beats = q('.vf-beat')
   const ticks = q('.vf-vibe__ticks li')
-  const day = q('.vf-vibe__day')[0]
+  const day = q('.vf-vibe__day')[0].firstChild
+  const field = q('.vf-field')[0]
   const crews = q('.vf-field__crew')
   const fills = q('.vf-field__fill')
   const live = fills.filter((_, i) => i !== FAILED)
   const liveWidth = (i) => PLOT_WIDTH * FIELD_FILL[i >= FAILED ? i + 1 : i]
-  const warn = getComputedStyle(root).getPropertyValue('--pc-warning').trim() || '#e8a33d'
-  const ink = getComputedStyle(root).getPropertyValue('--pc-ink').trim() || '#f2f5ef'
 
   root.classList.add('is-scrubbed')
+  day.nodeValue = '01'
   gsap.set(beats.slice(1), { opacity: 0 })
   gsap.set(ticks.slice(1), { opacity: 0.3 })
   gsap.set(crews, { x: GRANT_DX, y: (i) => grantDy(i) })
   gsap.set(fills, { attr: { width: 0 } })
 
+  // HUD and fence follow the timeline's own (smoothed) playhead, so they stay in step with the
+  // beats on a fast scrub. The fence colour is a class: its CSS transition would trail a tweened
+  // inline stroke.
   const tl = gsap.timeline({
     defaults: { ease: 'power2.inOut' },
+    onUpdate() {
+      day.nodeValue = String(Math.round(1 + this.progress() * 29)).padStart(2, '0')
+      field.classList.toggle('is-warning', this.currentLabel() === 'derisk')
+    },
     scrollTrigger: {
       scroller,
       trigger: q('.vf-vibe__stage')[0],
@@ -76,9 +88,6 @@ function scrubStage(root, scroller) {
       end: '+=300%',
       scrub: 0.8,
       snap: { snapTo: 'labels', duration: { min: 0.2, max: 0.8 }, ease: 'power1.inOut' },
-      onUpdate: (self) => {
-        day.textContent = String(Math.round(1 + self.progress * 29)).padStart(2, '0')
-      },
     },
   })
 
@@ -111,8 +120,7 @@ function scrubStage(root, scroller) {
     'watch'
   ).addLabel('derisk', '+=0.4')
   beatSwap(tl, beats, ticks, 4, 'derisk')
-  tl.to(q('.vf-field__fence'), { stroke: warn, duration: 0.3 }, 'derisk')
-    .to(live, { attr: { width: 0 }, duration: 0.9 }, 'derisk+=0.2')
+  tl.to(live, { attr: { width: 0 }, duration: 0.9 }, 'derisk+=0.2')
     .to(
       q('.vf-field__idle .vf-field__bay-value:not(.vf-field__bay-alt)'),
       { opacity: 0 },
@@ -121,16 +129,21 @@ function scrubStage(root, scroller) {
     .to(q('.vf-field__bay-alt'), { opacity: 1 }, 'derisk+=0.5')
     .addLabel('resume', '+=0.4')
   beatSwap(tl, beats, ticks, 5, 'resume')
-  tl.to(q('.vf-field__fence'), { stroke: ink, duration: 0.3 }, 'resume')
-    .to(q('.vf-field__bay-alt'), { opacity: 0 }, 'resume')
+  tl.to(q('.vf-field__bay-alt'), { opacity: 0 }, 'resume')
     .to(q('.vf-field__idle .vf-field__bay-value:not(.vf-field__bay-alt)'), { opacity: 1 }, 'resume')
     .to(live, { attr: { width: (i) => liveWidth(i) }, duration: 0.9, stagger: 0.06 }, 'resume+=0.2')
     .addLabel('end', '+=0.3')
 
-  return () => root.classList.remove('is-scrubbed')
+  // The list layout (small or short screens) shows the end state: day 30, fence at rest.
+  return () => {
+    root.classList.remove('is-scrubbed')
+    field.classList.remove('is-warning')
+    day.nodeValue = '30'
+  }
 }
 
-function revealList(root, scroller) {
+function revealList(root) {
+  const scroller = scrollerOf(root)
   const q = gsap.utils.selector(root)
   gsap.from(q('.vf-beat'), {
     opacity: 0,
@@ -144,13 +157,12 @@ function revealList(root, scroller) {
 
 export default function VibeForever() {
   const root = useRef(null)
-  const scroller = useScroller()
 
   useGSAP(
     () => {
       const mm = gsap.matchMedia()
-      mm.add(MOTION, (ctx) => {
-        const { motion, desktop } = ctx.conditions
+      mm.add(STAGE, (ctx) => {
+        const { motion, wide, tall } = ctx.conditions
         if (!motion) return undefined
         gsap.from(gsap.utils.toArray('.vf-vibe__head .vf-line > span', root.current), {
           yPercent: 105,
@@ -158,14 +170,14 @@ export default function VibeForever() {
           stagger: 0.08,
           ease: 'expo.out',
           scrollTrigger: {
-            scroller: scroller.current,
+            scroller: scrollerOf(root.current),
             trigger: root.current,
             start: 'top 80%',
             once: true,
           },
         })
-        if (desktop) return scrubStage(root.current, scroller.current)
-        revealList(root.current, scroller.current)
+        if (wide && tall) return scrubStage(root.current)
+        revealList(root.current)
         return undefined
       })
     },

@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ScrollTrigger, gsap } from '../motion/gsap.js'
 import SetOnce from '../sections/SetOnce.jsx'
 import { setMotion } from './motionEnv.js'
 
 beforeEach(() => setMotion({ reduce: true }))
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 describe('SetOnce', () => {
   it('is the how-it-works anchor and states the one decision', () => {
@@ -32,9 +36,19 @@ describe('SetOnce', () => {
     expect(screen.getByText('Vibing Farmer: 1 to start · 0 to repeat')).toBeTruthy()
   })
 
-  it('runs its motion branch without throwing', () => {
+  // SVG elements have no offsetLeft; measuring with it made every x NaN and the collapse froze.
+  it('scrubs every manual signature onto the first one', () => {
     setMotion({ reduce: false })
+    const box = Element.prototype.getBoundingClientRect
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      if (!this.classList.contains('vf-sigs__glyph')) return box.call(this)
+      const left = [...this.parentNode.children].indexOf(this) * 40
+      return { left, right: left + 36, top: 0, bottom: 24, width: 36, height: 24, x: left, y: 0 }
+    })
     const { container } = render(<SetOnce />)
-    expect(container.querySelectorAll('.vf-sigs__glyph')).toHaveLength(8)
+    const glyphs = [...container.querySelectorAll('.vf-sigs__glyph')]
+    const collapse = ScrollTrigger.getAll().find((st) => st.trigger.classList.contains('vf-sigs'))
+    collapse.animation.progress(1)
+    glyphs.slice(1).forEach((glyph, i) => expect(gsap.getProperty(glyph, 'x')).toBe(-(i + 1) * 40))
   })
 })

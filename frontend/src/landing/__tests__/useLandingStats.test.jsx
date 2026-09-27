@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const reads = { apr: vi.fn(), tvl: vi.fn() }
@@ -9,7 +9,7 @@ vi.mock('../../stellar/vaultReads.js', () => ({
 }))
 vi.mock('../../stellar/config.js', () => ({ SOROBAN_BLEND_POOL_ADDRESS: 'CPOOL' }))
 
-import { formatApr, formatTvl, useLandingStats } from '../useLandingStats.js'
+import { READ_TIMEOUT_MS, formatApr, formatTvl, useLandingStats } from '../useLandingStats.js'
 
 beforeEach(() => {
   reads.apr.mockReset()
@@ -35,6 +35,29 @@ describe('landing stats', () => {
     await waitFor(() => expect(result.current.status).toBe('live'))
     expect(reads.apr).toHaveBeenCalledWith('CPOOL')
     expect(result.current.aprBps).toBe(612)
+  })
+
+  it('is only partly live when one read fails', async () => {
+    reads.apr.mockResolvedValue(null)
+    reads.tvl.mockResolvedValue(50_000_000n)
+    const { result } = renderHook(() => useLandingStats())
+    await waitFor(() => expect(result.current.status).toBe('partial'))
+    expect(result.current.totalAssets).toBe(50_000_000n)
+  })
+
+  it('gives up on an RPC that never answers instead of loading forever', async () => {
+    vi.useFakeTimers()
+    try {
+      reads.apr.mockReturnValue(new Promise(() => {}))
+      reads.tvl.mockReturnValue(new Promise(() => {}))
+      const { result } = renderHook(() => useLandingStats())
+      await act(() => vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1))
+      expect(result.current.status).toBe('loading')
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      expect(result.current.status).toBe('unavailable')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('is unavailable when every read fails or throws', async () => {

@@ -309,6 +309,7 @@
   background: var(--pc-faint);
 }
 
+.vf-stamp[data-status='partial']::before,
 .vf-stamp[data-status='unavailable']::before {
   background: var(--pc-warning);
 }

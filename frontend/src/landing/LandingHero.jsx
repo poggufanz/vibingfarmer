@@ -1,9 +1,9 @@
 // Public landing: "Set once. Vibe forever." Seven sections, each owning its markup, CSS and
 // motion. `.vf-landing` is the scroll container (the app shell keeps the window fixed), so every
-// ScrollTrigger reads it from ScrollerContext.
-import { useEffect, useRef } from 'react'
+// ScrollTrigger names it (see scrollerOf in motion/gsap.js).
+import { useEffect } from 'react'
 import NavBar from '../components/NavBar.jsx'
-import { ScrollTrigger, ScrollerContext } from './motion/gsap.js'
+import { ScrollTrigger } from './motion/gsap.js'
 import { useLandingStats } from './useLandingStats.js'
 import Hero from './sections/Hero.jsx'
 import SetOnce from './sections/SetOnce.jsx'
@@ -15,7 +15,6 @@ import Final from './sections/Final.jsx'
 import './LandingHero.css'
 
 export default function LandingHero({ onStart }) {
-  const rootRef = useRef(null)
   const stats = useLandingStats()
 
   // Web fonts change line heights, and with them every trigger position.
@@ -28,20 +27,18 @@ export default function LandingHero({ onStart }) {
   }, [])
 
   return (
-    <ScrollerContext.Provider value={rootRef}>
-      <div className="vf-landing" ref={rootRef}>
-        <div className="vf-landing__backdrop" aria-hidden="true" />
-        <NavBar onLaunch={onStart} />
-        <main>
-          <Hero onStart={onStart} stats={stats} />
-          <SetOnce />
-          <VibeForever />
-          <RealYield stats={stats} />
-          <Leash />
-          <Risks />
-          <Final onStart={onStart} />
-        </main>
-      </div>
-    </ScrollerContext.Provider>
+    <div className="vf-landing">
+      <div className="vf-landing__backdrop" aria-hidden="true" />
+      <NavBar onLaunch={onStart} />
+      <main>
+        <Hero onStart={onStart} stats={stats} />
+        <SetOnce />
+        <VibeForever />
+        <RealYield stats={stats} />
+        <Leash />
+        <Risks />
+        <Final onStart={onStart} />
+      </main>
+    </div>
   )
 }

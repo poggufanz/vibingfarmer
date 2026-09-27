@@ -5,20 +5,21 @@
 //     created paused and run through playWhileVisible;
 //   - every ScrollTrigger names the landing scroller (.vf-landing owns overflow, not the window);
 //   - no tweens are created under prefers-reduced-motion, and the default CSS is the final frame.
-import { createContext, useContext } from 'react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { useGSAP } from '@gsap/react'
 
 gsap.registerPlugin(useGSAP, ScrollTrigger)
 
-export const MOTION = {
-  motion: '(prefers-reduced-motion: no-preference)',
-  desktop: '(min-width: 860px)',
-}
+// One query on purpose: gsap.matchMedia reverts and re-runs a callback whenever any of its queries
+// flips, so a width condition here would replay every intro when a window is resized.
+export const MOTION = '(prefers-reduced-motion: no-preference)'
 
-export const ScrollerContext = createContext({ current: null })
-export const useScroller = () => useContext(ScrollerContext)
+// Read the scroller from the DOM inside the motion callback, never from a parent ref: React runs
+// a child's layout effects before it attaches the parent's ref, so on the first (production) mount
+// a ref is still null and ScrollTrigger silently falls back to the window, which never scrolls.
+// Outside the landing (isolated section tests) this is null and the window is the right default.
+export const scrollerOf = (el) => el.closest('.vf-landing')
 
 // Runs a finite ambient loop only while `trigger` is on screen: it pauses when the section
 // leaves and starts again from the top if it had already finished. `ready` holds the loop back
@@ -49,7 +50,7 @@ export function countUp(el, to, format, { from = 0, duration = 1.2 } = {}) {
   const node = el?.firstChild
   if (!node || node.nodeType !== Node.TEXT_NODE || !Number.isFinite(to)) return
   const proxy = { value: from }
-  gsap.to(proxy, {
+  return gsap.to(proxy, {
     value: to,
     duration,
     ease: 'power3.out',

@@ -6,9 +6,9 @@ import {
   gsap,
   playWhileVisible,
   useGSAP,
-  useScroller,
+  scrollerOf,
 } from '../motion/gsap.js'
-import { formatApr, formatTvl, wholeUsdc } from '../useLandingStats.js'
+import { STAMP, formatApr, formatTvl, wholeUsdc } from '../useLandingStats.js'
 import './real-yield.css'
 
 const PATH = [
@@ -28,13 +28,8 @@ const FACTS = [
   ['Exit', 'Redeem any time; the admin cannot pause redemption'],
 ]
 
-const STAMP = {
-  loading: 'reading Stellar testnet',
-  live: 'live · Stellar testnet',
-  unavailable: 'unavailable · on-chain read failed',
-}
-
-function yieldMotion(root, scroller) {
+function yieldMotion(root) {
+  const scroller = scrollerOf(root)
   const q = gsap.utils.selector(root)
   const path = q('.vf-path')[0]
   const line = q('.vf-path__line')[0]
@@ -74,26 +69,21 @@ export default function RealYield({ stats }) {
   const root = useRef(null)
   const aprRef = useRef(null)
   const tvlRef = useRef(null)
-  const scroller = useScroller()
 
   useGSAP(
     () => {
       const mm = gsap.matchMedia()
-      mm.add(MOTION, (ctx) => {
-        if (ctx.conditions.motion) yieldMotion(root.current, scroller.current)
-      })
+      mm.add(MOTION, () => yieldMotion(root.current))
     },
     { scope: root }
   )
 
   useGSAP(
     () => {
-      if (stats.status !== 'live') return
       const mm = gsap.matchMedia()
-      mm.add(MOTION, (ctx) => {
-        if (!ctx.conditions.motion) return
+      mm.add(MOTION, () => {
         const trigger = {
-          scroller: scroller.current,
+          scroller: scrollerOf(root.current),
           trigger: aprRef.current,
           start: 'top 90%',
           once: true,
@@ -157,9 +147,9 @@ export default function RealYield({ stats }) {
 
       <div className="vf-yield__grid">
         <div className="vf-yield__live">
-          <dl className="vf-readout vf-readout--two" aria-live="polite">
+          <dl className="vf-readout vf-readout--two">
             <div>
-              <dt>Blend USDC supply APR</dt>
+              <dt>Est. Blend USDC supply APR</dt>
               <dd data-testid="yield-apr" ref={aprRef}>
                 {formatApr(stats.aprBps)}
               </dd>
@@ -175,8 +165,8 @@ export default function RealYield({ stats }) {
             {STAMP[stats.status]}
           </p>
           <p className="vf-caption">
-            APR is the pool&apos;s current supply rate and changes with utilisation. TVL is testnet
-            USDC held by the vault.
+            APR is an estimate from the pool&apos;s current rates and changes with utilisation. TVL
+            is testnet USDC held by the vault.
           </p>
         </div>
 

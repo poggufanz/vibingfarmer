@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { gsap } from '../motion/gsap.js'
 import Leash from '../sections/Leash.jsx'
 import { setMotion } from './motionEnv.js'
 
@@ -34,6 +35,21 @@ describe('Leash', () => {
     const toggle = screen.getByRole('button', { name: /revoke \(demo\)/i })
     fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('leash-allowance').textContent).toBe('0 USDC')
+  })
+
+  // Stacked counts write the same text node from opposite directions and flicker.
+  it('runs one allowance count at a time when the toggle is clicked repeatedly', () => {
+    setMotion({ reduce: false })
+    render(<Leash />)
+    const toggle = screen.getByRole('button', { name: /revoke \(demo\)/i })
+    fireEvent.click(toggle)
+    fireEvent.click(toggle)
+    fireEvent.click(toggle)
+    const counts = gsap.globalTimeline
+      .getChildren(true, true, false)
+      .filter((tween) => tween.targets()[0]?.constructor === Object)
+    expect(counts).toHaveLength(1)
     expect(screen.getByTestId('leash-allowance').textContent).toBe('0 USDC')
   })
 })

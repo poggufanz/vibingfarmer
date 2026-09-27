@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { MOTION, countUp, gsap, useGSAP, useScroller } from '../motion/gsap.js'
+import { MOTION, countUp, gsap, useGSAP, scrollerOf } from '../motion/gsap.js'
 import './leash.css'
 
 const BOUNDS = [
@@ -29,7 +29,8 @@ const ALSO = [
 
 const BUDGET = 500
 
-function leashMotion(root, scroller) {
+function leashMotion(root) {
+  const scroller = scrollerOf(root)
   const q = gsap.utils.selector(root)
   const frame = q('.vf-leash__frame')[0]
   gsap.from(q('.vf-leash__head .vf-line > span'), {
@@ -62,16 +63,14 @@ export default function Leash() {
   const root = useRef(null)
   const allowanceRef = useRef(null)
   const mounted = useRef(false)
-  const scroller = useScroller()
+  const counting = useRef(null)
   const [revoked, setRevoked] = useState(false)
   const allowance = revoked ? 0 : BUDGET
 
   useGSAP(
     () => {
       const mm = gsap.matchMedia()
-      mm.add(MOTION, (ctx) => {
-        if (ctx.conditions.motion) leashMotion(root.current, scroller.current)
-      })
+      mm.add(MOTION, () => leashMotion(root.current))
     },
     { scope: root }
   )
@@ -82,13 +81,13 @@ export default function Leash() {
         mounted.current = true
         return
       }
-      const mm = gsap.matchMedia()
-      mm.add(MOTION, (ctx) => {
-        if (!ctx.conditions.motion) return
-        countUp(allowanceRef.current, allowance, (v) => `${Math.round(v)} USDC`, {
-          from: BUDGET - allowance,
-          duration: 0.6,
-        })
+      // A second click mid-count must stop the first count, or both write the same text node.
+      counting.current?.kill()
+      counting.current = null
+      if (!window.matchMedia(MOTION).matches) return
+      counting.current = countUp(allowanceRef.current, allowance, (v) => `${Math.round(v)} USDC`, {
+        from: BUDGET - allowance,
+        duration: 0.6,
       })
     },
     { dependencies: [revoked], scope: root }

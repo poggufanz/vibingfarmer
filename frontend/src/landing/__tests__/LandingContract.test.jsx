@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ScrollTrigger } from '../motion/gsap.js'
 import { setMotion } from './motionEnv.js'
 
 vi.mock('../../stellar/vaultReads.js', () => ({
@@ -13,6 +14,11 @@ vi.mock('../../stellar/vaultReads.js', () => ({
 }))
 
 import LandingHero from '../LandingHero.jsx'
+import Hero from '../sections/Hero.jsx'
+import SetOnce from '../sections/SetOnce.jsx'
+import RealYield from '../sections/RealYield.jsx'
+import Leash from '../sections/Leash.jsx'
+import Final from '../sections/Final.jsx'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const src = (file) => fs.readFileSync(path.join(here, '..', file), 'utf8')
@@ -104,13 +110,47 @@ describe('Landing contract', () => {
 })
 
 describe('Landing motion contract', () => {
+  // Production renders once (no StrictMode double mount), so this is the first-mount case that
+  // shipped broken: triggers bound to the window never fire, because .vf-landing owns scrolling.
+  it('binds every ScrollTrigger to the landing scroller on first mount', () => {
+    const { container } = renderLanding()
+    const landing = container.querySelector('.vf-landing')
+    const triggers = ScrollTrigger.getAll()
+    expect(triggers.length).toBeGreaterThan(5)
+    for (const trigger of triggers) expect(trigger.scroller).toBe(landing)
+    expect(triggers.filter((trigger) => trigger.pin)).toHaveLength(1)
+  })
+
+  it('creates no motion at all under reduced motion', () => {
+    setMotion({ reduce: true })
+    renderLanding()
+    expect(ScrollTrigger.getAll()).toHaveLength(0)
+  })
+
+  // gsap.matchMedia reverts and re-runs a callback whenever any of its queries flips, so a section
+  // that subscribes to the desktop query replays its intro when a window is resized across 860px.
+  // Only the pinned stage has a layout that depends on width.
+  it.each([
+    ['Hero', <Hero key="hero" onStart={() => {}} stats={{ status: 'loading' }} />],
+    ['SetOnce', <SetOnce key="set" />],
+    ['RealYield', <RealYield key="yield" stats={{ status: 'loading' }} />],
+    ['Leash', <Leash key="leash" />],
+    ['Final', <Final key="final" onStart={() => {}} />],
+  ])('%s motion does not re-run on a viewport resize', (_, section) => {
+    render(section)
+    const queries = window.matchMedia.mock.calls.map(([query]) => query)
+    expect(queries.length).toBeGreaterThan(0)
+    expect(queries.filter((query) => /width|height/.test(query))).toEqual([])
+    expect(ScrollTrigger.getAll().length).toBeGreaterThan(0)
+  })
+
   it('requires GSAP motion wired to the landing scroller', () => {
     for (const file of ANIMATED) {
       const source = src(file)
       expect(source, file).toMatch(/from '\.\.\/motion\/gsap\.js'/)
       expect(source, file).toMatch(/useGSAP\(/)
       expect(source, file).toMatch(/gsap\.matchMedia\(\)/)
-      expect(source, file).toMatch(/scroller/)
+      expect(source, file).toMatch(/scrollerOf\(root\)/)
       // autoAlpha sets visibility:hidden, which drops pending content (CTAs included) out of the
       // accessibility tree and the tab order until its trigger fires. Reveals use opacity.
       expect(source, file).not.toMatch(/autoAlpha/)
@@ -121,7 +161,6 @@ describe('Landing motion contract', () => {
     expect(src('sections/VibeForever.jsx')).toMatch(/pin:\s*true/)
     expect(src('sections/VibeForever.jsx')).toMatch(/scrub:/)
     expect(src('motion/gsap.js')).toMatch(/registerPlugin\(useGSAP, ScrollTrigger\)/)
-    expect(src('LandingHero.jsx')).toMatch(/ScrollerContext\.Provider/)
   })
 
   it('keeps landing CSS inside the Pocket Crew web contract', () => {

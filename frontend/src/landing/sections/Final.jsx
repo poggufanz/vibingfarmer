@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { MOTION, gsap, playWhileVisible, useGSAP, useScroller } from '../motion/gsap.js'
+import { MOTION, gsap, playWhileVisible, useGSAP, scrollerOf } from '../motion/gsap.js'
 import { ECOSYSTEM } from '../ecosystem.js'
 import './final.css'
 
@@ -10,7 +10,8 @@ const LINKS = [
   ['Security', 'https://github.com/poggufanz/vibingfarmer/blob/main/SECURITY.md'],
 ]
 
-function finalMotion(root, scroller) {
+function finalMotion(root) {
+  const scroller = scrollerOf(root)
   const q = gsap.utils.selector(root)
   const once = { scroller, trigger: root, start: 'top 75%', once: true }
   gsap.from(q('.vf-final__title .vf-line > span'), {
@@ -69,14 +70,11 @@ function LogoSequence() {
 
 export default function Final({ onStart }) {
   const root = useRef(null)
-  const scroller = useScroller()
 
   useGSAP(
     () => {
       const mm = gsap.matchMedia()
-      mm.add(MOTION, (ctx) => {
-        if (ctx.conditions.motion) finalMotion(root.current, scroller.current)
-      })
+      mm.add(MOTION, () => finalMotion(root.current))
     },
     { scope: root }
   )

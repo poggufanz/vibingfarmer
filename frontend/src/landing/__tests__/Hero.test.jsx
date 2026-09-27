@@ -52,6 +52,26 @@ describe('Hero', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Set once. Vibe forever.')
   })
 
+  // countUp rewrites these nodes from 0 upward; inside a live region every frame is announced.
+  it('keeps counting readouts out of live regions and labels the APR as an estimate', () => {
+    render(<Hero onStart={() => {}} stats={unavailable} />)
+    expect(screen.getByTestId('hero-apr').closest('[aria-live]')).toBeNull()
+    expect(screen.getByTestId('hero-tvl').closest('[aria-live]')).toBeNull()
+    expect(screen.getByText('Est. Blend USDC supply APR')).toBeTruthy()
+  })
+
+  it('never stamps "live" when one of the two reads failed', () => {
+    render(
+      <Hero
+        onStart={() => {}}
+        stats={{ aprBps: null, totalAssets: 50_000_000n, status: 'partial' }}
+      />
+    )
+    expect(screen.getByTestId('hero-apr').textContent).toBe('--')
+    expect(screen.queryByText(/^live/)).toBeNull()
+    expect(screen.getByText('partly live · one on-chain read failed')).toBeTruthy()
+  })
+
   it('shows live testnet numbers and a signature count of one', () => {
     render(
       <Hero onStart={() => {}} stats={{ aprBps: 612, totalAssets: 50_000_000n, status: 'live' }} />

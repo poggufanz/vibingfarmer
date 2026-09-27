@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { MOTION, gsap, useGSAP, useScroller } from '../motion/gsap.js'
+import { MOTION, gsap, useGSAP, scrollerOf } from '../motion/gsap.js'
 import './set-once.css'
 
 const INTENT = [
@@ -32,7 +32,8 @@ const GLYPHS = Array.from({ length: 8 }, (_, i) => i)
 const SIGNATURE_GLYPH =
   'M3 17C7 6 10 5 11 11C12 17 9 21 12 18C16 14 18 6 22 8C25 10 22 17 26 15C29 13 30 9 33 10'
 
-function setOnceMotion(root, scroller) {
+function setOnceMotion(root) {
+  const scroller = scrollerOf(root)
   const q = gsap.utils.selector(root)
   const reveal = (targets, vars, trigger = root) =>
     gsap.from(targets, {
@@ -54,8 +55,11 @@ function setOnceMotion(root, scroller) {
     q('.vf-review')[0]
   )
 
+  // SVG elements have no offsetLeft, so measure with getBoundingClientRect. Values are recorded
+  // when the scrub first renders, before any glyph has moved.
   const glyphs = q('.vf-sigs__glyph')
   const first = glyphs[0]
+  const left = (el) => el.getBoundingClientRect().left
   gsap
     .timeline({
       scrollTrigger: {
@@ -67,7 +71,7 @@ function setOnceMotion(root, scroller) {
       },
     })
     .to(glyphs.slice(1), {
-      x: (i, glyph) => first.offsetLeft - glyph.offsetLeft,
+      x: (i, glyph) => left(first) - left(glyph),
       opacity: 0,
       ease: 'power2.in',
       stagger: 0.04,
@@ -84,14 +88,11 @@ function setOnceMotion(root, scroller) {
 
 export default function SetOnce() {
   const root = useRef(null)
-  const scroller = useScroller()
 
   useGSAP(
     () => {
       const mm = gsap.matchMedia()
-      mm.add(MOTION, (ctx) => {
-        if (ctx.conditions.motion) setOnceMotion(root.current, scroller.current)
-      })
+      mm.add(MOTION, () => setOnceMotion(root.current))
     },
     { scope: root }
   )

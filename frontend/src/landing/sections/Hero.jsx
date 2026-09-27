@@ -1,14 +1,8 @@
 import { useRef } from 'react'
-import { MOTION, countUp, gsap, playWhileVisible, useGSAP, useScroller } from '../motion/gsap.js'
-import { formatApr, formatTvl, wholeUsdc } from '../useLandingStats.js'
+import { MOTION, countUp, gsap, playWhileVisible, useGSAP, scrollerOf } from '../motion/gsap.js'
+import { STAMP, formatApr, formatTvl, wholeUsdc } from '../useLandingStats.js'
 import FieldArt from './FieldArt.jsx'
 import './hero.css'
-
-const STAMP = {
-  loading: 'reading Stellar testnet',
-  live: 'live · Stellar testnet',
-  unavailable: 'unavailable · on-chain read failed',
-}
 
 function scrollToHowItWorks(event) {
   const target = document.getElementById('how-it-works')
@@ -20,7 +14,8 @@ function scrollToHowItWorks(event) {
 
 // Act one: the signature stroke draws, then becomes the fence. Act two: the crew keeps walking
 // its rows for as long as the hero is on screen.
-function heroTimeline(root, scroller) {
+function heroTimeline(root) {
+  const scroller = scrollerOf(root)
   const q = gsap.utils.selector(root)
   const [setLine, vibeLine] = q('.vf-hero__title .vf-line > span')
   const intro = gsap.timeline({ defaults: { ease: 'expo.out' } })
@@ -80,24 +75,19 @@ export default function Hero({ onStart, stats }) {
   const root = useRef(null)
   const aprRef = useRef(null)
   const tvlRef = useRef(null)
-  const scroller = useScroller()
 
   useGSAP(
     () => {
       const mm = gsap.matchMedia()
-      mm.add(MOTION, (ctx) => {
-        if (ctx.conditions.motion) heroTimeline(root.current, scroller.current)
-      })
+      mm.add(MOTION, () => heroTimeline(root.current))
     },
     { scope: root }
   )
 
   useGSAP(
     () => {
-      if (stats.status !== 'live') return
       const mm = gsap.matchMedia()
-      mm.add(MOTION, (ctx) => {
-        if (!ctx.conditions.motion) return
+      mm.add(MOTION, () => {
         if (stats.aprBps != null) {
           countUp(aprRef.current, stats.aprBps / 100, (v) => `${v.toFixed(2)}%`)
         }
@@ -147,9 +137,9 @@ export default function Hero({ onStart, stats }) {
       </figure>
 
       <div className="vf-hero__live">
-        <dl className="vf-readout" aria-live="polite">
+        <dl className="vf-readout">
           <div>
-            <dt>Blend USDC supply APR</dt>
+            <dt>Est. Blend USDC supply APR</dt>
             <dd data-testid="hero-apr" ref={aprRef}>
               {formatApr(stats.aprBps)}
             </dd>

@@ -39,6 +39,13 @@ describe('RealYield', () => {
     expect(screen.getByTestId('yield-tvl').textContent).toBe('123,457 USDC')
   })
 
+  it('keeps counting readouts out of live regions and labels the APR as an estimate', () => {
+    render(<RealYield stats={unavailable} />)
+    expect(screen.getByTestId('yield-apr').closest('[aria-live]')).toBeNull()
+    expect(screen.getByTestId('yield-tvl').closest('[aria-live]')).toBeNull()
+    expect(screen.getByText('Est. Blend USDC supply APR')).toBeTruthy()
+  })
+
   it('runs its motion branch without throwing', () => {
     setMotion({ reduce: false })
     const { container } = render(<RealYield stats={unavailable} />)
