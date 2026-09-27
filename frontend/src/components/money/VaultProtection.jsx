@@ -16,27 +16,32 @@
 // for the identical action (MyMoneyRoute.test.jsx's own guard catches a regression here: two
 // buttons named "Renew vault protection" on one page is not two real actions, it is one action
 // wired twice).
-import { StatusNotice } from '../pocket/Primitives.jsx'
 import { formatUtcSeconds } from './formatUtc.js'
 
+// `tone` drives the status lamp; the live-region role keeps StatusNotice's own rule
+// (warning -> alert, info -> status) so assistive tech hears the same urgency as before.
 const STATE_COPY = Object.freeze({
   engaged: {
     statusState: 'warning',
+    tone: 'warn',
     title: 'Engaged',
     body: 'The vault has been de-risked under the lifeboat mandate.',
   },
   armed: {
     statusState: 'info',
+    tone: 'live',
     title: 'Armed',
     body: 'The lifeboat mandate is armed and ready if the vault needs de-risking.',
   },
   disarmed: {
     statusState: 'warning',
+    tone: 'warn',
     title: 'Disarmed',
     body: 'The lifeboat mandate has lapsed and needs renewal.',
   },
   unavailable: {
     statusState: 'info',
+    tone: 'idle',
     title: 'Status unavailable',
     body: 'The vault protection state could not be confirmed right now.',
   },
@@ -47,6 +52,7 @@ export function VaultProtection({ protection }) {
   const renewalDue = protection?.urgentRenewal === true
   const ownerCanRenew = renewalDue && protection?.ownerIsAuthority === true
   const authorityBlocked = renewalDue && protection?.ownerIsAuthority === false
+  const expiry = formatUtcSeconds(protection?.mandateExpiry)
 
   return (
     <section
@@ -56,32 +62,54 @@ export function VaultProtection({ protection }) {
     >
       <header>
         <h2 id="vault-protection-heading">Vault protection</h2>
+        <p className="pc-money-section-lede">Emergency de-risk for the whole vault.</p>
       </header>
-      <div>
-        <p>
-          This protection is vault-wide. It covers every depositor in the vault, not just your own
-          funds, and only the vault's configured authority can renew it.
-        </p>
+      <div className="pc-money-panel">
+        <div
+          className="pc-protection-state"
+          data-tone={copy.tone}
+          role={copy.statusState === 'warning' ? 'alert' : 'status'}
+        >
+          <span className="pc-lamp pc-lamp--large" aria-hidden="true" />
+          <div>
+            <p className="pc-protection-title">{copy.title}</p>
+            <p>{copy.body}</p>
+          </div>
+        </div>
 
-        <StatusNotice state={copy.statusState} title={copy.title}>
-          <p>{copy.body}</p>
-        </StatusNotice>
-
-        <p>
-          Configured authority:{' '}
-          <code className="pc-technical">{protection?.authority || 'Unavailable'}</code>
-        </p>
-        <p>Mandate expiry: {formatUtcSeconds(protection?.mandateExpiry)}</p>
+        <dl className="pc-readouts pc-readouts--facts">
+          <div className="pc-readout">
+            <dt>Configured authority</dt>
+            <dd>
+              {protection?.authority ? (
+                <code className="pc-technical">{protection.authority}</code>
+              ) : (
+                'Unavailable'
+              )}
+            </dd>
+          </div>
+          <div className="pc-readout">
+            <dt>Mandate expiry</dt>
+            <dd className={expiry === 'Unavailable' ? undefined : 'pc-technical'}>{expiry}</dd>
+          </div>
+        </dl>
 
         {ownerCanRenew && (
-          <p>Renewal is due. Use the Renew vault protection action above to renew it.</p>
+          <p className="pc-money-callout" data-tone="warn">
+            Renewal is due. Use the Renew vault protection action above to renew it.
+          </p>
         )}
         {authorityBlocked && (
-          <p>
+          <p className="pc-money-callout" data-tone="warn">
             Renewal is due, but only the configured authority (
             {protection.authority || 'unavailable'}) can renew it.
           </p>
         )}
+
+        <p className="pc-money-footnote">
+          This protection is vault-wide. It covers every depositor in the vault, not just your own
+          funds, and only the vault's configured authority can renew it.
+        </p>
       </div>
     </section>
   )

@@ -1,24 +1,87 @@
+/* Settings as an instrument rack (2026-09-27): grained plates for each section, recessed wells for
+ * every value you type, raised plates for the chosen option, and lamps for live state. Harvest
+ * lime means "on / live" and nothing else, so an Off toggle never lights up. Shares its material
+ * with the My Money panels (panel-grain.svg) and the topbar controls. */
 .pc-settings {
   --pc-settings-max-width: 820px;
-  --pc-settings-input: var(--pc-canvas);
+  --pc-settings-live: var(--pc-harvest);
+  --pc-settings-lamp: var(--pc-faint);
+  --pc-settings-well: rgb(7 15 11 / 32%);
+  --pc-settings-plate: rgb(242 245 239 / 4%);
+  --pc-settings-plate-lit: rgb(242 245 239 / 10%);
+  --pc-settings-lip: rgb(242 245 239 / 7%);
+  --pc-settings-rim: rgb(7 15 11 / 42%);
+  --pc-settings-hairline: rgb(242 245 239 / 8%);
+  --pc-settings-input: var(--pc-settings-well);
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   color: var(--pc-ink);
-  background: var(--pc-canvas);
   font-family: var(--pc-font-body);
 }
 
+/* Harvest lime has no contrast on the light workspace; live marks fall back to Field ink. */
+:root[data-theme='day-field'] .pc-settings {
+  --pc-settings-live: var(--pc-field);
+  --pc-settings-well: rgb(23 37 31 / 5%);
+  --pc-settings-plate: rgb(255 255 255 / 45%);
+  --pc-settings-plate-lit: rgb(255 255 255 / 92%);
+  --pc-settings-lip: rgb(255 255 255 / 85%);
+  --pc-settings-rim: rgb(23 37 31 / 12%);
+  --pc-settings-hairline: rgb(23 37 31 / 9%);
+}
+
+/* Lamps stay lime in both themes (a lit lamp is a light, not text); on the light workspace a dark
+ * rim keeps the lime dot readable. Text and radio marks use --pc-settings-live instead. */
+.pc-settings [data-tone='live'],
+.pc-settings [data-tone='ok'] {
+  --pc-settings-lamp: var(--pc-harvest);
+}
+
+.pc-settings [data-tone='warn'] {
+  --pc-settings-lamp: var(--pc-warning);
+}
+
+.pc-settings [data-tone='danger'] {
+  --pc-settings-lamp: var(--pc-danger);
+}
+
+.pc-settings [data-tone='idle'] {
+  --pc-settings-lamp: var(--pc-faint);
+}
+
+.pc-settings-lamp {
+  display: inline-block;
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-settings-lamp);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc-settings-lamp) 22%, transparent);
+}
+
+:root[data-theme='day-field'] .pc-settings-lamp,
+:root[data-theme='day-field'] .pc-settings-note[data-tone]::before {
+  box-shadow:
+    inset 0 0 0 1px rgb(23 37 31 / 45%),
+    0 0 0 3px color-mix(in srgb, var(--pc-settings-lamp) 35%, transparent);
+}
+
+/* ---- Header: title, state strip, tab rack ------------------------------------------------- */
+
 .pc-settings-header {
   flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, var(--pc-settings-max-width));
+  justify-content: center;
+  gap: var(--pc-space-4);
   border-bottom: 1px solid var(--pc-line);
-  padding: var(--pc-space-4) var(--pc-route-gutter) 0;
+  padding: var(--pc-space-4) var(--pc-route-gutter) var(--pc-space-4);
 }
 
 .pc-settings-title {
-  max-width: var(--pc-settings-max-width);
-  margin: 0 auto var(--pc-space-3);
+  margin: 0;
   color: var(--pc-ink);
   font-family: var(--pc-font-display);
   font-size: var(--pc-type-stage);
@@ -27,35 +90,91 @@
   line-height: var(--pc-leading-title);
 }
 
+/* State strip: one recessed well, cells split by hairlines. Each cell draws its hairline on its
+ * own left and top edge; the well clips the ones that land on the outer border, so the grid can
+ * wrap to two rows without a stray rule. */
+.pc-settings-state {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--pc-settings-well);
+  box-shadow: inset 0 1px 3px var(--pc-settings-rim);
+}
+
+.pc-settings-state-item {
+  display: grid;
+  align-content: start;
+  gap: var(--pc-space-1);
+  min-width: 0;
+  padding: var(--pc-space-3) var(--pc-space-4);
+  box-shadow:
+    -1px 0 0 var(--pc-settings-hairline),
+    0 -1px 0 var(--pc-settings-hairline);
+}
+
+.pc-settings-state-item dt {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 500;
+}
+
+.pc-settings-state-item dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body-small);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pc-settings-state-item[data-tone='idle'] dd {
+  color: var(--pc-muted);
+  font-weight: 500;
+}
+
+/* Tab rack: a recessed rail; the open tab is a raised grained plate sitting in it. */
 .pc-settings-tabs {
-  max-width: var(--pc-settings-max-width);
-  width: 100%;
-  margin: 0 auto;
+  justify-self: start;
+  max-width: 100%;
   display: flex;
   gap: var(--pc-space-1);
+  padding: var(--pc-space-1);
   overflow-x: auto;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--pc-settings-well);
+  box-shadow: inset 0 1px 3px var(--pc-settings-rim);
+  scrollbar-width: none;
 }
 
 .pc-settings-tab {
   appearance: none;
   flex: none;
   min-height: var(--pc-touch-target);
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  padding: var(--pc-space-2) var(--pc-space-3);
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--pc-radius-control);
+  padding: 0 var(--pc-space-4);
   background: transparent;
   color: var(--pc-muted);
   cursor: pointer;
   font: inherit;
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
   font-weight: 500;
   white-space: nowrap;
 }
 
-.pc-settings-tab:hover,
-.pc-settings-tab:focus-visible {
+.pc-settings-tab:hover {
   color: var(--pc-ink);
+  background-color: var(--pc-settings-plate);
 }
 
 .pc-settings-tab:focus-visible,
@@ -63,7 +182,7 @@
 .pc-settings-toggle-option:focus-visible,
 .pc-settings-check:focus-visible,
 .pc-settings-radio:focus-visible,
-.pc-settings-number:focus-visible,
+.pc-settings-number-group:focus-within,
 .pc-settings-api-input:focus-visible,
 .pc-settings-text-input:focus-visible {
   outline: 3px solid var(--pc-focus);
@@ -72,10 +191,21 @@
 }
 
 .pc-settings-tab--active {
-  border-bottom-color: var(--pc-harvest);
+  border-color: var(--pc-line);
+  background-color: var(--pc-workspace);
+  background-image: url('../money/panel-grain.svg');
   color: var(--pc-ink);
   font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 var(--pc-settings-lip),
+    0 1px 2px var(--pc-settings-rim);
 }
+
+.pc-settings-tab--active:hover {
+  background-color: var(--pc-workspace);
+}
+
+/* ---- Scroll body and section plates ------------------------------------------------------- */
 
 .pc-settings-scroll {
   flex: 1;
@@ -96,23 +226,42 @@
 }
 
 .pc-settings-section {
-  margin: 0 0 var(--pc-space-8);
-}
-
-.pc-settings-eyebrow {
-  margin: 0 0 var(--pc-space-2);
-  color: var(--pc-muted);
-  font-size: var(--pc-type-technical);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  text-transform: capitalize;
+  margin: 0 0 var(--pc-space-6);
 }
 
 .pc-settings-card {
-  padding: var(--pc-space-4) var(--pc-space-5);
+  padding: var(--pc-space-6);
   border: 1px solid var(--pc-line);
   border-radius: var(--pc-radius-support);
-  background: var(--pc-workspace);
+  background-color: var(--pc-workspace);
+  background-image: url('../money/panel-grain.svg');
+  box-shadow:
+    inset 0 1px 0 var(--pc-settings-lip),
+    inset 0 -1px 0 var(--pc-settings-rim),
+    var(--pc-shadow-support);
+}
+
+.pc-settings-section-head {
+  margin: 0 0 var(--pc-space-3);
+}
+
+.pc-settings-eyebrow {
+  margin: 0;
+  color: var(--pc-ink);
+  font-family: var(--pc-font-display);
+  font-size: calc(var(--pc-type-body) * 1.25);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: var(--pc-leading-title);
+}
+
+.pc-settings-lede {
+  max-width: 60ch;
+  margin: var(--pc-space-1) 0 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+  text-wrap: pretty;
 }
 
 .pc-settings-divider {
@@ -120,19 +269,51 @@
   border-top: 1px solid var(--pc-line);
 }
 
-.pc-settings-label {
-  margin: var(--pc-space-1) 0 var(--pc-space-2);
-  color: var(--pc-ink);
-  font-size: var(--pc-type-technical);
-  font-weight: 600;
+/* A group label carries its own engraved rule, so the divider in front of it steps aside. */
+.pc-settings-divider:has(+ .pc-settings-label) {
+  display: none;
 }
+
+.pc-settings-label {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-3);
+  margin: var(--pc-space-6) 0 var(--pc-space-2);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-label);
+  font-weight: 600;
+  line-height: var(--pc-leading-title);
+}
+
+.pc-settings-label::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-settings-section-head + .pc-settings-label {
+  margin-top: var(--pc-space-4);
+}
+
+.pc-settings-hint {
+  margin: 0 0 var(--pc-space-3);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  line-height: var(--pc-leading-body);
+}
+
+/* ---- Rows ----------------------------------------------------------------------------------- */
 
 .pc-settings-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: var(--pc-space-4);
-  padding: var(--pc-space-2) 0;
+  gap: var(--pc-space-6);
+  padding: var(--pc-space-3) 0;
+}
+
+.pc-settings-row + .pc-settings-row {
+  border-top: 1px solid var(--pc-settings-hairline);
 }
 
 .pc-settings-row-copy {
@@ -142,14 +323,15 @@
 
 .pc-settings-row-title {
   color: var(--pc-ink);
-  font-size: var(--pc-type-label);
+  font-size: var(--pc-type-body-small);
+  font-weight: 550;
 }
 
 .pc-settings-row-description {
-  max-width: 430px;
+  max-width: 54ch;
   margin-top: var(--pc-space-1);
   color: var(--pc-muted);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
   line-height: var(--pc-leading-body);
 }
 
@@ -160,78 +342,218 @@
   gap: var(--pc-space-2);
 }
 
+/* Cadence dials: short numeric settings sit side by side as small plates instead of a tall list. */
+.pc-settings-dials {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--pc-space-2);
+}
+
+.pc-settings-dials > .pc-settings-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--pc-space-2);
+  padding: var(--pc-space-3);
+  border: 1px solid var(--pc-settings-hairline);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--pc-settings-plate);
+}
+
+.pc-settings-dials .pc-settings-row-title {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 500;
+}
+
+.pc-settings-dials .pc-settings-number-group {
+  width: 100%;
+}
+
+.pc-settings-dials .pc-settings-number {
+  flex: 1;
+}
+
+/* ---- Toggle ------------------------------------------------------------------------------- */
+
 .pc-settings-toggle {
   display: inline-flex;
-  overflow: hidden;
-  border: 1px solid var(--pc-line-strong);
+  gap: var(--pc-space-1);
+  padding: var(--pc-space-1);
+  border: 1px solid var(--pc-line);
   border-radius: var(--pc-radius-control);
-  font-family: var(--pc-font-mono);
-  font-size: var(--pc-type-technical);
+  background-color: var(--pc-settings-well);
+  box-shadow: inset 0 1px 3px var(--pc-settings-rim);
+  font-size: var(--pc-type-label);
 }
 
 .pc-settings-toggle-option {
   appearance: none;
-  min-height: var(--pc-touch-target);
-  border: 0;
-  padding: var(--pc-space-2) var(--pc-space-3);
+  min-width: 3.5rem;
+  min-height: calc(var(--pc-touch-target) - var(--pc-space-2));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pc-space-2);
+  border: 1px solid transparent;
+  border-radius: calc(var(--pc-radius-control) - var(--pc-space-1));
+  padding: 0 var(--pc-space-3);
   background: transparent;
   color: var(--pc-muted);
   cursor: pointer;
   font: inherit;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pc-settings-toggle-option:hover {
+  color: var(--pc-ink);
 }
 
 .pc-settings-toggle-option--active {
-  background: var(--pc-harvest);
+  border-color: var(--pc-line);
+  background-color: var(--pc-settings-plate-lit);
+  color: var(--pc-ink);
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 var(--pc-settings-lip),
+    0 1px 2px var(--pc-settings-rim);
+}
+
+/* The on side of an on/off toggle carries a lamp: dark while off, lit when on. */
+.pc-settings-toggle:not([data-neutral]) .pc-settings-toggle-option[data-side='on']::before {
+  content: '';
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-faint);
+}
+
+.pc-settings-toggle:not([data-neutral]) .pc-settings-toggle-option--active[data-side='on'] {
+  border-color: transparent;
+  background-color: var(--pc-harvest);
   color: var(--pc-harvest-ink);
 }
 
-.pc-settings-radio {
+.pc-settings-toggle:not([data-neutral]) .pc-settings-toggle-option--active[data-side='on']::before {
+  background: var(--pc-harvest-ink);
+}
+
+/* ---- Radio plates (shared .skill-opt markup, restyled only inside Settings) ---------------- */
+
+.pc-settings .pc-settings-radio {
   width: 100%;
   min-height: var(--pc-touch-target);
   margin: 0 0 var(--pc-space-2);
-  padding: var(--pc-space-3);
+  padding: var(--pc-space-3) var(--pc-space-4);
+  gap: var(--pc-space-3);
   border: 1px solid var(--pc-line);
   border-radius: var(--pc-radius-control);
-  background: transparent;
+  background-color: var(--pc-settings-plate);
   color: var(--pc-ink);
   text-align: left;
 }
 
-.pc-settings-radio.sel {
-  border-color: var(--pc-focus);
-  background: var(--pc-canvas);
+.pc-settings .pc-settings-radio:hover {
+  border-color: var(--pc-line-strong);
 }
 
-.pc-settings-radio-dot {
-  position: absolute;
-  inset: var(--pc-space-1);
-  border-radius: var(--pc-radius-round);
-  background: var(--pc-harvest);
+.pc-settings .pc-settings-radio.sel {
+  border-color: color-mix(in srgb, var(--pc-settings-live) 55%, transparent);
+  background-color: var(--pc-settings-plate-lit);
+  box-shadow: inset 0 1px 0 var(--pc-settings-lip);
+}
+
+.pc-settings .skill-radio {
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.125rem;
+  border: 1px solid var(--pc-line-strong);
+  background-color: var(--pc-settings-well);
+}
+
+.pc-settings .skill-opt.sel .skill-radio {
+  border-color: var(--pc-settings-live);
+}
+
+.pc-settings .skill-opt.sel .skill-radio::after {
+  inset: 3px;
+  background: var(--pc-settings-live);
+}
+
+.pc-settings .skill-opt-title {
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body-small);
+  font-weight: 600;
+}
+
+.pc-settings .skill-opt-desc {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  line-height: var(--pc-leading-body);
 }
 
 .pc-settings-inline-control {
   flex-direction: row;
   align-items: center;
+  gap: var(--pc-space-3);
+}
+
+/* Two-way choice laid out side by side (emergency withdraw). */
+.pc-settings-choice {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
   gap: var(--pc-space-2);
 }
+
+.pc-settings .pc-settings-choice > .pc-settings-radio {
+  align-items: center;
+  margin: 0;
+}
+
+/* ---- Number field: value and unit share one recessed well --------------------------------- */
 
 .pc-settings-number-group {
   display: inline-flex;
   align-items: center;
   gap: var(--pc-space-1);
+  min-height: var(--pc-touch-target);
+  box-sizing: border-box;
+  padding: 0 var(--pc-space-3) 0 var(--pc-space-1);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--pc-settings-well);
+  box-shadow: inset 0 1px 3px var(--pc-settings-rim);
+  cursor: text;
+}
+
+.pc-settings-number-group:hover {
+  border-color: var(--pc-line-strong);
 }
 
 .pc-settings-number {
   width: var(--pc-space-16);
-  min-height: var(--pc-touch-target);
+  min-width: 0;
+  min-height: calc(var(--pc-touch-target) - 2px);
   box-sizing: border-box;
-  padding: var(--pc-space-2) var(--pc-space-2);
-  border: 1px solid var(--pc-line-strong);
-  border-radius: var(--pc-radius-control);
-  background: var(--pc-settings-input);
+  padding: 0 var(--pc-space-1);
+  border: 0;
+  background: transparent;
   color: var(--pc-ink);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-body-small);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
   text-align: right;
+  appearance: textfield;
+}
+
+.pc-settings-number:focus {
+  outline: none;
+}
+
+.pc-settings-number::-webkit-inner-spin-button,
+.pc-settings-number::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
 }
 
 .pc-settings-number-group[data-size='wide'] .pc-settings-number {
@@ -240,17 +562,19 @@
 
 .pc-settings-number-suffix {
   color: var(--pc-muted);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
 }
+
+/* ---- Checkbox rows ------------------------------------------------------------------------ */
 
 .pc-settings-check {
   appearance: none;
   width: 100%;
   display: flex;
   align-items: center;
-  gap: var(--pc-space-2);
+  gap: var(--pc-space-3);
   border: 0;
-  padding: var(--pc-space-2) 0;
+  padding: var(--pc-space-3) 0;
   background: transparent;
   color: var(--pc-ink);
   cursor: pointer;
@@ -259,21 +583,38 @@
   text-align: left;
 }
 
+.pc-settings-check + .pc-settings-check {
+  border-top: 1px solid var(--pc-settings-hairline);
+}
+
 .pc-settings-checkbox {
-  width: var(--pc-space-4);
-  height: var(--pc-space-4);
+  width: 1.125rem;
+  height: 1.125rem;
   flex: none;
   display: grid;
   place-items: center;
+  box-sizing: border-box;
   border: 1px solid var(--pc-line-strong);
-  border-radius: var(--pc-radius-control);
-  background: transparent;
+  border-radius: calc(var(--pc-radius-control) / 2);
+  background-color: var(--pc-settings-well);
 }
 
 .pc-settings-checkbox--checked {
   border-color: var(--pc-harvest);
-  background: var(--pc-harvest);
+  background-color: var(--pc-harvest);
 }
+
+.pc-settings-checkbox--checked::after {
+  content: '';
+  width: 0.3rem;
+  height: 0.55rem;
+  margin-top: -0.125rem;
+  border: solid var(--pc-harvest-ink);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* ---- Buttons ------------------------------------------------------------------------------ */
 
 .pc-settings-button {
   appearance: none;
@@ -281,38 +622,72 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--pc-line-strong);
+  border: 1px solid var(--pc-line);
   border-radius: var(--pc-radius-control);
-  padding: var(--pc-space-2) var(--pc-space-3);
-  background: var(--pc-canvas);
+  padding: 0 var(--pc-space-4);
+  background-color: var(--pc-settings-plate-lit);
   color: var(--pc-ink);
   cursor: pointer;
   font: inherit;
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
+  font-weight: 550;
   text-decoration: none;
+  white-space: nowrap;
+  box-shadow:
+    inset 0 1px 0 var(--pc-settings-lip),
+    0 1px 2px var(--pc-settings-rim);
 }
 
 .pc-settings-button:hover {
-  border-color: var(--pc-focus);
+  border-color: var(--pc-line-strong);
+}
+
+.pc-settings-button:active {
+  box-shadow: inset 0 1px 3px var(--pc-settings-rim);
 }
 
 .pc-settings-button:disabled {
   border-color: var(--pc-line);
+  background-color: transparent;
   color: var(--pc-faint);
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .pc-settings-button--danger {
-  border-color: var(--pc-danger);
+  border-color: color-mix(in srgb, var(--pc-danger) 55%, transparent);
+  background-color: color-mix(in srgb, var(--pc-danger) 8%, transparent);
   color: var(--pc-danger);
+}
+
+.pc-settings-button--danger:hover {
+  border-color: var(--pc-danger);
+  background-color: color-mix(in srgb, var(--pc-danger) 14%, transparent);
 }
 
 .pc-settings-button--spaced {
   margin-top: var(--pc-space-3);
 }
 
+/* Read-only status chip (e.g. network fee sponsored). */
+.pc-settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  min-height: 2rem;
+  padding: 0 var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background-color: var(--pc-settings-well);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-label);
+  font-weight: 600;
+}
+
+/* ---- Text inputs and API keys ------------------------------------------------------------- */
+
 .pc-settings-api-key {
-  margin-top: var(--pc-space-1);
+  margin: 0 0 var(--pc-space-3);
 }
 
 .pc-settings-api-key-row,
@@ -329,14 +704,26 @@
 .pc-settings-api-input,
 .pc-settings-text-input {
   min-width: 0;
+  min-height: var(--pc-touch-target);
   box-sizing: border-box;
-  border: 1px solid var(--pc-line-strong);
+  border: 1px solid var(--pc-line);
   border-radius: var(--pc-radius-control);
   padding: var(--pc-space-2) var(--pc-space-3);
-  background: var(--pc-settings-input);
+  background-color: var(--pc-settings-input);
   color: var(--pc-ink);
   font: inherit;
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
+  box-shadow: inset 0 1px 3px var(--pc-settings-rim);
+}
+
+.pc-settings-api-input:hover,
+.pc-settings-text-input:hover {
+  border-color: var(--pc-line-strong);
+}
+
+.pc-settings-api-input::placeholder,
+.pc-settings-text-input::placeholder {
+  color: var(--pc-faint);
 }
 
 .pc-settings-api-input {
@@ -348,26 +735,37 @@
 }
 
 .pc-settings-status {
-  font-size: var(--pc-type-technical);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  font-size: var(--pc-type-label);
+}
+
+.pc-settings-status::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--pc-radius-round);
+  background: currentcolor;
 }
 
 .pc-settings-status--ok {
-  color: var(--pc-harvest);
+  color: var(--pc-settings-live);
 }
 
 .pc-settings-status--danger {
   color: var(--pc-danger);
 }
 
-.pc-settings-status--warn,
-.pc-settings-note[data-tone='warn'] {
+.pc-settings-status--warn {
   color: var(--pc-warning);
 }
 
 .pc-settings-field-label {
   margin-bottom: var(--pc-space-1);
-  color: var(--pc-ink);
+  color: var(--pc-muted);
   font-size: var(--pc-type-label);
+  font-weight: 500;
 }
 
 .pc-settings-stack {
@@ -385,32 +783,59 @@
 .pc-settings-note {
   margin: var(--pc-space-1) 0 var(--pc-space-2);
   color: var(--pc-muted);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
   line-height: var(--pc-leading-body);
 }
 
-.pc-settings-note[data-tone='ok'] {
-  color: var(--pc-harvest);
+/* A toned note is a live readout (which AI provider will answer): lamp plus text in a well. */
+.pc-settings-note[data-tone] {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-3);
+  margin: var(--pc-space-2) 0 var(--pc-space-4);
+  padding: var(--pc-space-3) var(--pc-space-4);
+  border: 1px solid var(--pc-settings-hairline);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--pc-settings-well);
+  color: var(--pc-ink);
 }
+
+.pc-settings-note[data-tone]::before {
+  content: '';
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-settings-lamp);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc-settings-lamp) 22%, transparent);
+}
+
+/* ---- Ledgers: storage, telemetry, contracts, about --------------------------------------- */
 
 .pc-settings-contract-row,
 .pc-settings-data-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--pc-space-2);
+  gap: var(--pc-space-3);
   color: var(--pc-muted);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
 }
 
 .pc-settings-contract-row {
   padding: var(--pc-space-2) 0;
 }
 
+.pc-settings-contract-row + .pc-settings-contract-row,
+.pc-settings-data-row + .pc-settings-data-row {
+  border-top: 1px solid var(--pc-settings-hairline);
+}
+
 .pc-settings-contract-value {
   display: flex;
   align-items: center;
-  gap: var(--pc-space-2);
+  gap: var(--pc-space-3);
+  color: var(--pc-ink);
 }
 
 .pc-settings-muted {
@@ -418,18 +843,24 @@
 }
 
 .pc-settings-data-row {
-  padding: var(--pc-space-1) 0;
+  padding: var(--pc-space-2) 0;
 }
 
-.pc-settings-data-row--total {
-  margin-top: var(--pc-space-1);
-  padding: var(--pc-space-2) 0;
-  border-top: 1px solid var(--pc-line);
+.pc-settings-data-row .mono {
   color: var(--pc-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-settings-data-row.pc-settings-data-row--total {
+  margin-top: var(--pc-space-1);
+  padding: var(--pc-space-3) 0 var(--pc-space-2);
+  border-top: 1px solid var(--pc-line-strong);
+  color: var(--pc-ink);
+  font-weight: 600;
 }
 
 .pc-settings-data-row--compact {
-  padding: var(--pc-space-1) 0;
+  padding: var(--pc-space-2) 0;
   color: var(--pc-ink);
 }
 
@@ -441,7 +872,7 @@
 }
 
 .pc-settings-actions {
-  margin-top: var(--pc-space-3);
+  margin-top: var(--pc-space-4);
   flex-wrap: wrap;
 }
 
@@ -451,12 +882,12 @@
 }
 
 .pc-settings-telemetry {
-  margin-top: var(--pc-space-2);
+  margin-top: var(--pc-space-1);
 }
 
 .pc-settings-emphasis {
-  color: var(--pc-harvest);
-  font-weight: 600;
+  color: var(--pc-settings-live);
+  font-weight: 650;
 }
 
 .pc-settings-telemetry-history {
@@ -470,12 +901,13 @@
 }
 
 .pc-settings-telemetry-list {
-  max-height: var(--pc-space-16);
+  max-height: var(--pc-space-20);
   overflow-y: auto;
-  padding: var(--pc-space-2);
+  padding: var(--pc-space-1) var(--pc-space-3);
   border: 1px solid var(--pc-line);
   border-radius: var(--pc-radius-control);
-  background: var(--pc-canvas);
+  background-color: var(--pc-settings-well);
+  box-shadow: inset 0 1px 3px var(--pc-settings-rim);
 }
 
 .pc-settings-telemetry-item {
@@ -483,8 +915,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--pc-space-2);
-  padding: var(--pc-space-1) 0;
-  border-bottom: 1px solid var(--pc-line);
+  padding: var(--pc-space-2) 0;
+  border-bottom: 1px solid var(--pc-settings-hairline);
   font-size: var(--pc-type-technical);
 }
 
@@ -498,10 +930,12 @@
 
 .pc-settings-privacy-note {
   display: flex;
+  align-items: baseline;
   gap: var(--pc-space-2);
   padding: var(--pc-space-1) 0;
   color: var(--pc-muted);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
+  line-height: var(--pc-leading-body);
 }
 
 .pc-settings-about {
@@ -511,7 +945,7 @@
 .pc-settings-about-subtitle,
 .pc-settings-about-copy {
   color: var(--pc-muted);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
   line-height: var(--pc-leading-body);
 }
 
@@ -522,7 +956,7 @@
 .pc-settings-about-list {
   margin-top: var(--pc-space-2);
   color: var(--pc-ink);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
   line-height: var(--pc-leading-body);
 }
 
@@ -530,15 +964,22 @@
   margin-top: var(--pc-space-4);
 }
 
+/* ---- Base mandate manager: an inset well inside the Wallet plate -------------------------- */
+
 .pc-settings-manager {
-  padding: var(--pc-space-4) 0 0;
-  border-top: 1px solid var(--pc-line);
+  margin-top: var(--pc-space-2);
+  padding: var(--pc-space-5);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--pc-settings-well);
   color: var(--pc-ink);
 }
 
 .pc-settings-manager .pc-settings-title {
   margin: 0 0 var(--pc-space-2);
-  font-size: var(--pc-type-section);
+  font-size: var(--pc-type-body);
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .pc-settings-manager-status {
@@ -572,7 +1013,7 @@
 .pc-settings-manager-error {
   margin: var(--pc-space-2) 0;
   color: var(--pc-muted);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
   line-height: var(--pc-leading-body);
 }
 
@@ -588,7 +1029,7 @@
   margin: 0 0 var(--pc-space-2);
   padding-left: var(--pc-space-5);
   color: var(--pc-ink);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-label);
   line-height: var(--pc-leading-body);
 }
 
@@ -613,11 +1054,12 @@
   }
 
   .pc-settings-card {
-    padding: var(--pc-space-3);
+    padding: var(--pc-space-4);
   }
 
   .pc-settings-row {
     flex-direction: column;
+    align-items: stretch;
     gap: var(--pc-space-2);
   }
 
@@ -642,6 +1084,10 @@
   .pc-settings-telemetry-item {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .pc-settings-manager {
+    padding: var(--pc-space-4);
   }
 
   .pc-settings-manager .pc-settings-data-row dd {

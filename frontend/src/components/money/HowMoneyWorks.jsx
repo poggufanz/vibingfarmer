@@ -20,9 +20,18 @@ const KEEPER_LABEL = Object.freeze({
   unavailable: 'Unavailable',
 })
 const STRATEGY_LABEL = Object.freeze({ configured: 'Configured', unavailable: 'Unavailable' })
+// Lamp colour only restates the label automationEvidence.js already classified; any other
+// (free-text) label gets no lamp rather than a guessed health colour.
+const LABEL_TONE = Object.freeze({
+  Healthy: 'live',
+  Configured: 'live',
+  Stale: 'warn',
+  Unavailable: 'idle',
+})
 
 export function HowMoneyWorks({ keeper, strategyConfig, riskWatch, yieldInfo, venue }) {
   const keeperLabel = KEEPER_LABEL[keeper?.label] ?? 'Unavailable'
+  const heartbeat = formatUtcMs(keeper?.lastHeartbeatAt)
   const strategyLabel = STRATEGY_LABEL[strategyConfig?.label] ?? 'Unavailable'
   const riskWatchLabel =
     riskWatch?.label && riskWatch.label !== 'unavailable' ? riskWatch.label : 'Unavailable'
@@ -77,8 +86,11 @@ export function HowMoneyWorks({ keeper, strategyConfig, riskWatch, yieldInfo, ve
     >
       <header>
         <h2 id="how-money-works-heading">How your money is working</h2>
+        <p className="pc-money-section-lede">
+          The route your deposit takes and the automation on it.
+        </p>
       </header>
-      <div>
+      <div className="pc-money-panel">
         <VenueTruth
           kind={venueKind}
           venue={typeof venue === 'string' ? venue : venue?.name || 'Autofarm Vault'}
@@ -105,10 +117,35 @@ export function HowMoneyWorks({ keeper, strategyConfig, riskWatch, yieldInfo, ve
           }
         />
 
-        <p>Keeper automation: {keeperLabel}</p>
-        <p>Last keeper heartbeat: {formatUtcMs(keeper?.lastHeartbeatAt)}</p>
-        <p>Vault strategy: {strategyLabel}</p>
-        <p>Risk radar: {riskWatchLabel}</p>
+        <dl className="pc-evidence">
+          <div data-tone={LABEL_TONE[keeperLabel]}>
+            <dt>Keeper automation</dt>
+            <dd>
+              {LABEL_TONE[keeperLabel] && <span className="pc-lamp" aria-hidden="true" />}
+              {keeperLabel}
+            </dd>
+          </div>
+          <div>
+            <dt>Last keeper heartbeat</dt>
+            <dd className={heartbeat === 'Unavailable' ? undefined : 'pc-technical'}>
+              {heartbeat}
+            </dd>
+          </div>
+          <div data-tone={LABEL_TONE[strategyLabel]}>
+            <dt>Vault strategy</dt>
+            <dd>
+              {LABEL_TONE[strategyLabel] && <span className="pc-lamp" aria-hidden="true" />}
+              {strategyLabel}
+            </dd>
+          </div>
+          <div data-tone={LABEL_TONE[riskWatchLabel]}>
+            <dt>Risk radar</dt>
+            <dd>
+              {LABEL_TONE[riskWatchLabel] && <span className="pc-lamp" aria-hidden="true" />}
+              {riskWatchLabel}
+            </dd>
+          </div>
+        </dl>
       </div>
     </section>
   )

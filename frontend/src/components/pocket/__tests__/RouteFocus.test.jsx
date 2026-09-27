@@ -17,6 +17,7 @@ describe('routeLabel / routeTitle', () => {
     expect(routeLabel('/agent')).toBe('The crew')
     expect(routeLabel('/history')).toBe('History')
     expect(routeLabel('/settings')).toBe('Settings')
+    expect(routeLabel('/risks')).toBe('Risks')
     expect(routeLabel('/explorer')).toBe('Explorer')
     expect(routeLabel('/ecosystem')).toBe('Ecosystem')
     expect(routeLabel('/replay')).toBe('Replay')

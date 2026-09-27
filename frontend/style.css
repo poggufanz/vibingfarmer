@@ -284,28 +284,12 @@ textarea {
 .topbar-left {
   display: flex;
   align-items: center;
-  gap: 24px;
-}
-
-.topbar .network-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 30px;
-  padding: 4px 10px;
-  border: 1px solid var(--pc-owned);
-  border-radius: var(--pc-radius-round);
-  background: var(--pc-owned);
-  color: var(--pc-owned-ink);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.topbar .network-mark {
-  display: block;
-  flex: none;
+  /* This cluster used to hold the brand lockup *and* a solid `.topbar .network-badge` pill; the
+     24px gap existed to separate those two. The network identity now lives inside the wallet
+     control over in .topbar-right (the `.header-network-*` rows inside `.header-wallet-menu`), so
+     only the lockup remains and the cluster must be free to shrink. */
+  gap: var(--pc-space-3);
+  min-width: 0;
 }
 
 .brand {
@@ -363,6 +347,91 @@ textarea {
   display: flex;
   align-items: center;
   gap: 14px;
+  /* Four children on desktop (meta copy, notifications, reset, the wallet control -- which now also
+     carries the network identity). The controls keep their natural width; the left cluster is the
+     side that yields. */
+  flex: none;
+}
+
+/* ---------- Network rows (inside the wallet menu) ----------
+   The standalone `.header-network` disclosure -- its pill trigger, chevron and its own popover --
+   is gone, and with it the separate "Stellar testnet" pill in the topbar. The network list now
+   renders inside `.header-wallet-menu`; only these row classes survive, and they inherit the wallet
+   menu's panel chrome from `.header-wallet-menu` itself. */
+.header-network-section {
+  margin: 0;
+  padding: 6px 10px 4px;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.header-network-option {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.header-network-option:hover,
+.header-network-option:focus-visible {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, currentcolor 8%, var(--bg-elev));
+}
+
+.header-network-option.is-current {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--bg-elev);
+}
+
+.header-network-option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.header-network-option-check {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* The note is explanatory copy, not a dead control: a disabled row stays legible (--text-muted,
+   not --text-faint) so the "not deployed yet" reason is actually readable. */
+.header-network-option-note {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.header-network-option[disabled] {
+  cursor: default;
+  border-color: transparent;
+  background: transparent;
+}
+
+.header-network-option[disabled]:hover {
+  border-color: transparent;
+  background: transparent;
 }
 
 .header-wallet {
@@ -425,6 +494,16 @@ textarea {
   background: var(--ok);
 }
 
+/* Network mark inside the wallet trigger -- the topbar no longer carries a separate network pill,
+   so the wallet control now signals the active network. Layout only: a fixed 14x14 box that never
+   shrinks. The Stellar mark is not a circle, so no border-radius is applied. */
+.header-wallet-netmark {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
 .header-wallet-menu {
   position: absolute;
   top: calc(100% + 8px);
@@ -436,6 +515,13 @@ textarea {
   border-radius: var(--radius-md);
   background: var(--bg-card);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+/* Separator between the network group and the wallet rows inside .header-wallet-menu. */
+.header-wallet-divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 8px 0;
 }
 
 .header-wallet-status {
@@ -492,6 +578,20 @@ textarea {
   flex: none;
 }
 
+/* Secondary rows (Settings / Language / Documentation / Log out) inside the same wallet menu.
+   They are full-width menu rows, so a single column with left-aligned content reads as a list
+   rather than the 2-up grid used by the primary actions above. */
+.header-wallet-nav {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.header-wallet-nav .header-wallet-action {
+  justify-content: flex-start;
+}
+
 .topbar-meta {
   font-family: var(--font-body);
   font-size: 11px;
@@ -528,7 +628,6 @@ textarea {
   color: var(--text);
   border-color: var(--border-strong);
 }
-
 .icon-btn svg {
   width: 14px;
   height: 14px;
@@ -3507,22 +3606,36 @@ textarea {
   pointer-events: none;
 }
 
+/* 2026-09-27: the dialog is one grained Grove instrument (same material as the topbar and the My
+   Money panels). The head carries title + readouts, the list sits open on the panel, and the foot
+   is a darker base band. Hairlines use --pc-line; the brighter --border tokens are the "garis
+   terang" the owner rejected. Shadows lead with `inset` so the web gate's glow rule stays green. */
 .notif-modal {
-  max-width: 460px;
+  max-width: 440px;
+  padding: 0;
   overflow: hidden;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-dominant);
+  background-color: var(--pc-workspace);
+  background-image: url('./src/components/money/panel-grain.svg');
+  box-shadow:
+    inset 0 1px 0 rgb(242 245 239 / 7%),
+    var(--pc-shadow-dominant);
 }
 
 .notif-head {
   flex-shrink: 0;
-  padding-bottom: 12px;
-  margin-bottom: 2px;
-  border-bottom: 1px solid var(--border);
+  padding: var(--pc-space-6) var(--pc-space-6) var(--pc-space-4);
 }
 
-.notif-eyebrow-left {
-  display: inline-flex;
+.notif-sub {
+  display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--pc-space-2);
+  margin: var(--pc-space-1) 0 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  line-height: 1.4;
 }
 
 /* One pulsing live-dot max (DESIGN live-status family). */
@@ -3552,146 +3665,237 @@ textarea {
 
 .notif-title-row {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+  margin-bottom: var(--pc-space-5);
 }
 
 .notif-head .modal-title {
-  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin: 0;
+  font-size: var(--pc-type-section);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: var(--pc-leading-title);
 }
 
 .notif-count-pill {
-  min-width: 22px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-elev);
-  color: var(--text);
-  font-size: 11px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 var(--pc-space-2);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-canvas);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-technical);
   font-weight: 500;
-  line-height: 20px;
+  line-height: 22px;
   text-align: center;
-  letter-spacing: -0.01em;
 }
 
+/* Close: a socket, not a floating glyph -- it reads as a control and meets the touch target. */
+.notif-modal .modal-close-btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-canvas);
+  color: var(--pc-muted);
+  transition:
+    color var(--pc-duration-fast) var(--pc-ease-standard),
+    background-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.notif-modal .modal-close-btn:hover {
+  color: var(--pc-ink);
+  background: color-mix(in srgb, var(--pc-ink) 8%, var(--pc-canvas));
+}
+
+/* Readouts: three instrument cells in one inset well. A lamp lights only when its number is not
+   zero, and a zero reads muted, so an all-clear strip is quiet instead of three loud 0s. */
 .notif-stat-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
   overflow: hidden;
-  background: var(--bg-elev);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background: var(--pc-canvas);
 }
 
 .notif-stat {
+  --notif-lamp: var(--pc-faint);
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 9px 10px;
-  border-right: 1px solid var(--border);
+  gap: var(--pc-space-2);
   min-width: 0;
+  padding: var(--pc-space-3) var(--pc-space-4);
 }
 
-.notif-stat:last-child {
-  border-right: none;
+.notif-stat + .notif-stat {
+  box-shadow: inset 1px 0 0 var(--pc-line);
+}
+
+.notif-stat[data-tone='live'] {
+  --notif-lamp: var(--accent-text);
+}
+
+.notif-stat[data-tone='danger'] {
+  --notif-lamp: var(--pc-danger);
+}
+
+.notif-stat[data-tone='warn'] {
+  --notif-lamp: var(--pc-warning);
 }
 
 .notif-stat-k {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  color: var(--pc-muted);
   font-family: var(--font-body);
-  font-size: 10px;
-  color: var(--text-faint);
-  letter-spacing: -0.01em;
+  font-size: var(--pc-type-technical);
+  white-space: nowrap;
+}
+
+.notif-lamp {
+  box-sizing: border-box;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--pc-radius-round);
+  background: var(--notif-lamp);
+  outline: 3px solid color-mix(in srgb, var(--notif-lamp) 22%, transparent);
+}
+
+.notif-stat[data-tone='idle'] .notif-lamp {
+  border: 1.5px solid var(--pc-faint);
+  background: transparent;
+  outline: 0;
 }
 
 .notif-stat-v {
-  font-size: 16px;
+  color: var(--pc-ink);
+  font-size: 24px;
   font-weight: 500;
-  color: var(--text);
   letter-spacing: -0.02em;
-  line-height: 1.1;
+  line-height: 1;
   font-feature-settings: var(--num-feat);
 }
 
-.notif-stat--danger .notif-stat-v {
-  color: var(--danger);
+.notif-stat[data-tone='idle'] .notif-stat-v {
+  color: var(--pc-muted);
 }
 
-.notif-stat--warn .notif-stat-v {
-  color: var(--warn);
+.notif-stat[data-tone='danger'] .notif-stat-v {
+  color: var(--pc-danger);
+}
+
+.notif-stat[data-tone='warn'] .notif-stat-v {
+  color: var(--pc-warning);
 }
 
 .notif-list {
-  padding: 12px 0 2px;
+  padding: var(--pc-space-2) var(--pc-space-6) var(--pc-space-5);
 }
 
 .notif-section-label {
-  font-size: 10.5px;
-  color: var(--text-faint);
-  letter-spacing: -0.01em;
-  margin: 0 0 8px;
+  margin: 0 0 var(--pc-space-3);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
 }
 
 .notif-stack {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--pc-space-2);
 }
 
+/* All clear: a sonar mark -- a socketed check inside two fixed range rings -- because the crew
+   and the keeper are still watching while nothing needs you. Static rings, no pulse. */
 .notif-empty {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
-  padding: 16px 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--pc-space-5);
+  padding: var(--pc-space-4) 0 var(--pc-space-2);
 }
 
+/* Margin 16px holds the outer 14px ring inside the column, so the rings line up with the
+   readout well's left edge instead of hanging past it. */
 .notif-empty-mark {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  border: 1px solid color-mix(in oklch, var(--ok) 30%, var(--border));
-  background: color-mix(in oklch, var(--ok) 10%, transparent);
-  color: var(--ok);
+  position: relative;
   display: grid;
   place-items: center;
+  width: 40px;
+  height: 40px;
+  margin: var(--pc-space-4);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-canvas);
+  color: var(--accent-text);
+}
+
+.notif-empty-mark::before,
+.notif-empty-mark::after {
+  content: '';
+  position: absolute;
+  border-radius: var(--pc-radius-round);
+  pointer-events: none;
+}
+
+.notif-empty-mark::before {
+  inset: -7px;
+  border: 1px solid var(--pc-line);
+}
+
+.notif-empty-mark::after {
+  inset: -14px;
+  border: 1px dashed color-mix(in srgb, var(--pc-ink) 10%, transparent);
 }
 
 .notif-empty-mark svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 1.5;
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.75;
 }
 
 .notif-empty-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
-  margin-bottom: 4px;
+  margin-bottom: var(--pc-space-1);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body);
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
 .notif-empty-body {
+  max-width: 38ch;
   margin: 0;
-  font-size: 10.5px;
-  color: var(--text-faint);
-  line-height: 1.45;
-  letter-spacing: -0.01em;
-  max-width: 36ch;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  line-height: 1.5;
+  text-wrap: pretty;
 }
 
-.notif-foot {
+.modal-actions.notif-foot {
   align-items: center;
+  gap: var(--pc-space-3);
+  margin: 0;
+  padding: var(--pc-space-4) var(--pc-space-6) var(--pc-space-5);
+  border-top: 1px solid var(--pc-line);
+  background: color-mix(in srgb, var(--pc-canvas) 55%, transparent);
 }
 
 .notif-foot .btn-primary {
   flex: 0 1 auto;
-  min-width: 96px;
+  min-width: 104px;
 }
 
 .notif-foot .btn-ghost {
@@ -3700,10 +3904,9 @@ textarea {
 
 .notif-foot-hint {
   flex: 1;
-  font-size: 10.5px;
-  color: var(--text-faint);
-  letter-spacing: -0.01em;
-  line-height: 1.35;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  line-height: 1.4;
 }
 
 /* Alert cards inside notification stack */

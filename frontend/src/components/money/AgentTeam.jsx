@@ -250,9 +250,15 @@ export function AgentTeam({
     >
       <header>
         <h2 id="your-agent-team-heading">Your agent team</h2>
+        <p className="pc-money-section-lede">Agents acting for you, each with a cap and expiry.</p>
       </header>
-      <div>
-        {teamAgents.length === 0 && <p>{emptyCopy}</p>}
+      <div className="pc-money-panel">
+        {teamAgents.length === 0 && (
+          <p className="pc-money-empty">
+            <span className="pc-lamp" aria-hidden="true" />
+            {emptyCopy}
+          </p>
+        )}
         {agents.length > teamAgents.length && (
           <p className="pc-crew-summary-note">
             Showing your three current crew identities. Older agent accounts remain in Technical
@@ -294,7 +300,7 @@ export function AgentTeam({
                         <strong>{persona?.name ?? 'Agent'}</strong>
                         <NetworkBadge networkId="stellar-testnet" />
                       </div>
-                      <p>
+                      <p className="pc-technical">
                         <a
                           href={explorerAccountUrl(agent.address)}
                           target="_blank"
@@ -304,20 +310,22 @@ export function AgentTeam({
                           {shortAddress(agent.address)}
                         </a>
                       </p>
-                      <p>
-                        Cap:{' '}
-                        {formatCap(
-                          cap && typeof cap === 'object' ? cap.units : cap,
-                          cap?.decimals ?? agent.amount?.decimals ?? SOROBAN_DECIMALS,
-                          capToken
-                        )}
-                      </p>
-                      <p>
-                        Expires:{' '}
-                        {formatUtcSeconds(
-                          agent.scope?.state === 'known' ? agent.scope.value?.expiry : null
-                        )}
-                      </p>
+                      <div className="pc-crew-facts">
+                        <p>
+                          Cap:{' '}
+                          {formatCap(
+                            cap && typeof cap === 'object' ? cap.units : cap,
+                            cap?.decimals ?? agent.amount?.decimals ?? SOROBAN_DECIMALS,
+                            capToken
+                          )}
+                        </p>
+                        <p>
+                          Expires:{' '}
+                          {formatUtcSeconds(
+                            agent.scope?.state === 'known' ? agent.scope.value?.expiry : null
+                          )}
+                        </p>
+                      </div>
                     </>
                   ) : null}
                 </div>

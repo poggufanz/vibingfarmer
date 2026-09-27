@@ -4,15 +4,19 @@
 // fetching, no wallet/relayer reads. The caller (My Money Task 13 -- NOT this task; nothing here
 // is wired into app.jsx yet) owns all real state and passes it in as props.
 //
-// Renders EXACTLY the approved hierarchy (brief Step 2), in this order:
 //   1. Your money            -- MoneyHero (the one Rice dominant surface + state-aware action)
-//   2. Your position         -- PositionList (rows/dividers, never equal cards)
-//   3. Your agent team       -- AgentTeam
-//   4. Vault protection      -- VaultProtection
-//   5. How your money is working -- HowMoneyWorks
-//   6. Technical details     -- TechnicalMoneyDetails (expert capability + the optional,
-//                                DOM-list-last graph disclosure)
-// This is the ONLY place these six mount together; each section owns its own literal copy and
+//   2. Active grant          -- ActiveGrantCard (P1 G5: persistent router-allowance remainder +
+//                                ledger countdown + one-signature Revoke; renders nothing when no
+//                                grant is active, so the hierarchy below simply closes ranks)
+//   3. Live yield            -- LiveYieldCard (G2 follow-up: P0's live supply-APR + PPS
+//                                trailing sparkline, lifted off the retired console; always
+//                                rendered, honestly unavailable when reads/history are missing)
+//   4. Your position         -- PositionList (rows/dividers, never equal cards)
+//   5. Your agent team       -- AgentTeam
+//   6. Vault protection      -- VaultProtection
+//   7. How your money is working -- HowMoneyWorks
+//   8. Technical details     -- TechnicalMoneyDetails (expert capability + the optional,
+// This is the ONLY place these sections mount together; each section owns its own literal copy and
 // assertions (see each component's own header comment) so this file stays a thin, honest wire-up.
 //
 // Fix loop 1, I2 (My Money Task 13 review): a 7th, always-rendered "Recover a Base account"
@@ -24,6 +28,8 @@
 // triggers a real read (ensureBaseOwner + loadIndexedBasePositions in app.jsx), never a guess.
 import { useRef } from 'react'
 import './my-money.css'
+import { ActiveGrantCard } from './ActiveGrantCard.jsx'
+import { LiveYieldCard } from './LiveYieldCard.jsx'
 import { usePocketTransition } from '../../design/usePocketTransition.js'
 import { MoneyHero, toMoneyFactView } from './MoneyHero.jsx'
 import { PositionList } from './PositionList.jsx'
@@ -61,6 +67,15 @@ export function MyMoneyRoute({
   onAction,
   onRecoverAgent,
   onRecoverBase,
+  // P1 G5: the persistent grant widget's view-model (money/activeGrant.js) + its one-signature
+  // revoke wiring. `grant` defaults to null = no active grant = the card renders nothing.
+  grant = null,
+  onRevokeGrant,
+  revokePending = false,
+  revokeError = null,
+  // G2 follow-up: P0's live supply-APR + PPS series (money/liveYield.js), loaded by the app
+  // controller. Null-safe: the card renders honest unavailable states on its own.
+  liveYield = null,
   actionPending = false,
   baseActionsAvailable = true,
   baseUnavailableReason = null,
@@ -87,6 +102,18 @@ export function MyMoneyRoute({
           factView={factView}
           onAction={onAction}
           actionPending={actionPending}
+        />
+        <ActiveGrantCard
+          grant={grant}
+          onRevoke={onRevokeGrant}
+          revokePending={revokePending}
+          revokeError={revokeError}
+        />
+        <LiveYieldCard
+          liveApr={liveYield?.liveApr ?? null}
+          series={liveYield?.series ?? []}
+          nowMs={nowMs}
+          collectionState={model?.state}
         />
         <PositionList
           agents={agents}
@@ -124,7 +151,7 @@ export function MyMoneyRoute({
             <header>
               <h2 id="base-history-heading">Historical Base positions</h2>
             </header>
-            <div>
+            <div className="pc-money-panel">
               {!basePlan.available && basePlan.unavailableReason && (
                 <p id="base-history-unavailable" role="status">
                   {basePlan.unavailableReason}
@@ -151,7 +178,7 @@ export function MyMoneyRoute({
           <header>
             <h2 id="recover-base-heading">Recover a Base account</h2>
           </header>
-          <div>
+          <div className="pc-money-panel">
             <p>
               {(basePlan?.positions?.length ?? 0) > 0
                 ? 'Historical Base balances stay visible here. Recovery remains a separate owner action.'

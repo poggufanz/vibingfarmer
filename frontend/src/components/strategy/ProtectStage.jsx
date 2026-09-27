@@ -66,6 +66,7 @@
 //     not by an integration correctly reading `decision.mode` on its own.
 import { useState } from 'react'
 import { PoolSafetySection } from './PoolSafetyPanel.jsx'
+import GrantFallbackFee from './GrantFallbackFee.jsx'
 import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
 import { AgentMark } from '../pocket/AgentMark.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
@@ -1317,6 +1318,12 @@ export function ProtectStage({
               <p>Each agent signs with its own separate session key.</p>
               <p>Each agent can be stopped on its own, independent of the others.</p>
               <p>Network fee sponsored by fee-bump relay.</p>
+              <GrantFallbackFee
+                owner={owner}
+                agentCount={decision.reviewedAgentInits.length}
+                budgets={decision.reviewedBudgets}
+                durationSeconds={decision.durationSeconds}
+              />
             </div>
           </div>
         )}

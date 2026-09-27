@@ -304,3 +304,150 @@ export async function partialWithdraw({
     )
   }
 }
+
+/**
+ * Build an `unknown`-submission error for a relay that cannot be reached at all. Partial
+ * withdraw is relay-only by design (the user holds no XLM, so there is no user-paid
+ * fallback): when the relay is down nothing can be proven from here, so the outcome is
+ * reported as unknown — never as success — with a message that says exactly that and queues
+ * an explicit retry. Carries the same `code`/`submission` shape as
+ * `relay.js::RelaySubmissionUnknownError` so `money/ownerActions.js::ownerActionOutcome`
+ * classifies it identically.
+ */
+export function relayUnreachableUnknown(stage = 'partial-withdraw') {
+  const error = new Error(
+    'The gasless relay is unreachable, so nothing was submitted. ' +
+      'Your funds stay where they are — queued below for retry when the relay is back. ' +
+      'This was recorded as unknown, never as success.'
+  )
+  error.code = 'VF_SUBMISSION_UNKNOWN'
+  error.submission = 'unknown'
+  error.stage = stage
+  return error
+}
+
+/**
+ * Split a percentage-withdraw across agents, proportional to each agent's withdrawable max.
+ * Pure — no chain reads, no submits; the caller re-reads fresh maxima before submitting
+ * (see `partialWithdrawMulti`). Client-side composition over the single-agent
+ * `partialWithdraw`, never a new contract call.
+ * @param {Array<{address:string, maxUnits:bigint}>} agentRows per-agent withdrawable maxima
+ * @param {number} pctBps basis points of each agent's max to withdraw (1..10000)
+ * @returns {{legs:Array<{agentAddress:string, amountUnits:bigint}>, totalUnits:bigint,
+ *           skipped:number}} `skipped` counts agents whose floored share is dust (0 units)
+ */
+export function planProportionalWithdraw(agentRows, pctBps) {
+  if (!Number.isInteger(pctBps) || pctBps <= 0 || pctBps > 10000) {
+    throw new Error('Percentage must be between 1 and 10000 basis points.')
+  }
+  if (!Array.isArray(agentRows) || agentRows.length === 0) {
+    throw new Error('At least one agent is required for a proportional withdraw.')
+  }
+  const legs = []
+  let skipped = 0
+  for (const row of agentRows) {
+    const maxUnits = BigInt(row.maxUnits ?? 0n)
+    if (maxUnits <= 0n) {
+      skipped += 1
+      continue
+    }
+    const amountUnits = (maxUnits * BigInt(pctBps)) / 10000n
+    if (amountUnits <= 0n) {
+      skipped += 1
+      continue
+    }
+    legs.push({ agentAddress: row.address, amountUnits })
+  }
+  return { legs, totalUnits: legs.reduce((sum, l) => sum + l.amountUnits, 0n), skipped }
+}
+
+/**
+ * Withdraw from MANY agents in one call — sequential composition of the single-agent
+ * `ensureExitSigner` + `partialWithdraw` pair per leg (a no-op registration when the grant
+ * already bundled the exit signer, P1 G7). Never throws an aggregate: every leg settles
+ * into `results`, failures captured with their `code`/`submission` intact so the UI can
+ * badge `unknown` vs confirmed-failed honestly. Only an active-account switch (global abort,
+ * never a leg outcome) propagates.
+ *
+ * Relay-down handling: the relayer address is resolved ONCE up front. When it is missing,
+ * NO leg is submitted and every leg reports `relayUnreachableUnknown()` — status unknown,
+ * queued for retry, never a raw throw and never a false success.
+ * @param {{owner:string, legs:Array<{agentAddress:string, amountUnits:bigint}},
+ *          vault?:string, token?:string, server?:object, activeAccount?:object,
+ *          getCurrentActiveAccount?:Function, signal?:AbortSignal, deps?:object}} p
+ * @returns {Promise<{results:Array<object>, queued:Array<object>}>} `queued` = the failed
+ *          legs worth an explicit retry (everything except a global account-switch abort,
+ *          which throws instead of appearing here).
+ */
+export async function partialWithdrawMulti({
+  owner,
+  legs,
+  vault = SOROBAN_ACTIVE_VAULT_ADDRESS,
+  token = SOROBAN_TOKEN_ADDRESS,
+  server,
+  activeAccount,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
+  deps = {},
+}) {
+  assertActiveOwner({ owner, activeAccount })
+  if (!Array.isArray(legs) || legs.length === 0) {
+    throw new Error('At least one withdraw leg is required.')
+  }
+  const {
+    getRelayerAddress = _getRelayerAddress,
+    ensureExitSignerFn = (args) =>
+      ensureExitSigner({
+        owner,
+        activeAccount,
+        getCurrentActiveAccount,
+        signal,
+        ...args,
+      }),
+    partialWithdrawFn = (args) =>
+      partialWithdraw({
+        owner,
+        vault,
+        token,
+        server,
+        activeAccount,
+        getCurrentActiveAccount,
+        signal,
+        ...args,
+      }),
+  } = deps
+
+  const failLeg = (leg, error) => ({
+    agentAddress: leg.agentAddress,
+    amountUnits: leg.amountUnits,
+    ok: false,
+    error,
+  })
+  // Relay-only flow: one upfront resolution, so a down relay queues every leg WITHOUT
+  // submitting anything — the first leg must not burn reads/sigs the rest cannot use.
+  const relayer = await getRelayerAddress()
+  if (!relayer) {
+    const results = legs.map((leg) => failLeg(leg, relayUnreachableUnknown('relay-unreachable')))
+    return { results, queued: [...results] }
+  }
+  const results = []
+  for (const leg of legs) {
+    try {
+      await ensureExitSignerFn({ agentAddress: leg.agentAddress })
+      const out = await partialWithdrawFn({
+        agentAddress: leg.agentAddress,
+        amountUnits: leg.amountUnits,
+      })
+      results.push({
+        agentAddress: leg.agentAddress,
+        amountUnits: leg.amountUnits,
+        ok: true,
+        ...out,
+      })
+    } catch (error) {
+      if (error?.code === 'ACTIVE_ACCOUNT_CHANGED') throw error
+      results.push(failLeg(leg, error))
+    }
+  }
+  return { results, queued: results.filter((r) => !r.ok) }
+}

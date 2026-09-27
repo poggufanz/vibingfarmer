@@ -13,14 +13,12 @@
 // row is honestly labeled Confirmed (not fabricated optimism; Horizon does not return anything
 // else here).
 //
-// KNOWN GAP (documented, not silently ignored): wallet/history.js's fetchHistory() -- off-limits
-// for this task (not in the Task 10 file list) -- internally catches its own fetch failures and
-// resolves to `[]` rather than rejecting or returning null, so a TRUE network failure and a
-// genuinely empty history are indistinguishable once they reach this component. This component is
-// built to render the correct state for either input it receives (see HistoryScreen.jsx's sibling
-// unit coverage via WalletActivity.test.jsx); popup.jsx initializes its `activity` state to `null`
-// (not `[]`) so at least "never yet loaded" reads as unavailable rather than a false "no
-// activity" -- the remaining silent-failure-to-empty gap lives in fetchHistory itself.
+// CLOSED GAP (P1 G10): wallet/history.js's fetchHistory() used to catch its own fetch failures
+// and resolve to `[]`, making a TRUE network failure indistinguishable from a genuinely empty
+// history. It now resolves to `null` on any read failure, so this component's long-standing
+// null-vs-[] rendering (unavailable vs. "no activity yet") finally receives truthful input:
+// popup.jsx initializes `activity` to `null` ("never yet loaded") and loadActivity's `null`
+// now honestly means "could not load".
 import { formatTokenUnits } from '../../../design/pocket-crew-foundation.js'
 
 const ACTIVITY_STATES = new Set([

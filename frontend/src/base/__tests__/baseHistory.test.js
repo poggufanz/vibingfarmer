@@ -37,11 +37,11 @@ describe('fetchBaseHistory', () => {
     expect(rows[1]).toMatchObject({ amount: 12, direction: 'out' })
   })
 
-  it('fail-soft: no account, HTTP error, or non-array result -> []', async () => {
+  it('no account -> [] (nothing to query); HTTP error, garbage, or throw -> null (unloadable)', async () => {
     expect(await fetchBaseHistory({})).toEqual([])
     expect(
       await fetchBaseHistory({ account: K, fetchImpl: vi.fn().mockResolvedValue({ ok: false }) })
-    ).toEqual([])
+    ).toBeNull()
     expect(
       await fetchBaseHistory({
         account: K,
@@ -49,9 +49,9 @@ describe('fetchBaseHistory', () => {
           .fn()
           .mockResolvedValue({ ok: true, json: async () => ({ result: 'rate limited' }) }),
       })
-    ).toEqual([])
+    ).toBeNull()
     expect(
       await fetchBaseHistory({ account: K, fetchImpl: vi.fn().mockRejectedValue(new Error('net')) })
-    ).toEqual([])
+    ).toBeNull()
   })
 })

@@ -62,6 +62,17 @@
 .pc-my-money-route {
   font-size: var(--pc-type-body);
   line-height: var(--pc-leading-body);
+
+  /* Instrument-panel locals (2026-09-27 redesign, see the panel block below). */
+  --pc-lamp: var(--pc-faint);
+  --pc-money-live-ink: var(--pc-harvest);
+  --pc-money-well: rgb(7 15 11 / 30%);
+}
+
+/* Harvest lime has no contrast on the light workspace; the live figure falls back to Field ink. */
+:root[data-theme='day-field'] .pc-my-money-route {
+  --pc-money-live-ink: var(--pc-field);
+  --pc-money-well: rgb(23 37 31 / 5%);
 }
 
 .pc-my-money-route > .pc-route-stack > h1 {
@@ -97,45 +108,29 @@
   box-shadow: var(--pc-shadow-dominant);
 }
 
+/* Paper tooth: a near-invisible tiled noise so the Rice surface reads as stock, not flat plastic. */
 .pc-dominant--owned {
   background: var(--pc-owned);
+  background-image: url('./hero-grain.svg');
   color: var(--pc-owned-ink);
 }
 
-/* Decorative paint splatter on the "Your money" hero (route-scoped, non-contract).
- * Fade-function-free by design: rejection checklist item 6 (MyMoneyRoute.test.jsx:731-735,
- * myMoneyCssContract.test.js:94, coreRoutes.styles.test.js:148) forbids CSS fade paint
- * functions in this file, and both pocket-crew gates ban those too -- so the soft edge
- * comes from an inline SVG data-URI (feGaussianBlur blur, never a CSS paint function;
- * a data-URI matches no gate pattern). `.pc-dominant` above already provides
- * position:relative + overflow:clip, so the splatter is clipped neatly into the corner.
- * ::before/::after are absolutely positioned with pointer-events:none and paint beneath
- * the card's positioned content (the `> *` rule below, no z-index literal needed).
- * Solid dark-forest fill (#17251f at low opacity) reads as decoration on the Rice
- * surface in both themes. */
+/* Decorative ink splash on the "Your money" hero (route-scoped, non-contract). The art lives in
+ * hero-splash.svg: a field-green crown splash with a harvest-lime overprint knocked off-register
+ * onto its edge, textured entirely by SVG filter primitives (warped edge, pigment mottling,
+ * dry-brush pinholes, wet sheen, pooled lime rim) -- this file's gates forbid CSS fade paint
+ * functions, keyframes, and CSS blur. The SVG is 1:1 CSS px with this box, anchored to the card's
+ * top-right corner, and every mark stays in the measured text-safe zone: the band above the meta
+ * column (y < 96) or the right padding strip. `.pc-dominant` clips it to the rounded corner;
+ * pointer-events:none, and the `> *` rule below keeps content painted above it. */
 .pc-dominant--owned::before {
-  content: "";
+  content: '';
   position: absolute;
-  top: -140px;
-  right: -110px;
-  width: 400px;
+  top: 0;
+  right: 0;
+  width: 560px;
   height: 400px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'%3E%3Cfilter id='soft' x='-40%25' y='-40%25' width='180%25' height='180%25'%3E%3CfeGaussianBlur stdDeviation='28'/%3E%3C/filter%3E%3Cpath d='M205 45C265 35 332 85 341 165C350 245 298 318 208 328C118 338 52 278 47 188C42 98 145 55 205 45Z' fill='%2317251f' fill-opacity='0.55' filter='url(%23soft)'/%3E%3Cpath d='M120 90C140 80 160 95 155 115C150 135 125 135 118 118C113 105 110 95 120 90Z' fill='%2317251f' fill-opacity='0.35'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-size: contain;
-  pointer-events: none;
-}
-
-.pc-dominant--owned::after {
-  content: "";
-  position: absolute;
-  top: 60px;
-  right: 210px;
-  width: 220px;
-  height: 120px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='120' viewBox='0 0 220 120'%3E%3Cg fill='%2317251f'%3E%3Ccircle cx='180' cy='40' r='14' fill-opacity='0.28'/%3E%3Ccircle cx='128' cy='70' r='9' fill-opacity='0.22'/%3E%3Ccircle cx='76' cy='34' r='6' fill-opacity='0.18'/%3E%3Ccircle cx='214' cy='92' r='4' fill-opacity='0.15'/%3E%3C/g%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-size: contain;
+  background: url('./hero-splash.svg') top right / contain no-repeat;
   pointer-events: none;
 }
 
@@ -420,6 +415,559 @@
 
 .pc-crew-row-recovery {
   padding-left: 0;
+}
+
+/* 2026-09-27 redesign: instrument panels. The approved 3fr/9fr editorial split stays; its content
+ * column becomes a grained Grove panel so every section reads as a data instrument, not loose
+ * prose. Each section keeps its own interior (readout strip, chart well, ledger rows, status
+ * block, evidence grid) so the panels never collapse into one repeated card. Lamps only restate
+ * a state the adjacent text already says; they are aria-hidden. */
+.pc-my-money-route .pc-money-section-lede {
+  max-width: 30ch;
+  margin: var(--pc-space-2) 0 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+  text-wrap: pretty;
+}
+
+.pc-my-money-route .pc-money-section > .pc-money-panel {
+  container-type: inline-size;
+  gap: var(--pc-space-5);
+  padding: var(--pc-space-6);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--pc-workspace);
+  background-image: url('./panel-grain.svg');
+  box-shadow:
+    inset 0 1px 0 rgb(242 245 239 / 6%),
+    var(--pc-shadow-support);
+}
+
+.pc-money-panel p {
+  margin: 0;
+}
+
+.pc-money-panel > .pc-button {
+  justify-self: start;
+}
+
+.pc-my-money-route [data-tone='live'] {
+  --pc-lamp: var(--pc-money-live-ink);
+}
+
+.pc-my-money-route [data-tone='warn'] {
+  --pc-lamp: var(--pc-warning);
+}
+
+.pc-my-money-route [data-tone='danger'] {
+  --pc-lamp: var(--pc-danger);
+}
+
+.pc-my-money-route [data-tone='idle'] {
+  --pc-lamp: var(--pc-faint);
+}
+
+.pc-lamp {
+  display: inline-block;
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-lamp);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc-lamp) 24%, transparent);
+}
+
+.pc-lamp--large {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: var(--pc-space-2);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--pc-lamp) 20%, transparent);
+}
+
+/* Empty/pre-read state: a recessed dashed slot, so "nothing yet" still shows where data will
+ * land. The chart variant carries the chart grid so an empty yield well reads as a chart frame. */
+.pc-money-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-3);
+  min-height: 4.5rem;
+  margin: 0;
+  padding: var(--pc-space-4) var(--pc-space-5);
+  border: 1px dashed color-mix(in srgb, var(--pc-line-strong) 45%, transparent);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--pc-money-well);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-money-empty--chart {
+  min-height: 9rem;
+  background-image: url('./chart-grid.svg');
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+/* Readout strip: label over figure. Stacks by default; once the panel is wide enough the
+ * figures sit in one row split by hairlines, the lead figure taking the widest column. */
+.pc-readouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--pc-space-5) var(--pc-space-8);
+  margin: 0;
+}
+
+.pc-readout--lead {
+  grid-column: 1 / -1;
+}
+
+.pc-readout {
+  display: grid;
+  align-content: start;
+  gap: var(--pc-space-1);
+  min-width: 0;
+}
+
+.pc-readout dt {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 500;
+}
+
+.pc-readout dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pc-readout-value {
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-section);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: var(--pc-leading-tight);
+}
+
+.pc-readout--lead .pc-readout-value {
+  font-size: var(--pc-type-stage);
+  font-weight: 720;
+  letter-spacing: -0.035em;
+}
+
+.pc-readout--lead[data-tone='live'] .pc-readout-value {
+  color: var(--pc-money-live-ink);
+}
+
+.pc-readout[data-tone='idle'] .pc-readout-value {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-section);
+}
+
+.pc-readout-note {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+}
+
+@container (min-width: 36rem) {
+  .pc-readouts {
+    grid-template-columns: minmax(0, 1.6fr);
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+  }
+
+  .pc-readout--lead {
+    grid-column: auto;
+  }
+
+  .pc-readout + .pc-readout {
+    padding-left: var(--pc-space-8);
+    border-left: 1px solid var(--pc-line);
+  }
+}
+
+/* Yield chart well: the share-price line rides a recessed plot area with a dashed value grid. */
+.pc-yield-chart {
+  display: grid;
+  gap: var(--pc-space-2);
+  margin: 0;
+  padding: var(--pc-space-4);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--pc-money-well);
+}
+
+.pc-yield-chart svg {
+  display: block;
+  background: url('./chart-grid.svg') center / 100% 100% no-repeat;
+}
+
+.pc-yield-chart svg path {
+  stroke: var(--pc-money-live-ink);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.pc-yield-chart figcaption {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+}
+
+/* Vault protection: one status block (lamp + state word), then the two mandate facts. */
+.pc-protection-state {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--pc-space-4);
+  align-items: start;
+  padding: var(--pc-space-4) var(--pc-space-5);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--pc-money-well);
+}
+
+.pc-protection-state > div {
+  display: grid;
+  gap: var(--pc-space-1);
+}
+
+.pc-protection-title {
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-section);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: var(--pc-leading-title);
+}
+
+.pc-money-callout {
+  padding: var(--pc-space-3) var(--pc-space-4);
+  border: 1px solid var(--pc-lamp);
+  border-radius: var(--pc-radius-control);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-money-footnote {
+  padding-top: var(--pc-space-4);
+  border-top: 1px solid var(--pc-line);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+}
+
+/* Automation evidence: a small status board under the venue route. */
+.pc-evidence {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--pc-space-4) var(--pc-space-8);
+  margin: 0;
+  padding-top: var(--pc-space-5);
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-evidence > div {
+  display: grid;
+  gap: var(--pc-space-1);
+  min-width: 0;
+}
+
+/* Four facts read as a 2x2 board once the panel can hold two columns; never a 3+1 orphan. */
+@container (min-width: 28rem) {
+  .pc-evidence {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.pc-evidence dt {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+}
+
+.pc-evidence dd {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  min-width: 0;
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Technical details: a drawer index inside the grained panel. Rows split by hairlines instead of
+ * four separately outlined pills; each summary is title + hint + a peek reading + a dial chevron,
+ * and an open drawer holds a recessed ledger. The shared .pc-technical-details outline is reset
+ * only inside this panel -- every other TechnicalDetails caller keeps Foundation's look. */
+.pc-my-money-route .pc-money-section > .pc-tech-drawers {
+  gap: 0;
+  padding: var(--pc-space-2);
+}
+
+.pc-tech-drawers .pc-technical-details {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+/* Same specificity as the reset above and later, so the divider survives it. */
+.pc-tech-drawers > :not(:first-child) {
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-tech-drawers .pc-technical-details-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'title mark'
+    'hint mark'
+    'peek mark';
+  gap: var(--pc-space-1) var(--pc-space-4);
+  align-items: center;
+  padding: var(--pc-space-4);
+  border-radius: var(--pc-radius-control);
+  font-size: var(--pc-type-body);
+  list-style: none;
+}
+
+.pc-tech-drawers .pc-technical-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.pc-tech-drawers .pc-technical-details-summary:hover {
+  background-color: var(--pc-money-well);
+}
+
+/* Dial: a ringed well (::before) with the chevron (::after) centred in the same grid cell. */
+.pc-tech-drawers .pc-technical-details-summary::before,
+.pc-tech-drawers .pc-technical-details-summary::after {
+  content: '';
+  grid-area: mark;
+  place-self: center;
+}
+
+.pc-tech-drawers .pc-technical-details-summary::before {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background-color: var(--pc-money-well);
+}
+
+.pc-tech-drawers .pc-technical-details-summary::after {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-right: 2px solid var(--pc-muted);
+  border-bottom: 2px solid var(--pc-muted);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--pc-duration-base) var(--pc-ease-out);
+}
+
+.pc-tech-drawers .pc-technical-details-summary:hover::before {
+  border-color: var(--pc-line-strong);
+}
+
+.pc-tech-drawers .pc-technical-details[open] > .pc-technical-details-summary::after {
+  border-color: var(--pc-ink);
+  transform: translateY(2px) rotate(-135deg);
+}
+
+.pc-tech-drawer-title {
+  grid-area: title;
+  color: var(--pc-ink);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.pc-tech-drawer-hint {
+  grid-area: hint;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+}
+
+.pc-tech-drawer-peek {
+  grid-area: peek;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin-top: var(--pc-space-1);
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background-color: var(--pc-money-well);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-label);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pc-tech-drawers .pc-technical-details-body {
+  display: grid;
+  gap: var(--pc-space-3);
+  margin: 0;
+  padding: 0 var(--pc-space-4) var(--pc-space-5);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-tech-drawer-note {
+  color: var(--pc-muted);
+}
+
+/* Ledger: a recessed statement of label/value rows; values right-align once there is room. */
+.pc-tech-ledger,
+.pc-tech-agent {
+  display: grid;
+  margin: 0;
+  padding: 0 var(--pc-space-4);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--pc-money-well);
+}
+
+.pc-tech-ledger > div,
+.pc-tech-agent > div {
+  display: grid;
+  align-content: start;
+  gap: var(--pc-space-1);
+  min-width: 0;
+  padding: var(--pc-space-3) 0;
+}
+
+.pc-tech-ledger > div + div {
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-tech-ledger dt,
+.pc-tech-agent dt {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+}
+
+.pc-tech-ledger dd,
+.pc-tech-agent dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--pc-ink);
+  overflow-wrap: anywhere;
+}
+
+/* One agent = one card: the address across the top, its scope fields as a readout row below. */
+.pc-tech-agent {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--pc-space-4);
+}
+
+.pc-tech-agent > div:first-child {
+  grid-column: 1 / -1;
+  border-bottom: 1px solid var(--pc-line);
+}
+
+.pc-tech-ledger .pc-technical,
+.pc-tech-agent .pc-technical,
+.pc-tech-ledger pre {
+  font-size: var(--pc-type-technical);
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-tech-ledger pre {
+  margin: var(--pc-space-1) 0 0;
+  padding: var(--pc-space-3);
+  overflow-x: auto;
+  border-radius: var(--pc-radius-control);
+  background-color: var(--pc-money-well);
+  white-space: pre;
+}
+
+@container (min-width: 32rem) {
+  .pc-tech-drawers .pc-technical-details-summary {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'title peek mark'
+      'hint peek mark';
+  }
+
+  .pc-tech-drawer-peek {
+    justify-self: end;
+    margin-top: 0;
+  }
+
+  .pc-tech-ledger > div:not(.pc-tech-ledger-block) {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: var(--pc-space-4);
+    align-items: baseline;
+  }
+
+  .pc-tech-ledger > div:not(.pc-tech-ledger-block) dd {
+    text-align: right;
+  }
+
+  .pc-tech-agent {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+/* Ledger rows inside the panels: no list chrome, last hairline dropped, the amount promoted to a
+ * display figure, and the trailing column (address / crew state) quieted or pilled. */
+.pc-position-list,
+.pc-crew-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pc-position-list > li:last-child,
+.pc-crew-list > li:last-child {
+  border-bottom-color: transparent;
+}
+
+.pc-position-row
+  .pc-money:not(
+    .pc-money--loading,
+    .pc-money--empty,
+    .pc-money--error,
+    .pc-money--unknown,
+    .pc-money--unavailable
+  ) {
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-section);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.pc-position-row > :nth-child(3),
+.pc-crew-row > :nth-child(3) {
+  justify-self: end;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+}
+
+.pc-position-row > :nth-child(3) {
+  font-family: var(--pc-font-mono);
+}
+
+.pc-crew-row > span:nth-child(3):not(:empty) {
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  color: var(--pc-ink);
+  font-weight: 600;
+}
+
+.pc-crew-row[data-agent-state='needs-recovery'] > span:nth-child(3) {
+  border-color: var(--pc-danger);
+  color: var(--pc-danger);
+}
+
+.pc-crew-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-1) var(--pc-space-5);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Fix precedent reused verbatim from strategy.css's own I1 finding (fix loop 1): pocket-crew.css's
@@ -779,6 +1327,21 @@
     position: static;
   }
 
+  .pc-my-money-route .pc-money-section > .pc-money-panel {
+    padding: var(--pc-space-5) var(--pc-space-4);
+  }
+
+  /* Drawer rows carry their own padding; the panel only needs a thin frame. */
+  .pc-my-money-route .pc-money-section > .pc-tech-drawers {
+    padding: var(--pc-space-1);
+  }
+
+  /* Half-scale splash keeps the spray clear of the "Your money" heading on a phone-width card. */
+  .pc-dominant--owned::before {
+    width: 280px;
+    height: 200px;
+  }
+
   /* Fix loop 2 (M7): scoped to the money dialog (specificity 0,2,0) so this mobile stacking rule
    * matches the base rule above it (also 0,2,0) and wins by source order -- the previous bare
    * `.pc-dialog-actions` (0,1,0) lost outright to the scoped base rule regardless of the media
@@ -822,6 +1385,18 @@
   .pc-agent-lane > :last-child {
     grid-column: 2;
     justify-self: start;
+  }
+
+  /* 2026-09-27 redesign: at phone width the network badge column squeezed the promoted amount
+   * until "USDC" and its freshness flag broke mid-word. Position rows stack instead: badge, then
+   * avatar + amount at full width, then the short address. Crew rows keep the two-column shape. */
+  .pc-position-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--pc-space-3);
+  }
+
+  .pc-position-row > :nth-child(3) {
+    grid-column: 1;
   }
 
   /* Standalone mobile dialog override (contract :896-907), verbatim -- SCOPED the same as the base

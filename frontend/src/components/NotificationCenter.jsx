@@ -100,47 +100,48 @@ export default function NotificationCenter({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="notif-head">
-              <div className="modal-eyebrow skill-detail-eyebrow">
-                <span className="notif-eyebrow-left">
-                  {highCount > 0 && (
-                    <span className="notif-live-dot" aria-hidden="true" title="High severity" />
-                  )}
-                  Agent alerts
-                </span>
+              <div className="notif-title-row">
+                <div className="notif-title-block">
+                  <h3 className="modal-title" id="notif-title">
+                    Notifications
+                    {count > 0 && (
+                      <span className="notif-count-pill mono tnum" aria-hidden="true">
+                        {count}
+                      </span>
+                    )}
+                  </h3>
+                  <p className="notif-sub">
+                    {highCount > 0 && (
+                      <span className="notif-live-dot" aria-hidden="true" title="High severity" />
+                    )}
+                    Alerts from your agents and the keeper
+                  </p>
+                </div>
                 <button
                   type="button"
                   className="modal-close-btn"
                   aria-label="Close notifications"
                   onClick={() => setOpen(false)}
                 >
-                  <Icon name="x" size={12} />
+                  <Icon name="x" size={14} />
                 </button>
               </div>
 
-              <div className="notif-title-row">
-                <h3 className="modal-title" id="notif-title">
-                  Notifications
-                </h3>
-                {count > 0 && (
-                  <span className="notif-count-pill mono tnum" aria-hidden="true">
-                    {count}
-                  </span>
-                )}
-              </div>
-
+              {/* Readouts: each lamp repeats its own number's meaning, so it stays aria-hidden. */}
               <div className="notif-stat-strip" role="group" aria-label="Alert summary">
-                <div className="notif-stat">
-                  <span className="notif-stat-k">Active</span>
-                  <span className="notif-stat-v mono tnum">{count}</span>
-                </div>
-                <div className={`notif-stat${highCount > 0 ? ' notif-stat--danger' : ''}`}>
-                  <span className="notif-stat-k">High</span>
-                  <span className="notif-stat-v mono tnum">{highCount}</span>
-                </div>
-                <div className={`notif-stat${actionCount > 0 ? ' notif-stat--warn' : ''}`}>
-                  <span className="notif-stat-k">Need action</span>
-                  <span className="notif-stat-v mono tnum">{actionCount}</span>
-                </div>
+                {[
+                  ['Active', count, 'live'],
+                  ['High', highCount, 'danger'],
+                  ['Need action', actionCount, 'warn'],
+                ].map(([label, value, tone]) => (
+                  <div className="notif-stat" key={label} data-tone={value > 0 ? tone : 'idle'}>
+                    <span className="notif-stat-k">
+                      <span className="notif-lamp" aria-hidden="true" />
+                      {label}
+                    </span>
+                    <span className="notif-stat-v mono tnum">{value}</span>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -148,11 +149,11 @@ export default function NotificationCenter({
               {count === 0 ? (
                 <div className="notif-empty" role="status">
                   <span className="notif-empty-mark" aria-hidden="true">
-                    <Icon name="check" size={14} />
+                    <Icon name="check" size={16} />
                   </span>
                   <div className="notif-empty-copy">
                     <div className="notif-empty-title">All clear</div>
-                    <p className="notif-empty-body mono">
+                    <p className="notif-empty-body">
                       No active alerts. Harvests, compounds, risk signals, and keeper moves surface
                       here when something needs a look.
                     </p>
@@ -160,7 +161,7 @@ export default function NotificationCenter({
                 </div>
               ) : (
                 <>
-                  <div className="notif-section-label mono">
+                  <div className="notif-section-label">
                     {actionCount > 0
                       ? `${actionCount} need your decision`
                       : 'Read-only updates from agents and keeper'}
@@ -193,7 +194,7 @@ export default function NotificationCenter({
                   Dismiss all
                 </button>
               ) : (
-                <span className="notif-foot-hint mono">Alerts stay until you dismiss them</span>
+                <span className="notif-foot-hint">Alerts stay until you dismiss them</span>
               )}
               <button
                 ref={closeRef}

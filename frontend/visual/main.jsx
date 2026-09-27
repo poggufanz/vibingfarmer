@@ -3621,9 +3621,11 @@ function SecondaryFixture({ branch, cap, state }) {
   if (branch === 'history') {
     return (
       <SecondaryFixtureShell fixtureId={fixtureId} cap={cap}>
-        <main className="pc-route">
-          <HistoryPanel connectedAddress={null} historyRead={payload} />
-        </main>
+        <SecondaryRouter entry="/history">
+          <main className="pc-route">
+            <HistoryPanel connectedAddress={null} historyRead={payload} />
+          </main>
+        </SecondaryRouter>
       </SecondaryFixtureShell>
     )
   }

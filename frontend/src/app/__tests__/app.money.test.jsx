@@ -753,6 +753,81 @@ describe('/home & /agent route source: MyMoneyRoute moved to /home, /agent is no
   })
 })
 
+// P1 G5 (defi-gap-analysis §4.2/§5 item 4): the persistent "Active grant" widget. app.jsx is too
+// heavy to render (see header), so the wiring is proven structurally at the same seams the
+// route describe above pins: /home passes the widget its state + revoke handler, and that
+// handler revokes the OWNER's router allowance via grant.js::revokeGrant (approve 0, 1 tanda
+// tangan) — the live read/countdown behavior itself is proven against injected mocks in
+// money/__tests__/activeGrant.test.js and the card in ActiveGrantCard.test.jsx.
+describe('P1 G5 — Active grant widget wiring', () => {
+  const src = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
+
+  function homeRoute() {
+    const marker = 'path="/home"'
+    const start = src.indexOf(marker)
+    expect(start, 'Route /home not found in app.jsx').toBeGreaterThan(-1)
+    const nextRoute = src.indexOf('<Route', start + marker.length)
+    return src.slice(start, nextRoute === -1 ? src.length : nextRoute)
+  }
+
+  it('the /home MyMoneyRoute receives the grant view-model and its revoke wiring', () => {
+    const home = homeRoute()
+    expect(home).toMatch(/grant=\{moneyGrant\}/)
+    expect(home).toMatch(/onRevokeGrant=\{handleRevokeGrant\}/)
+    expect(home).toMatch(/revokePending=\{moneyGrantPending\}/)
+    expect(home).toMatch(/revokeError=\{moneyGrantError\}/)
+  })
+
+  it('handleRevokeGrant revokes the owner router allowance via revokeGrant', () => {
+    expect(src).toMatch(/async function handleRevokeGrant\(\)/)
+    // The spender-side kill switch takes the OWNER's allowance — never a hardcoded address,
+    // never another agent's scope.
+    expect(src).toMatch(/revokeGrant\(\{[^}]*owner:\s*actionContext\.owner/)
+    expect(src).toMatch(
+      /import \{ AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE, revokeGrant \} from '\.\/stellar\/grant\.js'/
+    )
+  })
+
+  it('the grant read path stays read-only inside the wallet reload effect', () => {
+    const start = src.indexOf('// MONEY-RELOAD-EFFECT:START')
+    const end = src.indexOf('// MONEY-RELOAD-EFFECT:END')
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    const block = src.slice(start, end)
+    expect(block).not.toMatch(/revokeGrant/)
+    expect(block).not.toMatch(/refreshMoneyGrant/)
+  })
+})
+
+// G2 follow-up: P0's live supply-APR + PPS sparkline moves to the production /home route.
+// Same structural proof as P1 G5 above: /home receives the loaded view, and the controller
+// refresh reads through money/liveYield.js on wallet change plus a throttled 15-minute
+// interval — never per render. Live derivation + rendering are proven with injected mocks
+// in money/__tests__/liveYield.test.js and LiveYieldCard.test.jsx.
+describe('G2 follow-up — Live yield section wiring', () => {
+  const src = fs.readFileSync(path.resolve(here, '../../app.jsx'), 'utf8')
+
+  it('the /home MyMoneyRoute receives the live yield view', () => {
+    const marker = 'path="/home"'
+    const start = src.indexOf(marker)
+    expect(start, 'Route /home not found in app.jsx').toBeGreaterThan(-1)
+    const nextRoute = src.indexOf('<Route', start + marker.length)
+    const home = src.slice(start, nextRoute === -1 ? src.length : nextRoute)
+    expect(home).toMatch(/liveYield=\{moneyLiveYield\}/)
+  })
+
+  it('the controller refresh goes through loadLiveYield with a 15-minute throttle', () => {
+    expect(src).toMatch(/import \{ loadLiveYield \} from '\.\/money\/liveYield\.js'/)
+    expect(src).toMatch(/async function refreshMoneyLiveYield\(\)/)
+    expect(src).toMatch(/await loadLiveYield\(\{ nowMs: Date\.now\(\) \}\)/)
+    expect(src).toMatch(/}, 15 \* 60 \* 1000\)/)
+  })
+
+  it('a wallet change resets the yield view instead of showing the prior owner', () => {
+    expect(src).toMatch(/setMoneyLiveYield\(null\)/)
+  })
+})
+
 // Task 5 fix round 2: expiry labels are presentation-only time, never the stale source read clock.
 // The heavy App component is not rendered here; its source seam and the small clock helper are
 // tested directly so this cannot silently drop explicit nowMs wiring or leak a live interval.

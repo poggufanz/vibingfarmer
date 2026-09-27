@@ -12,6 +12,9 @@ import {
 import { saveCachedAgent, takeReusableAgent } from '../stellar/agentCache.js'
 import { newSessionKey } from '../stellar/sessionKey.js'
 import { readTokenBalance, readVaultShares, runAgentDeposit } from '../stellar/agentDeposit.js'
+// P1 G7: grant-time exit-signer registration (helpers live just above `OrchestratorAgent`).
+import { generateExitKey, saveManualExitKey } from '../wallet/exitKey.js'
+
 import {
   STELLAR_USDC_SAC,
   STELLAR_TOKEN_MESSENGER_MINTER,
@@ -670,6 +673,40 @@ export function reconcileBaseLegEpochCustody(result, deps) {
       ? result.allocations.map((allocation) => ({ ...allocation, custody }))
       : result.allocations,
   }
+}
+
+// P1 G7: grant-time exit-signer registration. One ephemeral exit keypair is minted per
+// Deposit-kind agent init so `submitGrant` can bundle `set_exit_signer` into the grant's own
+// envelope (same popup, same single owner signature). Bridge-kind inits get a null slot —
+// they hold no vault shares to exit. Keys are persisted under wallet/exitKey.js's v2
+// owner-scoped namespace ONLY after the grant confirms (the same never-save-unconfirmed rule
+// `ensureExitSigner` follows); a failed grant discards them and the next attempt mints fresh.
+// Bundling is G-owner-only: a C (passkey) grant is relay-only and the relay sponsors a single
+// contract invocation, so C keeps the proven single-op grant plus lazy registration.
+async function mintGrantExitKeys(agentInits) {
+  const keys = []
+  for (const init of agentInits) {
+    keys.push(init?.kind === AGENT_KIND_DEPOSIT ? await generateExitKey() : null)
+  }
+  return keys
+}
+
+function grantExitSigners(keys) {
+  if (!keys || !keys.some((k) => k != null)) return undefined
+  return keys.map((k) => (k == null ? null : k.publicKey))
+}
+
+function persistGrantExitKeys({ owner, agentAddresses, agentInits, keys }) {
+  agentInits.forEach((init, i) => {
+    const key = keys?.[i]
+    if (key == null || init?.kind !== AGENT_KIND_DEPOSIT) return
+    saveManualExitKey({
+      owner,
+      agent: agentAddresses[i],
+      publicKey: key.publicKey,
+      secret: key.secret,
+    })
+  })
 }
 
 /**
@@ -2453,6 +2490,12 @@ export class OrchestratorAgent {
         : undefined
 
     let submitted
+    // P1 G7: a classic-G owner bundles each deposit agent's exit signer into the grant
+    // envelope itself (one popup; later partial withdraws need no extra authorization).
+    // Keys are minted here but persisted only after the grant confirms (see below) — a
+    // failed grant discards them. C owners skip bundling (relay-only single-op).
+    const reuseExitKeys =
+      this.activeAccount?.kind === 'G' ? await mintGrantExitKeys(agentInits) : null
     try {
       submitted = await submitGrant({
         owner: this.user,
@@ -2463,6 +2506,7 @@ export class OrchestratorAgent {
         durationSeconds: permissionDecision.durationSeconds,
         agentInits,
         reviewedExpiryUnix,
+        ...(reuseExitKeys ? { exitSigners: grantExitSigners(reuseExitKeys) } : {}),
       })
       this.assertCurrentAccount()
     } catch (err) {
@@ -2519,6 +2563,17 @@ export class OrchestratorAgent {
         },
       })
     })
+    // The grant (with bundled exit signers, when requested) is confirmed on-chain — only now
+    // are the minted exit keys safe to persist for later popup-free partial withdraws.
+    if (submitted.exitSignersRegistered) {
+      this.assertCurrentAccount()
+      persistGrantExitKeys({
+        owner: this.user,
+        agentAddresses: submitted.agentAddresses,
+        agentInits,
+        keys: reuseExitKeys,
+      })
+    }
 
     // Save + fingerprint the GrantReceiptV1 BEFORE dispatchPermissioned emits 'grant-confirmed' —
     // that event IS the "permission is now active" signal a caller (app.jsx) waits on, so the
@@ -3323,19 +3378,25 @@ export class OrchestratorAgent {
       agentInits.push(bridgeInit)
       budgets.push({ budget: bridgeInit.cap, token: bridgeInit.token })
     }
-    const { hash, agentAddresses, bridgeAgentAddress, expiryLedger } = await submitGrant({
-      owner: this.user,
-      ...(this.activeAccount ? { activeAccount: this.activeAccount } : {}),
-      getCurrentActiveAccount: this.getCurrentActiveAccount,
-      signal: this.signal,
-      budgets,
-      durationSeconds,
-      agentInits,
-      // The agent scopes and SEP-41 allowance must terminate at the same absolute reviewed
-      // expiry. Passing this through prevents buildGrantTx from starting a fresh duration clock
-      // after setup/signing delay.
-      reviewedExpiryUnix: expiry,
-    })
+    // P1 G7: same bundling as the reuse path above — deposit workers get an exit signer in the
+    // grant envelope itself; the appended bridge init (if any) maps to a null slot.
+    const freshExitKeys =
+      this.activeAccount?.kind === 'G' ? await mintGrantExitKeys(agentInits) : null
+    const { hash, agentAddresses, bridgeAgentAddress, expiryLedger, exitSignersRegistered } =
+      await submitGrant({
+        owner: this.user,
+        ...(this.activeAccount ? { activeAccount: this.activeAccount } : {}),
+        getCurrentActiveAccount: this.getCurrentActiveAccount,
+        signal: this.signal,
+        budgets,
+        durationSeconds,
+        agentInits,
+        // The agent scopes and SEP-41 allowance must terminate at the same absolute reviewed
+        // expiry. Passing this through prevents buildGrantTx from starting a fresh duration clock
+        // after setup/signing delay.
+        reviewedExpiryUnix: expiry,
+        ...(freshExitKeys ? { exitSigners: grantExitSigners(freshExitKeys) } : {}),
+      })
     this.assertCurrentAccount()
     if (
       typeof hash !== 'string' ||
@@ -3366,6 +3427,16 @@ export class OrchestratorAgent {
         reused: false,
       })
     })
+    // Confirmed on-chain — only now persist the bundled exit keys for popup-free partials.
+    if (exitSignersRegistered) {
+      this.assertCurrentAccount()
+      persistGrantExitKeys({
+        owner: this.user,
+        agentAddresses,
+        agentInits,
+        keys: freshExitKeys,
+      })
+    }
     if (bridgeInit) {
       if (
         typeof bridgeAgentAddress !== 'string' ||

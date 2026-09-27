@@ -41,8 +41,60 @@ const PixiSwarmGraph = lazy(() =>
   import('../../graph/PixiSwarmGraph.jsx').then((m) => ({ default: m.PixiSwarmGraph }))
 )
 
-function rawOrUnavailable(value) {
-  return value === null || value === undefined ? 'Unavailable' : String(value)
+// Mono only for a real value; the "Unavailable" word stays in the body face.
+function LedgerValue({ value }) {
+  return value === null || value === undefined ? (
+    'Unavailable'
+  ) : (
+    <span className="pc-technical">{String(value)}</span>
+  )
+}
+
+function Ledger({ rows, className = 'pc-tech-ledger' }) {
+  return (
+    <dl className={className}>
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>
+            <LedgerValue value={value} />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+// A closed drawer still reports one reading (the peek), so the index itself is informative.
+// The lamp only restates the peek text beside it.
+function DrawerSummary({ title, hint, peek, tone }) {
+  return (
+    <>
+      <span className="pc-tech-drawer-title">{title}</span>
+      <span className="pc-tech-drawer-hint">{hint}</span>
+      {peek && (
+        <span className="pc-tech-drawer-peek" data-tone={tone}>
+          {tone && <span className="pc-lamp" aria-hidden="true" />}
+          {peek}
+        </span>
+      )}
+    </>
+  )
+}
+
+const FRESHNESS_TONE = Object.freeze({
+  current: 'live',
+  stale: 'warn',
+  problem: 'danger',
+  unavailable: 'idle',
+})
+
+const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`
+
+function problemPeek(problemCount) {
+  if (problemCount === null || problemCount === undefined) return ['Unavailable', 'idle']
+  if (problemCount === 0) return ['No problems', 'live']
+  return [`${plural(problemCount, 'agent')} with problems`, 'warn']
 }
 
 // Pure reshape of `agents` into PixiSwarmGraph's {nodes, links} contract -- every node id is a
@@ -106,6 +158,8 @@ export function TechnicalMoneyDetails({ model, factView = null, agents = [] }) {
   const graphData = useMemo(() => buildAgentNetworkGraphData(agents), [agents])
   const freshness = factView?.freshness ?? toFreshnessView(toFactView({ state: 'unavailable' }))
   const technicalState = factView ? freshness.label : model?.state
+  const freshnessTone = FRESHNESS_TONE[factView ? freshness.state : model?.state]
+  const [custodyPeek, custodyTone] = problemPeek(model?.problemAgentCount)
   return (
     <section
       className="pc-money-section"
@@ -114,83 +168,104 @@ export function TechnicalMoneyDetails({ model, factView = null, agents = [] }) {
     >
       <header>
         <h2 id="technical-details-heading">Technical details</h2>
+        <p className="pc-money-section-lede">The raw readings behind every figure on this page.</p>
       </header>
-      <div>
-        {/* Owner decision #19: the container no longer defaults to mono -- these six raw values
-            are marked .pc-technical individually so they keep rendering in the mono face. */}
-        <TechnicalDetails summary="Freshness and provenance">
-          <p>
-            State: <span className="pc-technical">{technicalState ?? 'unavailable'}</span>
-          </p>
-          <p>
-            Checked at:{' '}
-            <span className="pc-technical">
-              {rawOrUnavailable(factView ? freshness.checkedAt : model?.checkedAt)}
-            </span>
-          </p>
-          <p>
-            Confirmed ledger (Stellar):{' '}
-            <span className="pc-technical">
-              {rawOrUnavailable(factView ? freshness.confirmedLedger : model?.confirmedLedger)}
-            </span>
-          </p>
-          <p>
-            Confirmed block (Base):{' '}
-            <span className="pc-technical">
-              {rawOrUnavailable(factView ? freshness.confirmedBlock : model?.confirmedBlock)}
-            </span>
-          </p>
-          <p>
-            Source:{' '}
-            <span className="pc-technical">
-              {rawOrUnavailable(factView ? freshness.source : model?.source)}
-            </span>
-          </p>
-          <p>
-            Freshness:{' '}
-            <span className="pc-technical">
-              {rawOrUnavailable(factView ? freshness.label : model?.freshness)}
-            </span>
-          </p>
+      {/* 2026-09-27: the four disclosures read as one drawer index inside a grained panel. A closed
+          row carries a peek reading; an open row is a ledger, not loose "Label: value" prose. */}
+      <div className="pc-money-panel pc-tech-drawers">
+        <TechnicalDetails
+          summary={
+            <DrawerSummary
+              title="Freshness and provenance"
+              hint="When the chain was last read, and from which source."
+              peek={technicalState ?? 'Unavailable'}
+              tone={freshnessTone}
+            />
+          }
+        >
+          <Ledger
+            rows={[
+              ['State', technicalState],
+              ['Checked at', factView ? freshness.checkedAt : model?.checkedAt],
+              [
+                'Confirmed ledger (Stellar)',
+                factView ? freshness.confirmedLedger : model?.confirmedLedger,
+              ],
+              [
+                'Confirmed block (Base)',
+                factView ? freshness.confirmedBlock : model?.confirmedBlock,
+              ],
+              ['Source', factView ? freshness.source : model?.source],
+              ['Freshness', factView ? freshness.label : model?.freshness],
+            ]}
+          />
         </TechnicalDetails>
 
-        {/* Owner decision #19: two raw counts marked .pc-technical individually; the two <pre>
-            blocks already stay mono via pocket-crew.css's Foundation-wide `code, pre, .pc-technical`
-            rule with no change needed here. 2026-08-02 polish (audit item #16): an EMPTY object
-            used to stringify as a bare `{}` -- a broken-looking artifact even in an expert
-            disclosure -- so empty buckets now say what they mean. */}
-        <TechnicalDetails summary="Custody and execution breakdown">
-          <p>
-            Agent count: <span className="pc-technical">{rawOrUnavailable(model?.agentCount)}</span>
-          </p>
-          <p>
-            Problem agent count:{' '}
-            <span className="pc-technical">{rawOrUnavailable(model?.problemAgentCount)}</span>
-          </p>
-          {Object.keys(model?.custodyBreakdown ?? {}).length === 0 ? (
-            <p>No custody breakdown recorded.</p>
-          ) : (
-            <pre>{JSON.stringify(model.custodyBreakdown, null, 2)}</pre>
-          )}
-          {Object.keys(model?.unattributed ?? {}).length === 0 ? (
-            <p>No unattributed balances recorded.</p>
-          ) : (
-            <pre>{JSON.stringify(model.unattributed, null, 2)}</pre>
-          )}
+        {/* 2026-08-02 polish (audit item #16): an EMPTY object used to stringify as a bare `{}`,
+            so empty buckets say what they mean. The <pre> stays mono via the global rule. */}
+        <TechnicalDetails
+          summary={
+            <DrawerSummary
+              title="Custody and execution breakdown"
+              hint="Where the money sits, and which agents hit a problem."
+              peek={custodyPeek}
+              tone={custodyTone}
+            />
+          }
+        >
+          <dl className="pc-tech-ledger">
+            {[
+              ['Agent count', model?.agentCount],
+              ['Problem agent count', model?.problemAgentCount],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>
+                  <LedgerValue value={value} />
+                </dd>
+              </div>
+            ))}
+            {[
+              ['Custody by location', model?.custodyBreakdown],
+              ['Unattributed balances', model?.unattributed],
+            ].map(([label, bucket]) => (
+              <div key={label} className="pc-tech-ledger-block">
+                <dt>{label}</dt>
+                <dd>
+                  {Object.keys(bucket ?? {}).length === 0 ? (
+                    'None recorded'
+                  ) : (
+                    <pre>{JSON.stringify(bucket, null, 2)}</pre>
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
         </TechnicalDetails>
 
-        {/* Owner decision #19: the whole raw-fields line is marked .pc-technical (it is entirely
-            addresses/state/booleans/numbers, no friendly label prefix worth splitting out). */}
-        <TechnicalDetails summary="Raw agent scope fields">
-          {agents.length === 0 && <p>No agents to show.</p>}
+        <TechnicalDetails
+          summary={
+            <DrawerSummary
+              title="Raw agent scope fields"
+              hint="The permission each agent holds on chain."
+              peek={agents.length === 0 ? 'None' : plural(agents.length, 'agent')}
+            />
+          }
+        >
+          {agents.length === 0 && <p className="pc-money-empty">No agents to show.</p>}
           {agents.map((agent) => (
-            <p key={agent.address} className="pc-technical">
-              {agent.address}: scope={agent.scope?.state ?? 'unavailable'}, revoked=
-              {rawOrUnavailable(agent.scope?.value?.revoked)}, expiry=
-              {rawOrUnavailable(agent.scope?.value?.expiry)}, executionStatus=
-              {rawOrUnavailable(agent.executionStatus)}, problems=
-              {(agent.problems ?? []).join(', ') || 'none'}
-            </p>
+            <Ledger
+              key={agent.address}
+              className="pc-tech-agent"
+              rows={[
+                ['Agent', agent.address],
+                ['Scope', agent.scope?.state ?? 'unavailable'],
+                ['Revoked', agent.scope?.value?.revoked],
+                ['Expiry', agent.scope?.value?.expiry],
+                ['Execution status', agent.executionStatus],
+                ['Problems', (agent.problems ?? []).join(', ') || 'none'],
+              ]}
+            />
           ))}
         </TechnicalDetails>
 
@@ -199,13 +274,19 @@ export function TechnicalMoneyDetails({ model, factView = null, agents = [] }) {
             See this file's header for the adapter this graph is built from -- it supplements the
             lists above, it never replaces them (those lists mount unconditionally, above). */}
         <div ref={graphWrapRef}>
-          <TechnicalDetails summary="Agent network graph (advanced)">
-            <p>
-              Your agents and the vault they deposit into, drawn from the same real data as the list
-              above. This never replaces that list -- it only visualizes it.
+          <TechnicalDetails
+            summary={
+              <DrawerSummary
+                title="Agent network graph (advanced)"
+                hint="Your agents and the vault they deposit into, drawn as a graph."
+              />
+            }
+          >
+            <p className="pc-tech-drawer-note">
+              Drawn from the same data as the lists above. It only visualizes them.
             </p>
             {agents.length === 0 ? (
-              <p>No agents yet to graph.</p>
+              <p className="pc-money-empty">No agents yet to graph.</p>
             ) : (
               <Suspense fallback={<p>Loading graph…</p>}>
                 <PixiSwarmGraph graphData={graphData} paused={graphPaused} />

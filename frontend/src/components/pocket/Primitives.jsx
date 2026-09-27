@@ -765,6 +765,7 @@ function useDialogFocusTrap({ open, requestCloseRef, initialFocusRef, panelRef }
 export function Dialog({
   open,
   title,
+  label,
   description,
   onClose,
   children,
@@ -816,15 +817,17 @@ export function Dialog({
       // are mounted at route level. Foundation's own geometry is unchanged when it is omitted.
       className={`pc-dialog pc-dialog--${mode}${className ? ` ${className}` : ''}`}
       aria-modal="true"
-      aria-labelledby={titleId}
+      {...(title ? { 'aria-labelledby': titleId } : label ? { 'aria-label': label } : {})}
       aria-describedby={description ? descriptionId : undefined}
       onClick={handleOverlayClick}
       {...fallbackSemantics}
     >
       <div className="pc-dialog-panel">
-        <h2 id={titleId} className="pc-dialog-title">
-          {title}
-        </h2>
+        {title ? (
+          <h2 id={titleId} className="pc-dialog-title">
+            {title}
+          </h2>
+        ) : null}
         {description && (
           <p id={descriptionId} className="pc-dialog-description">
             {description}

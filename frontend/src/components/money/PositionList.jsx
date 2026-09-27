@@ -273,9 +273,15 @@ export function PositionList({
     <section className="pc-money-section" aria-labelledby="your-position-heading" data-pocket-enter>
       <header>
         <h2 id="your-position-heading">Your position</h2>
+        <p className="pc-money-section-lede">Where each deposit sits right now.</p>
       </header>
-      <div>
-        {rows.length === 0 && idleRows.length === 0 && <p>{emptyCopy}</p>}
+      <div className="pc-money-panel">
+        {rows.length === 0 && idleRows.length === 0 && (
+          <p className="pc-money-empty">
+            <span className="pc-lamp" aria-hidden="true" />
+            {emptyCopy}
+          </p>
+        )}
         <ul className="pc-position-list">
           {rows.map((row) => {
             const persona = presentationPersonaForAddress(personaByAddress, row.address)

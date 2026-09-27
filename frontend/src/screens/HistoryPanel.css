@@ -1,305 +1,876 @@
+/* History as a ledger instrument (2026-09-28): a recessed state strip under the title, a tab rack,
+ * one grained ledger plate for the open view, and the provenance drawer at the plate's foot. Same
+ * material as Settings and My Money (panel-grain.svg, lit top lip, dark bottom rim). Harvest lime
+ * marks a live chain read and nothing else; a record kept only on this device stays grey. */
 .history-page {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--pc-space-4);
+  --history-lamp: var(--pc-faint);
+  --history-well: rgb(7 15 11 / 32%);
+  --history-plate: rgb(242 245 239 / 4%);
+  --history-lip: rgb(242 245 239 / 7%);
+  --history-rim: rgb(7 15 11 / 42%);
+  --history-hairline: rgb(242 245 239 / 8%);
+  display: grid;
+  gap: var(--pc-space-6);
   min-width: 0;
-  overflow-y: auto;
-  padding: var(--pc-space-6) var(--pc-space-8);
+  color: var(--pc-ink);
+  font-family: var(--pc-font-body);
 }
 
+:root[data-theme='day-field'] .history-page {
+  --history-well: rgb(23 37 31 / 5%);
+  --history-plate: rgb(255 255 255 / 45%);
+  --history-lip: rgb(255 255 255 / 85%);
+  --history-rim: rgb(23 37 31 / 12%);
+  --history-hairline: rgb(23 37 31 / 9%);
+}
+
+.history-page [data-tone='live'] {
+  --history-lamp: var(--pc-harvest);
+}
+
+.history-page [data-tone='warn'] {
+  --history-lamp: var(--pc-warning);
+}
+
+.history-page [data-tone='danger'] {
+  --history-lamp: var(--pc-danger);
+}
+
+.history-page [data-tone='idle'] {
+  --history-lamp: var(--pc-faint);
+}
+
+/* A lamp is a light: lime in both themes, halo drawn with outline (the web gate owns shadows). */
+.history-lamp,
+.tx-status-label::before,
+.history-partial::before {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--pc-radius-round);
+  background: var(--history-lamp);
+  outline: 3px solid color-mix(in srgb, var(--history-lamp) 22%, transparent);
+}
+
+:root[data-theme='day-field'] .history-lamp,
+:root[data-theme='day-field'] .tx-status-label::before {
+  outline-color: color-mix(in srgb, var(--history-lamp) 40%, transparent);
+  box-shadow: inset 0 0 0 1px rgb(23 37 31 / 45%);
+}
+
+.history-page button:focus-visible,
+.history-page a:focus-visible,
+.history-panel:focus-visible,
+.history-source-summary:focus-visible {
+  outline: 3px solid var(--pc-focus);
+  outline-offset: 3px;
+}
+
+/* ---- Header: title, clear action, state strip -------------------------------------------- */
+
 .history-head {
-  align-items: center;
-  display: flex;
-  gap: var(--pc-space-4);
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--pc-space-4) var(--pc-space-6);
 }
 
 .history-title {
-  font-size: var(--pc-type-page);
-  letter-spacing: -0.035em;
-  line-height: 1.12;
   margin: 0 0 var(--pc-space-2);
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-page);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: var(--pc-leading-title);
 }
 
 .history-intro {
-  color: var(--text-muted);
   margin: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body);
+  line-height: var(--pc-leading-body);
 }
 
-/* History: inset ring ganti border putih — lolos gate UNAPPROVED_EFFECT, geometri tetap. */
-.history-summary {
-  border: 0;
-  box-shadow: inset 0 0 0 2px var(--pc-shadow-color);
-  border-radius: var(--pc-radius-dominant);
+.history-clear {
+  min-height: var(--pc-touch-target);
+  padding: 0 var(--pc-space-4);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: transparent;
+  color: var(--pc-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 500;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.history-clear:hover {
+  border-color: var(--pc-danger);
+  color: var(--pc-danger);
+}
+
+/* One recessed well, cells split by hairlines drawn on each cell's own left and top edge; the
+ * well clips the ones on its border, so a wrapped second row never shows a stray rule. */
+.history-state {
+  grid-column: 1 / -1;
   display: grid;
-  gap: var(--pc-space-3);
-  padding: var(--pc-space-4);
-}
-
-.history-summary-money {
-  font-size: var(--pc-type-section);
-}
-
-.history-venue-label {
-  color: var(--text-muted);
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--history-well);
+  box-shadow: inset 0 1px 3px var(--history-rim);
 }
 
-.history-evidence {
+.history-state-item {
   display: grid;
-  gap: var(--pc-space-3);
+  gap: var(--pc-space-1);
+  min-width: 0;
+  padding: var(--pc-space-3) var(--pc-space-4);
+  box-shadow:
+    -1px 0 0 var(--history-hairline),
+    0 -1px 0 var(--history-hairline);
 }
 
-/* History tabs: directional shadow ganti border-bottom — bukan pola 0 0 Npx jadi lolos gate. */
+.history-state-item dt {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 500;
+}
+
+.history-state-item dd {
+  margin: 0;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.history-state-item[data-tone='idle'] dd {
+  color: var(--pc-muted);
+  font-weight: 500;
+}
+
+/* ---- Tab rack: recessed rail, the open view is a raised grained plate --------------------- */
+
 .history-tabs {
-  align-items: end;
-  border-bottom: 0;
-  box-shadow: 0 2px 0 var(--pc-shadow-color);
+  justify-self: start;
+  max-width: 100%;
   display: flex;
   gap: var(--pc-space-1);
-  margin-top: var(--pc-space-2);
+  padding: var(--pc-space-1);
+  overflow-x: auto;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--history-well);
+  box-shadow: inset 0 1px 3px var(--history-rim);
+  scrollbar-width: none;
 }
 
 .history-tab {
-  align-items: center;
   appearance: none;
-  background: transparent;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--text-faint);
+  flex: none;
+  min-height: var(--pc-touch-target);
   display: inline-flex;
-  font: inherit;
+  align-items: center;
   gap: var(--pc-space-2);
-  justify-content: center;
-  margin-bottom: -1px;
-  min-height: 44px;
-  padding: var(--pc-space-2) var(--pc-space-3);
+  padding: 0 var(--pc-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--pc-radius-control);
+  background: transparent;
+  color: var(--pc-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 500;
+  white-space: nowrap;
 }
 
-.history-tab:hover,
-.history-tab:focus-visible {
-  color: var(--text);
-}
-
-.history-tab:focus-visible,
-.history-row-button:focus-visible,
-.history-row-link:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.history-tab:hover {
+  background-color: var(--history-plate);
+  color: var(--pc-ink);
 }
 
 .history-tab.active {
-  border-bottom-color: var(--accent);
-  color: var(--text);
+  border-color: var(--pc-line);
+  background-color: var(--pc-workspace);
+  background-image: url('../components/money/panel-grain.svg');
+  color: var(--pc-ink);
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 var(--history-lip),
+    0 1px 2px var(--history-rim);
 }
 
 .history-tab-count {
-  background: var(--accent-soft);
+  min-width: 1.5rem;
+  padding: 0 var(--pc-space-2);
+  border: 1px solid var(--history-hairline);
   border-radius: var(--pc-radius-round);
-  color: var(--text-muted);
+  background: var(--history-well);
+  color: var(--pc-muted);
   font-size: var(--pc-type-technical);
-  min-width: 1.4em;
-  padding: 1px 5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
   text-align: center;
 }
 
+/* ---- Ledger plate -------------------------------------------------------------------------- */
+
+.history-ledger {
+  container-type: inline-size;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-dominant);
+  background-color: var(--pc-workspace);
+  background-image: url('../components/money/panel-grain.svg');
+  box-shadow:
+    inset 0 1px 0 var(--history-lip),
+    inset 0 -1px 0 var(--history-rim),
+    var(--pc-shadow-support);
+}
+
+.history-ledger-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--pc-space-3) var(--pc-space-6);
+  padding: var(--pc-space-6) var(--pc-space-6) var(--pc-space-4);
+  border-bottom: 1px solid var(--history-hairline);
+}
+
+.history-ledger-title {
+  margin: 0;
+  font-family: var(--pc-font-display);
+  font-size: calc(var(--pc-type-body) * 1.25);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: var(--pc-leading-title);
+}
+
+.history-ledger-lede {
+  max-width: 60ch;
+  margin: var(--pc-space-1) 0 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+}
+
+.history-ledger-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-3);
+}
+
+.history-ledger-money {
+  font-size: var(--pc-type-body);
+  font-weight: 600;
+}
+
+/* The read chip beside it already names freshness. */
+.history-ledger-money .pc-money-freshness {
+  display: none;
+}
+
+.history-read {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background: var(--history-well);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-label);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.history-read[data-tone='idle'] {
+  color: var(--pc-muted);
+}
+
 .history-body {
-  min-height: 8rem;
+  padding: 0 var(--pc-space-6);
 }
 
 .history-panel[hidden] {
   display: none;
 }
 
+.history-panel:focus-visible,
+.history-source-summary:focus-visible {
+  outline-offset: -3px;
+}
+
+/* The rack clips overflow, so the ring sits inside its 4px padding. */
+.history-tab:focus-visible {
+  outline-offset: 1px;
+}
+
+/* ---- Empty, loading and failed reads: one recessed well with a next step ------------------ */
+
 .history-empty {
-  color: var(--text-faint);
-  padding: var(--pc-space-8) var(--pc-space-2);
+  display: grid;
+  justify-items: center;
+  gap: var(--pc-space-2);
+  margin: var(--pc-space-6) 0;
+  padding: var(--pc-space-10) var(--pc-space-6);
+  border: 1px dashed var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--history-well);
+  box-shadow: inset 0 1px 3px var(--history-rim);
   text-align: center;
 }
 
-.tx-table {
-  min-width: 0;
+.history-empty-mark {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-bottom: var(--pc-space-2);
+  fill: none;
+  stroke: var(--pc-faint);
+  stroke-linecap: round;
+  stroke-width: 1.5;
 }
 
-/* Tx row: directional 1px shadow ganti border-bottom — ringan, lolos gate. */
-.tx-row {
+.history-empty-mark rect {
+  fill: var(--history-plate);
+}
+
+.history-empty[aria-busy='true'] .history-empty-mark {
+  opacity: 0.6;
+}
+
+.history-empty-title {
+  margin: 0;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body);
+  font-weight: 600;
+}
+
+.history-empty-copy {
+  max-width: 44ch;
+  margin: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+  text-wrap: pretty;
+}
+
+.history-empty-action {
+  margin-top: var(--pc-space-3);
+}
+
+.history-action,
+.history-page-btn {
+  min-height: var(--pc-touch-target);
+  padding: 0 var(--pc-space-5);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--pc-workspace);
+  background-image: url('../components/money/panel-grain.svg');
+  color: var(--pc-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 var(--history-lip),
+    0 1px 2px var(--history-rim);
+  transition: border-color 120ms ease;
+}
+
+.history-action:hover,
+.history-page-btn:hover:not(:disabled) {
+  border-color: var(--pc-line-strong);
+}
+
+.history-page-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.history-partial {
+  --history-lamp: var(--pc-warning);
+  display: flex;
   align-items: center;
-  border-bottom: 0;
-  box-shadow: 0 1px 0 var(--pc-shadow-color);
-  display: grid;
   gap: var(--pc-space-3);
+  margin: var(--pc-space-4) 0 0;
+  padding: var(--pc-space-3) var(--pc-space-4);
+  border: 1px solid color-mix(in srgb, var(--pc-warning) 45%, transparent);
+  border-radius: var(--pc-radius-control);
+  background: color-mix(in srgb, var(--pc-warning) 8%, transparent);
+  font-size: var(--pc-type-body-small);
+}
+
+.history-partial::before {
+  content: '';
+}
+
+/* ---- Ledger rows -------------------------------------------------------------------------- */
+
+.tx-table {
+  min-width: 0;
+  padding: var(--pc-space-2) 0 var(--pc-space-4);
+}
+
+.tx-row {
+  display: grid;
   grid-template-columns:
     minmax(8rem, 1.1fr) minmax(8rem, 1fr) minmax(9rem, 1.4fr) minmax(7rem, 1fr)
     minmax(5rem, 0.7fr);
-  padding: var(--pc-space-3) var(--pc-space-2);
-  text-align: left;
+  align-items: center;
+  gap: var(--pc-space-3);
   width: 100%;
+  padding: var(--pc-space-3);
+  border: 0;
+  border-radius: var(--pc-radius-control);
+  text-align: left;
 }
 
-.tx-row-button {
+/* The merged feed has no amount column (amounts live in its details line). */
+.tx-table--unified .tx-row {
+  grid-template-columns: minmax(8rem, 1.1fr) minmax(8rem, 1fr) minmax(12rem, 2.4fr) minmax(
+      5rem,
+      0.7fr
+    );
+}
+
+.tx-row + .tx-row:not(.tx-head) {
+  box-shadow: inset 0 1px 0 var(--history-hairline);
+}
+
+.tx-head {
+  padding-block: var(--pc-space-2);
+  color: var(--pc-faint);
+  font-size: var(--pc-type-technical);
+  font-weight: 500;
+}
+
+.tx-head span:nth-child(n + 4),
+.tx-amount,
+.tx-age {
+  justify-self: end;
+  text-align: right;
+}
+
+.tx-row-button,
+.tx-row-link {
   appearance: none;
   background: transparent;
-  border-left: 0;
-  border-right: 0;
-  border-top: 0;
   color: inherit;
+  cursor: pointer;
   font: inherit;
+  text-decoration: none;
+  transition: background-color 120ms ease;
 }
 
 .tx-row-button:hover,
 .tx-row-link:hover {
-  background: var(--bg-elev);
+  background-color: var(--history-plate);
 }
 
-.tx-row-link {
-  color: inherit;
-  text-decoration: none;
-}
-
-.tx-head {
-  color: var(--text-faint);
-  font-size: var(--pc-type-technical);
-  letter-spacing: 0.02em;
+.tx-row-button:hover .tx-hash,
+.tx-row-link:hover .tx-hash {
+  border-color: var(--pc-line);
+  color: var(--pc-ink);
 }
 
 .tx-status,
 .tx-vault {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: var(--pc-space-1);
   min-width: 0;
 }
 
-.tx-status {
-  color: var(--text-muted);
+.tx-status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  color: var(--pc-ink);
+  font-weight: 550;
 }
 
-.tx-hash,
-.tx-age {
-  color: var(--text-muted);
-  min-width: 0;
+.tx-status-label::before {
+  content: '';
+}
+
+.tx-status .tx-sub {
+  padding-left: calc(0.5rem + var(--pc-space-2));
+}
+
+.tx-hash {
+  justify-self: start;
+  max-width: 100%;
   overflow: hidden;
+  padding: 0 var(--pc-space-2);
+  border: 1px solid var(--history-hairline);
+  border-radius: var(--pc-radius-round);
+  background: var(--history-well);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  line-height: 1.8;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tx-vault {
-  color: var(--text);
+  color: var(--pc-ink);
 }
 
 .tx-sub {
-  color: var(--text-faint);
+  color: var(--pc-faint);
   font-size: var(--pc-type-technical);
+  font-variant-numeric: tabular-nums;
 }
 
 .tx-amount {
   min-width: 0;
+  font-weight: 600;
+}
+
+.tx-age {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
 }
 
 .history-row-truth {
   grid-column: 1 / -1;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
 }
 
-.history-row-truth .pc-venue-truth {
-  margin-top: var(--pc-space-1);
-}
+/* ---- Strategy and reasoning plates -------------------------------------------------------- */
 
 .hist-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: var(--pc-space-3);
+  padding: var(--pc-space-4) 0 var(--pc-space-6);
 }
 
-/* Hist card: inset ring ganti border putih — lolos gate, geometri tetap. */
 .hist-card {
-  border: 0;
-  box-shadow: inset 0 0 0 2px var(--pc-shadow-color);
-  border-radius: var(--pc-radius-control);
-  padding: var(--pc-space-3) var(--pc-space-4);
+  padding: var(--pc-space-4) var(--pc-space-5);
+  border: 1px solid var(--history-hairline);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--history-plate);
+  box-shadow: inset 0 1px 0 var(--history-lip);
 }
 
 .hist-card-head {
-  align-items: center;
-  color: var(--text);
   display: flex;
-  gap: var(--pc-space-2);
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pc-space-1) var(--pc-space-3);
 }
 
-.hist-card-head .hist-age {
-  color: var(--text-faint);
-  font-size: var(--pc-type-technical);
+.hist-card-title {
+  margin: 0;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body);
+  font-weight: 600;
+}
+
+.hist-card-title::first-letter {
+  text-transform: uppercase;
+}
+
+.hist-card-money {
+  font-weight: 600;
+}
+
+.hist-age {
   margin-left: auto;
-}
-
-.hist-dot {
-  background: var(--accent);
-  border-radius: var(--pc-radius-round);
-  flex: 0 0 auto;
-  height: 7px;
-  width: 7px;
-}
-
-.hist-card-meta,
-.hist-card-tags {
-  color: var(--text-muted);
+  color: var(--pc-faint);
   font-size: var(--pc-type-technical);
-  margin-top: var(--pc-space-2);
+  font-variant-numeric: tabular-nums;
 }
 
-.hist-card-tags {
-  color: var(--text-faint);
-  margin-top: var(--pc-space-1);
+.hist-readouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  margin: var(--pc-space-3) 0 0;
+  overflow: hidden;
+  border: 1px solid var(--history-hairline);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--history-well);
 }
 
-.hist-reason {
-  color: var(--text);
-  line-height: 1.5;
-  margin-top: var(--pc-space-3);
-}
-
-/* Pagination: directional shadow ganti border-top — bukan pola 0 0 Npx jadi lolos gate. */
-.history-pagination {
-  align-items: center;
-  border-top: 0;
-  box-shadow: 0 -1px 0 var(--pc-shadow-color);
-  display: flex;
-  justify-content: space-between;
-  padding-top: var(--pc-space-4);
-}
-
-.history-page-btn {
-  min-height: 40px;
+.hist-readouts > div {
+  display: grid;
+  gap: var(--pc-space-1);
+  min-width: 0;
   padding: var(--pc-space-2) var(--pc-space-3);
+  box-shadow:
+    -1px 0 0 var(--history-hairline),
+    0 -1px 0 var(--history-hairline);
+}
+
+.hist-readouts dt {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+.hist-readouts dd {
+  margin: 0;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body-small);
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+/* The strategist's own words read as a quote, set in the serif so they never pass for UI copy. */
+.hist-reason {
+  max-width: 70ch;
+  margin: var(--pc-space-3) 0 0;
+  padding-left: var(--pc-space-4);
+  border-left: 2px solid var(--pc-line-strong);
+  color: var(--pc-ink);
+  font-family: var(--pc-font-wordmark);
+  font-size: calc(var(--pc-type-body) * 1.0625);
+  line-height: 1.6;
+}
+
+.hist-reason--missing {
+  border-left-color: var(--pc-line);
+  color: var(--pc-faint);
+  font-family: var(--pc-font-body);
+  font-size: var(--pc-type-body-small);
+}
+
+.hist-card-foot {
+  margin: var(--pc-space-3) 0 0;
+  color: var(--pc-faint);
+  font-size: var(--pc-type-technical);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Pagination and provenance drawer ---------------------------------------------------- */
+
+.history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+  padding: var(--pc-space-3) var(--pc-space-6);
+  border-top: 1px solid var(--history-hairline);
 }
 
 .history-page-label {
-  color: var(--text-faint);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-source {
+  border-top: 1px solid var(--history-hairline);
+  background-color: var(--history-plate);
+}
+
+.history-source-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-1) var(--pc-space-3);
+  min-height: var(--pc-touch-target);
+  padding: var(--pc-space-3) var(--pc-space-6);
+  cursor: pointer;
+  list-style: none;
+}
+
+.history-source-summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-source-summary::after {
+  content: '';
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-left: auto;
+  border-right: 1.5px solid var(--pc-muted);
+  border-bottom: 1.5px solid var(--pc-muted);
+  transform: rotate(45deg);
+  transition: transform 150ms ease;
+}
+
+.history-source[open] > .history-source-summary::after {
+  transform: rotate(225deg);
+}
+
+.history-source-title {
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body-small);
+  font-weight: 600;
+}
+
+.history-source-hint {
+  color: var(--pc-faint);
   font-size: var(--pc-type-technical);
 }
 
-@media (max-width: 720px) {
-  .history-page {
-    padding: var(--pc-space-4);
+.history-source-body {
+  display: grid;
+  gap: var(--pc-space-4);
+  margin: 0 var(--pc-space-6) var(--pc-space-6);
+  padding: var(--pc-space-4);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--history-well);
+  box-shadow: inset 0 1px 3px var(--history-rim);
+  font-size: var(--pc-type-body-small);
+}
+
+.history-source .network-route-facts > span {
+  padding: 0 var(--pc-space-2);
+  border: 1px solid var(--history-hairline);
+  border-radius: var(--pc-radius-round);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  line-height: 1.8;
+}
+
+.history-source .network-route-status-kind {
+  font-weight: 600;
+}
+
+.history-source .network-route-status-detail,
+.history-venue-label {
+  margin: 0;
+  color: var(--pc-muted);
+}
+
+.history-evidence {
+  display: grid;
+  gap: var(--pc-space-3);
+  padding-top: var(--pc-space-4);
+  border-top: 1px solid var(--history-hairline);
+}
+
+.history-source .pc-status-notice,
+.history-source .pc-technical-details {
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+.history-source .pc-status-notice-title {
+  color: var(--pc-ink);
+}
+
+.history-source .pc-status-notice-consequence,
+.history-source .pc-status-notice-next-action,
+.history-source .pc-status-notice-source,
+.history-source .pc-status-notice-freshness {
+  color: var(--pc-muted);
+}
+
+.history-source .pc-technical-details-summary {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+.history-source .pc-technical-details-fact,
+.history-source .pc-venue-truth-freshness {
+  gap: 0;
+  margin: var(--pc-space-2) 0 0;
+}
+
+.history-source .pc-technical-details-fact > div,
+.history-source .pc-venue-truth-freshness > div {
+  padding: var(--pc-space-2) 0;
+}
+
+.history-source .pc-technical-details-fact > div + div,
+.history-source .pc-venue-truth-freshness > div + div {
+  border-top: 1px solid var(--history-hairline);
+}
+
+.history-source .pc-technical {
+  font-size: var(--pc-type-technical);
+}
+
+/* ---- Narrow ledger: rows fold into two-line entries, the column head steps aside ---------- */
+
+@container (max-width: 44rem) {
+  .history-ledger-head {
+    padding: var(--pc-space-5) var(--pc-space-4) var(--pc-space-4);
   }
 
-  .history-head {
-    align-items: flex-start;
-    flex-direction: column;
+  .history-body {
+    padding: 0 var(--pc-space-3);
   }
 
-  .history-tabs {
-    overflow-x: auto;
-  }
-
-  .history-tab {
-    flex: 0 0 auto;
-  }
-
-  .tx-table {
-    overflow-x: auto;
+  .tx-head {
+    display: none;
   }
 
   .tx-row {
-    min-width: 42rem;
+    grid-template-areas:
+      'status amount'
+      'vault age'
+      'hash hash';
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--pc-space-2) var(--pc-space-3);
+  }
+
+  .tx-status {
+    grid-area: status;
+  }
+
+  .tx-amount {
+    grid-area: amount;
+  }
+
+  .tx-vault {
+    grid-area: vault;
+  }
+
+  .tx-age {
+    grid-area: age;
+  }
+
+  .tx-hash {
+    grid-area: hash;
+  }
+
+  .history-pagination,
+  .history-source-summary {
+    padding-inline: var(--pc-space-4);
+  }
+
+  .history-source-body {
+    margin: 0 var(--pc-space-4) var(--pc-space-4);
+  }
+}
+
+@media (max-width: 720px) {
+  .history-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .history-clear {
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-page *,
+  .history-page *::after {
+    transition: none;
   }
 }

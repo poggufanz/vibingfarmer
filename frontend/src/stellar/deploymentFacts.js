@@ -84,3 +84,17 @@ export const EXTERNAL_PROTOCOL_COUNT = STELLAR_STATIC_DEPLOYMENTS.filter(
 ).length
 
 export const STATIC_ADDRESS_COUNT = STELLAR_STATIC_DEPLOYMENTS.length
+
+// Vault upgrade safety (P1 G8): admin + timelock facts for the Explorer security section and
+// the /risks audit line. Addresses come straight from the manifest (same public-only policy
+// as above); the threshold and delay restate autofarmVault.adminNote (2-of-3 multisig, 3-day
+// schedule → execute, cancellable, redeem never pause-gated) and vault.rs TIMELOCK_DELAY_S.
+// deploymentFacts.test.js pins both sides, so prose drift in either file breaks loudly
+// instead of silently misreporting who can upgrade the vault.
+export const VAULT_UPGRADE_SAFETY = Object.freeze({
+  vault: manifest.autofarmVault.address,
+  admin: manifest.autofarmVault.admin,
+  threshold: '2-of-3',
+  timelockDays: 3,
+  redeemGated: false,
+})

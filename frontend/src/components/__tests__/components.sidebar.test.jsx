@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import { Sidebar, TopBar } from '../../components.jsx'
@@ -80,7 +80,7 @@ function contrastFromRgb(rgbA, rgbB) {
 }
 
 describe('Sidebar', () => {
-  it('exposes the six Pocket Crew labels without changing their routes', () => {
+  it('exposes the four primary Pocket Crew labels without changing their routes', () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
         <Sidebar extended onToggle={() => {}} />
@@ -91,8 +91,9 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: /put it to work/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /the crew/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /history/i })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /developers/i })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /settings/i })).toBeTruthy()
+    // Developers and Settings moved to the TopBar account panel -- never in the sidebar.
+    expect(screen.queryByRole('button', { name: /developers/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /settings/i })).toBeNull()
   })
 
   it('marks the shared navigation landmark for the Pocket Crew shell', () => {
@@ -241,34 +242,238 @@ describe('Sidebar', () => {
 
 describe('TopBar', () => {
   const baseProps = { onReset: () => {} }
+  // TopBar now owns in-shell navigation (its account panel routes to /settings), so it must be
+  // rendered inside a Router. MemoryRouter renders no DOM node of its own, so the container markup
+  // -- including the innerHTML handed to the real-Chromium harness below -- is unchanged.
+  const renderTopBar = (props) => render(<MemoryRouter>{<TopBar {...props} />}</MemoryRouter>)
 
   it('marks the shared header landmark for the Pocket Crew shell', () => {
-    render(<TopBar {...baseProps} />)
+    renderTopBar(baseProps)
     expect(screen.getByRole('banner').hasAttribute('data-pocket-topbar')).toBe(true)
   })
 
-  it('renders a NetworkBadge with the visible "Stellar testnet" label', () => {
-    render(<TopBar {...baseProps} />)
-    expect(screen.getByText('Stellar testnet')).toBeTruthy()
+  it('carries the network identity on the account control instead of a standalone network pill', () => {
+    const { container } = renderTopBar(baseProps)
+    // The pill that used to sit beside the account control is gone -- one identity control, not
+    // two, and no leftover container/menu/trigger for the removed one to reappear in.
+    expect(container.querySelector('.header-network')).toBeNull()
+    expect(container.querySelector('.header-network-trigger')).toBeNull()
+    expect(container.querySelector('.header-network-menu')).toBeNull()
+    const trigger = container.querySelector('.header-wallet-trigger')
+    // The disconnected trigger is just the wallet icon plus "Not connected" -- no decorative
+    // network mark. The network identity lives in the accessible name and the panel rows, so
+    // nobody has to open the panel to learn which chain this account is on.
+    expect(trigger.getAttribute('aria-label')).toBe('Wallet not connected on Stellar testnet')
+    expect(trigger.querySelector('img.header-wallet-netmark')).toBeNull()
+    expect(trigger.textContent).toBe('Not connected')
+    expect(trigger.querySelector('svg')).toBeTruthy()
   })
 
   it('renders the brand as a BrandLockup', () => {
-    const { container } = render(<TopBar {...baseProps} />)
+    const { container } = renderTopBar(baseProps)
     expect(container.querySelector('.pc-brand-lockup')).toBeTruthy()
+  })
+
+  it('leaves the brand alone on the left and orders the right cluster fee, bell, plus, account', () => {
+    const { container } = renderTopBar({
+      ...baseProps,
+      notifications: <button className="icon-btn" aria-label="Notifications" />,
+    })
+    // The network identity used to sit beside the wordmark in `.topbar-left`; the brand stands
+    // alone there now.
+    expect(container.querySelector('.topbar-left').children).toHaveLength(1)
+    expect(container.querySelector('.topbar-left .network-badge')).toBeNull()
+    const right = [...container.querySelector('.topbar-right').children]
+    // Exactly one disclosure in the right cluster: the network picker was folded into the account
+    // panel, so a second control cannot come back without failing this list.
+    expect(right.map((element) => element.className)).toEqual([
+      'topbar-meta',
+      'icon-btn',
+      'icon-btn',
+      'header-wallet',
+    ])
+    expect(right.map((element) => element.tagName)).toEqual(['SPAN', 'BUTTON', 'BUTTON', 'DETAILS'])
+  })
+
+  it('offers the network choice inside the account panel, with only the undeployed mainnet as an alternative', () => {
+    const { container } = renderTopBar(baseProps)
+    const menu = container.querySelector('.header-wallet-menu')
+    expect(menu).toBeTruthy()
+    const current = menu.querySelector('.header-network-option.is-current')
+    expect(current.textContent).toBe('Stellar testnet Current')
+    expect(current.closest('.header-wallet-menu')).toBe(menu)
+    const mainnet = menu.querySelector('[data-network="stellar-mainnet"]')
+    expect(mainnet.disabled).toBe(true)
+    expect(mainnet.textContent).toBe('Stellar mainnet Not deployed yet')
+    expect(mainnet.getAttribute('title')).toMatch(/not deployed yet/i)
+    expect(container.textContent).not.toContain('Base Sepolia')
+
+    // The current-network row is a no-op that closes the panel it lives in, so choosing the
+    // network you are already on never leaves the popover hanging open.
+    fireEvent.click(screen.getByTitle('Connect wallet'))
+    expect(container.querySelector('.header-wallet').open).toBe(true)
+    fireEvent.click(current)
+    expect(container.querySelector('.header-wallet').open).toBe(false)
+  })
+
+  it('keeps the header to one disclosure, closed by Escape or an outside pointerdown', () => {
+    const { container } = renderTopBar({
+      ...baseProps,
+      walletPhase: 'upgraded',
+      walletAddress: `G${'A'.repeat(55)}`,
+      walletLabel: 'GAAAAA…AAAA',
+    })
+    expect(container.querySelectorAll('.topbar details')).toHaveLength(1)
+    const accountTrigger = screen.getByTitle('Session keys active')
+    const account = accountTrigger.closest('details')
+
+    fireEvent.click(accountTrigger)
+    expect(account.open).toBe(true)
+
+    // Escape belongs to the panel it was pressed in, and focus returns to that panel's trigger.
+    fireEvent.keyDown(account, { key: 'Escape' })
+    expect(account.open).toBe(false)
+    expect(document.activeElement).toBe(accountTrigger)
+
+    fireEvent.click(accountTrigger)
+    fireEvent.pointerDown(container.querySelector('.topbar-meta'))
+    expect(account.open).toBe(false)
+
+    // Reopening after an outside dismissal still works: no leftover open/close crossover from the
+    // removed sibling pill may close this panel the instant it opens.
+    fireEvent.click(accountTrigger)
+    expect(account.open).toBe(true)
+  })
+
+  it('wires the account panel actions and the disconnected panel to the shell handlers', () => {
+    const onConnect = vi.fn()
+    const onDisconnect = vi.fn()
+    const onLanguageChange = vi.fn()
+    const { container } = renderTopBar({
+      ...baseProps,
+      language: 'en',
+      onConnect,
+      onDisconnect,
+      onLanguageChange,
+    })
+
+    // Visited without a wallet: the same disclosure, reachable and actionable from the keyboard --
+    // and its accessible name still states the network even though it is not connected to one.
+    const disconnectedTrigger = screen.getByTitle('Connect wallet')
+    expect(disconnectedTrigger.getAttribute('aria-label')).toBe(
+      'Wallet not connected on Stellar testnet'
+    )
+    disconnectedTrigger.focus()
+    expect(document.activeElement).toBe(disconnectedTrigger)
+    fireEvent.click(disconnectedTrigger)
+    expect(disconnectedTrigger.closest('details').open).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect wallet' }))
+    expect(onConnect).toHaveBeenCalledOnce()
+    expect(onDisconnect).not.toHaveBeenCalled()
+    // No Log out without a wallet to log out of.
+    expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Language: English' }))
+    expect(onLanguageChange).toHaveBeenCalledWith('id')
+    expect(container.querySelector('.header-wallet-action[href]').getAttribute('href')).toBe(
+      'https://vibingfarmer.gitbook.io/vibingfarmer/'
+    )
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy()
+  })
+
+  it('logs out from the connected account panel', () => {
+    const onDisconnect = vi.fn()
+    renderTopBar({
+      ...baseProps,
+      walletPhase: 'upgraded',
+      walletAddress: `G${'A'.repeat(55)}`,
+      walletLabel: 'GAAAAA…AAAA',
+      onDisconnect,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Log out' }))
+    expect(onDisconnect).toHaveBeenCalledOnce()
+  })
+
+  it('routes the disconnected account panel to Developers without a Log out row', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<TopBar {...baseProps} />} />
+          <Route path="/developers" element={<span>Developers page</span>} />
+        </Routes>
+      </MemoryRouter>
+    )
+    // Shared panel: Connect wallet stays, Log out is absent, Developers navigates in-app.
+    expect(screen.getByRole('button', { name: 'Connect wallet' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Developers' }))
+    expect(screen.getByText('Developers page')).toBeTruthy()
+  })
+
+  it('routes the connected account panel to Developers without a Connect row', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route
+            path="/home"
+            element={
+              <TopBar
+                {...baseProps}
+                walletPhase="upgraded"
+                walletAddress={`G${'A'.repeat(55)}`}
+                walletLabel="GAAAAA…AAAA"
+              />
+            }
+          />
+          <Route path="/developers" element={<span>Developers page</span>} />
+        </Routes>
+      </MemoryRouter>
+    )
+    expect(screen.queryByRole('button', { name: 'Connect wallet' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Log out' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Developers' }))
+    expect(screen.getByText('Developers page')).toBeTruthy()
+  })
+
+  it('opens Settings via onOpenSettings when provided, else falls back to /settings', () => {
+    const onOpenSettings = vi.fn()
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/home']}>
+        <TopBar {...baseProps} onOpenSettings={onOpenSettings} />
+      </MemoryRouter>
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    expect(onOpenSettings).toHaveBeenCalledOnce()
+    unmount()
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<TopBar {...baseProps} />} />
+          <Route path="/settings" element={<span>Settings page</span>} />
+        </Routes>
+      </MemoryRouter>
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    expect(screen.getByText('Settings page')).toBeTruthy()
   })
 
   it('renders the connected wallet account control in the header without an info-rail toggle', () => {
     const address = `G${'A'.repeat(55)}`
-    const { container } = render(
-      <TopBar
-        {...baseProps}
-        walletPhase="upgraded"
-        walletAddress={address}
-        walletLabel="GAAAAA…AAAA"
-      />
-    )
+    const { container } = renderTopBar({
+      ...baseProps,
+      walletPhase: 'upgraded',
+      walletAddress: address,
+      walletLabel: 'GAAAAA…AAAA',
+    })
     expect(screen.getByText('GAAAAA…AAAA')).toBeTruthy()
     expect(screen.getByText('Session keys active')).toBeTruthy()
+    // The connected trigger names the network too, and carries its mark: the account pill is the
+    // header's only network identity now.
+    const trigger = container.querySelector('.header-wallet-trigger')
+    expect(trigger.getAttribute('aria-label')).toBe('Wallet GAAAAA…AAAA on Stellar testnet')
+    expect(trigger.querySelectorAll('img.header-wallet-netmark')).toHaveLength(1)
+    expect(container.querySelector('.header-wallet-menu .header-wallet-netmark')).toBeNull()
     expect(container.querySelector('.header-wallet-action[href]').getAttribute('href')).toContain(
       address
     )
@@ -276,14 +481,12 @@ describe('TopBar', () => {
   })
 
   it('keeps the connected account control inside a 320px header', async () => {
-    const { container } = render(
-      <TopBar
-        {...baseProps}
-        walletPhase="upgraded"
-        walletAddress={`G${'A'.repeat(55)}`}
-        walletLabel="GAAAAA…AAAA"
-      />
-    )
+    const { container } = renderTopBar({
+      ...baseProps,
+      walletPhase: 'upgraded',
+      walletAddress: `G${'A'.repeat(55)}`,
+      walletLabel: 'GAAAAA…AAAA',
+    })
     const browser = await launchRealChromium()
     try {
       const page = await browser.newPage()
@@ -309,7 +512,7 @@ describe('TopBar', () => {
 
   it('renames the flow-restart icon button so it never collides with the Sidebar\'s "New deposit" navigation label', () => {
     const onReset = vi.fn()
-    render(<TopBar {...baseProps} onReset={onReset} />)
+    renderTopBar({ ...baseProps, onReset })
     expect(screen.queryByRole('button', { name: 'New deposit' })).toBeNull()
     const startOver = screen.getByRole('button', { name: 'Start over' })
     fireEvent.click(startOver)
@@ -324,7 +527,7 @@ describe('TopBar', () => {
     'item 10 (owner report), :root palette only: "Network fee sponsored by fee-bump relay." reads at >=4.5:1 ' +
       "against the bar's real painted background, measured in a real Chromium layout engine",
     async () => {
-      const { container } = render(<TopBar {...baseProps} />)
+      const { container } = renderTopBar(baseProps)
       const browser = await launchRealChromium()
       try {
         const page = await browser.newPage()

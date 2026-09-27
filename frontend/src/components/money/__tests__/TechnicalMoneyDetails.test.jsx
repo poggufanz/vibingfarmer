@@ -25,6 +25,10 @@ import { TechnicalMoneyDetails } from '../TechnicalMoneyDetails.jsx'
 
 afterEach(cleanup)
 
+// The same address renders twice: once in the raw scope ledger, once as a graph node.
+const GRAPH_NODE = '.agent-graph-fallback span'
+const RAW_SCOPE_VALUE = '.pc-tech-agent .pc-technical'
+
 function agent(address) {
   return {
     address,
@@ -39,8 +43,8 @@ describe('TechnicalMoneyDetails — agent network graph (My Money Task 13 Part B
     render(<TechnicalMoneyDetails model={{}} agents={[agent('CAGENT1'), agent('CAGENT2')]} />)
     // jsdom has no WebGL, so PixiSwarmGraph falls back to its static DOM render (StaticGraphFallback)
     // -- real node labels, not a canvas we can't inspect. Awaited because pixi's init rejects async.
-    expect(await screen.findByText('CAGENT1')).toBeTruthy()
-    expect(await screen.findByText('CAGENT2')).toBeTruthy()
+    expect(await screen.findByText('CAGENT1', { selector: GRAPH_NODE })).toBeTruthy()
+    expect(await screen.findByText('CAGENT2', { selector: GRAPH_NODE })).toBeTruthy()
     expect(screen.getByText('Your vault')).toBeTruthy()
     // The old placeholder copy must be gone -- this is a real graph now, not "planned for this space".
     expect(screen.queryByText(/planned for this space/)).toBeNull()
@@ -56,8 +60,8 @@ describe('TechnicalMoneyDetails — agent network graph (My Money Task 13 Part B
     render(<TechnicalMoneyDetails model={{}} agents={[agent('CAGENT1')]} />)
     // "Raw agent scope fields" (this component's own earlier disclosure) must still list the real
     // agent -- the graph augments, it does not substitute.
-    const rawFieldsRow = screen.getByText(/^CAGENT1: scope=/)
-    const graphNode = await screen.findByText('CAGENT1', { selector: 'span' })
+    const rawFieldsRow = screen.getByText('CAGENT1', { selector: RAW_SCOPE_VALUE })
+    const graphNode = await screen.findByText('CAGENT1', { selector: GRAPH_NODE })
     expect(rawFieldsRow).toBeTruthy()
     expect(graphNode).toBeTruthy()
     expect(
@@ -70,13 +74,13 @@ describe('TechnicalMoneyDetails — agent network graph (My Money Task 13 Part B
     const summary = screen.getByText('Agent network graph (advanced)')
     const details = summary.closest('details')
     expect(details.open).toBe(false)
-    expect(screen.getByText(/^CAGENT1: scope=/)).toBeTruthy()
+    expect(screen.getByText('CAGENT1', { selector: RAW_SCOPE_VALUE })).toBeTruthy()
     fireEvent.click(summary)
     expect(details.open).toBe(true)
-    expect(await screen.findByText('CAGENT1', { selector: 'span' })).toBeTruthy()
+    expect(await screen.findByText('CAGENT1', { selector: GRAPH_NODE })).toBeTruthy()
     fireEvent.click(summary)
     expect(details.open).toBe(false)
-    expect(screen.getByText(/^CAGENT1: scope=/)).toBeTruthy()
+    expect(screen.getByText('CAGENT1', { selector: RAW_SCOPE_VALUE })).toBeTruthy()
   })
 
   it('uses the shared freshness view for stale provenance instead of a lower-case model label', () => {

@@ -12,7 +12,10 @@ import { BrandLockup } from './pocket/BrandLockup.jsx'
 import './NavBar.css'
 
 const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
-const DOCS_URL = 'https://vibingfarmer.gitbook.io/vibingfarmer/'
+// Exported because the app shell's account panel links the same destination (TopBar's
+// "Documentation" row in components.jsx) -- one definition, so the two surfaces cannot drift to
+// different doc versions.
+export const DOCS_URL = 'https://vibingfarmer.gitbook.io/vibingfarmer/'
 
 // 2026-08-02 polish (audit item #14): the public pages' brand slot used the retired
 // pre-Pocket-Crew "vibing / farmer" script+mono text treatment -- a different product read from

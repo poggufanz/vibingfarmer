@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'react'
 import { getStrategies } from '../history/history.js'
 import { SOROBAN_DECIMALS } from '../stellar/config.js'
-import { readTotalAssets } from '../stellar/vaultReads.js'
+import { readPendingUpgrade, readTotalAssets } from '../stellar/vaultReads.js'
 import { NETWORK_IDS } from '../design/networks.js'
 import { formatCoreAmount, normalizeCoreAmount } from '../core/coreRouteAdapters.js'
 import { toExplorerPresentation } from '../secondary/secondaryRouteAdapters.js'
@@ -22,6 +22,7 @@ import {
   SOROBAN_SOURCE_CRATES,
   STATIC_ADDRESS_COUNT,
   STELLAR_STATIC_DEPLOYMENTS,
+  VAULT_UPGRADE_SAFETY,
 } from '../stellar/deploymentFacts.js'
 import NavBar from '../components/NavBar.jsx'
 import './ExplorerPage.css'
@@ -40,6 +41,12 @@ async function fetchTotalDeposits() {
   return Number(assets) / DECIMALS_DIV
 }
 
+// P1 G8: vault upgrade-safety facts, sourced from VAULT_UPGRADE_SAFETY (itself derived from
+// deployments/stellar-testnet.json::autofarmVault — admin address verbatim, threshold/timelock
+// restating its adminNote; deploymentFacts.test.js pins both). Signer labels (master,
+// vf-admin-2, vf-admin-3) are that note's own names; only public addresses ever render.
+const VAULT_ADMIN_SHORT = `${VAULT_UPGRADE_SAFETY.admin.slice(0, 8)}…${VAULT_UPGRADE_SAFETY.admin.slice(-4)}`
+
 const SECURITY = [
   'Funding Router grants limit the total budget and expiry',
   'Owners can revoke the router allowance and agent access',
@@ -47,6 +54,9 @@ const SECURITY = [
   'The fee-bump relay accepts allowlisted Soroban operations and rate-limits callers',
   'Soroban auth nonces and signature-expiration ledgers prevent replay',
   'SHA-256 strategy hashes make saved strategies tamper-evident',
+  `Vault admin is a ${VAULT_UPGRADE_SAFETY.threshold} multisig (master ${VAULT_ADMIN_SHORT} plus vf-admin-2 and vf-admin-3); no single key can move or upgrade the vault`,
+  `Vault upgrades wait ${VAULT_UPGRADE_SAFETY.timelockDays} days from schedule to executable, and can be cancelled while pending`,
+  'Redeem is never pause-gated; holders can always exit',
 ]
 
 /* ----------------------------- helpers ----------------------------- */
@@ -60,6 +70,55 @@ function timeAgo(ts) {
   if (h < 24) return `${h} hour${h > 1 ? 's' : ''} ago`
   const d = Math.floor(h / 24)
   return `${d} day${d > 1 ? 's' : ''} ago`
+}
+
+// P1 G8: live timelock status for the Security list — the first UI consumer of
+// vaultReads.js::readPendingUpgrade (previously read by tests only). `injected === undefined`
+// means "read the chain" (public page, no wallet); any other value (including null) is the
+// ExplorerPage explorerRead seam for tests. null covers BOTH "nothing scheduled" and "RPC
+// failed" — readPendingUpgrade deliberately conflates them — so the copy says "found", never
+// "scheduled: none". ETA is a Unix-seconds ledger timestamp (vault.rs TIMELOCK_DELAY_S).
+function formatUpgradeEta(eta) {
+  if (!Number.isFinite(eta) || eta <= 0) return null
+  return `${new Date(eta * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`
+}
+
+function PendingUpgradeStatus({ injected }) {
+  const [live, setLive] = useState(undefined)
+  useEffect(() => {
+    if (injected !== undefined) return undefined
+    let alive = true
+    Promise.resolve()
+      .then(() => (typeof readPendingUpgrade === 'function' ? readPendingUpgrade() : null))
+      .then((v) => {
+        if (alive) setLive(v ?? null)
+      })
+      .catch(() => {
+        if (alive) setLive(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [injected])
+  if (injected === undefined && live === undefined) {
+    return <li className="ex-secitem">Checking the vault for a pending upgrade…</li>
+  }
+  const pending = injected === undefined ? live : injected
+  if (pending == null) {
+    return <li className="ex-secitem">No pending upgrade found on the vault.</li>
+  }
+  const hash =
+    typeof pending.wasmHashHex === 'string' && pending.wasmHashHex
+      ? shortHash(`0x${pending.wasmHashHex}`)
+      : 'hash unavailable'
+  const when = formatUpgradeEta(pending.eta)
+  return (
+    <li className="ex-secitem">
+      Upgrade scheduled: wasm {hash}
+      {when ? `, executable after ${when}` : '; executable date unavailable'}. Holders can
+      redeem out before it executes.
+    </li>
+  )
 }
 
 const shortHash = (h) => (h ? `${String(h).slice(0, 10)}…` : '0x…')
@@ -457,6 +516,9 @@ export default function ExplorerPage({ explorerRead } = {}) {
                 {item}
               </li>
             ))}
+            <PendingUpgradeStatus
+              injected={hasInjectedRead ? (explorerRead.pendingUpgrade ?? null) : undefined}
+            />
           </ul>
           <p className="ex-disclaimer">
             Unaudited (hackathon scope). Production deployment requires third-party audit.
