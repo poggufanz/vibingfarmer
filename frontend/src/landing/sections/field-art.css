@@ -96,6 +96,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.vf-field__bay-alt {
+  opacity: 0;
+}
+
 .vf-field.is-warning .vf-field__fence {
   stroke: var(--pc-warning);
 }

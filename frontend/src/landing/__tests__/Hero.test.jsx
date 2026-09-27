@@ -22,7 +22,7 @@ describe('Hero', () => {
   it('leads with the principle and one launch action', () => {
     const onStart = vi.fn()
     render(<Hero onStart={onStart} stats={unavailable} />)
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Set once.Vibe forever.')
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Set once. Vibe forever.')
     fireEvent.click(screen.getByRole('button', { name: 'Launch app' }))
     expect(onStart).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('link', { name: 'See how it works' }).getAttribute('href')).toBe(
@@ -49,7 +49,7 @@ describe('Hero', () => {
     render(
       <Hero onStart={() => {}} stats={{ aprBps: 612, totalAssets: 50_000_000n, status: 'live' }} />
     )
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Set once.Vibe forever.')
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Set once. Vibe forever.')
   })
 
   it('shows live testnet numbers and a signature count of one', () => {

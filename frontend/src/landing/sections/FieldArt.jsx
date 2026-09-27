@@ -53,14 +53,14 @@ function StageParts() {
     <>
       <line className="vf-field__sweep" x1={PLOT.x} x2={PLOT.x} y1="40" y2="400" />
       <circle className="vf-field__radar" cx="260" cy="220" r="0" />
-      <g className="vf-field__fail" transform={`translate(${PLOT.x + 150} ${failY})`}>
+      <g className="vf-field__fail" transform={`translate(${PLOT.x + 28} ${failY})`}>
         <path d="M-9 -9L9 9M9 -9L-9 9" />
       </g>
     </>
   )
 }
 
-function Bay({ className, x, title, value }) {
+function Bay({ className, x, title, value, alt }) {
   return (
     <g className={className}>
       <rect x={x} y="168" width="88" height="104" rx="12" />
@@ -70,6 +70,11 @@ function Bay({ className, x, title, value }) {
       <text className="vf-field__bay-value" x={x + 44} y="236">
         {value}
       </text>
+      {alt && (
+        <text className="vf-field__bay-value vf-field__bay-alt" x={x + 44} y="236">
+          {alt}
+        </text>
+      )}
     </g>
   )
 }
@@ -98,7 +103,7 @@ export default function FieldArt({ variant = 'hero' }) {
         <>
           <Bay className="vf-field__grant" x={8} title="Grant" value="500 USDC" />
           <g transform="translate(112 0)">{land}</g>
-          <Bay className="vf-field__idle" x={648} title="Vault idle" value="0 USDC" />
+          <Bay className="vf-field__idle" x={648} title="Vault idle" value="0 USDC" alt="500 USDC" />
         </>
       ) : (
         land

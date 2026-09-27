@@ -89,7 +89,7 @@ export default function SetOnce() {
           <p className="vf-kicker">01 · Set once</p>
           <h2 id="set-title">
             <span className="vf-line">
-              <span>One decision.</span>
+              <span>One decision. </span>
             </span>
             <span className="vf-line">
               <span>Made properly.</span>

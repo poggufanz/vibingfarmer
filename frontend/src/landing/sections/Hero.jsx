@@ -121,7 +121,7 @@ export default function Hero({ onStart, stats }) {
         <p className="vf-kicker vf-hero__kicker">Autonomous USDC yield · Stellar testnet</p>
         <h1 className="vf-hero__title">
           <span className="vf-line vf-hero__set">
-            <span>Set once.</span>
+            <span>Set once. </span>
           </span>
           <span className="vf-line vf-hero__vibe">
             <span>Vibe forever.</span>

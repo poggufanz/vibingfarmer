@@ -13,7 +13,7 @@ describe('SetOnce', () => {
     const section = container.querySelector('[data-landing-section="SetOnce"]')
     expect(section.id).toBe('how-it-works')
     expect(screen.getByRole('heading', { level: 2 }).textContent).toBe(
-      'One decision.Made properly.'
+      'One decision. Made properly.'
     )
   })
 
