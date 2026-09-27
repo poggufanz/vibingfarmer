@@ -19,17 +19,19 @@ export const MOTION = {
 export const ScrollerContext = createContext({ current: null })
 export const useScroller = () => useContext(ScrollerContext)
 
-// Rolls a readout up to its live value. Call only inside a motion branch: React has already
-// rendered the final text, so skipping this leaves the correct number on screen.
-export function countUp(el, to, format, duration = 1.2) {
-  if (!el || !Number.isFinite(to)) return
-  const proxy = { value: 0 }
+// Rolls a readout from `from` to its value. Call only inside a motion branch: React has already
+// rendered the final text, so skipping this leaves the correct number on screen. It writes the
+// existing text node (never textContent) so React keeps ownership of the node for later updates.
+export function countUp(el, to, format, { from = 0, duration = 1.2 } = {}) {
+  const node = el?.firstChild
+  if (!node || node.nodeType !== Node.TEXT_NODE || !Number.isFinite(to)) return
+  const proxy = { value: from }
   gsap.to(proxy, {
     value: to,
     duration,
     ease: 'power3.out',
     onUpdate: () => {
-      el.textContent = format(proxy.value)
+      node.nodeValue = format(proxy.value)
     },
   })
 }
