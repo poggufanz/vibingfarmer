@@ -34,9 +34,7 @@ describe('RealYield', () => {
   it('shows live numbers when present and "--" when not', () => {
     const { rerender } = render(<RealYield stats={unavailable} />)
     expect(screen.getByTestId('yield-apr').textContent).toBe('--')
-    rerender(
-      <RealYield stats={{ aprBps: 431, totalAssets: 1_234_567_890_000n, status: 'live' }} />
-    )
+    rerender(<RealYield stats={{ aprBps: 431, totalAssets: 1_234_567_890_000n, status: 'live' }} />)
     expect(screen.getByTestId('yield-apr').textContent).toBe('4.31%')
     expect(screen.getByTestId('yield-tvl').textContent).toBe('123,457 USDC')
   })

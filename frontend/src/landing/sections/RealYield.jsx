@@ -1,5 +1,13 @@
 import { useRef } from 'react'
-import { MOTION, ScrollTrigger, countUp, gsap, useGSAP, useScroller } from '../motion/gsap.js'
+import {
+  MOTION,
+  ScrollTrigger,
+  countUp,
+  gsap,
+  playWhileVisible,
+  useGSAP,
+  useScroller,
+} from '../motion/gsap.js'
 import { formatApr, formatTvl, wholeUsdc } from '../useLandingStats.js'
 import './real-yield.css'
 
@@ -45,7 +53,7 @@ function yieldMotion(root, scroller) {
     scrollTrigger: { scroller, trigger: path, start: 'top 85%', end: 'top 45%', scrub: true },
   })
   gsap.from(q('.vf-path__stage'), {
-    autoAlpha: 0,
+    opacity: 0,
     y: 24,
     duration: 0.8,
     stagger: 0.1,
@@ -53,19 +61,13 @@ function yieldMotion(root, scroller) {
     scrollTrigger: { scroller, trigger: path, start: 'top 80%', once: true },
   })
 
-  // Capital keeps moving while the section is on screen.
+  // Capital moves along the path while the section is on screen: five passes per viewing.
   const flow = gsap.fromTo(
     q('.vf-path__token'),
     { x: 0 },
-    { x: () => line.offsetWidth, duration: 6, ease: 'none', repeat: -1, paused: true }
+    { x: () => line.offsetWidth, duration: 6, ease: 'none', repeat: 4, paused: true }
   )
-  ScrollTrigger.create({
-    scroller,
-    trigger: root,
-    start: 'top bottom',
-    end: 'bottom top',
-    onToggle: (self) => (self.isActive ? flow.play() : flow.pause()),
-  })
+  playWhileVisible(flow, { scroller, trigger: root }).start()
 }
 
 export default function RealYield({ stats }) {
@@ -90,7 +92,12 @@ export default function RealYield({ stats }) {
       const mm = gsap.matchMedia()
       mm.add(MOTION, (ctx) => {
         if (!ctx.conditions.motion) return
-        const trigger = { scroller: scroller.current, trigger: aprRef.current, start: 'top 90%', once: true }
+        const trigger = {
+          scroller: scroller.current,
+          trigger: aprRef.current,
+          start: 'top 90%',
+          once: true,
+        }
         ScrollTrigger.create({
           ...trigger,
           onEnter: () => {

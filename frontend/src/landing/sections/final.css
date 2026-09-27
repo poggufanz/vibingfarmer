@@ -1,0 +1,142 @@
+.vf-final {
+  padding-top: var(--vf-section-space);
+  border-top: 1px solid var(--pc-line);
+}
+
+.vf-final__inner {
+  width: var(--vf-shell);
+  margin: 0 auto;
+  display: grid;
+  gap: clamp(32px, 4vw, 56px);
+}
+
+.vf-landing .vf-final__title {
+  max-width: none;
+  font-size: clamp(3.4rem, 12vw, 12rem);
+  font-weight: 650;
+  letter-spacing: -0.065em;
+  line-height: 0.86;
+}
+
+.vf-final__vibe > span {
+  padding-left: 0.9em;
+  color: var(--pc-muted);
+  font-weight: 300;
+  letter-spacing: -0.04em;
+}
+
+.vf-final__copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.vf-landing .vf-final__copy p {
+  max-width: 40ch;
+  color: var(--pc-ink);
+  font-size: clamp(1.05rem, 1.5vw, 1.3rem);
+}
+
+.vf-final__built {
+  margin-top: clamp(80px, 10vw, 140px);
+  display: grid;
+  gap: 20px;
+}
+
+.vf-final__built > .vf-kicker {
+  width: var(--vf-shell);
+  margin: 0 auto;
+}
+
+.vf-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.vf-marquee {
+  padding: 22px 0;
+  overflow: hidden;
+  border-top: 1px solid var(--pc-line);
+  border-bottom: 1px solid var(--pc-line);
+}
+
+.vf-marquee__track {
+  width: max-content;
+  display: flex;
+}
+
+.vf-marquee__seq {
+  padding-right: 56px;
+  display: flex;
+  align-items: center;
+  gap: 56px;
+}
+
+.vf-marquee__logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--pc-muted);
+  font-family: var(--pc-font-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.vf-marquee__logo img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+/* Forest (default) shows the white Stellar mark; Day Field shows the black one. */
+.vf-marquee__icon--light-only {
+  display: none;
+}
+
+:root[data-theme='day-field'] .vf-marquee__icon--light-only {
+  display: block;
+}
+
+:root[data-theme='day-field'] .vf-marquee__icon--dark-only {
+  display: none;
+}
+
+.vf-footer {
+  width: var(--vf-shell);
+  margin: 0 auto;
+  padding: 32px 0 40px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 32px;
+}
+
+.vf-landing .vf-footer p {
+  color: var(--pc-faint);
+  font-family: var(--pc-font-mono);
+  font-size: 0.75rem;
+}
+
+.vf-footer ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+@media (max-width: 560px) {
+  .vf-final__vibe > span {
+    padding-left: 0;
+  }
+}

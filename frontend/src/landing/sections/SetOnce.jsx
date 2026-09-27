@@ -29,7 +29,8 @@ const REVIEW = [
 ]
 
 const GLYPHS = Array.from({ length: 8 }, (_, i) => i)
-const SIGNATURE_GLYPH = 'M3 17C7 6 10 5 11 11C12 17 9 21 12 18C16 14 18 6 22 8C25 10 22 17 26 15C29 13 30 9 33 10'
+const SIGNATURE_GLYPH =
+  'M3 17C7 6 10 5 11 11C12 17 9 21 12 18C16 14 18 6 22 8C25 10 22 17 26 15C29 13 30 9 33 10'
 
 function setOnceMotion(root, scroller) {
   const q = gsap.utils.selector(root)
@@ -41,25 +42,44 @@ function setOnceMotion(root, scroller) {
     })
 
   reveal(q('.vf-set__head .vf-line > span'), { yPercent: 105, duration: 1, stagger: 0.08 })
-  reveal(q('.vf-intent'), { autoAlpha: 0, y: 40, duration: 1 }, q('.vf-intent')[0])
-  reveal(q('.vf-review__line'), { scaleX: 0, transformOrigin: 'left center', duration: 1.2 }, q('.vf-review')[0])
-  reveal(q('.vf-review__step'), { autoAlpha: 0, y: 24, duration: 0.8, stagger: 0.1 }, q('.vf-review')[0])
+  reveal(q('.vf-intent'), { opacity: 0, y: 40, duration: 1 }, q('.vf-intent')[0])
+  reveal(
+    q('.vf-review__line'),
+    { scaleX: 0, transformOrigin: 'left center', duration: 1.2 },
+    q('.vf-review')[0]
+  )
+  reveal(
+    q('.vf-review__step'),
+    { opacity: 0, y: 24, duration: 0.8, stagger: 0.1 },
+    q('.vf-review')[0]
+  )
 
   const glyphs = q('.vf-sigs__glyph')
   const first = glyphs[0]
   gsap
     .timeline({
-      scrollTrigger: { scroller, trigger: q('.vf-sigs')[0], start: 'top 75%', end: 'bottom 40%', scrub: 0.6 },
+      scrollTrigger: {
+        scroller,
+        trigger: q('.vf-sigs')[0],
+        start: 'top 75%',
+        end: 'bottom 40%',
+        scrub: 0.6,
+      },
     })
     .to(glyphs.slice(1), {
       x: (i, glyph) => first.offsetLeft - glyph.offsetLeft,
-      autoAlpha: 0,
+      opacity: 0,
       ease: 'power2.in',
       stagger: 0.04,
     })
-    .to(q('.vf-sigs__before'), { autoAlpha: 0.35 }, '<')
-    .fromTo(q('.vf-sigs__after'), { autoAlpha: 0.35 }, { autoAlpha: 1 }, '<0.2')
-    .fromTo(first, { scale: 1 }, { scale: 1.25, transformOrigin: '50% 50%', ease: 'back.out(3)' }, '>-0.1')
+    .to(q('.vf-sigs__before'), { opacity: 0.35 }, '<')
+    .fromTo(q('.vf-sigs__after'), { opacity: 0.35 }, { opacity: 1 }, '<0.2')
+    .fromTo(
+      first,
+      { scale: 1 },
+      { scale: 1.25, transformOrigin: '50% 50%', ease: 'back.out(3)' },
+      '>-0.1'
+    )
 }
 
 export default function SetOnce() {

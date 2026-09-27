@@ -2151,7 +2151,7 @@ const compatibilityThemes = Object.freeze(['forest', 'day-field'])
 // and app.jsx is not in this task's file list) -- this asserts what genuinely renders today, not
 // a fixed IA.
 const ROUTE_LANDMARKS = Object.freeze({
-  landing: { role: 'heading', name: /One signature/i },
+  landing: { role: 'heading', name: /Set once/i },
   home: { role: 'button', name: 'Connect Wallet' },
   // 2026-08-02 polish: /history now has a real h1 (the old mono-eyebrow gap is closed), so the
   // landmark upgrades to the semantic heading the a11y rules always wanted here.

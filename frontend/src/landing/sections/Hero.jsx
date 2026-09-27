@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { MOTION, ScrollTrigger, countUp, gsap, useGSAP, useScroller } from '../motion/gsap.js'
+import { MOTION, countUp, gsap, playWhileVisible, useGSAP, useScroller } from '../motion/gsap.js'
 import { formatApr, formatTvl, wholeUsdc } from '../useLandingStats.js'
 import FieldArt from './FieldArt.jsx'
 import './hero.css'
@@ -25,7 +25,7 @@ function heroTimeline(root, scroller) {
   const [setLine, vibeLine] = q('.vf-hero__title .vf-line > span')
   const intro = gsap.timeline({ defaults: { ease: 'expo.out' } })
   intro
-    .from(q('.vf-hero__kicker'), { autoAlpha: 0, y: 12, duration: 0.6 })
+    .from(q('.vf-hero__kicker'), { opacity: 0, y: 12, duration: 0.6 })
     .from(setLine, { yPercent: 105, duration: 1.1 }, 0.05)
     .fromTo(
       q('.vf-field__sig'),
@@ -49,29 +49,24 @@ function heroTimeline(root, scroller) {
     .from(vibeLine, { yPercent: 105, duration: 1.1 }, 1.45)
     .from(
       q('.vf-hero__lede, .vf-hero__actions, .vf-hero__live'),
-      { autoAlpha: 0, y: 16, duration: 0.8, stagger: 0.08 },
+      { opacity: 0, y: 16, duration: 0.8, stagger: 0.08 },
       1.6
     )
 
+  // Four legs per crew (out, back, out, back), so every walk ends at its row head.
   const walk = gsap.timeline({ paused: true })
   q('.vf-field__crew').forEach((crew, i) => {
     walk.to(
       crew,
-      { x: 300 + i * 14, duration: 7 + i * 1.3, ease: 'sine.inOut', repeat: -1, yoyo: true },
+      { x: 300 + i * 14, duration: 7 + i * 1.3, ease: 'sine.inOut', repeat: 3, yoyo: true },
       i * 0.4
     )
   })
   let introDone = false
-  const onScreen = ScrollTrigger.create({
-    scroller,
-    trigger: root,
-    start: 'top bottom',
-    end: 'bottom top',
-    onToggle: (self) => introDone && (self.isActive ? walk.play() : walk.pause()),
-  })
+  const visible = playWhileVisible(walk, { scroller, trigger: root, ready: () => introDone })
   intro.call(() => {
     introDone = true
-    if (onScreen.isActive) walk.play()
+    visible.start()
   })
 
   gsap.to(q('.vf-hero__art'), {

@@ -49,7 +49,7 @@ function leashMotion(root, scroller) {
     }
   )
   gsap.from(q('.vf-bound'), {
-    autoAlpha: 0,
+    opacity: 0,
     y: 24,
     duration: 0.8,
     stagger: 0.08,
@@ -157,7 +157,9 @@ export default function Leash() {
             </div>
             <div>
               <dt>Leash</dt>
-              <dd>{revoked ? 'Closed · nothing can be pulled' : 'Open · workers pull within budget'}</dd>
+              <dd>
+                {revoked ? 'Closed · nothing can be pulled' : 'Open · workers pull within budget'}
+              </dd>
             </div>
           </dl>
           <code className="vf-revoke__call">{`approve(router, ${allowance})`}</code>

@@ -103,7 +103,13 @@ export default function FieldArt({ variant = 'hero' }) {
         <>
           <Bay className="vf-field__grant" x={8} title="Grant" value="500 USDC" />
           <g transform="translate(112 0)">{land}</g>
-          <Bay className="vf-field__idle" x={648} title="Vault idle" value="0 USDC" alt="500 USDC" />
+          <Bay
+            className="vf-field__idle"
+            x={648}
+            title="Vault idle"
+            value="0 USDC"
+            alt="500 USDC"
+          />
         </>
       ) : (
         land

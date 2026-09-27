@@ -42,8 +42,8 @@ const grantDy = (i) => 220 - (96 + i * 84)
 const FAILED = 2
 
 function beatSwap(tl, beats, ticks, i, at) {
-  tl.to(beats[i - 1], { autoAlpha: 0, y: -16, duration: 0.4 }, at)
-    .fromTo(beats[i], { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.4 }, `${at}+=0.2`)
+  tl.to(beats[i - 1], { opacity: 0, y: -16, duration: 0.4 }, at)
+    .fromTo(beats[i], { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4 }, `${at}+=0.2`)
     .to(ticks[i - 1], { opacity: 0.3, duration: 0.2 }, at)
     .to(ticks[i], { opacity: 1, duration: 0.2 }, at)
 }
@@ -61,7 +61,7 @@ function scrubStage(root, scroller) {
   const ink = getComputedStyle(root).getPropertyValue('--pc-ink').trim() || '#f2f5ef'
 
   root.classList.add('is-scrubbed')
-  gsap.set(beats.slice(1), { autoAlpha: 0 })
+  gsap.set(beats.slice(1), { opacity: 0 })
   gsap.set(ticks.slice(1), { opacity: 0.3 })
   gsap.set(crews, { x: GRANT_DX, y: (i) => grantDy(i) })
   gsap.set(fills, { attr: { width: 0 } })
@@ -88,8 +88,11 @@ function scrubStage(root, scroller) {
     .to(q('.vf-field__fail'), { opacity: 1, duration: 0.3 }, 'fund+=0.9')
     .addLabel('earn', '+=0.4')
   beatSwap(tl, beats, ticks, 1, 'earn')
-  tl.to(live, { attr: { width: (i) => liveWidth(i) * 0.9 }, duration: 1.1, stagger: 0.08 }, 'earn')
-    .addLabel('compound', '+=0.4')
+  tl.to(
+    live,
+    { attr: { width: (i) => liveWidth(i) * 0.9 }, duration: 1.1, stagger: 0.08 },
+    'earn'
+  ).addLabel('compound', '+=0.4')
   beatSwap(tl, beats, ticks, 2, 'compound')
   tl.fromTo(
     q('.vf-field__sweep'),
@@ -110,7 +113,11 @@ function scrubStage(root, scroller) {
   beatSwap(tl, beats, ticks, 4, 'derisk')
   tl.to(q('.vf-field__fence'), { stroke: warn, duration: 0.3 }, 'derisk')
     .to(live, { attr: { width: 0 }, duration: 0.9 }, 'derisk+=0.2')
-    .to(q('.vf-field__idle .vf-field__bay-value:not(.vf-field__bay-alt)'), { opacity: 0 }, 'derisk+=0.5')
+    .to(
+      q('.vf-field__idle .vf-field__bay-value:not(.vf-field__bay-alt)'),
+      { opacity: 0 },
+      'derisk+=0.5'
+    )
     .to(q('.vf-field__bay-alt'), { opacity: 1 }, 'derisk+=0.5')
     .addLabel('resume', '+=0.4')
   beatSwap(tl, beats, ticks, 5, 'resume')
@@ -126,7 +133,7 @@ function scrubStage(root, scroller) {
 function revealList(root, scroller) {
   const q = gsap.utils.selector(root)
   gsap.from(q('.vf-beat'), {
-    autoAlpha: 0,
+    opacity: 0,
     y: 24,
     duration: 0.8,
     stagger: 0.08,
@@ -150,7 +157,12 @@ export default function VibeForever() {
           duration: 1,
           stagger: 0.08,
           ease: 'expo.out',
-          scrollTrigger: { scroller: scroller.current, trigger: root.current, start: 'top 80%', once: true },
+          scrollTrigger: {
+            scroller: scroller.current,
+            trigger: root.current,
+            start: 'top 80%',
+            once: true,
+          },
         })
         if (desktop) return scrubStage(root.current, scroller.current)
         revealList(root.current, scroller.current)
@@ -178,8 +190,8 @@ export default function VibeForever() {
           </span>
         </h2>
         <p>
-          After the grant, workers, the keeper and Lifeboat carry the position. Scroll through thirty
-          days of one run.
+          After the grant, workers, the keeper and Lifeboat carry the position. Scroll through
+          thirty days of one run.
         </p>
       </div>
 
