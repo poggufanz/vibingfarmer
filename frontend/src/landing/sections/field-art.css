@@ -1,0 +1,105 @@
+/* Default state is the final frame: fence drawn, crew placed, plots filled, signature spent.
+   Never put a CSS `transform` on these nodes; GSAP drives them through the SVG attribute. */
+
+.vf-field {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.vf-field__plot {
+  fill: none;
+  stroke: var(--pc-line-strong);
+  stroke-opacity: 0.45;
+  stroke-width: 1;
+}
+
+.vf-field__furrows {
+  fill: none;
+  stroke: var(--pc-line);
+  stroke-width: 1;
+}
+
+.vf-field__fill {
+  fill: var(--crew);
+  fill-opacity: 0.16;
+}
+
+.vf-field__crew-dot {
+  fill: var(--crew);
+}
+
+.vf-field__crew-ring {
+  fill: none;
+  stroke: var(--crew);
+  stroke-opacity: 0.4;
+  stroke-width: 1.5;
+}
+
+.vf-field__fence,
+.vf-field__sig {
+  fill: none;
+  stroke: var(--pc-ink);
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.vf-field__fence {
+  stroke-width: 2;
+  transition: stroke var(--pc-duration-base) var(--pc-ease-standard);
+}
+
+.vf-field__sig {
+  stroke-width: 3;
+  opacity: 0;
+}
+
+.vf-field__sweep,
+.vf-field__radar {
+  fill: none;
+  stroke: var(--pc-ink);
+  stroke-width: 1.5;
+  opacity: 0;
+}
+
+.vf-field__fail {
+  fill: none;
+  stroke: var(--pc-danger);
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0;
+}
+
+.vf-field__grant rect,
+.vf-field__idle rect {
+  fill: var(--pc-workspace);
+  stroke: var(--pc-line-strong);
+  stroke-width: 1;
+}
+
+.vf-field__grant text,
+.vf-field__idle text {
+  fill: var(--pc-muted);
+  font-family: var(--pc-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-anchor: middle;
+}
+
+.vf-field__grant .vf-field__bay-value,
+.vf-field__idle .vf-field__bay-value {
+  fill: var(--pc-ink);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vf-field__bay-alt {
+  opacity: 0;
+}
+
+.vf-field.is-warning .vf-field__fence {
+  stroke: var(--pc-warning);
+}
