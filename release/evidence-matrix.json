@@ -9,7 +9,7 @@
   "freeze": {
     "active": true,
     "activatedOn": "2026-08-11",
-    "baselineSha": "3c792e37f7866d9c4b74105ad1705a0595187000",
+    "baselineSha": "4f53b52cfde9c7831a7f818c8443a1d58309b45a",
     "forbiddenCommitTypes": ["feat"]
   },
   "claims": [
@@ -31,7 +31,20 @@
         "frontend/src/orchestrator/__tests__/orchestrator.baseleg.test.js",
         "frontend/src/orchestrator/__tests__/orchestrator.unavailable.test.js",
         "frontend/src/components/strategy/ProtectStage.jsx",
-        "frontend/src/components/strategy/__tests__/ProtectStage.test.jsx"
+        "frontend/src/components/strategy/__tests__/ProtectStage.test.jsx",
+        "frontend/src/components/strategy/RisksGateModal.jsx",
+        "frontend/src/components/strategy/__tests__/RisksGate.test.jsx",
+        "frontend/src/components/strategy/GrantFallbackFee.jsx",
+        "frontend/src/components/strategy/__tests__/GrantFallbackFee.test.jsx",
+        "frontend/src/stellar/__tests__/grantExitSigner.test.js",
+        "frontend/src/money/activeGrant.js",
+        "frontend/src/money/__tests__/activeGrant.test.js",
+        "frontend/src/components/money/ActiveGrantCard.jsx",
+        "frontend/src/components/money/__tests__/ActiveGrantCard.test.jsx",
+        "frontend/src/strategy/poolSafety.js",
+        "frontend/src/strategy/__tests__/poolSafety.test.js",
+        "frontend/src/components/strategy/PoolSafetyPanel.jsx",
+        "frontend/src/components/strategy/__tests__/PoolSafetyPanel.test.jsx"
       ]
     },
     {
@@ -55,7 +68,32 @@
         "frontend/src/strategy/strategist.js",
         "frontend/src/strategy/__tests__/strategist.yield.test.js",
         "frontend/src/screens/TxDetailPage.jsx",
-        "frontend/src/screens/__tests__/TxDetailPage.test.jsx"
+        "frontend/src/screens/__tests__/TxDetailPage.test.jsx",
+        "frontend/src/money/liveYield.js",
+        "frontend/src/money/__tests__/liveYield.test.js",
+        "frontend/src/components/money/LiveYieldCard.jsx",
+        "frontend/src/components/money/__tests__/LiveYieldCard.test.jsx",
+        "frontend/src/history/ppsHistory.js",
+        "frontend/src/history/__tests__/ppsHistory.test.js",
+        "frontend/src/stellar/vaultReads.js",
+        "frontend/src/stellar/__tests__/vaultReads.test.js",
+        "frontend/src/money/readOwnerMoney.js",
+        "frontend/src/money/__tests__/readOwnerMoney.test.js",
+        "frontend/src/store/positionsStore.js",
+        "frontend/src/store/__tests__/positionsStore.test.js",
+        "frontend/src/components/money/MoneyHero.jsx",
+        "frontend/src/components/money/__tests__/MoneyHero.test.jsx",
+        "frontend/src/components/console/instruments/Sparkline.jsx",
+        "frontend/src/components/console/instruments/geometry.js",
+        "frontend/src/components/console/instruments/__tests__/geometry.test.js",
+        "frontend/src/components/console/KeeperZone.jsx",
+        "frontend/src/components/console/__tests__/KeeperZone.test.jsx",
+        "frontend/src/components/console/PositionsZone.jsx",
+        "frontend/src/components/console/__tests__/PositionsZone.test.jsx",
+        "frontend/src/components/console/OpsConsole.jsx",
+        "frontend/src/components/console/__tests__/OpsConsole.test.jsx",
+        "frontend/src/components/money/my-money.css",
+        "frontend/src/components/money/__tests__/myMoneyCssContract.test.js"
       ]
     },
     {
@@ -75,7 +113,16 @@
         "frontend/src/stellar/partialWithdraw.js",
         "frontend/src/stellar/__tests__/partialWithdraw.test.js",
         "frontend/src/screens/TxDetailPage.jsx",
-        "frontend/src/screens/__tests__/TxDetailPage.test.jsx"
+        "frontend/src/screens/__tests__/TxDetailPage.test.jsx",
+        "frontend/src/history/unifiedHistory.js",
+        "frontend/src/history/__tests__/unifiedHistory.test.js",
+        "frontend/src/base/baseHistory.js",
+        "frontend/src/base/__tests__/baseHistory.test.js",
+        "frontend/src/stellar/grantFeeEstimate.js",
+        "frontend/src/stellar/__tests__/grantFeeEstimate.test.js",
+        "frontend/src/components/WithdrawModal.jsx",
+        "frontend/src/components/__tests__/WithdrawModal.test.jsx",
+        "frontend/src/stellar/__tests__/partialWithdrawMulti.test.js"
       ]
     },
     {
@@ -88,7 +135,9 @@
         "frontend/src/stellar/__tests__/deploymentFacts.test.js",
         "frontend/src/screens/ExplorerPage.jsx",
         "frontend/src/screens/__tests__/ExplorerPage.test.jsx",
-        "deployments/stellar-testnet.json"
+        "deployments/stellar-testnet.json",
+        "frontend/src/screens/ReplayPage.jsx",
+        "frontend/src/screens/__tests__/ReplayPage.test.jsx"
       ]
     },
     {
