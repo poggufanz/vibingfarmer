@@ -36,9 +36,6 @@ export function baseTxUrl(hash) {
 const shortAddr = (addr) =>
   typeof addr === 'string' && addr.length > 12 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr
 
-const shortHash = (hash) =>
-  typeof hash === 'string' && hash.length > 0 ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : ''
-
 // 7-dp base units (vault/token convention) -> "12.50 USDC", or null when unparseable.
 function unitsToUsdcText(units) {
   try {

@@ -929,7 +929,10 @@ export default function SettingsPage({
                     )}
                   </Row>
                   <Divider />
-                  <Row label="Network fee" desc="Paid by the fee-bump relay. You pay 0 XLM.">
+                  <Row
+                    label="Network fee"
+                    desc="Relay covers it when available; otherwise your wallet pays the fee in XLM."
+                  >
                     <span className="pc-settings-chip" data-tone="live">
                       <span className="pc-settings-lamp" aria-hidden="true" />
                       Sponsored

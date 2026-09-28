@@ -1,6 +1,6 @@
 // P1 G10: unified feed — merge/sort across sources, null (not []) on failure,
 // no explorer link without a source-provided hash.
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
   stellarTxUrl,
   baseTxUrl,

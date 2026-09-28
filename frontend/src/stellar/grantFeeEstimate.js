@@ -10,7 +10,7 @@
 // owner, unreachable RPC, invalid shape) resolves to `null` — the UI renders "unavailable",
 // never a fabricated number. Relay/direct submission logic is untouched.
 import { buildGrantTx, AGENT_KIND_DEPOSIT } from './grant.js'
-import { SOROBAN_ACTIVE_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS } from './config.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './config.js'
 
 const STROOPS_PER_XLM = 10_000_000n
 const ZERO32 = new Uint8Array(32)
@@ -51,7 +51,7 @@ function normalizeBudgets(budgets) {
  * Simulate a grant-shaped transaction and report what the owner would pay without the
  * relay. Display-only estimate, never a quote and never submitted.
  * @param {{owner:string, agentCount:number, budgets:Array<{token:string, budget|units}>,
- *   durationSeconds?:number, token?:string, target?:string, server?:object,
+ *   durationSeconds?:number, target?:string, server?:object,
  *   build?:Function}} p
  * @returns {Promise<{feeStroops:bigint, feeXlm:string, agentCount:number}|null>}
  */
@@ -60,7 +60,6 @@ export async function estimateGrantFallbackFee({
   agentCount,
   budgets,
   durationSeconds = 86400,
-  token = SOROBAN_TOKEN_ADDRESS,
   target = SOROBAN_ACTIVE_VAULT_ADDRESS,
   server,
   build = buildGrantTx,
