@@ -79,9 +79,8 @@ export function cleanupWranglerArgs({ retentionMs, batchSize, nowMs = Date.now()
 export function runCleanup(env = process.env, nowMs = Date.now(), execute = execFileSync) {
   const config = readCleanupConfig(env)
   const args = cleanupWranglerArgs({ ...config, nowMs })
-  const commandArgs = args.slice(1)
   const executable = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-  return execute(executable, commandArgs, {
+  return execute(executable, args, {
     cwd: FRONTEND_DIR,
     env: {
       ...env,
