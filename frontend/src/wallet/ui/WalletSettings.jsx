@@ -38,10 +38,43 @@ const NAV_TABS = [
   { id: 'settings', label: 'Settings' },
 ]
 
-// README.md's own live-app link (the same origin extension/vite.config.extension.js defaults
-// VF_API_BASE to) -- not a new constant invented for this task, the app's one canonical web
-// origin.
-const VF_WEB_APP_URL = 'https://vibing-farmer.pages.dev/settings?tab=wallet#base-mandate'
+// Web-app link target for the Base-mandate handoff (origin-aware, NOT a baked apex URL):
+// one Pages build serves pages.dev AND the custom domain, but a passkey RP_ID is per-hostname
+// (wallet/config.js defaultRpId, base/config.js defaultZeroDevRpId: canonical apex with one
+// leading www. stripped), so a credential created on <x>.pages.dev is INVALID on
+// vibingfarmer.xyz and vice versa. A baked apex link would therefore strand every pages.dev
+// user on a host where their passkey does not work. So on the web (http/https) the link stays
+// on the SERVING origin (location.origin + path: pages.dev stays pages.dev, xyz stays xyz,
+// www stays www) and the apex is only the FALLBACK for contexts with no http(s) origin at
+// all -- the chrome-extension:// popup (which per this file's header cannot read web storage,
+// hence the absolute URL in the first place) and non-DOM runtimes. The fallback is the apex,
+// not a pages.dev alias, because the apex is the canonical passkey domain: per the WebAuthn
+// parent-suffix rule an apex RP_ID also covers www, so xyz is the one host where the most
+// users' existing credentials already work. Deliberately NOT the extension's VF_API_BASE
+// fallback origin (extension/vite.config.extension.js still defaults that to pages.dev --
+// same backend project, owned by the extension workstream; leave it alone).
+const VF_WEB_APP_PATH = '/settings?tab=wallet#base-mandate'
+const VF_WEB_APP_FALLBACK_URL = `https://vibingfarmer.xyz${VF_WEB_APP_PATH}`
+
+// Exported for WalletSettings.test.jsx. Reads the live location at CALL time (not module
+// scope, unlike wallet/config.js's import-time RP_ID default) so tests can vi.stubGlobal a
+// fake location per case without a module re-import, and so the rendered href always tracks
+// the serving origin. Bare `location` (not window.location) is deliberate: the same object
+// in browsers, but the one vi.stubGlobal('location', ...) can replace without tearing down
+// jsdom's window that React rendering needs -- the exact stub idiom
+// wallet/__tests__/config.rpId.test.js already locks in.
+export function resolveVfWebAppUrl() {
+  const loc = typeof location !== 'undefined' ? location : undefined
+  if (
+    loc &&
+    (loc.protocol === 'http:' || loc.protocol === 'https:') &&
+    typeof loc.origin === 'string' &&
+    /^https?:\/\//.test(loc.origin)
+  ) {
+    return `${loc.origin}${VF_WEB_APP_PATH}`
+  }
+  return VF_WEB_APP_FALLBACK_URL
+}
 
 export function WalletSettings({
   account,
@@ -120,7 +153,12 @@ export function WalletSettings({
             `.pc-button`) with `min-height: var(--pc-touch-target)` gives the link a real 44px tap
             area while keeping `white-space` at its normal default -- the text still wraps freely
             at 320px, so the overflow this link was originally written to dodge does not return. */}
-        <a className="pc-external-link" href={VF_WEB_APP_URL} target="_blank" rel="noreferrer">
+        <a
+          className="pc-external-link"
+          href={resolveVfWebAppUrl()}
+          target="_blank"
+          rel="noreferrer"
+        >
           Manage Base mandate on the web app
         </a>
       </div>

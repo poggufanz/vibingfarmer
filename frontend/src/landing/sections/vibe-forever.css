@@ -1,0 +1,140 @@
+/* Default layout is a readable list (reduced motion, small screens). The pinned scrub layout
+   applies only when the desktop motion branch adds .is-scrubbed. */
+
+.vf-vibe__stage {
+  display: grid;
+  gap: clamp(32px, 4vw, 48px);
+}
+
+.vf-vibe__hud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 40px;
+}
+
+.vf-vibe__hud > div {
+  display: grid;
+  gap: 6px;
+}
+
+.vf-vibe__hud span {
+  color: var(--pc-faint);
+  font-family: var(--pc-font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.vf-vibe__hud strong {
+  color: var(--pc-ink);
+  font-family: var(--pc-font-mono);
+  font-size: clamp(2.4rem, 5vw, 4.5rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.vf-vibe__ticks {
+  display: flex;
+  align-self: center;
+  gap: 6px;
+}
+
+.vf-vibe__ticks li {
+  width: 18px;
+  height: 3px;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-ink);
+}
+
+.vf-vibe__art {
+  width: min(100%, 880px);
+  display: grid;
+  gap: 12px;
+}
+
+.vf-beats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.vf-beat {
+  padding: 24px;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background: var(--pc-workspace);
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.vf-beat__num {
+  color: var(--pc-faint);
+  font-family: var(--pc-font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.vf-landing .vf-beat p {
+  font-size: 0.95rem;
+}
+
+/* Pinned scrub stage (desktop + motion only) */
+.vf-vibe.is-scrubbed .vf-vibe__stage {
+  height: 100vh;
+  padding: calc(var(--pc-topbar-height, 64px) + 24px) 0 32px;
+  grid-template-columns: minmax(140px, 180px) minmax(0, 1fr) minmax(260px, 340px);
+  align-items: center;
+  gap: clamp(24px, 3vw, 48px);
+}
+
+.vf-vibe.is-scrubbed .vf-vibe__hud {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 32px;
+}
+
+.vf-vibe.is-scrubbed .vf-vibe__ticks {
+  align-self: flex-start;
+}
+
+.vf-vibe.is-scrubbed .vf-vibe__art {
+  width: 100%;
+}
+
+.vf-vibe.is-scrubbed .vf-beats {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.vf-vibe.is-scrubbed .vf-beat {
+  grid-area: 1 / 1;
+  padding: 0;
+  border: 0;
+  background: none;
+  gap: 16px;
+}
+
+.vf-landing .vf-vibe.is-scrubbed .vf-beat h3 {
+  font-size: clamp(1.6rem, 2.4vw, 2.2rem);
+  letter-spacing: -0.035em;
+}
+
+@media (max-width: 1100px) {
+  .vf-beats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .vf-beats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vf-vibe__hud strong {
+    font-size: 2.4rem;
+  }
+}

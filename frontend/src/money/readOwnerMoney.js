@@ -537,6 +537,7 @@ export async function readOwnerMoney({
   stellar = {},
   base = {},
   associationDelivery = null,
+  depositLedger = null,
   now = Date.now(),
   signal,
 }) {
@@ -809,10 +810,67 @@ export async function readOwnerMoney({
     ownerBaseCustodyBreakdown,
     completeBaseTotalUnits,
     overallTotalUnits,
+    // P0 G1 honest-PnL cost basis (positionsStore.js deposit ledger). Carried verbatim for
+    // aggregateOwnerPositions below; null (not []) when the caller supplies none, so "no
+    // ledger" stays distinguishable from "an empty ledger" — both fail closed to unavailable.
+    depositLedger: depositLedger ?? null,
     baseValuationKind: BASE_VALUATION_KIND,
     associationCoverage,
     baseSourceCoverage,
     basePositionCoverage,
+  }
+}
+
+// P0 G1 honest-PnL: `earned` from the deposit ledger's cost basis (positionsStore.js) versus
+// the live vault value this aggregate already totals. `currentValue` is Σ known vault-share
+// legs — each leg is 'known' only when live `price_per_share` itself was readable
+// (buildSharesRead), so leg-knownness IS the PPS-live signal, no second read needed.
+// `principal` is Σ ledger `assetsIn` (canonical 7-dp): `earned ≈ currentValue − principal`,
+// labeled unrealized by the renderer.
+//
+// Fail-closed: 'known' ONLY when ALL of these hold —
+// - a non-empty, valid ledger exists (no principal → any figure would be invented),
+// - discovery is 'complete' (a partial enumeration may hide agents holding value),
+// - EVERY enumerated agent's vault leg is individually known (one unread leg voids the total),
+// - the live vault value is positive (fully exited → no unrealized position left).
+// Anything else → the historical `{ state: 'unavailable', amount: null }` shape, exactly.
+// A negative diff (unrealized loss) stays 'known' with `loss: true`; the amount itself is the
+// UNSIGNED magnitude because the whole amount pipeline (normalizeCoreAmount and below) is
+// unsigned-only — the renderer prefixes the minus sign.
+function validDepositLedgerEntries(ledger) {
+  if (!Array.isArray(ledger)) return []
+  return ledger.filter(
+    (e) =>
+      e != null &&
+      typeof e.agent === 'string' &&
+      e.agent.length > 0 &&
+      typeof e.assetsIn === 'string' &&
+      /^[0-9]+$/.test(e.assetsIn) &&
+      BigInt(e.assetsIn) > 0n
+  )
+}
+
+function computeEarned(reads, agents) {
+  const entries = validDepositLedgerEntries(reads?.depositLedger)
+  if (entries.length === 0) return { state: 'unavailable', amount: null }
+  if (reads?.status !== 'complete') return { state: 'unavailable', amount: null }
+  let currentValue = 0n
+  for (const a of agents) {
+    if (!isLegKnown(a?.vaultShares)) return { state: 'unavailable', amount: null }
+    currentValue += BigInt(a.vaultShares.amount.units)
+  }
+  if (currentValue <= 0n) return { state: 'unavailable', amount: null }
+  let principal = 0n
+  for (const e of entries) principal += BigInt(e.assetsIn)
+  const diff = currentValue - principal
+  return {
+    state: 'known',
+    amount: amountOf(diff >= 0n ? diff : -diff),
+    deposits: entries.map((e) => ({
+      agent: e.agent,
+      txHash: typeof e.txHash === 'string' && e.txHash.length > 0 ? e.txHash : null,
+    })),
+    ...(diff < 0n ? { loss: true } : {}),
   }
 }
 
@@ -908,13 +966,10 @@ export function aggregateOwnerPositions(reads) {
       state,
       amount: state === 'unavailable' ? null : amountOf(dedupedUnits),
     },
-    // Base Sepolia pools are honest ERC-4626 1:1 custody proxies, not live yield venues — never
-    // attribute Autofarm/Blend's live APR to confirmed money that is entirely Base custody.
     yield: yieldInfo,
-    // No principal/share-price history is tracked by this read model — an "earned" figure would
-    // have to be invented (the exact anti-pattern positionsStore.js's hardcoded
-    // `unclaimedRewards: '0'` already commits elsewhere in this codebase). Always unavailable.
-    earned: { state: 'unavailable', amount: null },
+    // P0 G1: honest unrealized PnL from the deposit ledger (see computeEarned above) —
+    // 'known' only with a valid ledger AND fully-known live vault value, else unavailable.
+    earned: computeEarned(reads, agents),
     custodyBreakdown: Object.fromEntries(
       Object.entries(custodyBreakdown).map(([k, v]) => [k, String(v)])
     ),

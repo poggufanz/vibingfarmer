@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
-import { buildCleanupSql, cleanupWranglerArgs, readCleanupConfig } from './cleanup-rate-limits.mjs'
+import { buildCleanupSql, cleanupWranglerArgs, readCleanupConfig, runCleanup } from './cleanup-rate-limits.mjs'
 
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
 
@@ -57,12 +57,37 @@ describe('bounded production rate-limit retention', () => {
     })
     expect(config).toMatchObject({ retentionMs: 86_400_000, batchSize: 100 })
     const args = cleanupWranglerArgs({ ...config, nowMs: 100_000_000 })
+    expect(args[0]).toBe('wrangler')
     expect(args).toEqual(
       expect.arrayContaining(['d1', 'execute', 'vf-gate', '--config', 'wrangler.jsonc', '--remote'])
     )
     expect(args).not.toContain('--env')
     expect(args.join(' ')).toContain('LIMIT 100')
     expect(args.join(' ')).toContain('updated_at_ms < 13600000')
+  })
+
+  it('routes the full invocation through npx wrangler', () => {
+    const calls = []
+    runCleanup(
+      {
+        RATE_LIMIT_CLEANUP_ENV: 'production',
+        CLOUDFLARE_API_TOKEN: 'token',
+        CLOUDFLARE_ACCOUNT_ID: 'account',
+        VF_RATE_LIMIT_RETENTION_MS: '86400000',
+        VF_RATE_LIMIT_CLEANUP_BATCH: '100',
+      },
+      100_000_000,
+      (executable, commandArgs, options) => {
+        calls.push({ executable, commandArgs, options })
+        return 'ok'
+      }
+    )
+    expect(calls).toHaveLength(1)
+    expect(calls[0].executable).toMatch(/^npx/)
+    expect(calls[0].commandArgs[0]).toBe('wrangler')
+    expect(calls[0].commandArgs).toEqual(
+      expect.arrayContaining(['d1', 'execute', 'vf-gate', '--remote'])
+    )
   })
 
   it('ships a scheduled package command with production-only secrets', () => {

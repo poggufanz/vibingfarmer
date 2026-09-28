@@ -228,7 +228,7 @@ describe('MyMoneyRoute Task 5 state truth matrix', () => {
     expect(screen.getAllByText('(stale)').length).toBeGreaterThan(0)
     expect(screen.getByText('Source: soroban-rpc')).toBeTruthy()
     expect(screen.getByText(/Last checked: 12 Jul 2026/)).toBeTruthy()
-    expect(screen.getByText(/Confirmed ledger \(Stellar\):/)).toBeTruthy()
+    expect(screen.getByText('Confirmed ledger (Stellar)')).toBeTruthy()
     expect(screen.getByText('12345')).toBeTruthy()
   })
 
@@ -377,6 +377,7 @@ function revokedFundedAgent(address = 'CREVOKED1') {
 
 const SECTION_HEADINGS = [
   'Your money',
+  'Live yield',
   'Your position',
   'Your agent team',
   'Vault protection',
@@ -393,7 +394,7 @@ describe('MyMoneyRoute — heading and exact hierarchy order (Step 2)', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'My money' })).toBeTruthy()
   })
 
-  it('renders exactly the seven approved section headings, in the approved order, no more no less', () => {
+  it('renders exactly the eight approved section headings, in the approved order, no more no less', () => {
     render(<MyMoneyRoute model={baseModel()} agents={[stellarVaultAgent()]} />)
     const h2s = [...document.querySelectorAll('h2')].map((el) => el.textContent)
     expect(h2s).toEqual(SECTION_HEADINGS)

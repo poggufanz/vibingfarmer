@@ -25,20 +25,44 @@ describe('history', () => {
     expect(out[0]).toMatchObject({ asset: 'XLM', amount: '3', direction: 'out' })
   })
 
-  it('degrades to empty list when fetchImpl throws (network error)', async () => {
+  it('resolves null when fetchImpl throws (network error is not an empty history)', async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error('network unreachable')
     })
     const out = await fetchHistory('GXYZ', { fetchImpl })
-    expect(out).toEqual([])
+    expect(out).toBeNull()
   })
 
-  it('degrades to empty list when response is not ok', async () => {
+  it('resolves null when the response is not ok', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: false,
     }))
     const out = await fetchHistory('GXYZ', { fetchImpl })
-    expect(out).toEqual([])
+    expect(out).toBeNull()
+  })
+
+  it('carries the payment transaction hash for explorer links', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        _embedded: {
+          records: [
+            {
+              id: '9',
+              type: 'payment',
+              from: 'GME',
+              to: 'GYOU',
+              asset_type: 'native',
+              amount: '3',
+              created_at: 't',
+              transaction_hash: 'HASH9',
+            },
+          ],
+        },
+      }),
+    }))
+    const out = await fetchHistory('GME', { fetchImpl })
+    expect(out[0]).toMatchObject({ txHash: 'HASH9' })
   })
 
   it('maps create_account record with correct direction', async () => {

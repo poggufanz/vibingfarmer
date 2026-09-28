@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
 
 const partialWithdraw = vi.fn(async () => ({
   redeemed: 20_000_000n,
@@ -9,14 +9,30 @@ const partialWithdraw = vi.fn(async () => ({
   channel: 'relay',
 }))
 const ensureExitSigner = vi.fn(async () => ({ publicKey: 'GPUB', secret: 'S' }))
-vi.mock('../../stellar/partialWithdraw.js', () => ({
-  partialWithdraw: (...a) => partialWithdraw(...a),
-  ensureExitSigner: (...a) => ensureExitSigner(...a),
-  readAgentScope: async () => ({
-    expiry: BigInt(Math.floor(Date.now() / 1000) + 86400),
-    revoked: false,
-  }),
+const partialWithdrawMulti = vi.fn(async ({ legs }) => ({
+  results: legs.map((leg) => ({
+    ...leg,
+    ok: true,
+    redeemed: leg.amountUnits,
+    redeemHash: `HR:${leg.agentAddress}`,
+    transferHash: `HT:${leg.agentAddress}`,
+    channel: 'relay',
+  })),
+  queued: [],
 }))
+vi.mock('../../stellar/partialWithdraw.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    partialWithdraw: (...a) => partialWithdraw(...a),
+    ensureExitSigner: (...a) => ensureExitSigner(...a),
+    partialWithdrawMulti: (...a) => partialWithdrawMulti(...a),
+    readAgentScope: async () => ({
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 86400),
+      revoked: false,
+    }),
+  }
+})
 const readVaultShares = vi.fn(async () => 100_000_000n) // 10 USDC per agent
 vi.mock('../../stellar/agentDeposit.js', () => ({
   readVaultShares: (...a) => readVaultShares(...a),
@@ -181,5 +197,142 @@ describe('WithdrawModal full mode sweep failure', () => {
     fireEvent.click(screen.getByRole('button', { name: /^withdraw$/i }))
     await waitFor(() => expect(saveTransaction).toHaveBeenCalled())
     expect(saveTransaction).toHaveBeenCalledWith(expect.objectContaining({ channel: 'direct' }))
+  })
+})
+
+describe('WithdrawModal proportional mode', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  test('plans X% per agent from loaded maxima and submits one multi call', async () => {
+    render(<WithdrawModal {...props} />)
+    fireEvent.click(screen.getByRole('tab', { name: /proportional/i }))
+    // Each mocked agent holds 10 USDC max; default 25% => 2.50 USDC per agent, ~5.00 total.
+    expect(await screen.findByText(/2 eligible agents/i)).toBeTruthy()
+    expect(screen.getByRole('region', { name: /proportional summary/i })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /withdraw ~5\.00 usdc/i }))
+    await waitFor(() => expect(partialWithdrawMulti).toHaveBeenCalled())
+    const call = partialWithdrawMulti.mock.calls[0][0]
+    expect(call.vault).toBe('CVAULT')
+    expect(call.legs).toEqual([
+      { agentAddress: 'CAGENT1', amountUnits: 25_000_000n },
+      { agentAddress: 'CAGENT2', amountUnits: 25_000_000n },
+    ])
+    // Confirmed legs are recorded individually and reported honestly in aggregate.
+    await waitFor(() => expect(saveTransaction).toHaveBeenCalledTimes(2))
+    expect(props.onSuccess).toHaveBeenCalledWith('CVAULT', '50000000')
+    // Two leg badges read Done (the confirm button also reads Done — scoped out here).
+    const resultsRegion = screen.getByRole('status', { name: /withdraw results/i })
+    expect(within(resultsRegion).getAllByText('Done')).toHaveLength(2)
+  })
+
+  test('relay down across all legs: unknown status is shown, queue offered, nothing recorded', async () => {
+    partialWithdrawMulti.mockResolvedValueOnce({
+      results: ['CAGENT1', 'CAGENT2'].map((agentAddress) => ({
+        agentAddress,
+        amountUnits: 25_000_000n,
+        ok: false,
+        error: Object.assign(
+          new Error('The gasless relay is unreachable, so nothing was submitted.'),
+          { code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown', stage: 'relay-unreachable' }
+        ),
+      })),
+      get queued() {
+        return this.results
+      },
+    })
+    render(<WithdrawModal {...props} />)
+    fireEvent.click(screen.getByRole('tab', { name: /proportional/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /withdraw ~5\.00 usdc/i }))
+    // Unknown (not failed): the status badge, the unknown banner, and an explicit retry.
+    expect(await screen.findAllByText('Unknown')).toHaveLength(2)
+    const banner = await screen.findByText(/Status: unknown/i)
+    expect(banner.textContent).toMatch(/Status: unknown/i)
+    expect(screen.getByRole('button', { name: /retry 2 queued/i })).toBeTruthy()
+    // Never a false success: no history rows, reconcile-from-chain instead of an amount.
+    expect(saveTransaction).not.toHaveBeenCalled()
+    await waitFor(() => expect(props.onSuccess).toHaveBeenCalledWith('CVAULT', '0'))
+  })
+
+  test('a queued retry re-runs only the queued legs and merges the outcome', async () => {
+    const unknownLeg = (agentAddress) => ({
+      agentAddress,
+      amountUnits: 25_000_000n,
+      ok: false,
+      error: Object.assign(new Error('Lost contact with the relay after submission.'), {
+        code: 'VF_SUBMISSION_UNKNOWN',
+        submission: 'unknown',
+      }),
+    })
+    partialWithdrawMulti
+      .mockResolvedValueOnce({
+        results: [
+          {
+            agentAddress: 'CAGENT1',
+            amountUnits: 25_000_000n,
+            ok: true,
+            redeemed: 25_000_000n,
+            redeemHash: 'HR1',
+            transferHash: 'HT1',
+            channel: 'relay',
+          },
+          unknownLeg('CAGENT2'),
+        ],
+        queued: [unknownLeg('CAGENT2')],
+      })
+      .mockResolvedValueOnce({
+        results: [
+          {
+            agentAddress: 'CAGENT2',
+            amountUnits: 25_000_000n,
+            ok: true,
+            redeemed: 25_000_000n,
+            redeemHash: 'HR2',
+            transferHash: 'HT2',
+            channel: 'relay',
+          },
+        ],
+        queued: [],
+      })
+    render(<WithdrawModal {...props} />)
+    fireEvent.click(screen.getByRole('tab', { name: /proportional/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /withdraw ~5\.00 usdc/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /retry 1 queued/i }))
+    await waitFor(() => expect(partialWithdrawMulti).toHaveBeenCalledTimes(2))
+    // Retry carries only the queued leg's original planned amount.
+    expect(partialWithdrawMulti.mock.calls[1][0].legs).toEqual([
+      { agentAddress: 'CAGENT2', amountUnits: 25_000_000n },
+    ])
+    await waitFor(() => expect(screen.queryByRole('button', { name: /retry/i })).toBeNull())
+    const merged = screen.getByRole('status', { name: /withdraw results/i })
+    expect(within(merged).getAllByText('Done')).toHaveLength(2)
+  })
+})
+
+describe('WithdrawModal single partial relay-down', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  test('an unknown submission surfaces status unknown, never a raw throw or false success', async () => {
+    partialWithdraw.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          'The gasless relay is unreachable, so nothing was submitted. ' +
+            'Your funds stay where they are — queued below for retry when the relay is back. ' +
+            'This was recorded as unknown, never as success.'
+        ),
+        { code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown', stage: 'relay-unreachable' }
+      )
+    )
+    render(<WithdrawModal {...props} />)
+    fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+    fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: /withdraw 2/i }))
+    const status = await screen.findByRole('status')
+    expect(status.textContent).toMatch(/Status: unknown/i)
+    expect(status.textContent).toMatch(/nothing was submitted/i)
+    // No success reported, no history row, confirm stays available as the retry.
+    expect(props.onSuccess).not.toHaveBeenCalled()
+    expect(saveTransaction).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /withdraw 2/i }).disabled).toBe(false)
   })
 })

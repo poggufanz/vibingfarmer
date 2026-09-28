@@ -3,25 +3,27 @@
 // judges and users can audit the static Stellar deployments and strategy
 // attestations against Stellar testnet directly.
 //
-// Aesthetic: matches LandingHero's editorial-finance terminal — one dominant
-// surface, single accent, mono for every address/hash/stat. Inherits Pocket
-// Crew's semantic tokens so it re-themes with the rest of the app.
+// Aesthetic (2026-09-28): the same grained instrument material as History, Risks and Settings.
+// A recessed readout strip under the title, then the money path (the one bold element: grant ->
+// agents -> vault -> strategy -> pool, each stop linked to its address row), a contract register,
+// the attestation ledger and the security plate. Mono is only for real addresses and hashes.
 
 import { useEffect, useState } from 'react'
 import { getStrategies } from '../history/history.js'
 import { SOROBAN_DECIMALS } from '../stellar/config.js'
-import { readTotalAssets } from '../stellar/vaultReads.js'
+import { readPendingUpgrade, readTotalAssets } from '../stellar/vaultReads.js'
 import { NETWORK_IDS } from '../design/networks.js'
 import { formatCoreAmount, normalizeCoreAmount } from '../core/coreRouteAdapters.js'
 import { toExplorerPresentation } from '../secondary/secondaryRouteAdapters.js'
 import { StatusNotice, TechnicalDetails } from '../components/pocket/Primitives.jsx'
-import { NetworkRoute } from '../components/pocket/NetworkIdentity.jsx'
+import { NetworkBadge } from '../components/pocket/NetworkIdentity.jsx'
 import {
   EXTERNAL_PROTOCOL_COUNT,
   FIRST_PARTY_DEPLOYMENT_COUNT,
   SOROBAN_SOURCE_CRATES,
   STATIC_ADDRESS_COUNT,
   STELLAR_STATIC_DEPLOYMENTS,
+  VAULT_UPGRADE_SAFETY,
 } from '../stellar/deploymentFacts.js'
 import NavBar from '../components/NavBar.jsx'
 import './ExplorerPage.css'
@@ -40,6 +42,12 @@ async function fetchTotalDeposits() {
   return Number(assets) / DECIMALS_DIV
 }
 
+// P1 G8: vault upgrade-safety facts, sourced from VAULT_UPGRADE_SAFETY (itself derived from
+// deployments/stellar-testnet.json::autofarmVault — admin address verbatim, threshold/timelock
+// restating its adminNote; deploymentFacts.test.js pins both). Signer labels (master,
+// vf-admin-2, vf-admin-3) are that note's own names; only public addresses ever render.
+const VAULT_ADMIN_SHORT = `${VAULT_UPGRADE_SAFETY.admin.slice(0, 8)}…${VAULT_UPGRADE_SAFETY.admin.slice(-4)}`
+
 const SECURITY = [
   'Funding Router grants limit the total budget and expiry',
   'Owners can revoke the router allowance and agent access',
@@ -47,7 +55,59 @@ const SECURITY = [
   'The fee-bump relay accepts allowlisted Soroban operations and rate-limits callers',
   'Soroban auth nonces and signature-expiration ledgers prevent replay',
   'SHA-256 strategy hashes make saved strategies tamper-evident',
+  `Vault admin is a ${VAULT_UPGRADE_SAFETY.threshold} multisig (master ${VAULT_ADMIN_SHORT} plus vf-admin-2 and vf-admin-3); no single key can move or upgrade the vault`,
+  `Vault upgrades wait ${VAULT_UPGRADE_SAFETY.timelockDays} days from schedule to executable, and can be cancelled while pending`,
+  'Redeem is never pause-gated; holders can always exit',
 ]
+
+const DEPLOYMENT_BY_ID = Object.fromEntries(STELLAR_STATIC_DEPLOYMENTS.map((c) => [c.id, c]))
+
+// The route a deposit actually travels. Agent accounts have no static address (one set is
+// created per run), so that stop is drawn dashed and does not link to a register row. Step
+// numbers come from a CSS counter, never DOM text.
+const MONEY_PATH = [
+  { id: 'funding-router-v2', does: 'Holds your one signature: budget and expiry' },
+  { id: 'agents', name: 'Agent accounts', does: 'Created per run; sign only scoped moves' },
+  { id: 'autofarm-vault', does: 'Takes deposits and issues vault shares' },
+  { id: 'blend-strategy', does: 'Moves vault USDC into lending' },
+  { id: 'blend-pool', does: 'Pays the lending interest' },
+]
+const ON_PATH = new Set(MONEY_PATH.map(({ id }) => id))
+const OFF_PATH = STELLAR_STATIC_DEPLOYMENTS.filter(({ id }) => !ON_PATH.has(id))
+
+const CONTRACT_GROUPS = [
+  {
+    ownership: 'first-party',
+    title: 'Vibing Farmer contracts',
+    hint: 'Deployed and administered by this project',
+  },
+  {
+    ownership: 'external',
+    title: 'External protocols',
+    hint: 'Third-party contracts the vault depends on',
+  },
+]
+
+// One lamp vocabulary for every read on the page: harvest lime only for a current chain read.
+const READ_TONE = {
+  loading: 'idle',
+  current: 'live',
+  stale: 'warn',
+  empty: 'idle',
+  partial: 'warn',
+  error: 'danger',
+  unavailable: 'idle',
+}
+const READ_LABEL = {
+  loading: 'Checking',
+  current: 'Current',
+  stale: 'Stale',
+  empty: 'Empty',
+  partial: 'Partial',
+  error: 'Failed',
+  unavailable: 'Unverified',
+}
+const OPEN_SOURCE_STATES = new Set(['error', 'stale', 'partial'])
 
 /* ----------------------------- helpers ----------------------------- */
 
@@ -62,41 +122,78 @@ function timeAgo(ts) {
   return `${d} day${d > 1 ? 's' : ''} ago`
 }
 
+const shortAddress = (a) => `${a.slice(0, 4)}…${a.slice(-4)}`
 const shortHash = (h) => (h ? `${String(h).slice(0, 10)}…` : '0x…')
+
+// P1 G8: live timelock status for the Security plate — the first UI consumer of
+// vaultReads.js::readPendingUpgrade (previously read by tests only). `injected === undefined`
+// means "read the chain" (public page, no wallet); any other value (including null) is the
+// ExplorerPage explorerRead seam for tests. null covers BOTH "nothing scheduled" and "RPC
+// failed" — readPendingUpgrade deliberately conflates them — so the copy says "found", never
+// "scheduled: none", and the lamp stays grey rather than claiming a verified all-clear.
+// ETA is a Unix-seconds ledger timestamp (vault.rs TIMELOCK_DELAY_S).
+function formatUpgradeEta(eta) {
+  if (!Number.isFinite(eta) || eta <= 0) return null
+  return `${new Date(eta * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`
+}
+
+function upgradeCopy(injected, live) {
+  if (injected === undefined && live === undefined) {
+    return { tone: 'idle', text: 'Checking the vault for a pending upgrade…' }
+  }
+  const pending = injected === undefined ? live : injected
+  if (pending == null) return { tone: 'idle', text: 'No pending upgrade found on the vault.' }
+  const hash =
+    typeof pending.wasmHashHex === 'string' && pending.wasmHashHex
+      ? shortHash(`0x${pending.wasmHashHex}`)
+      : 'hash unavailable'
+  const when = formatUpgradeEta(pending.eta)
+  return {
+    tone: 'warn',
+    text: `Upgrade scheduled: wasm ${hash}${
+      when ? `, executable after ${when}` : '; executable date unavailable'
+    }. Holders can redeem out before it executes.`,
+  }
+}
+
+function PendingUpgradeStatus({ injected }) {
+  const [live, setLive] = useState(undefined)
+  useEffect(() => {
+    if (injected !== undefined) return undefined
+    let alive = true
+    Promise.resolve()
+      .then(() => (typeof readPendingUpgrade === 'function' ? readPendingUpgrade() : null))
+      .then((v) => {
+        if (alive) setLive(v ?? null)
+      })
+      .catch(() => {
+        if (alive) setLive(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [injected])
+  const { tone, text } = upgradeCopy(injected, live)
+  return (
+    <div className="ex-upgrade" data-tone={tone}>
+      <p className="ex-upgrade__label">
+        <span className="ex-lamp" aria-hidden="true" />
+        Upgrade queue
+      </p>
+      <p className="ex-upgrade__text">{text}</p>
+    </div>
+  )
+}
 
 /* ----------------------------- pieces ----------------------------- */
 
-function OwnershipBadge({ ownership }) {
-  return <span className={`ex-badge ex-badge--${ownership}`}>{ownership}</span>
-}
-
-function ContractCard({ contract, copied, onCopy }) {
+function ContractRow({ contract, copied, onCopy }) {
   const isCopied = copied === contract.address
   return (
-    <article className="ex-card">
-      <div className="ex-card__head">
-        <h3 className="ex-card__name">
-          {contract.name}
-          {contract.protocol && <span className="ex-card__proto">, {contract.protocol}</span>}
-        </h3>
-        <OwnershipBadge ownership={contract.ownership} />
-      </div>
-
-      <button
-        className="ex-addr"
-        onClick={() => onCopy(contract.address)}
-        title="Click to copy"
-        aria-label={`Copy address ${contract.address}`}
-      >
-        <span className="ex-addr__text">{contract.address}</span>
-        <span className={`ex-addr__copy${isCopied ? ' is-copied' : ''}`}>
-          {isCopied ? 'Copied' : 'Copy'}
-        </span>
-      </button>
-
-      <p className="ex-card__desc">{contract.role}</p>
-
-      <div className="ex-card__links">
+    <li className="ex-row" id={`ex-contract-${contract.id}`}>
+      <div className="ex-row__id">
+        <h4 className="ex-row__name">{contract.name}</h4>
+        <p className="ex-row__role">{contract.role}</p>
         <a
           className="ex-extlink"
           href={`${STELLAR_EXPERT}${contract.address}`}
@@ -106,23 +203,81 @@ function ContractCard({ contract, copied, onCopy }) {
           View on Stellar Expert
         </a>
       </div>
-    </article>
+      <button
+        type="button"
+        className="ex-addr"
+        onClick={() => onCopy(contract.address)}
+        title="Click to copy"
+        aria-label={`Copy address ${contract.address}`}
+      >
+        <span className="ex-addr__text pc-technical">{contract.address}</span>
+        <span className={`ex-addr__copy${isCopied ? ' is-copied' : ''}`}>
+          {isCopied ? 'Copied' : 'Copy'}
+        </span>
+      </button>
+    </li>
   )
 }
 
+function MoneyPath() {
+  return (
+    <ol className="ex-path">
+      {MONEY_PATH.map((stop) => {
+        const contract = DEPLOYMENT_BY_ID[stop.id]
+        const body = (
+          <>
+            <span className="ex-path__name">{contract?.name ?? stop.name}</span>
+            <span className="ex-path__does">{stop.does}</span>
+            <span className={`ex-path__addr${contract ? ' pc-technical' : ''}`}>
+              {contract ? shortAddress(contract.address) : 'No fixed address'}
+            </span>
+          </>
+        )
+        return (
+          <li
+            key={stop.id}
+            className="ex-path__stop"
+            data-kind={contract ? contract.ownership : 'dynamic'}
+          >
+            {contract ? (
+              <a className="ex-path__link" href={`#ex-contract-${contract.id}`}>
+                {body}
+              </a>
+            ) : (
+              <div className="ex-path__link">{body}</div>
+            )}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+// A value in the header strip. Data attributes keep the read state auditable in the DOM.
 function StatBlock({ label, value, loading, factView, factKey }) {
   const state = factView?.fact?.state
   return (
     <div
-      className="ex-stat"
+      className="ex-readout"
       data-fact-key={factKey}
       data-fact-state={state || undefined}
       data-fact-value={value == null ? 'null' : String(value)}
+      data-tone={READ_TONE[state] || 'idle'}
     >
-      <div className="ex-stat__value">
-        {loading ? <span className="ex-skeleton" aria-hidden="true" /> : value}
-      </div>
-      <div className="ex-stat__label">{label}</div>
+      <dt>
+        <span className="ex-lamp" aria-hidden="true" />
+        {label}
+      </dt>
+      <dd>{loading ? <span className="ex-skeleton" aria-hidden="true" /> : value}</dd>
+    </div>
+  )
+}
+
+function Fact({ label, value }) {
+  return (
+    <div className="ex-fact">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
     </div>
   )
 }
@@ -169,6 +324,30 @@ function ExplorerFactStatus({ factView, title, factKey, includeDetails = true })
   )
 }
 
+// Provenance for the strip above it. It opens by itself only when the read needs attention;
+// otherwise the peek pill carries the state, so a closed drawer never hides a failure.
+function ReadSource({ factView }) {
+  const state = factView?.fact?.state
+  if (!state) return null
+  return (
+    <details className="ex-source" open={OPEN_SOURCE_STATES.has(state)}>
+      <summary className="ex-source__summary">
+        <span className="ex-source__title">Where these numbers come from</span>
+        <span className="ex-source__hint">
+          Vault reads from Soroban RPC, addresses from the deployment manifest
+        </span>
+        <span className="ex-peek" data-tone={READ_TONE[state] || 'idle'}>
+          <span className="ex-lamp" aria-hidden="true" />
+          {READ_LABEL[state] || 'Unverified'}
+        </span>
+      </summary>
+      <div className="ex-source__body">
+        <ExplorerFactStatus factView={factView} title="Explorer read" factKey="explorer" />
+      </div>
+    </details>
+  )
+}
+
 // Decoded strategy_hash arrives as bytes (BytesN<32>); normalize to a 0x-hex string.
 function hashHex(v) {
   if (!v) return ''
@@ -211,7 +390,11 @@ function AttestationsTable({ strategies, initialOnchain = [] }) {
   if (!strategies.length && !onchain.length) {
     return (
       <div className="ex-empty">
-        No attestations yet. Start a strategy to see on-chain evidence.
+        <p className="ex-empty__title">No attestations yet</p>
+        <p className="ex-empty__next">
+          Each approved strategy leaves its hash here. Start a strategy in the app to add the first
+          one.
+        </p>
       </div>
     )
   }
@@ -220,9 +403,9 @@ function AttestationsTable({ strategies, initialOnchain = [] }) {
       <table className="ex-table">
         <thead>
           <tr>
-            <th>Time</th>
-            <th>Strategy Hash</th>
-            <th>Protocol</th>
+            <th scope="col">When</th>
+            <th scope="col">Strategy hash</th>
+            <th scope="col">Protocol</th>
           </tr>
         </thead>
         <tbody>
@@ -230,7 +413,12 @@ function AttestationsTable({ strategies, initialOnchain = [] }) {
             <tr key={e.cursor || e.txHash}>
               <td className="ex-table__time">Ledger {e.ledger}</td>
               <td className="ex-table__hash">
-                <a href={`${TX_BASE}${e.txHash}`} target="_blank" rel="noreferrer">
+                <a
+                  className="pc-technical"
+                  href={`${TX_BASE}${e.txHash}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   {shortHash(hashHex(e.data?.strategy_hash))}
                 </a>
               </td>
@@ -240,7 +428,9 @@ function AttestationsTable({ strategies, initialOnchain = [] }) {
           {strategies.map((s) => (
             <tr key={s.id || s.strategyHash || s.timestamp}>
               <td className="ex-table__time">{timeAgo(s.timestamp || s.savedAt || Date.now())}</td>
-              <td className="ex-table__hash">{shortHash(s.strategyHash)}</td>
+              <td className="ex-table__hash">
+                <span className="pc-technical">{shortHash(s.strategyHash)}</span>
+              </td>
               <td className="ex-table__proto">
                 {s.vaultsSelected?.[0]?.protocol || 'Not available'}
               </td>
@@ -353,138 +543,200 @@ export default function ExplorerPage({ explorerRead } = {}) {
       <NavBar />
 
       <main className="ex-main">
-        {/* ---------- header ---------- */}
+        {/* ---------- header: title, readout strip, provenance ---------- */}
         <header className="ex-header">
-          <div className="ex-header__top">
-            <h1 className="ex-title">Explorer</h1>
-            <NetworkRoute
-              compact
-              context={{
-                hostNetworkId: NETWORK_IDS.STELLAR_TESTNET,
-                sourceNetworkId: NETWORK_IDS.STELLAR_TESTNET,
-                destinationNetworkId: NETWORK_IDS.STELLAR_TESTNET,
-                custodyNetworkId: NETWORK_IDS.STELLAR_TESTNET,
-                transitState: 'none',
-              }}
-            />
-          </div>
+          <h1 className="ex-title">Explorer</h1>
           <p className="ex-lede">
             8 static Stellar testnet addresses: 6 Vibing Farmer deployments and 2 external protocol
             contracts. Agent accounts are created dynamically per run.
           </p>
+
+          <div className="ex-console">
+            <dl className="ex-strip">
+              <div className="ex-readout">
+                <dt>Network</dt>
+                <dd>
+                  <NetworkBadge networkId={NETWORK_IDS.STELLAR_TESTNET} />
+                </dd>
+              </div>
+              <StatBlock
+                label="Vault TVL"
+                value={depositsLabel}
+                loading={depositsLoading}
+                factView={totalAssetsStatView}
+                factKey="totalAssets"
+              />
+              <StatBlock
+                label="Strategy attestations"
+                value={displayedAttestationCount}
+                loading={attestationLoading}
+                factView={attestationView || (hasInjectedRead ? presentation : undefined)}
+                factKey="attestations"
+              />
+              <div className="ex-readout">
+                <dt>Upgrade delay</dt>
+                <dd>{VAULT_UPGRADE_SAFETY.timelockDays} days</dd>
+              </div>
+            </dl>
+            <ReadSource factView={presentation} />
+          </div>
         </header>
 
-        <ExplorerFactStatus factView={presentation} title="Explorer read" factKey="explorer" />
-
-        {/* ---------- contracts ---------- */}
-        <section className="ex-section" aria-labelledby="ex-contracts">
-          <h2 id="ex-contracts" className="ex-section__title">
-            Deployed Contracts
-          </h2>
-          <div className="ex-cards">
-            {STELLAR_STATIC_DEPLOYMENTS.map((c) => (
-              <ContractCard key={c.address + c.name} contract={c} copied={copied} onCopy={copy} />
-            ))}
+        {/* ---------- money path ---------- */}
+        <section className="ex-plate" aria-labelledby="ex-path">
+          <div className="ex-plate__head">
+            <h2 id="ex-path" className="ex-plate__title">
+              Where a deposit goes
+            </h2>
+            <p className="ex-plate__lede">
+              Follow one deposit from your signature to the lending pool. Select a stop to see its
+              full address.
+            </p>
+          </div>
+          <MoneyPath />
+          <div className="ex-aside">
+            <p className="ex-aside__label">Alongside the path</p>
+            <ul className="ex-aside__list">
+              {OFF_PATH.map((c) => (
+                <li key={c.id}>
+                  <a className="ex-aside__link" href={`#ex-contract-${c.id}`}>
+                    {c.name}
+                  </a>
+                </li>
+              ))}
+            </ul>
           </div>
         </section>
 
-        {/* ---------- read stats ---------- */}
-        <section className="ex-section" aria-labelledby="ex-stats">
-          <div className="ex-section__head">
-            <h2 id="ex-stats" className="ex-section__title">
-              Deployment Facts
+        {/* ---------- contracts ---------- */}
+        <section className="ex-plate" aria-labelledby="ex-contracts">
+          <div className="ex-plate__head">
+            <h2 id="ex-contracts" className="ex-plate__title">
+              Deployed contracts
             </h2>
-            <span className="ex-section__note">{STATIC_ADDRESS_COUNT} static addresses</span>
+            <span className="ex-count">{STATIC_ADDRESS_COUNT} static addresses</span>
+            <p className="ex-plate__lede">
+              Every fixed address the app calls. Copy one, or open it on Stellar Expert to check its
+              code and history yourself.
+            </p>
+            <dl className="ex-facts">
+              <Fact label="Soroban source crates" value={SOROBAN_SOURCE_CRATES.length} />
+              <Fact label="VF deployments" value={FIRST_PARTY_DEPLOYMENT_COUNT} />
+              <Fact label="Protocol contracts" value={EXTERNAL_PROTOCOL_COUNT} />
+              <Fact label="Dynamic agents" value="N per run" />
+            </dl>
           </div>
-          <div className="ex-stats">
-            <StatBlock label="Soroban source crates" value={SOROBAN_SOURCE_CRATES.length} />
-            <StatBlock label="VF deployments" value={FIRST_PARTY_DEPLOYMENT_COUNT} />
-            <StatBlock label="Protocol contracts" value={EXTERNAL_PROTOCOL_COUNT} />
-            <StatBlock label="Dynamic agents" value="N per run" />
-            <StatBlock
-              label="Vault TVL"
-              value={depositsLabel}
-              loading={depositsLoading}
-              factView={totalAssetsStatView}
-              factKey="totalAssets"
-            />
-            <StatBlock
-              label="Strategy Attestations"
-              value={displayedAttestationCount}
-              loading={attestationLoading}
-              factView={attestationView || (hasInjectedRead ? presentation : undefined)}
-              factKey="attestations"
-            />
-          </div>
+          {CONTRACT_GROUPS.map((group) => (
+            <div key={group.ownership} className="ex-group" data-ownership={group.ownership}>
+              <div className="ex-group__head">
+                <h3 className="ex-group__title">{group.title}</h3>
+                <p className="ex-group__hint">{group.hint}</p>
+              </div>
+              <ul className="ex-rows">
+                {STELLAR_STATIC_DEPLOYMENTS.filter((c) => c.ownership === group.ownership).map(
+                  (c) => (
+                    <ContractRow
+                      key={c.address + c.name}
+                      contract={c}
+                      copied={copied}
+                      onCopy={copy}
+                    />
+                  )
+                )}
+              </ul>
+            </div>
+          ))}
         </section>
 
         {/* ---------- attestations ---------- */}
-        <section className="ex-section" aria-labelledby="ex-attest">
-          <h2 id="ex-attest" className="ex-section__title">
-            Strategy Attestations
-          </h2>
-          <p className="ex-section__sub">
-            Recent strategy hashes (SHA-256, off-chain verifiable; re-derivable from the strategy
-            JSON):
-          </p>
-          {attestationView && attestationState !== 'current' && (
-            <ExplorerFactStatus
-              factView={attestationView}
-              title="Attestation read"
-              factKey="attestations"
-              includeDetails={false}
-            />
-          )}
-          <AttestationsTable strategies={displayedStrategies} initialOnchain={initialOnchain} />
-          <a
-            className="ex-extlink ex-extlink--block"
-            href={`${STELLAR_EXPERT}${ACTIVE_VAULT_ADDRESS}`}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            View the vault on Stellar Expert
-          </a>
+        <section className="ex-plate" aria-labelledby="ex-attest">
+          <div className="ex-plate__head">
+            <h2 id="ex-attest" className="ex-plate__title">
+              Strategy attestations
+            </h2>
+            <p className="ex-plate__lede">
+              Recent strategy hashes (SHA-256, off-chain verifiable; re-derivable from the strategy
+              JSON). Rows with a ledger number come from the chain; the rest were saved on this
+              device.
+            </p>
+          </div>
+          <div className="ex-plate__body">
+            {attestationView && attestationState !== 'current' && (
+              <ExplorerFactStatus
+                factView={attestationView}
+                title="Attestation read"
+                factKey="attestations"
+                includeDetails={false}
+              />
+            )}
+            <AttestationsTable strategies={displayedStrategies} initialOnchain={initialOnchain} />
+          </div>
+          <div className="ex-plate__foot">
+            <a
+              className="ex-extlink"
+              href={`${STELLAR_EXPERT}${ACTIVE_VAULT_ADDRESS}`}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              View the vault on Stellar Expert
+            </a>
+          </div>
         </section>
 
         {/* ---------- security ---------- */}
-        <section className="ex-section" aria-labelledby="ex-security">
-          <h2 id="ex-security" className="ex-section__title">
-            Security
-          </h2>
-          <ul className="ex-seclist">
-            {SECURITY.map((item) => (
-              <li key={item} className="ex-secitem">
-                {item}
-              </li>
-            ))}
-          </ul>
-          <p className="ex-disclaimer">
-            Unaudited (hackathon scope). Production deployment requires third-party audit.
-          </p>
+        <section className="ex-plate" aria-labelledby="ex-security">
+          <div className="ex-plate__head">
+            <h2 id="ex-security" className="ex-plate__title">
+              Security
+            </h2>
+            <p className="ex-plate__lede">
+              What the contracts and the gas relay enforce today, and what is still missing.
+            </p>
+          </div>
+          <div className="ex-plate__body">
+            <ul className="ex-guards">
+              {SECURITY.map((item) => (
+                <li key={item} className="ex-guard">
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <PendingUpgradeStatus
+              injected={hasInjectedRead ? (explorerRead.pendingUpgrade ?? null) : undefined}
+            />
+          </div>
+          <div className="ex-audit">
+            <span className="ex-chip">Not audited</span>
+            <p className="ex-disclaimer">
+              Unaudited (hackathon scope). Production deployment requires third-party audit.
+            </p>
+          </div>
         </section>
 
-        {/* ---------- open source ---------- */}
-        <section className="ex-section ex-section--os" aria-labelledby="ex-os">
-          <h2 id="ex-os" className="ex-section__title">
-            Open Source
+        {/* ---------- source code ---------- */}
+        <section className="ex-plate ex-plate--os" aria-labelledby="ex-os">
+          <h2 id="ex-os" className="ex-plate__title">
+            Source code
           </h2>
-          <div className="ex-oslist">
+          <dl className="ex-oslist">
             <div className="ex-osrow">
-              <span className="ex-osrow__k">GitHub</span>
-              <a
-                className="ex-osrow__v"
-                href="https://github.com/poggufanz/vibingfarmer"
-                target="_blank"
-                rel="noreferrer noopener"
-              >
-                github.com/poggufanz/vibingfarmer
-              </a>
+              <dt>GitHub</dt>
+              <dd>
+                <a
+                  className="ex-osrow__link pc-technical"
+                  href="https://github.com/poggufanz/vibingfarmer"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  github.com/poggufanz/vibingfarmer
+                </a>
+              </dd>
             </div>
             <div className="ex-osrow">
-              <span className="ex-osrow__k">License</span>
-              <span className="ex-osrow__v">MIT</span>
+              <dt>License</dt>
+              <dd>MIT</dd>
             </div>
-          </div>
+          </dl>
         </section>
 
         <footer className="ex-foot">

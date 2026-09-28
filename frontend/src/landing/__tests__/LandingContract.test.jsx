@@ -2,39 +2,40 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter, useLocation } from 'react-router-dom'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ScrollTrigger } from '../motion/gsap.js'
+import { setMotion } from './motionEnv.js'
+
+vi.mock('../../stellar/vaultReads.js', () => ({
+  readSupplyAprBps: async () => null,
+  readTotalAssets: async () => null,
+}))
+
 import LandingHero from '../LandingHero.jsx'
-import NavBar from '../../components/NavBar.jsx'
+import Hero from '../sections/Hero.jsx'
+import SetOnce from '../sections/SetOnce.jsx'
+import RealYield from '../sections/RealYield.jsx'
+import Leash from '../sections/Leash.jsx'
+import Final from '../sections/Final.jsx'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const landingFxSource = fs.readFileSync(path.join(here, '..', 'LandingFx.jsx'), 'utf8')
-const landingCssSource = fs.readFileSync(path.join(here, '..', 'LandingHero.css'), 'utf8')
-const navSource = fs.readFileSync(path.join(here, '..', '..', 'components', 'NavBar.jsx'), 'utf8')
+const src = (file) => fs.readFileSync(path.join(here, '..', file), 'utf8')
 
-let reduceMotion = false
+const SECTIONS = ['Hero', 'SetOnce', 'VibeForever', 'RealYield', 'Leash', 'Risks', 'Final']
+const ANIMATED = [
+  'sections/Hero.jsx',
+  'sections/SetOnce.jsx',
+  'sections/VibeForever.jsx',
+  'sections/RealYield.jsx',
+  'sections/Leash.jsx',
+  'sections/Final.jsx',
+]
 
 beforeEach(() => {
-  reduceMotion = false
+  setMotion({ reduce: false })
   localStorage.clear()
-  window.IntersectionObserver = class IntersectionObserver {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  }
-  window.matchMedia = vi.fn().mockImplementation((query) => ({
-    get matches() {
-      return query.includes('prefers-reduced-motion') ? reduceMotion : false
-    },
-    media: query,
-    onchange: null,
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  }))
 })
 
 afterEach(cleanup)
@@ -47,103 +48,130 @@ function renderLanding(onStart = vi.fn()) {
   )
 }
 
-function LocationProbe() {
-  const location = useLocation()
-  return <output data-testid="location">{location.pathname}</output>
+// Text a screen reader gets: decorative (aria-hidden) layers are excluded.
+function readableText(container) {
+  const main = container.querySelector('main').cloneNode(true)
+  main.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove())
+  return main.textContent
 }
 
-describe('Landing frozen contract', () => {
-  it('keeps the section order, narrative, anchor, public links, and shared launch callback', () => {
-    const onStart = vi.fn()
-    const { container } = renderLanding(onStart)
+describe('Landing contract', () => {
+  it('keeps the narrative order, one h1, the anchor and the public nav links', () => {
+    const { container } = renderLanding()
     const sections = [...container.querySelectorAll('[data-landing-section]')]
-
-    expect(sections.map((section) => section.dataset.landingSection)).toEqual([
-      'Hero',
-      'ProofStrip',
-      'ProblemSection',
-      'FlowSection',
-      'BoundsSection',
-      'IntelligenceSection',
-      'YieldSection',
-      'RelaySection',
-      'ObservabilitySection',
-      'HonestySection',
-      'EcosystemBand',
-      'FinalSection',
-    ])
-    expect(screen.getByText('Yield farming should not feel like clerical work.')).toBeTruthy()
-    expect(screen.getByText('From intent to working capital.')).toBeTruthy()
-    expect(screen.getByText('Real where it counts. Clear where it is not.')).toBeTruthy()
+    expect(sections.map((section) => section.dataset.landingSection)).toEqual(SECTIONS)
+    expect(container.querySelectorAll('h1')).toHaveLength(1)
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Set once. Vibe forever.')
     expect(screen.getByRole('link', { name: 'See how it works' }).getAttribute('href')).toBe(
       '#how-it-works'
     )
+    expect(container.querySelector('#how-it-works').dataset.landingSection).toBe('SetOnce')
     expect(
       [...container.querySelectorAll('nav a')].map((link) => link.getAttribute('href'))
     ).toEqual([
       'https://github.com/poggufanz/vibingfarmer',
       'https://vibingfarmer.gitbook.io/vibingfarmer/',
     ])
-
-    const launchButtons = screen.getAllByRole('button', { name: 'Launch app' })
-    expect(launchButtons.length).toBe(3)
-    fireEvent.click(launchButtons[1])
-    expect(onStart).toHaveBeenCalledTimes(1)
   })
 
-  it('dismisses the intro without retaining a scroll lock or hijacking later scroll', () => {
+  it('routes every launch button to the shared callback', () => {
+    const onStart = vi.fn()
+    renderLanding(onStart)
+    const buttons = screen.getAllByRole('button', { name: 'Launch app' })
+    expect(buttons).toHaveLength(3)
+    buttons.forEach((button) => fireEvent.click(button))
+    expect(onStart).toHaveBeenCalledTimes(3)
+  })
+
+  it('never locks scroll and has no intro gate', () => {
     const { container } = renderLanding()
-    const root = container.querySelector('.vf-landing')
-    const intro = screen.getByLabelText('Welcome')
-
-    expect(root.style.overflow).toBe('hidden')
-    fireEvent.click(intro)
+    expect(container.querySelector('.vf-landing').style.overflow).not.toBe('hidden')
     expect(screen.queryByLabelText('Welcome')).toBeNull()
-    expect(root.style.overflow).not.toBe('hidden')
-
-    fireEvent.scroll(root)
-    expect(root.style.overflow).not.toBe('hidden')
   })
 
-  it('keeps direct NavBar launch persistence and navigation unchanged', () => {
-    const { container } = render(
-      <MemoryRouter initialEntries={['/']}>
-        <NavBar />
-        <LocationProbe />
-      </MemoryRouter>
-    )
-
-    fireEvent.click(container.querySelector('.nv-cta'))
-    expect(localStorage.getItem('yv_skip_landing')).toBe('true')
-    expect(localStorage.getItem('yv_onboarded')).toBe('true')
-    expect(screen.getByTestId('location').textContent).toBe('/strategy')
-  })
-
-  it('exposes the same content and final state with reduced motion', () => {
+  it('gives reduced-motion visitors the same readable text', () => {
     const normal = renderLanding()
-    const normalText = normal.container.querySelector('main').textContent
+    const normalText = readableText(normal.container)
     normal.unmount()
 
-    reduceMotion = true
+    setMotion({ reduce: true })
     const reduced = renderLanding()
-    const root = reduced.container.querySelector('.vf-landing')
-    expect(reduced.container.querySelector('main').textContent).toBe(normalText)
-    expect(screen.queryByLabelText('Welcome')).toBeNull()
-    expect(root.style.overflow).not.toBe('hidden')
-    expect(reduced.container.querySelector('.vf-progressbar')).toBeNull()
+    expect(readableText(reduced.container)).toBe(normalText)
+  })
+
+  it('shows honest fallbacks when on-chain reads fail', async () => {
+    renderLanding()
+    await waitFor(() =>
+      expect(screen.getAllByText('unavailable · on-chain read failed')).toHaveLength(2)
+    )
+    expect(screen.getByTestId('hero-apr').textContent).toBe('--')
+    expect(screen.getByTestId('yield-tvl').textContent).toBe('--')
   })
 })
 
-describe('Landing decorative source contract', () => {
-  it('uses only finite opacity/position/scale effects', () => {
-    expect(landingFxSource).toMatch(/opacity/)
-    expect(landingFxSource).toMatch(/(?:\by\b|\bx\b|scale)/)
-    expect(landingFxSource).toMatch(/duration/)
-    expect(landingFxSource).not.toMatch(/ScrollTrigger|Observer|repeat\s*:\s*-1/)
-    expect(landingFxSource).not.toMatch(/pointer(?:move|over|down|up|enter|leave)|magnetic|cursor/i)
-    expect(landingFxSource).not.toMatch(/gateDone|setGateDone|onDone|progress/i)
-    expect(navSource).not.toMatch(/<style>/)
-    expect(landingCssSource).not.toMatch(/gradient|glow|shimmer/i)
-    expect(landingCssSource).not.toMatch(/vf-progressbar|vf-cursor|vf-magnetic/i)
+describe('Landing motion contract', () => {
+  // Production renders once (no StrictMode double mount), so this is the first-mount case that
+  // shipped broken: triggers bound to the window never fire, because .vf-landing owns scrolling.
+  it('binds every ScrollTrigger to the landing scroller on first mount', () => {
+    const { container } = renderLanding()
+    const landing = container.querySelector('.vf-landing')
+    const triggers = ScrollTrigger.getAll()
+    expect(triggers.length).toBeGreaterThan(5)
+    for (const trigger of triggers) expect(trigger.scroller).toBe(landing)
+    expect(triggers.filter((trigger) => trigger.pin)).toHaveLength(1)
+  })
+
+  it('creates no motion at all under reduced motion', () => {
+    setMotion({ reduce: true })
+    renderLanding()
+    expect(ScrollTrigger.getAll()).toHaveLength(0)
+  })
+
+  // gsap.matchMedia reverts and re-runs a callback whenever any of its queries flips, so a section
+  // that subscribes to the desktop query replays its intro when a window is resized across 860px.
+  // Only the pinned stage has a layout that depends on width.
+  it.each([
+    ['Hero', <Hero key="hero" onStart={() => {}} stats={{ status: 'loading' }} />],
+    ['SetOnce', <SetOnce key="set" />],
+    ['RealYield', <RealYield key="yield" stats={{ status: 'loading' }} />],
+    ['Leash', <Leash key="leash" />],
+    ['Final', <Final key="final" onStart={() => {}} />],
+  ])('%s motion does not re-run on a viewport resize', (_, section) => {
+    render(section)
+    const queries = window.matchMedia.mock.calls.map(([query]) => query)
+    expect(queries.length).toBeGreaterThan(0)
+    expect(queries.filter((query) => /width|height/.test(query))).toEqual([])
+    expect(ScrollTrigger.getAll().length).toBeGreaterThan(0)
+  })
+
+  it('requires GSAP motion wired to the landing scroller', () => {
+    for (const file of ANIMATED) {
+      const source = src(file)
+      expect(source, file).toMatch(/from '\.\.\/motion\/gsap\.js'/)
+      expect(source, file).toMatch(/useGSAP\(/)
+      expect(source, file).toMatch(/gsap\.matchMedia\(\)/)
+      expect(source, file).toMatch(/scrollerOf\(root\)/)
+      // autoAlpha sets visibility:hidden, which drops pending content (CTAs included) out of the
+      // accessibility tree and the tab order until its trigger fires. Reveals use opacity.
+      expect(source, file).not.toMatch(/autoAlpha/)
+      // Pocket Crew web contract (scripts/check-pocket-crew-web.mjs REPEAT_FOREVER): ambient loops
+      // are finite per viewing and restart on re-entry, never endless.
+      expect(source, file).not.toMatch(/\brepeat\s*:\s*-1\b/)
+    }
+    expect(src('sections/VibeForever.jsx')).toMatch(/pin:\s*true/)
+    expect(src('sections/VibeForever.jsx')).toMatch(/scrub:/)
+    expect(src('motion/gsap.js')).toMatch(/registerPlugin\(useGSAP, ScrollTrigger\)/)
+  })
+
+  it('keeps landing CSS inside the Pocket Crew web contract', () => {
+    const css = fs
+      .readdirSync(path.join(here, '..', 'sections'))
+      .filter((name) => name.endsWith('.css'))
+      .map((name) => `sections/${name}`)
+      .concat('LandingHero.css')
+    expect(css.length).toBeGreaterThan(5)
+    for (const file of css) {
+      expect(src(file), file).not.toMatch(/gradient|glow|shimmer|backdrop-filter|infinite/i)
+    }
   })
 })

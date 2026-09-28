@@ -1216,6 +1216,43 @@ pre,
   width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
   margin-inline: auto;
 }
+/* Developers route modifier: the JSX keeps the `.pc-route` base class (so
+   `.main:has(.pc-route)` still unclips `.main` scrolling) and only restyles the
+   column -- full-bleed with its own gutter, visually distinct from the plain
+   `.pc-route` History/crew column but with identical scroll behavior. */
+.pc-route--developers {
+  width: 100%;
+  padding: var(--pc-space-8) var(--pc-route-gutter);
+}
+
+/* Settings modal (option B): SettingsPage's content column caps at 820px
+   (settings.css `--pc-settings-max-width`), so the default 480px dialog panel
+   cannot fit its 6-tab layout + tables. This scoped hook widens only the
+   settings dialog; Foundation's default panel geometry and max-height contract
+   stay untouched (the panel keeps `overflow: auto`, so tall tab content scrolls
+   inside the dialog). On narrow viewports `min(100%, ...)` collapses to full
+   width, so the mobile bottom-sheet rules below still apply unchanged. */
+.pc-dialog.pc-settings-dialog .pc-dialog-panel {
+  width: min(100%, 960px);
+  max-width: 960px;
+  /* Settings sections are grained Grove plates; seat them on the darker Field chassis (the
+     default panel is Grove too, so the plates vanished into it). */
+  border: 1px solid var(--pc-line);
+  background-color: var(--pc-canvas);
+  background-image: url('../components/money/panel-grain.svg');
+  box-shadow: inset 0 1px 0 rgb(242 245 239 / 6%);
+}
+
+/* Settings modal single-scroller: inside a Dialog the flex parent has no bounded
+   height, so the inner `.pc-settings-scroll` (overflow-y: auto in settings.css)
+   never bounds and traps the wheel beside the outer panel scroller. Flatten the
+   inner scroller here so only `.pc-dialog-panel` (Foundation `overflow: auto`)
+   scrolls. Scoped under `.pc-settings-dialog`, so the /settings route keeps its
+   own inner scroll untouched. */
+.pc-dialog.pc-settings-dialog .pc-settings-scroll {
+  overflow: visible;
+  max-height: none;
+}
 
 /* ---------------------------------------------------------------------------------------------
    Foundation Task 6 -- shared application shell: sidebar/topbar brand identity, the skip link,
@@ -1381,7 +1418,6 @@ pre,
   min-height: 100dvh;
   gap: 0;
   overflow: hidden;
-  background: var(--pc-canvas);
 }
 
 [data-pocket-shell].sb-minimized {
@@ -1419,6 +1455,463 @@ pre,
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+}
+/* 2026-09-27 shell field. The owner said the shell background was too plain to deliver as DeFi.
+   The shell is now two materials instead of one flat Field:
+   - Chassis: the sidebar and the frame around the content, a deeper Field with the panel grain.
+   - Bay: the content column, inset from the chassis as one rounded sheet. It carries a soil tile
+     (lit and shaded mottle under grain) and an aerial farmland map anchored top-right, whose
+     furrowed parcels thin out toward the lower left. Both are SVG assets beside this file,
+     generated from a seed, one per theme, because an image cannot read a CSS token.
+   The bay keeps background-color: var(--pc-canvas): the topbar fee notice contrast test measures
+   against it. No bright outline: the bay edge is value contrast plus a faint lit top lip. */
+[data-pocket-shell] {
+  --pc-shell-chassis: color-mix(in srgb, var(--pc-field) 56%, black);
+  --pc-shell-grain: url('../components/money/panel-grain.svg');
+  --pc-shell-soil: url('./field-soil-forest.svg');
+  --pc-shell-plots: url('./field-plots-forest.svg');
+  --pc-shell-lip: rgb(242 245 239 / 7%);
+  --pc-shell-edge: rgb(242 245 239 / 6%);
+  --pc-shell-rim: rgb(0 0 0 / 45%);
+  --pc-shell-inset: var(--pc-space-2);
+  background-color: var(--pc-shell-chassis);
+  background-image: var(--pc-shell-grain), var(--pc-shell-soil);
+}
+
+:root[data-theme='day-field'] [data-pocket-shell] {
+  --pc-shell-chassis: color-mix(in srgb, var(--pc-field) 9%, var(--pc-canvas));
+  --pc-shell-grain: url('../components/money/hero-grain.svg');
+  --pc-shell-soil: url('./field-soil-day.svg');
+  --pc-shell-plots: url('./field-plots-day.svg');
+  --pc-shell-lip: rgb(255 255 255 / 72%);
+  --pc-shell-edge: rgb(23 37 31 / 6%);
+  --pc-shell-rim: rgb(23 37 31 / 12%);
+}
+
+[data-pocket-sidebar] {
+  border-right: 0;
+  background: transparent;
+}
+
+[data-pocket-main] {
+  margin: var(--pc-shell-inset) var(--pc-shell-inset) var(--pc-shell-inset) 0;
+  border-radius: var(--pc-radius-dominant);
+  background-color: var(--pc-canvas);
+  background-image: var(--pc-shell-plots), var(--pc-shell-soil);
+  background-repeat: no-repeat, repeat;
+  background-position:
+    right -96px top -48px,
+    0 0;
+}
+
+/* RouteFocus moves focus to <main> on every route change. It is a landmark, not a control, so it
+   gets no ring: the global :focus-visible ring would outline the whole bay in Harvest. */
+[data-pocket-main],
+[data-pocket-main]:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 1px 0 var(--pc-shell-lip),
+    inset 0 0 0 1px var(--pc-shell-edge),
+    0 0 0 1px var(--pc-shell-rim);
+}
+
+/* An engraved groove under the topbar: a shaded line with a lit line beneath it. */
+[data-pocket-topbar] {
+  border-bottom: 0;
+  box-shadow:
+    0 1px 0 var(--pc-shadow-color),
+    0 2px 0 var(--pc-shell-lip);
+}
+
+/* The current page wears the same instrument material as the topbar controls, so the chassis
+   reads as one rack: grain, a hairline ring and a lit top lip. An inset ring, not a border, so
+   the 44px row keeps its geometry. */
+[data-pocket-sidebar] .sb-item.active {
+  color: var(--pc-ink);
+  background-color: var(--pc-workspace);
+  background-image: var(--pc-shell-grain);
+  box-shadow:
+    inset 0 1px 0 var(--pc-shell-lip),
+    inset 0 0 0 1px var(--pc-line),
+    0 1px 0 var(--pc-shadow-color);
+}
+
+[data-pocket-sidebar] .sb-item:where(:hover, :focus-visible):not(.active) {
+  color: var(--pc-ink);
+  background-color: color-mix(in srgb, var(--pc-ink) 6%, transparent);
+}
+/* 2026-09-27 shell chrome. The topbar controls and the account panel share the instrument
+   material of the My Money panels: grained Grove, a quiet hairline, a lit top lip and a dark
+   bottom lip. They replace dark 2px shadow rings that sank into the Field canvas, so the controls
+   read as holes. Hairlines stay at --pc-line (16% ink): the brighter --border tokens are the
+   "garis terang" the owner rejected. Every rule is scoped to [data-pocket-topbar], and the hover
+   rules carry :not(:disabled) so they outrank style.css's global 0,3,0 currentcolor wash. */
+[data-pocket-topbar] {
+  --pc-topbar-gap: var(--pc-space-3);
+  --pc-chrome-grain: url('../components/money/panel-grain.svg');
+  --pc-chrome-lips: inset 0 1px 0 rgb(242 245 239 / 7%), 0 1px 0 var(--pc-shadow-color);
+  --pc-chrome-hover: color-mix(in srgb, var(--pc-ink) 7%, var(--pc-workspace));
+  --pc-chrome-edge-hover: color-mix(in srgb, var(--pc-ink) 30%, transparent);
+}
+
+[data-pocket-topbar] .topbar-right {
+  gap: var(--pc-topbar-gap);
+}
+
+/* The fee notice is information, the rest of the cluster is controls: one hairline splits them. */
+[data-pocket-topbar] .topbar-meta {
+  padding-inline-end: var(--pc-space-4);
+  border-inline-end: 1px solid var(--pc-line);
+  line-height: var(--pc-touch-target);
+}
+
+[data-pocket-topbar] .icon-btn,
+[data-pocket-topbar] .header-wallet-trigger {
+  border: 1px solid var(--pc-line);
+  background-color: var(--pc-workspace);
+  background-image: var(--pc-chrome-grain);
+  color: var(--pc-muted);
+  box-shadow: var(--pc-chrome-lips);
+  transition:
+    color var(--pc-duration-fast) var(--pc-ease-standard),
+    border-color var(--pc-duration-fast) var(--pc-ease-standard),
+    background-color var(--pc-duration-fast) var(--pc-ease-standard),
+    transform var(--duration-press) var(--ease-out);
+}
+
+[data-pocket-topbar] .icon-btn:where(:hover, :focus-visible):not(:disabled),
+[data-pocket-topbar] .header-wallet-trigger:where(:hover, :focus-visible),
+[data-pocket-topbar] .header-wallet[open] > .header-wallet-trigger {
+  color: var(--pc-ink);
+  border-color: var(--pc-chrome-edge-hover);
+  background-color: var(--pc-chrome-hover);
+}
+
+/* Keep Foundation's keyboard ring: the lip shadow above would otherwise replace its contrast halo. */
+[data-pocket-topbar] :is(.icon-btn, .header-wallet-trigger):focus-visible {
+  box-shadow: 0 0 0 5px var(--focus-ring-contrast);
+}
+
+/* Bell and Start over sit as one utility rack: square inner corners, one shared hairline. The DOM
+   order (fee, bell, plus, account) is pinned by components.sidebar.test.jsx, so the join is CSS. */
+[data-pocket-topbar] .icon-btn:has(+ .icon-btn) {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+[data-pocket-topbar] .icon-btn + .icon-btn {
+  margin-inline-start: calc(-1 * var(--pc-topbar-gap) - 1px);
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
+[data-pocket-topbar] .notif-bell.has-alerts {
+  color: var(--pc-ink);
+}
+
+[data-pocket-topbar] .notif-badge {
+  top: var(--pc-space-1);
+  right: var(--pc-space-1);
+  box-shadow: 0 0 0 2px var(--pc-workspace);
+}
+
+/* Account trigger: the wallet glyph sits in a socket. Dashed while nothing is plugged in, solid
+   once a wallet is connected. The chevron is a pseudo-element, so the pinned textContent holds. */
+[data-pocket-topbar] .header-wallet-trigger {
+  gap: var(--pc-space-2);
+  padding: 0 var(--pc-space-4) 0 var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  color: var(--pc-ink);
+  font-family: var(--pc-font-body);
+  font-size: var(--pc-type-label);
+  font-weight: 500;
+}
+
+[data-pocket-topbar] .header-wallet-trigger.is-disconnected {
+  cursor: pointer;
+  color: var(--pc-ink);
+}
+
+[data-pocket-topbar] .header-wallet-trigger svg {
+  box-sizing: content-box;
+  width: 14px;
+  height: 14px;
+  padding: 6px;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-canvas);
+  color: var(--pc-ink);
+}
+
+[data-pocket-topbar] .header-wallet-trigger.is-disconnected svg {
+  border-style: dashed;
+  border-color: var(--pc-line-strong);
+  color: var(--pc-muted);
+}
+
+[data-pocket-topbar] .header-wallet-trigger::after {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-inline-start: var(--pc-space-1);
+  border-right: 1.5px solid var(--pc-muted);
+  border-bottom: 1.5px solid var(--pc-muted);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--pc-duration-base) var(--pc-ease-out);
+}
+
+[data-pocket-topbar] .header-wallet[open] > .header-wallet-trigger::after {
+  transform: translateY(1px) rotate(225deg);
+}
+
+[data-pocket-topbar] .header-wallet-address {
+  font-variant-numeric: tabular-nums;
+}
+
+[data-pocket-topbar] .header-wallet-trigger:not(.is-disconnected) .header-wallet-address {
+  font-family: var(--pc-font-mono);
+  font-size: var(--pc-type-technical);
+}
+
+[data-pocket-topbar] .header-wallet-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--pc-faint);
+}
+
+[data-pocket-topbar] .header-wallet-dot.is-active {
+  background: var(--accent-text);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 22%, transparent);
+}
+
+/* Account panel: one grained plate holding an identity header, a primary action and two inset
+   wells (network rows, nav rows). Rows inside a well split by hairlines instead of each row
+   wearing its own outlined pill. */
+[data-pocket-topbar] .header-wallet-menu {
+  display: grid;
+  gap: var(--pc-space-3);
+  top: calc(100% + var(--pc-space-2));
+  width: min(320px, calc(100vw - var(--pc-space-6)));
+  padding: var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--pc-workspace);
+  background-image: var(--pc-chrome-grain);
+  box-shadow:
+    inset 0 1px 0 rgb(242 245 239 / 7%),
+    var(--pc-shadow-dominant);
+}
+
+[data-pocket-topbar] .header-wallet-plate {
+  --pc-plate-lamp: var(--pc-faint);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--pc-space-3);
+  row-gap: var(--pc-space-1);
+  padding: var(--pc-space-2) var(--pc-space-2) 0;
+}
+
+[data-pocket-topbar] .header-wallet-plate[data-tone='live'] {
+  --pc-plate-lamp: var(--accent-text);
+}
+
+[data-pocket-topbar] .header-wallet-plate::before {
+  content: '';
+  grid-row: 1;
+  align-self: center;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-plate-lamp);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc-plate-lamp) 20%, transparent);
+}
+
+[data-pocket-topbar] .header-wallet-plate[data-tone='off']::before {
+  border: 1.5px solid var(--pc-faint);
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-pocket-topbar] .header-wallet-plate > * {
+  grid-column: 2;
+}
+
+[data-pocket-topbar] .header-wallet-status {
+  font-size: var(--pc-type-body-small);
+  letter-spacing: -0.01em;
+}
+
+[data-pocket-topbar] .header-wallet-full-address,
+[data-pocket-topbar] .header-wallet-hint {
+  margin: 0;
+  color: var(--pc-muted);
+}
+
+[data-pocket-topbar] .header-wallet-hint {
+  font-size: var(--pc-type-technical);
+  line-height: 1.45;
+}
+
+[data-pocket-topbar] .header-wallet-connect {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pc-space-2);
+  width: 100%;
+  min-height: var(--pc-touch-target);
+  border: 0;
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-ink);
+  color: var(--pc-canvas);
+  font-family: var(--pc-font-body);
+  font-size: var(--pc-type-body-small);
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 0 var(--pc-shadow-color);
+  transition: background-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+[data-pocket-topbar] .header-wallet-connect:hover {
+  background: color-mix(in srgb, var(--pc-ink) 86%, var(--pc-workspace));
+}
+
+[data-pocket-topbar] .header-wallet-connect svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Copy address / Explorer: the two quiet tools under a connected identity. */
+[data-pocket-topbar] .header-wallet-actions:not(.header-wallet-nav) {
+  gap: var(--pc-space-2);
+}
+
+[data-pocket-topbar] .header-wallet-actions:not(.header-wallet-nav) .header-wallet-action {
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-canvas);
+  color: var(--pc-ink);
+}
+
+[data-pocket-topbar] .header-network-group {
+  display: grid;
+  gap: var(--pc-space-2);
+}
+
+[data-pocket-topbar] .header-network-section {
+  padding: 0 var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+[data-pocket-topbar] .header-network-list,
+[data-pocket-topbar] .header-wallet-nav {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-canvas);
+}
+
+[data-pocket-topbar] .header-network-option,
+[data-pocket-topbar] .header-wallet-nav .header-wallet-action {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: var(--pc-space-3);
+  min-height: var(--pc-touch-target);
+  padding: 0 var(--pc-space-3);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-label);
+  box-shadow: none;
+}
+
+[data-pocket-topbar] .header-network-option + .header-network-option,
+[data-pocket-topbar] .header-wallet-nav .header-wallet-action + .header-wallet-action {
+  box-shadow: inset 0 1px 0 var(--pc-line);
+}
+
+[data-pocket-topbar] .header-network-option:where(:hover, :focus-visible):not(:disabled),
+[data-pocket-topbar] .header-wallet-nav .header-wallet-action:where(:hover, :focus-visible) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--pc-ink) 7%, transparent);
+  color: var(--pc-ink);
+}
+
+[data-pocket-topbar] .header-network-option.is-current {
+  border-color: transparent;
+  background: transparent;
+}
+
+[data-pocket-topbar] .header-network-option[disabled],
+[data-pocket-topbar] .header-network-option[disabled]:hover {
+  background: transparent;
+}
+
+[data-pocket-topbar] .header-network-lamp {
+  box-sizing: border-box;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--pc-faint);
+  border-radius: var(--pc-radius-round);
+}
+
+[data-pocket-topbar] .header-network-option.is-current .header-network-lamp {
+  border-color: var(--accent-text);
+  background: var(--accent-text);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 22%, transparent);
+}
+
+[data-pocket-topbar] .header-network-option-check {
+  width: 14px;
+  height: 14px;
+  color: var(--accent-text);
+}
+
+[data-pocket-topbar] .header-network-option-note {
+  font-size: var(--pc-type-technical);
+}
+
+[data-pocket-topbar] .header-network-option[disabled] .header-network-option-note {
+  padding: 2px var(--pc-space-2);
+  border: 1px dashed var(--pc-line-strong);
+  border-radius: var(--pc-radius-round);
+}
+
+[data-pocket-topbar] .header-wallet-action svg {
+  width: 15px;
+  height: 15px;
+  color: var(--pc-muted);
+}
+
+[data-pocket-topbar] .header-wallet-action .header-wallet-action-trail {
+  margin-inline-start: auto;
+  color: var(--pc-faint);
+}
+
+[data-pocket-topbar] svg.header-wallet-action-trail {
+  width: 13px;
+  height: 13px;
+}
+
+[data-pocket-topbar] .header-wallet-action-value {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+}
+
+[data-pocket-topbar] .header-wallet-nav .header-wallet-action--exit,
+[data-pocket-topbar] .header-wallet-nav .header-wallet-action--exit svg {
+  color: var(--pc-danger);
 }
 
 [data-pocket-topbar] {
@@ -1485,9 +1978,12 @@ pre,
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Phones give every pixel to content: the bay goes full bleed, the chassis stays as the bottom bar. */
   [data-pocket-main] {
     grid-column: 1;
     grid-row: 1;
+    margin: 0;
+    border-radius: 0;
   }
 
   [data-pocket-sidebar],
@@ -1496,14 +1992,15 @@ pre,
     grid-row: 2;
     width: 100%;
     min-width: 0;
-    min-height: var(--pc-touch-target);
-    height: auto;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-around;
-    padding: var(--pc-space-2) var(--pc-space-2);
-    gap: var(--pc-space-1);
-    border-top: 1px solid var(--pc-line);
+    /* Bottom-bar: it must never claim viewport height. The old `min-height: 100dvh`
+    floor (inherited from the desktop sidebar column rule) forced the implicit
+    `auto` second grid row to 600px tall, leaving `minmax(0, 1fr)` with 0px --
+    so [data-pocket-main] measured 0px and every wheel gesture went nowhere.
+    `min-height: 0` lets row 1 keep the full viewport for scrolling content. */
+    min-height: 0;
+    /* Bottom-bar: pemisah via shadow token, 2px mengikuti separator desktop. */
+    border-top: 0;
+    box-shadow: 0 -2px 0 var(--pc-shadow-color);
     border-right: 0;
     overflow: visible;
     transition: none;
@@ -1547,8 +2044,14 @@ pre,
   }
 
   [data-pocket-topbar] {
+    --pc-topbar-gap: var(--pc-space-2);
     padding-inline: var(--pc-space-4);
     gap: var(--pc-space-2);
+  }
+
+  /* Icon-only account trigger on phones: the socket is the whole control, no chevron beside it. */
+  [data-pocket-topbar] .header-wallet-trigger::after {
+    display: none;
   }
 
   [data-pocket-topbar] .topbar-meta,
@@ -1566,10 +2069,6 @@ pre,
   [data-pocket-topbar] .topbar-left {
     min-width: 0;
     flex: 1 1 auto;
-  }
-
-  [data-pocket-topbar] .network-badge {
-    white-space: nowrap;
   }
 
   [data-pocket-topbar] .header-wallet-trigger {

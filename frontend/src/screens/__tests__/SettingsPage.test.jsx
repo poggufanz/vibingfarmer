@@ -315,7 +315,7 @@ describe('SettingsPage route tab handoff', () => {
       onRevoke,
     })
 
-    expect(screen.getByText('Active Permissions')).toBeTruthy()
+    expect(screen.getByText('Active permissions')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Revoke all' }))
     expect(onRevoke).toHaveBeenCalledTimes(1)
 

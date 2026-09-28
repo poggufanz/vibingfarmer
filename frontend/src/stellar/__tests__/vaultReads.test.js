@@ -132,6 +132,35 @@ describe('estimateSupplyAprBps', () => {
     }
     expect(estimateSupplyAprBps(reserve, 0n)).toBe(0)
   })
+
+  // P0 #2: pins the Blend lending standard (docs.blend.capital/users/lending-borrowing/
+  // lending.md) — lender rate = borrowing rate × utilization. With ir_mod == 1.0 and no
+  // backstop take, the kinked-curve machinery must collapse to exactly that product:
+  // util 50%, borrow 10% → supply 5% → 500 bps.
+  test('supply APR equals borrow rate times utilization (Blend lender standard)', () => {
+    const reserve = {
+      config: {
+        util: 5_000_000n, // 50% kink target — actual utilization lands exactly on it
+        max_util: 9_500_000n,
+        r_base: 1_000_000n, // flat 10% borrow rate (all slopes zero)
+        r_one: 0n,
+        r_two: 0n,
+        r_three: 0n,
+      },
+      data: {
+        b_supply: 1000n,
+        b_rate: 1_000_000_000_000n,
+        d_supply: 500n,
+        d_rate: 1_000_000_000_000n,
+        ir_mod: 10_000_000n, // 1.0x — no reactivity adjustment
+      },
+    }
+    const borrowRate = 1_000_000n // 1e7 scale
+    const util = 5_000_000n // 1e7 scale
+    const expectedBps = Number(((borrowRate * util) / 10_000_000n) * 10_000n) / 10_000_000
+    expect(expectedBps).toBe(500)
+    expect(estimateSupplyAprBps(reserve, 0n)).toBe(expectedBps)
+  })
 })
 
 describe('readSupplyAprBps', () => {

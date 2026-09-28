@@ -12,9 +12,13 @@ export async function fetchBaseHistory({ account, fetchImpl = fetch, limit = 12 
     const r = await fetchImpl(
       `${BLOCKSCOUT_API}?module=account&action=tokentx&address=${encodeURIComponent(account)}`
     )
-    if (!r.ok) return []
+    // P1 G10, same contract as wallet/history.js: an unreachable/rate-limited indexer is
+    // `null` (could not load), never `[]` (proven empty) — the unified feed marks that leg
+    // unavailable instead of rendering a false "no Base activity".
+    if (!r.ok) return null
     const j = await r.json()
-    const rows = Array.isArray(j?.result) ? j.result : []
+    const rows = Array.isArray(j?.result) ? j.result : null
+    if (!rows) return null
     const acct = account.toLowerCase()
     return rows.slice(0, limit).map((t) => {
       const isIn = (t.to || '').toLowerCase() === acct
@@ -28,6 +32,6 @@ export async function fetchBaseHistory({ account, fetchImpl = fetch, limit = 12 
       }
     })
   } catch {
-    return []
+    return null
   }
 }

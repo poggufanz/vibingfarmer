@@ -2149,16 +2149,17 @@ const compatibilityThemes = Object.freeze(['forest', 'day-field'])
 // /developers currently redirects a disconnected visitor to the same Landing takeover as "/"
 // (app.jsx's `!skipLanding && !realAddress` gate runs before the /developers route ever mounts,
 // and app.jsx is not in this task's file list) -- this asserts what genuinely renders today, not
-// a fixed IA.
+// a fixed IA. 3dcdaf52 renamed the takeover H1 from "One signature. Bounded workers." to
+// "Set once. Vibe forever.", so this shares landing's landmark.
 const ROUTE_LANDMARKS = Object.freeze({
-  landing: { role: 'heading', name: /One signature/i },
+  landing: { role: 'heading', name: /Set once/i },
   home: { role: 'button', name: 'Connect Wallet' },
   // 2026-08-02 polish: /history now has a real h1 (the old mono-eyebrow gap is closed), so the
   // landmark upgrades to the semantic heading the a11y rules always wanted here.
   history: { role: 'heading', name: 'History', exact: true },
   settings: { text: 'Agent Configuration' },
   explorer: { role: 'heading', name: 'Explorer' },
-  developers: { role: 'heading', name: /One signature/i },
+  developers: { role: 'heading', name: /Set once/i },
 })
 
 test.describe('Pocket Crew disconnected compatibility', () => {
@@ -2194,7 +2195,9 @@ test.describe('Pocket Crew disconnected compatibility', () => {
         })
 
         await page.goto(route.path)
-        await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme)
+        if (route.id !== 'landing') {
+          await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme)
+        }
         // Step 0b (My Money Task 14) root-cause fix, found while re-justifying the 5 stale
         // baselines: BrandLockup's compact mark (Sidebar's top-left `.sb-logo-mark`) resolves its
         // <img src> from the DOM theme attribute synchronously at React render time and does not
@@ -2226,6 +2229,15 @@ test.describe('Pocket Crew disconnected compatibility', () => {
           ? page.getByRole(landmark.role, { name: landmark.name })
           : page.getByText(landmark.text)
         await expect(locator.first()).toBeVisible()
+        if (route.id === 'landing') {
+          // The lazy landing mounts after page.goto. A forced DOM theme does not re-render
+          // BrandLockup, so sync its themed asset as a real palette change would.
+          await page.evaluate((t) => {
+            document.documentElement.setAttribute('data-theme', t)
+            document.querySelector('.nv-brand .pc-brand-mark').src =
+              `/brand/vibing-farmer-mark-${t === 'day-field' ? 'day' : 'forest'}.svg`
+          }, theme)
+        }
 
         if (route.id !== 'landing') {
           const lavaButtonCount = await page.evaluate(
@@ -2244,6 +2256,16 @@ test.describe('Pocket Crew disconnected compatibility', () => {
         // arg here is the exact `compat-<id>-<theme>-desktop-1440.png` baseline minus that suffix.
         await expect(page).toHaveScreenshot(`compat-${route.id}-${theme}.png`, {
           fullPage: true,
+          // Landing numbers come from live testnet reads; compare layout, not an RPC response.
+          mask:
+            route.id === 'landing'
+              ? [
+                  page.locator(
+                    '[data-testid="hero-apr"], [data-testid="hero-tvl"], .vf-hero__live .vf-stamp'
+                  ),
+                ]
+              : [],
+          maskColor: theme === 'day-field' ? '#e9eee8' : '#17251f',
         })
       })
     }

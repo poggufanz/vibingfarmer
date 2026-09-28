@@ -364,6 +364,10 @@ async function buildEventSource(source, server, sdkMod) {
 export default async function handler(req, res, { rateLimitImpl = durableRateLimit } = {}) {
   const url = new URL(req.url, 'http://local')
   const action = url.searchParams.get('action') || ''
+  // Cache reads, not writes: mutation responses are never cacheable (skill caching).
+  // GET reads set their own PUBLIC_GET_CACHE below; everything else is no-store so a
+  // shared cache can neither serve nor poison a write acknowledgement.
+  if (req.method !== 'GET') res.setHeader('Cache-Control', 'no-store')
 
   // Cross-chain actions are durably limited before reporter authentication, RPC construction, or
   // any D1 business-store work. Unknown actions remain outside this policy and return 404 below.

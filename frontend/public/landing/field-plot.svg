@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640" fill="none" stroke="#f2f5ef" stroke-opacity="0.07" stroke-width="1">
+  <defs>
+    <pattern id="rows" width="14" height="14" patternUnits="userSpaceOnUse">
+      <path d="M0 7H14" />
+    </pattern>
+    <pattern id="cols" width="14" height="14" patternUnits="userSpaceOnUse">
+      <path d="M7 0V14" />
+    </pattern>
+  </defs>
+  <path d="M0 0.5H640M0 212.5H640M0 430.5H640" />
+  <path d="M0.5 0V640M244.5 0V212M520.5 0V212M388.5 212V430M160.5 430V640M470.5 430V640M244 212L300 430" />
+  <rect x="14" y="14" width="216" height="184" fill="url(#rows)" stroke="none" />
+  <rect x="402" y="226" width="224" height="190" fill="url(#cols)" stroke="none" />
+  <rect x="174" y="444" width="282" height="182" fill="url(#rows)" stroke="none" />
+  <circle cx="610" cy="600" r="3" />
+  <circle cx="90" cy="320" r="3" />
+</svg>

@@ -25,6 +25,13 @@ import {
   secondaryPayload,
 } from '../../../visual/secondaryFixtures.js'
 
+// The landing reads live APR/TVL on mount; keep unit tests off the network.
+vi.mock('../../stellar/vaultReads.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  readSupplyAprBps: async () => null,
+  readTotalAssets: async () => null,
+}))
+
 expect.extend(axeMatchers)
 afterEach(() => {
   cleanup()
@@ -162,16 +169,16 @@ describe('Secondary route accessibility handoff', () => {
     async (classId) => {
       const { container } = mountClass(classId)
       expect(container.querySelectorAll('h1')).toHaveLength(1)
-      if (classId === 'CAP-07') expect(container.textContent).toContain('One signature.')
+      if (classId === 'CAP-07') expect(container.textContent).toContain('Set once.')
       const focusables = container.querySelectorAll('button, a[href], input, textarea, summary')
       for (const element of [...focusables].slice(0, 3)) {
         element.focus()
         expect(document.activeElement).toBe(element)
       }
-      // Landing retains one pre-existing narrative-only aria-label on a paragraph, and History's
-      // legacy visual row uses role="row" without grid children. Their production owners are
-      // outside this fixture handoff; all other Secondary mounts run the full axe check.
-      if (!['CAP-02', 'CAP-07', 'CAP-11'].includes(classId)) {
+      // History's legacy visual row uses role="row" without grid children. Its production owners
+      // are outside this fixture handoff; all other Secondary mounts, landing included, run the
+      // full axe check.
+      if (!['CAP-02', 'CAP-11'].includes(classId)) {
         expect(await axe(container)).toHaveNoViolations()
       }
     }

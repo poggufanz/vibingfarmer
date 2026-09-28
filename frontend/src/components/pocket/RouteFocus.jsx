@@ -20,6 +20,7 @@ const ROUTE_LABELS = [
   { test: (p) => p === '/agent', label: 'The crew' },
   { test: (p) => p === '/history', label: 'History' },
   { test: (p) => p === '/settings', label: 'Settings' },
+  { test: (p) => p === '/risks', label: 'Risks' },
   { test: (p) => p === '/explorer', label: 'Explorer' },
   { test: (p) => p === '/ecosystem', label: 'Ecosystem' },
   { test: (p) => p === '/replay', label: 'Replay' },

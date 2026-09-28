@@ -39,14 +39,24 @@ const TABS = [
   { id: 'data', label: 'Data & Privacy' },
   { id: 'about', label: 'About' },
 ]
-const Section = ({ title, children }) => (
+const Section = ({ title, lede, children }) => (
   <section className="pc-settings-section">
-    <div className="pc-settings-eyebrow">{title}</div>
-    <div className="pc-settings-card">{children}</div>
+    <div className="pc-settings-card">
+      <header className="pc-settings-section-head">
+        <h2 className="pc-settings-eyebrow">{title}</h2>
+        {lede && <p className="pc-settings-lede">{lede}</p>}
+      </header>
+      {children}
+    </div>
   </section>
 )
 const Divider = () => <div className="pc-settings-divider" />
-const SubLabel = ({ children }) => <div className="pc-settings-label">{children}</div>
+const SubLabel = ({ children, hint }) => (
+  <>
+    <h3 className="pc-settings-label">{children}</h3>
+    {hint && <p className="pc-settings-hint">{hint}</p>}
+  </>
+)
 const Row = ({ label, desc, children }) => (
   <div className="pc-settings-row">
     <div className="pc-settings-row-copy">
@@ -56,15 +66,19 @@ const Row = ({ label, desc, children }) => (
     <div className="pc-settings-row-control">{children}</div>
   </div>
 )
-const Toggle = ({ on, onChange, onLabel = 'ON', offLabel = 'OFF' }) => (
-  <div className="pc-settings-toggle">
+// Lime means "on" and nothing else: the on side lights up only when it is the active side.
+// `neutral` is for two-way choices with no on/off meaning (both sides stay unlit).
+const Toggle = ({ on, onChange, onLabel = 'On', offLabel = 'Off', neutral = false }) => (
+  <div className="pc-settings-toggle" data-neutral={neutral ? '' : undefined}>
     {[
-      [true, onLabel],
-      [false, offLabel],
-    ].map(([v, l]) => (
+      [true, onLabel, 'on'],
+      [false, offLabel, 'off'],
+    ].map(([v, l, side]) => (
       <button
-        key={l}
+        key={side}
         type="button"
+        aria-pressed={on === v}
+        data-side={side}
         onClick={() => onChange(v)}
         className={`pc-settings-toggle-option ${on === v ? 'pc-settings-toggle-option--active' : ''}`}
       >
@@ -99,7 +113,12 @@ const Num = ({ value, onChange, suffix, step = '1', width = 64 }) => (
   </span>
 )
 const Check = ({ on, onChange, label }) => (
-  <button type="button" onClick={() => onChange(!on)} className="pc-settings-check">
+  <button
+    type="button"
+    aria-pressed={on}
+    onClick={() => onChange(!on)}
+    className="pc-settings-check"
+  >
     <span className={`pc-settings-checkbox ${on ? 'pc-settings-checkbox--checked' : ''}`} />
     <span>{label}</span>
   </button>
@@ -394,12 +413,55 @@ export default function SettingsPage({
     telemetryHistory.length
   const ghUrl = import.meta.env.VITE_GITHUB_URL || '#'
 
+  // At-a-glance state above the tabs, so the page answers "is my agent working?" before any control.
+  const remaining = permActive ? fmtRemaining(permExpiresAt) : null
+  const stateItems = [
+    {
+      label: 'Agent',
+      value: agentEnabled ? 'Running' : 'Paused',
+      tone: agentEnabled ? 'live' : 'idle',
+    },
+    {
+      label: 'Wallet',
+      value: userAddress ? short(userAddress) : 'Not connected',
+      tone: userAddress ? 'live' : 'idle',
+      mono: !!userAddress,
+    },
+    {
+      label: 'Permission',
+      value: !permActive
+        ? 'None'
+        : remaining === 'Expired'
+          ? 'Expired'
+          : remaining
+            ? `${remaining} left`
+            : 'Active',
+      tone: !permActive ? 'idle' : remaining === 'Expired' ? 'warn' : 'live',
+    },
+    {
+      label: 'Council monitor',
+      value: s.monitorEnabled ? 'Watching' : 'Off',
+      tone: s.monitorEnabled ? 'live' : 'idle',
+    },
+  ]
+
   return (
     <div className="pc-settings enter">
       <header className="pc-settings-header">
         {/* 2026-08-02 polish (audit item #13): this route had no real page heading at all --
             the first text on screen was a tab strip. One h1 gives the page its identity. */}
         <h1 className="pc-settings-title">Settings</h1>
+        <dl className="pc-settings-state">
+          {stateItems.map((item) => (
+            <div key={item.label} className="pc-settings-state-item" data-tone={item.tone}>
+              <dt>
+                <span className="pc-settings-lamp" aria-hidden="true" />
+                {item.label}
+              </dt>
+              <dd className={item.mono ? 'mono' : undefined}>{item.value}</dd>
+            </div>
+          ))}
+        </dl>
         <div className="pc-settings-tabs" role="tablist" aria-label="Settings sections">
           {TABS.map((tb) => (
             <button
@@ -432,20 +494,18 @@ export default function SettingsPage({
         >
           {/* ── SECTION 1: Agent Configuration ── */}
           {tab === 'agent' && (
-            <Section title="Agent Configuration">
+            <Section
+              title="Agent Configuration"
+              lede="What your agent watches, how often it looks, and when it acts for you."
+            >
               <Row
-                label="Autonomous Agent"
-                desc="When enabled, agent monitors positions and alerts you in the background automatically."
+                label="Autonomous agent"
+                desc="When on, the agent monitors your positions in the background and alerts you."
               >
-                <Toggle
-                  on={agentEnabled}
-                  onChange={(v) => setAgentEnabled?.(v)}
-                  onLabel="Enable"
-                  offLabel="Disable"
-                />
+                <Toggle on={agentEnabled} onChange={(v) => setAgentEnabled?.(v)} />
               </Row>
               <Divider />
-              <SubLabel>Harvest Settings</SubLabel>
+              <SubLabel>Harvest</SubLabel>
               <Row label={t(language, 'automationLabel')} desc={t(language, 'automationDesc')}>
                 <Toggle
                   on={!!agentSettings.autoHarvest}
@@ -464,37 +524,39 @@ export default function SettingsPage({
                 />
               </Row>
               <Divider />
-              <SubLabel>Monitoring Intervals</SubLabel>
-              <Row label="Position check">
-                <Num
-                  value={agentSettings.positionInterval ?? 5}
-                  suffix="min"
-                  onChange={(v) => setAgent('positionInterval', Number(v))}
-                />
-              </Row>
-              <Row label="APY check">
-                <Num
-                  value={agentSettings.apyInterval ?? 10}
-                  suffix="min"
-                  onChange={(v) => setAgent('apyInterval', Number(v))}
-                />
-              </Row>
-              <Row label="Risk scan">
-                <Num
-                  value={agentSettings.riskInterval ?? 15}
-                  suffix="min"
-                  onChange={(v) => setAgent('riskInterval', Number(v))}
-                />
-              </Row>
-              <Row label="Reward check">
-                <Num
-                  value={agentSettings.rewardInterval ?? 5}
-                  suffix="min"
-                  onChange={(v) => setAgent('rewardInterval', Number(v))}
-                />
-              </Row>
+              <SubLabel hint="How often the agent reads each signal.">Monitoring cadence</SubLabel>
+              <div className="pc-settings-dials">
+                <Row label="Position check">
+                  <Num
+                    value={agentSettings.positionInterval ?? 5}
+                    suffix="min"
+                    onChange={(v) => setAgent('positionInterval', Number(v))}
+                  />
+                </Row>
+                <Row label="APY check">
+                  <Num
+                    value={agentSettings.apyInterval ?? 10}
+                    suffix="min"
+                    onChange={(v) => setAgent('apyInterval', Number(v))}
+                  />
+                </Row>
+                <Row label="Risk scan">
+                  <Num
+                    value={agentSettings.riskInterval ?? 15}
+                    suffix="min"
+                    onChange={(v) => setAgent('riskInterval', Number(v))}
+                  />
+                </Row>
+                <Row label="Reward check">
+                  <Num
+                    value={agentSettings.rewardInterval ?? 5}
+                    suffix="min"
+                    onChange={(v) => setAgent('rewardInterval', Number(v))}
+                  />
+                </Row>
+              </div>
               <Divider />
-              <SubLabel>Alert Thresholds</SubLabel>
+              <SubLabel>Alert thresholds</SubLabel>
               <Row
                 label="APY drop alert"
                 desc="Alert when vault APY drops more than this % from baseline (your APY at deposit time)."
@@ -528,23 +590,24 @@ export default function SettingsPage({
                 />
               </Row>
               <Divider />
-              <SubLabel>Emergency Withdraw</SubLabel>
-              <div className="pc-settings-stack pc-settings-stack--tight">
+              <SubLabel hint="Used when RiskWatcher detects a high-severity threat.">
+                Emergency withdraw
+              </SubLabel>
+              <div className="pc-settings-choice">
                 <Radio
                   sel={!!agentSettings.emergencyFull}
                   onClick={() => setAgent('emergencyFull', true)}
-                  title="Full position (100%)"
+                  title="Full position"
+                  desc="Withdraw 100% of the position."
                 />
                 <div
-                  className="skill-opt"
+                  className={`skill-opt pc-settings-radio ${!agentSettings.emergencyFull ? 'sel' : ''}`}
                   role="presentation"
                   onClick={() => setAgent('emergencyFull', false)}
                 >
-                  <span className={`skill-radio ${!agentSettings.emergencyFull ? '' : ''}`}>
-                    {!agentSettings.emergencyFull && <span className="pc-settings-radio-dot" />}
-                  </span>
+                  <span className="skill-radio" />
                   <span className="skill-opt-main pc-settings-inline-control">
-                    <span className="skill-opt-title">Partial:</span>
+                    <span className="skill-opt-title">Partial</span>
                     <Num
                       value={agentSettings.emergencyPct ?? 50}
                       suffix="%"
@@ -556,31 +619,25 @@ export default function SettingsPage({
                   </span>
                 </div>
               </div>
-              <div className="pc-settings-note">
-                When RiskWatcher detects a high severity threat, emergency withdraw will use this
-                setting.
-              </div>
             </Section>
           )}
 
           {/* ── SECTION 1B: Council Continuous Monitor ── */}
           {tab === 'agent' && (
-            <Section title="Council Monitor">
+            <Section
+              title="Council Monitor"
+              lede="Keeps re-checking your plan against live market data after you deposit."
+            >
               <Row
                 label="Continuous re-evaluation"
-                desc="When enabled, Council re-evaluates your plan periodically against live market data. Pre-check and APY drift comparison cost $0; fast Risk/Compliance re-eval costs ~$0.0005 per check; full debate costs ~$0.001-0.003."
+                desc="When on, the Council re-evaluates your plan periodically against live market data. Pre-check and APY drift comparison cost $0; fast Risk/Compliance re-eval costs ~$0.0005 per check; full debate costs ~$0.001-0.003."
               >
-                <Toggle
-                  on={s.monitorEnabled}
-                  onChange={(v) => set('monitorEnabled', v)}
-                  onLabel="Enabled"
-                  offLabel="Disabled"
-                />
+                <Toggle on={s.monitorEnabled} onChange={(v) => set('monitorEnabled', v)} />
               </Row>
               {s.monitorEnabled && (
                 <>
                   <Divider />
-                  <SubLabel>Re-evaluation Thresholds</SubLabel>
+                  <SubLabel>Re-evaluation thresholds</SubLabel>
                   <Row
                     label="APY drift"
                     desc="Min % APY drift from last council snapshot to trigger a re-evaluation."
@@ -612,8 +669,8 @@ export default function SettingsPage({
                     <Toggle
                       on={s.autoApprove}
                       onChange={(v) => set('autoApprove', v)}
-                      onLabel="On (auto-update)"
-                      offLabel="Off (notify)"
+                      onLabel="Auto-update"
+                      offLabel="Notify me"
                     />
                   </Row>
                 </>
@@ -623,9 +680,12 @@ export default function SettingsPage({
 
           {/* ── SECTION 2: Vault Strategy ── */}
           {tab === 'strategy' && (
-            <Section title="Vault Strategy">
+            <Section
+              title="Vault Strategy"
+              lede="Which skill and AI model build your plan, and which data they read."
+            >
               <Row
-                label="Active Skill"
+                label="Active skill"
                 desc={
                   customSkill
                     ? 'Custom strategy, user-defined'
@@ -637,7 +697,7 @@ export default function SettingsPage({
                 </button>
               </Row>
               <Divider />
-              <SubLabel>AI Model, Strategy model</SubLabel>
+              <SubLabel>Strategy model</SubLabel>
               <Radio
                 sel={s.modelPreference === 'auto'}
                 onClick={() => set('modelPreference', 'auto')}
@@ -661,7 +721,7 @@ export default function SettingsPage({
                 {userAddress ? ', a funded x402 wallet overrides this.' : ''}
               </div>
               <Row
-                label="Venice API Key"
+                label="Venice API key"
                 desc="Routes strategy to api.venice.ai (Bearer auth). Alternative to the x402 wallet path; not required for it. Stored in this tab's sessionStorage, never sent to our servers."
               >
                 <span />
@@ -674,7 +734,7 @@ export default function SettingsPage({
                 testState={test.venice}
               />
               <Row
-                label="DeepSeek API Key"
+                label="DeepSeek API key"
                 desc="Routes strategy directly to api.deepseek.com (OpenAI-compatible Bearer auth). Bring your own key so the public demo never spends the operator's. Stored in this tab's sessionStorage, never sent to our servers."
               >
                 <span />
@@ -687,7 +747,7 @@ export default function SettingsPage({
                 testState={test.deepseek}
               />
               <Divider />
-              <SubLabel>Vault Data Source</SubLabel>
+              <SubLabel>Vault data source</SubLabel>
               <Radio
                 sel={s.vaultDataSource === 'live'}
                 onClick={() => set('vaultDataSource', 'live')}
@@ -700,14 +760,14 @@ export default function SettingsPage({
                 title="Static (hardcoded catalog, no network)"
               />
               <Divider />
-              <SubLabel>Market Context</SubLabel>
+              <SubLabel>Market context</SubLabel>
               <Row
                 label="Tavily web search"
                 desc="Enriches AI strategy with real-time DeFi market news before vault selection."
               >
                 <Toggle on={!!s.marketContext} onChange={(v) => set('marketContext', v)} />
               </Row>
-              <Row label="Tavily API Key">
+              <Row label="Tavily API key">
                 <span />
               </Row>
               <ApiKeyField
@@ -722,7 +782,10 @@ export default function SettingsPage({
 
           {/* ── SECTION 3: Alerts & Notifications ── */}
           {tab === 'alerts' && (
-            <Section title="Alerts & Notifications">
+            <Section
+              title="Alerts & Notifications"
+              lede="Which risks reach you, how long they stay, and where they are sent."
+            >
               <SubLabel>Show alerts by severity</SubLabel>
               <Check
                 on={s.alertSeverity.high}
@@ -740,12 +803,13 @@ export default function SettingsPage({
                 label="Low severity (minor fluctuations, speculation)"
               />
               <Divider />
-              <SubLabel>Alert Behavior</SubLabel>
+              <SubLabel>Alert behavior</SubLabel>
               <Row
                 label="Risk alert persistence"
                 desc="Per session: dismissed alerts reappear on page reload. Permanent: dismissed alerts never shown again."
               >
                 <Toggle
+                  neutral
                   on={s.alertPersistence === 'session'}
                   onChange={(v) => set('alertPersistence', v ? 'session' : 'permanent')}
                   onLabel="Per session"
@@ -759,10 +823,12 @@ export default function SettingsPage({
                 <Toggle on={!!s.alertBanner} onChange={(v) => set('alertBanner', v)} />
               </Row>
               <Divider />
-              <SubLabel>Push Notifications (Telegram / Discord)</SubLabel>
+              <SubLabel hint="Send alerts to Discord or Telegram as well as this app.">
+                Push notifications
+              </SubLabel>
               <div className="pc-settings-stack">
                 <div>
-                  <div className="pc-settings-field-label">Discord Webhook URL</div>
+                  <div className="pc-settings-field-label">Discord webhook URL</div>
                   <input
                     type="text"
                     value={agentSettings.discordWebhookUrl || ''}
@@ -772,7 +838,7 @@ export default function SettingsPage({
                   />
                 </div>
                 <div>
-                  <div className="pc-settings-field-label">Telegram Bot Token</div>
+                  <div className="pc-settings-field-label">Telegram bot token</div>
                   <input
                     type="password"
                     value={agentSettings.telegramToken || ''}
@@ -782,7 +848,7 @@ export default function SettingsPage({
                   />
                 </div>
                 <div>
-                  <div className="pc-settings-field-label">Telegram Chat ID</div>
+                  <div className="pc-settings-field-label">Telegram chat ID</div>
                   <input
                     type="text"
                     value={agentSettings.telegramChatId || ''}
@@ -793,7 +859,7 @@ export default function SettingsPage({
                 </div>
               </div>
               <Divider />
-              <SubLabel>Display, Timestamp format</SubLabel>
+              <SubLabel>Timestamp format</SubLabel>
               <Radio
                 sel={s.timestampFormat === 'relative'}
                 onClick={() => set('timestampFormat', 'relative')}
@@ -814,14 +880,17 @@ export default function SettingsPage({
                 sel={language === 'id'}
                 onClick={() => onLanguageChange?.('id')}
                 title="Indonesia"
-                desc="changes UI labels only, not AI reasoning output."
+                desc="Changes UI labels only, not AI reasoning output."
               />
             </Section>
           )}
 
           {/* ── SECTION 4: Wallet & Network ── */}
           {tab === 'wallet' && (
-            <Section title="Wallet & Network">
+            <Section
+              title="Wallet & Network"
+              lede="Your connected wallet, the permissions your agents hold, and who pays network fees."
+            >
               <Row label="Network">
                 <NetworkBadge networkId={NETWORK_IDS.STELLAR_TESTNET} />
               </Row>
@@ -829,7 +898,7 @@ export default function SettingsPage({
               {userAddress ? (
                 <>
                   <Row
-                    label="Connected Wallet"
+                    label="Connected wallet"
                     desc={walletPhase === 'upgraded' ? 'Session keys active' : 'Standard wallet'}
                   >
                     <span className="mono pc-settings-wallet-address">{short(userAddress)}</span>
@@ -842,11 +911,11 @@ export default function SettingsPage({
                   </Row>
                   <Divider />
                   <Row
-                    label="Active Permissions"
+                    label="Active permissions"
                     desc={
                       permActive
                         ? `${permissionCount} permission, ${fmtRemaining(permExpiresAt) || '-'} remaining, session scope, batch`
-                        : 'no active permission'
+                        : 'No active permission.'
                     }
                   >
                     {permActive && (
@@ -860,14 +929,20 @@ export default function SettingsPage({
                     )}
                   </Row>
                   <Divider />
-                  <Row label="Network fee" desc="Sponsored by fee-bump relay.">
-                    <span />
+                  <Row
+                    label="Network fee"
+                    desc="Relay covers it when available; otherwise your wallet pays the fee in XLM."
+                  >
+                    <span className="pc-settings-chip" data-tone="live">
+                      <span className="pc-settings-lamp" aria-hidden="true" />
+                      Sponsored
+                    </span>
                   </Row>
                 </>
               ) : (
                 <Row label="Wallet" desc="Not connected.">
                   <button type="button" className="pc-settings-button" onClick={onConnect}>
-                    Connect Wallet
+                    Connect wallet
                   </button>
                 </Row>
               )}
@@ -887,8 +962,11 @@ export default function SettingsPage({
 
           {/* ── SECTION 5: Data & Privacy ── */}
           {tab === 'data' && (
-            <Section title="Data & Privacy">
-              <SubLabel>Local Storage Usage</SubLabel>
+            <Section
+              title="Data & Privacy"
+              lede="Everything below lives in this browser only. Export it or clear it at any time."
+            >
+              <SubLabel>Stored in this browser</SubLabel>
               {[
                 ['Transactions', `${sum.transactions} entries`],
                 ['Strategy sessions', `${sum.strategies} entries`],
@@ -945,7 +1023,7 @@ export default function SettingsPage({
                 }
               />
               <Divider />
-              <SubLabel>Clear Individual Stores</SubLabel>
+              <SubLabel>Clear one store</SubLabel>
               <Row label="Transaction history">
                 <button
                   type="button"
@@ -1004,23 +1082,23 @@ export default function SettingsPage({
                 </button>
               </Row>
               <Divider />
-              <SubLabel>AI Token Telemetry</SubLabel>
+              <SubLabel>AI token usage</SubLabel>
               <div className="pc-settings-telemetry">
                 <div className="pc-settings-data-row">
-                  <span>Total Prompt Tokens</span>
+                  <span>Prompt tokens</span>
                   <span className="mono">{telemetryStats.prompt}</span>
                 </div>
                 <div className="pc-settings-data-row">
-                  <span>Total Completion Tokens</span>
+                  <span>Completion tokens</span>
                   <span className="mono">{telemetryStats.completion}</span>
                 </div>
                 <div className="pc-settings-data-row">
-                  <span>Total Tokens Used</span>
+                  <span>Total tokens</span>
                   <span className="mono pc-settings-emphasis">{telemetryStats.total}</span>
                 </div>
                 {telemetryStats.history.length > 0 && (
                   <div className="pc-settings-telemetry-history">
-                    <div className="pc-settings-small-label">Recent API Requests (last 5):</div>
+                    <div className="pc-settings-small-label">Last 5 AI requests</div>
                     <div className="pc-settings-telemetry-list">
                       {telemetryStats.history
                         .slice(-5)
@@ -1046,7 +1124,7 @@ export default function SettingsPage({
                     refresh()
                   }}
                 >
-                  Clear Telemetry History
+                  Clear token usage
                 </button>
               </div>
               <Divider />
@@ -1055,7 +1133,7 @@ export default function SettingsPage({
                 <LegacyAutoExitCleanup addLog={addLog} />
               </div>
               <Divider />
-              <SubLabel>Privacy Notes</SubLabel>
+              <SubLabel>Where your data goes</SubLabel>
               {[
                 'API keys for Venice, DeepSeek, and Tavily stay in this tab and are cleared when it closes.',
                 'Venice AI does not retain queries.',
@@ -1076,7 +1154,7 @@ export default function SettingsPage({
 
           {/* ── SECTION 6: About ── */}
           {tab === 'about' && (
-            <Section title="About">
+            <Section title="About" lede="Build details and the contracts this app talks to.">
               <div className="pc-settings-about">
                 <BrandLockup variant="full" />
               </div>

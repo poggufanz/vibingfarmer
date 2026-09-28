@@ -77,3 +77,35 @@ export function gaugeRatio(value, max) {
   if (!max || !Number.isFinite(Number(max))) return 0
   return Math.min(1, Math.max(0, Number(value) / Number(max)))
 }
+
+/**
+ * PPS sparkline: min-max normalized polyline over bucket-downsampled values.
+ * Flat mid-line when empty, singleton, or constant — a flat trace is honest (no
+ * movement in range), a missing trace would be; `empty` tells the caller which.
+ * @param {number[]} values oldest → newest, finite numbers
+ * @returns {{path: string, empty: boolean}}
+ */
+export function ppsSparklineGeometry(values, { width, height, maxPoints = 60 } = {}) {
+  const midY = Math.round(height / 2)
+  const pts = (values || []).filter(Number.isFinite)
+  if (pts.length === 0) return { path: `M0,${midY} L${width},${midY}`, empty: true }
+  let sampled = pts
+  if (pts.length > maxPoints) {
+    sampled = []
+    const bucket = pts.length / maxPoints
+    for (let b = 0; b < maxPoints; b++) {
+      const slice = pts.slice(Math.floor(b * bucket), Math.floor((b + 1) * bucket))
+      if (slice.length) sampled.push(slice.reduce((s, v) => s + v, 0) / slice.length)
+    }
+  }
+  const min = Math.min(...sampled)
+  const max = Math.max(...sampled)
+  const span = max - min
+  const x = (i) => (sampled.length === 1 ? width / 2 : (i / (sampled.length - 1)) * width)
+  const y = (v) => (span === 0 ? midY : Math.round(height - 4 - ((v - min) / span) * (height - 8)))
+  let d = `M${round2(x(0))},${y(sampled[0])}`
+  for (let i = 1; i < sampled.length; i++) d += ` L${round2(x(i))},${y(sampled[i])}`
+  return { path: d, empty: false }
+}
+
+const round2 = (n) => Math.round(n * 100) / 100

@@ -225,3 +225,37 @@ describe('ExplorerPage deployment facts', () => {
     expect(screen.queryByText('Every deployed contract')).toBeNull()
   })
 })
+
+describe('ExplorerPage upgrade safety (P1 G8)', () => {
+  it('renders the multisig, timelock, and redeem facts from the deployment', () => {
+    renderExplorer(readResult('current'))
+    expect(screen.getByText(/2-of-3 multisig/)).toBeTruthy()
+    expect(screen.getByText(/GDYIPNML…XZUQ/)).toBeTruthy()
+    expect(screen.getByText(/wait 3 days from schedule to executable/)).toBeTruthy()
+    expect(screen.getByText(/never pause-gated/)).toBeTruthy()
+  })
+
+  it('shows a scheduled upgrade with its wasm hash and executable date', () => {
+    renderExplorer(
+      readResult('current', {
+        pendingUpgrade: { wasmHashHex: 'ab'.repeat(32), eta: 1_900_000_000 },
+      })
+    )
+    expect(screen.getByText(/Upgrade scheduled/)).toBeTruthy()
+    expect(screen.getByText(/0xabababab/)).toBeTruthy()
+    expect(screen.getByText(/executable after/)).toBeTruthy()
+    expect(screen.getByText(/redeem out before it executes/)).toBeTruthy()
+  })
+
+  it('says none found when no upgrade is pending, never a fabricated status', () => {
+    renderExplorer(readResult('current', { pendingUpgrade: null }))
+    expect(screen.getByText(/No pending upgrade found on the vault/)).toBeTruthy()
+    expect(screen.queryByText(/Upgrade scheduled/)).toBeNull()
+  })
+
+  it('keeps the honest unaudited disclaimer with no audit-passed claim', () => {
+    const { container } = renderExplorer(readResult('current'))
+    expect(screen.getByText(/Unaudited \(hackathon scope\)/)).toBeTruthy()
+    expect(container.textContent).not.toMatch(/audited by|audit complete|certified/i)
+  })
+})

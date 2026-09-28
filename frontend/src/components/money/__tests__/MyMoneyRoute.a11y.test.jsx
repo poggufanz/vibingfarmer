@@ -149,9 +149,9 @@ const FIXTURES = [
 // 1. Headings and landmarks
 // ---------------------------------------------------------------------------------------------
 
-describe('MyMoneyRoute a11y -- one h1, seven labelled regions', () => {
+describe('MyMoneyRoute a11y -- one h1, eight labelled regions', () => {
   for (const [label, build] of FIXTURES) {
-    it(`fixture=${label}: exactly one h1 and seven accessible regions`, () => {
+    it(`fixture=${label}: exactly one h1 and eight accessible regions`, () => {
       const { model, agents } = build()
       render(<MyMoneyRoute model={model} agents={agents} />)
       expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
@@ -161,6 +161,7 @@ describe('MyMoneyRoute a11y -- one h1, seven labelled regions', () => {
       const regions = screen.getAllByRole('region')
       expect(regions.map((r) => within(r).getByRole('heading', { level: 2 }).textContent)).toEqual([
         'Your money',
+        'Live yield',
         'Your position',
         'Your agent team',
         'Vault protection',

@@ -34,8 +34,10 @@ export class VfWalletModule {
     this.moduleType = 'HOT_WALLET'
     this.productId = VF_WALLET_ID
     this.productName = 'VF Wallet'
-    // TODO: point at a real listing/repo once VF Wallet is published somewhere.
-    this.productUrl = '/'
+    // Production site URL (no shared site-URL constant exists in the repo yet; the pages.dev
+    // literals elsewhere still point at the old deployment — keep this absolute so the kit's
+    // picker "view product" link works on every domain the dApp is served from).
+    this.productUrl = 'https://vibingfarmer.xyz'
     this.productIcon = '/vibing_farmer.logo.svg'
   }
 

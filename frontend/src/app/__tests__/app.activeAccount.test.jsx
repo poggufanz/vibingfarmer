@@ -175,6 +175,7 @@ vi.mock('../../strategy/reusePreflight.js', async (importOriginal) => ({
 vi.mock('../../stellar/vaultReads.js', () => ({
   readTotalShares: vi.fn(async () => 0n),
   readPricePerShare: vi.fn(async () => null),
+  readSupplyAprBps: vi.fn(async () => null),
   readLifeboatState: vi.fn(async () => null),
 }))
 vi.mock('../../stellar/lifeboat.js', async (importOriginal) => ({
@@ -272,6 +273,7 @@ import {
 } from '../../orchestrator/orchestrator.js'
 import { normalizeStrategyPlan } from '../../strategy/planModel.js'
 import { preflightPermission } from '../../strategy/reusePreflight.js'
+import { saveRisksAck } from '../../strategy/risksAck.js'
 import { discoverOwnerScopes } from '../../stellar/ownerDiscovery.js'
 import { readOwnerMoney } from '../../money/readOwnerMoney.js'
 import { ensureExitSigner, partialWithdraw } from '../../stellar/partialWithdraw.js'
@@ -1452,6 +1454,11 @@ describe('active account application state', () => {
     await act(async () => {
       await mountedHarness.routeProps.protectProps.onRetryPreflight({ durationSeconds: 3600 })
     })
+    // P1 G7: this flow drives a real grant through app.jsx, which now gates the first grant
+    // behind the Risks acknowledgement — pre-ack so the test exercises the grant, not the
+    // gate (the gate itself is proven in RisksGate/risksAck tests). Seeded before the storage
+    // spies below are installed, so the no-write assertions still hold.
+    saveRisksAck({ owner: G.address })
 
     readBaseMandate.mockClear()
     getMandateStatus.mockClear()
@@ -1504,6 +1511,8 @@ describe('active account application state', () => {
       </MemoryRouter>
     )
     await waitFor(() => expect(mountedState().owner).toBe(G.address))
+    // P1 G7: pre-ack the Risks gate so this exercises the grant flow, not the gate.
+    saveRisksAck({ owner: G.address })
 
     const plan = normalizeStrategyPlan({
       runId: 'run-mounted-transition',

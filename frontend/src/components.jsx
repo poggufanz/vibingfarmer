@@ -6,8 +6,8 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { getSidebarPath } from './app/router.js'
 import { t } from './store/settingsStore.js'
 import { BrandLockup } from './components/pocket/BrandLockup.jsx'
-import { NetworkBadge } from './components/pocket/NetworkIdentity.jsx'
-import { NETWORK_IDS } from './design/networks.js'
+import { DOCS_URL } from './components/NavBar.jsx'
+import { getNetworkMeta, NETWORK_IDS } from './design/networks.js'
 
 /* ---------- Icons (Lucide-style, stroke 1.5) ---------- */
 const Icon = ({ name, size = 16, className = '' }) => {
@@ -102,17 +102,21 @@ const Icon = ({ name, size = 16, className = '' }) => {
         <path d="M9 6l6 6-6 6" />
       </>
     ),
-    chevDown: (
-      <>
-        <path d="M6 9l6 6 6-6" />
-      </>
-    ),
     network: (
       <>
         <circle cx="12" cy="5" r="2" />
         <circle cx="5" cy="19" r="2" />
         <circle cx="19" cy="19" r="2" />
         <path d="M12 7v3M12 10l-6 7M12 10l6 7" />
+      </>
+    ),
+    // Language (TopBar account panel): nothing in the set above reads as "locale" -- `network`
+    // is topology and `code` is markup, so the nearest mark would have been a lie. Lucide globe.
+    globe: (
+      <>
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        <path d="M2 12h20" />
       </>
     ),
     code: (
@@ -135,6 +139,11 @@ const Icon = ({ name, size = 16, className = '' }) => {
       <>
         <circle cx="12" cy="12" r="9" />
         <path d="M12 7v5l3 2" />
+      </>
+    ),
+    shield: (
+      <>
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
       </>
     ),
     panelLeftOpen: (
@@ -182,8 +191,6 @@ const Sidebar = ({ extended, onToggle, agentCount = 0 }) => {
     { key: 'strategy', icon: 'grid', path: '/strategy', label: 'Put it to work' },
     { key: 'crew', icon: 'network', path: '/agent', label: 'The crew' },
     { key: 'history', icon: 'layers', path: '/history', label: 'History' },
-    { key: 'developers', icon: 'code', path: '/developers', label: 'Developers' },
-    { key: 'settings', icon: 'settings', path: '/settings', label: 'Settings' },
   ]
 
   return (
@@ -227,6 +234,22 @@ const Sidebar = ({ extended, onToggle, agentCount = 0 }) => {
       })}
       <div className="sb-spacer" style={{ flex: 1 }} />
 
+      {/* P1 G7: the permanent Risks link — a shell footer, always one click away, routing to
+          the /risks page. Kept OUT of the four-item primary nav above (pinned by the Sidebar
+          label test) so the IA order never shifts. */}
+      <div className="sb-footer">
+        <button
+          type="button"
+          className="sb-item"
+          title="Risks"
+          aria-label="Risks"
+          aria-current={activePath === '/risks' ? 'page' : undefined}
+          onClick={() => navigate('/risks')}
+        >
+          <Icon name="shield" />
+          <span className="sb-label">Risks</span>
+        </button>
+      </div>
       <button
         className="sb-item sb-toggle"
         onClick={onToggle}
@@ -242,22 +265,148 @@ const Sidebar = ({ extended, onToggle, agentCount = 0 }) => {
 }
 
 /* ---------- Top bar — minimal, no chip soup ---------- */
+const NOOP = () => {}
+
+// Cross-workstream contract with src/design/networks.js: the shell names the mainnet row even
+// though nothing is deployed there yet, so the id falls back to the literal if this file ever
+// ships ahead of the registry entry -- `undefined` must never reach a `data-network` attribute.
+const MAINNET_ID = NETWORK_IDS.STELLAR_MAINNET || 'stellar-mainnet'
+// The registry owns every network name. `getNetworkMeta` answers an unregistered id with its
+// id-less "Unknown network" sentinel, which would be a false name for a row we deliberately show,
+// so the literal is the last resort.
+const MAINNET_META = getNetworkMeta(MAINNET_ID)
+const MAINNET_LABEL = MAINNET_META.id ? MAINNET_META.label : 'Stellar mainnet'
+// The account control now carries the network identity itself -- the mark in its closed state and
+// the picker inside its panel -- so this file resolves the testnet meta, not just its label.
+const TESTNET_META = getNetworkMeta(NETWORK_IDS.STELLAR_TESTNET)
+const TESTNET_LABEL = TESTNET_META.label
+
 const TopBar = ({
   onReset,
   walletPhase = 'none',
   walletAddress = '',
   walletLabel = '',
   notifications = null,
+  onConnect = NOOP,
+  onDisconnect = NOOP,
+  language = 'en',
+  onLanguageChange = NOOP,
+  onOpenSettings,
 }) => {
+  const navigate = useNavigate()
   const [copied, setCopied] = React.useState(false)
+  const accountRef = React.useRef(null)
   const walletConnected = walletPhase !== 'none' && Boolean(walletAddress)
   const sessionActive = walletPhase === 'upgraded'
 
+  // One header popover remains: the account panel, a native `<details>` disclosure (this shell has
+  // no role="menu" anywhere). The network picker used to be a second, sibling disclosure with its
+  // own trigger and its own close path; it now lives INSIDE this panel, so there is no sibling to
+  // close and no cross-panel open/close dance left -- Escape, an outside pointerdown, and the
+  // disclosure's own toggle cover every way it can be dismissed. Closing never moves focus, which
+  // is why the outside-pointerdown rule can dismiss a panel without stealing focus from whatever
+  // the user just pressed.
+  const closeAccountMenu = () => accountRef.current?.removeAttribute('open')
+
+  // Escape closes the panel and returns focus to its trigger. stopPropagation keeps the key from
+  // also reaching the notification bell's dialog.
+  const handlePanelKeyDown = (event) => {
+    if (event.key !== 'Escape') return
+    const panel = accountRef.current
+    if (!panel || !panel.hasAttribute('open')) return
+    event.stopPropagation()
+    panel.removeAttribute('open')
+    panel.querySelector('summary')?.focus()
+  }
+
+  React.useEffect(() => {
+    const handlePointerDown = (event) => {
+      const panel = accountRef.current
+      if (panel && panel.hasAttribute('open') && !panel.contains(event.target)) {
+        panel.removeAttribute('open')
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [])
+
+  // The account panel's nav list: Settings / Developers / Language / Documentation are identical
+  // rows in the connected and the disconnected panel; only Log out depends on having a wallet --
+  // one definition, so the two states cannot drift apart. Each row's trailing mark says where it
+  // goes: a chevron for an in-app page, the current value for a toggle, an arrow for a new tab.
+  const languageName = language === 'en' ? 'English' : 'Indonesia'
+  const networkHeadingId = React.useId()
+  const accountActions = (
+    <div className="header-wallet-actions header-wallet-nav">
+      <button
+        type="button"
+        className="header-wallet-action"
+        onClick={() => {
+          closeAccountMenu()
+          if (onOpenSettings) onOpenSettings()
+          else navigate('/settings')
+        }}
+      >
+        <Icon name="settings" />
+        Settings
+        <Icon name="chev" className="header-wallet-action-trail" />
+      </button>
+      <button
+        type="button"
+        className="header-wallet-action"
+        onClick={() => {
+          closeAccountMenu()
+          navigate('/developers')
+        }}
+      >
+        <Icon name="code" />
+        Developers
+        <Icon name="chev" className="header-wallet-action-trail" />
+      </button>
+      <button
+        type="button"
+        className="header-wallet-action"
+        aria-label={`Language: ${languageName}`}
+        title={language === 'en' ? 'Switch to Indonesia' : 'Switch to English'}
+        onClick={() => {
+          closeAccountMenu()
+          onLanguageChange(language === 'en' ? 'id' : 'en')
+        }}
+      >
+        <Icon name="globe" />
+        Language
+        <span className="header-wallet-action-trail header-wallet-action-value">
+          {languageName}
+        </span>
+      </button>
+      <a className="header-wallet-action" href={DOCS_URL} target="_blank" rel="noreferrer noopener">
+        <Icon name="layers" />
+        Documentation
+        <Icon name="external" className="header-wallet-action-trail" />
+      </a>
+      {walletConnected && (
+        <button
+          type="button"
+          className="header-wallet-action header-wallet-action--exit"
+          onClick={() => {
+            closeAccountMenu()
+            onDisconnect()
+          }}
+        >
+          <Icon name="logout" />
+          Log out
+        </button>
+      )}
+    </div>
+  )
+
   return (
     <header className="topbar" data-pocket-topbar>
+      {/* The brand stands alone on the left: the network identity used to sit beside the wordmark,
+          where it read as part of the product name. It belongs to the account control on the right
+          now (see `.header-wallet`), so nothing network-shaped sits beside the wordmark. */}
       <div className="topbar-left">
         <BrandLockup variant="full" />
-        <NetworkBadge networkId={NETWORK_IDS.STELLAR_TESTNET} />
       </div>
       <div className="topbar-right">
         <span className="topbar-meta">Network fee sponsored by fee-bump relay.</span>
@@ -268,11 +417,15 @@ const TopBar = ({
         <button className="icon-btn" title="Start over" aria-label="Start over" onClick={onReset}>
           <Icon name="plus" />
         </button>
-        {walletConnected ? (
-          <details className="header-wallet">
+        {/* Order is deliberate: fee notice, bell, plus, account -- the one controlling popover sits
+            at the far end, next to nothing that can reset the flow. The network picker used to be a
+            second pill beside this one; it now lives inside the account panel, so the header holds
+            exactly one identity control. */}
+        <details className="header-wallet" ref={accountRef} onKeyDown={handlePanelKeyDown}>
+          {walletConnected ? (
             <summary
               className="header-wallet-trigger"
-              aria-label={`Wallet ${walletLabel}`}
+              aria-label={`Wallet ${walletLabel} on ${TESTNET_LABEL}`}
               title={sessionActive ? 'Session keys active' : 'Standard wallet'}
             >
               <Icon name="wallet" />
@@ -281,12 +434,64 @@ const TopBar = ({
                 aria-hidden="true"
               />
               <span className="header-wallet-address">{walletLabel}</span>
+              {/* Network identity, carried by the account control itself now that the standalone
+                  network pill is gone. Decorative: the aria-label above names the network. */}
+              <img
+                className="header-wallet-netmark"
+                src={TESTNET_META.markPath}
+                alt=""
+                aria-hidden="true"
+              />
             </summary>
-            <div className="header-wallet-menu">
+          ) : (
+            /* Same disclosure as the connected state -- "Not connected" used to be a dead span
+               with no way to act on it, which made the header the one place a visitor could not
+               start the flow. */
+            <summary
+              className="header-wallet-trigger is-disconnected"
+              aria-label={`Wallet not connected on ${TESTNET_LABEL}`}
+              title="Connect wallet"
+            >
+              <Icon name="wallet" />
+              <span className="header-wallet-address">Not connected</span>
+            </summary>
+          )}
+          <div className="header-wallet-menu">
+            {/* Identity plate: the lamp restates the status line beside it (aria-hidden there), so
+                nothing is carried by color alone. */}
+            <div
+              className="header-wallet-plate"
+              data-tone={walletConnected ? (sessionActive ? 'live' : 'idle') : 'off'}
+            >
               <p className="header-wallet-status">
-                {sessionActive ? 'Session keys active' : 'Standard wallet'}
+                {walletConnected
+                  ? sessionActive
+                    ? 'Session keys active'
+                    : 'Standard wallet'
+                  : 'Wallet not connected'}
               </p>
-              <p className="header-wallet-full-address">{walletAddress}</p>
+              {walletConnected ? (
+                <p className="header-wallet-full-address">{walletAddress}</p>
+              ) : (
+                <p className="header-wallet-hint">
+                  Connect a Stellar wallet to see what you hold and put it to work.
+                </p>
+              )}
+            </div>
+            {walletConnected ? null : (
+              <button
+                type="button"
+                className="header-wallet-connect"
+                onClick={() => {
+                  closeAccountMenu()
+                  onConnect()
+                }}
+              >
+                <Icon name="wallet" />
+                Connect wallet
+              </button>
+            )}
+            {walletConnected ? (
               <div className="header-wallet-actions">
                 <button
                   type="button"
@@ -314,14 +519,43 @@ const TopBar = ({
                   Explorer
                 </a>
               </div>
+            ) : null}
+            {/* The network picker lives here now: the header's single identity control owns both
+                halves of "which account on which network". */}
+            <div className="header-network-group" role="group" aria-labelledby={networkHeadingId}>
+              <p className="header-network-section" id={networkHeadingId}>
+                Network
+              </p>
+              <div className="header-network-list">
+                <button
+                  type="button"
+                  className="header-network-option is-current"
+                  data-network={NETWORK_IDS.STELLAR_TESTNET}
+                  onClick={closeAccountMenu}
+                >
+                  <span className="header-network-lamp" aria-hidden="true" />
+                  <span className="header-network-option-label">{TESTNET_LABEL}</span>{' '}
+                  <Icon name="check" className="header-network-option-check" />
+                  <span className="header-network-option-note">Current</span>
+                </button>
+                {/* The only other network this product could run on, listed so the choice is not
+                    a mystery -- and disabled, because there is no mainnet deployment to point at. */}
+                <button
+                  type="button"
+                  className="header-network-option"
+                  data-network={MAINNET_ID}
+                  disabled
+                  title={`${MAINNET_LABEL} is not deployed yet`}
+                >
+                  <span className="header-network-lamp" aria-hidden="true" />
+                  <span className="header-network-option-label">{MAINNET_LABEL}</span>{' '}
+                  <span className="header-network-option-note">Not deployed yet</span>
+                </button>
+              </div>
             </div>
-          </details>
-        ) : (
-          <span className="header-wallet-trigger is-disconnected" role="status">
-            <Icon name="wallet" />
-            <span className="header-wallet-address">Not connected</span>
-          </span>
-        )}
+            {accountActions}
+          </div>
+        </details>
       </div>
     </header>
   )

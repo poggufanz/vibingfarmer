@@ -6,7 +6,13 @@ import { saveTransaction } from '../history/history.js'
 import { loadSettings, t } from '../store/settingsStore.js'
 import { toDisplay, toBaseUnits } from '../stellar/format.js'
 import { SOROBAN_EXIT_ROUTER_ADDRESS } from '../stellar/config.js'
-import { partialWithdraw, ensureExitSigner, readAgentScope } from '../stellar/partialWithdraw.js'
+import {
+  partialWithdraw,
+  ensureExitSigner,
+  readAgentScope,
+  planProportionalWithdraw,
+  partialWithdrawMulti,
+} from '../stellar/partialWithdraw.js'
 import { readVaultShares } from '../stellar/agentDeposit.js'
 import { readPricePerShare } from '../stellar/vaultReads.js'
 import { clearManualExitKey } from '../wallet/exitKey.js'
@@ -60,6 +66,12 @@ const PCT_CHIPS = [
   { id: 'max', label: 'Max', frac: 1 },
 ]
 
+const PROP_CHIPS = [
+  { id: 'p10', label: '10%', pct: '10' },
+  { id: 'p25', label: '25%', pct: '25' },
+  { id: 'p50', label: '50%', pct: '50' },
+]
+
 export default function WithdrawModal({
   vault,
   balance,
@@ -85,10 +97,14 @@ export default function WithdrawModal({
   const [error, setError] = useState(null)
   const [progress, setProgress] = useState(null)
   const [depositedAgoSec, setDepositedAgoSec] = useState(0)
-  const [mode, setMode] = useState('full') // 'full' | 'partial'
+  const [mode, setMode] = useState('full') // 'full' | 'partial' | 'proportional'
   const [agentInfo, setAgentInfo] = useState(null) // [{address, maxUnits, blocked}] | null=loading
   const [chosen, setChosen] = useState(null)
   const [amount, setAmount] = useState('')
+  const [propPct, setPropPct] = useState('25')
+  const [multiResults, setMultiResults] = useState(null) // {results:[{agentAddress,amountUnits,ok,...}], queued:[...]} | null
+  const [multiStep, setMultiStep] = useState(null)
+  const [unknownNote, setUnknownNote] = useState(null)
   const confirmRef = useRef(null)
   const actionControllerRef = useRef(null)
   if (!actionControllerRef.current) actionControllerRef.current = new AbortController()
@@ -118,12 +134,11 @@ export default function WithdrawModal({
       prev?.focus?.()
     }
   }, [])
-
-  // Partial mode: load each agent's withdrawable max (shares * price-per-share) and whether its
-  // scope has expired/been revoked (chain still enforces either way — this read only drives the UI
-  // gate, so a failed scope read leaves the row selectable rather than falsely blocking it).
+  // Partial + proportional modes both need each agent's withdrawable max (shares *
+  // price-per-share) and scope gate. A failed scope read leaves the row selectable — the
+  // chain still enforces expiry/revocation either way.
   useEffect(() => {
-    if (mode !== 'partial' || agentInfo) return
+    if ((mode !== 'partial' && mode !== 'proportional') || agentInfo) return
     let dead = false
     ;(async () => {
       const pps = (await readPricePerShare(vault.address)) ?? PPS_SCALE
@@ -239,6 +254,7 @@ export default function WithdrawModal({
     }
     setStatus('loading')
     setError(null)
+    setUnknownNote(null)
     try {
       await ensureExitSigner({
         owner: userAddress,
@@ -281,10 +297,154 @@ export default function WithdrawModal({
       if (/signature|auth/i.test(err?.message || ''))
         clearManualExitKey({ owner: userAddress, agent: chosen })
       commitIfCurrent(() => {
-        setError(friendlyError(err))
+        // Relay-down / lost-submission outcomes carry submission:'unknown': surface that status
+        // explicitly with the error's own honest message (it says what was and was not
+        // submitted) instead of collapsing it into the generic failure line — and never mark
+        // anything received. The confirm button stays enabled: this exact call is the retry.
+        if (err?.submission === 'unknown') setUnknownNote(err.message)
+        else setError(friendlyError(err))
         setStatus('idle')
       })
     }
+  }
+  // Proportional multi-agent mode (P1 G7): withdraw X% of EVERY eligible agent's max —
+  // client-side composition of the single-agent partialWithdraw per leg (no new contract
+  // call). The preview plans from the loaded maxima; each leg still re-reads chain state at
+  // submit time, so a retry after an unknown outcome can only move what is actually there
+  // (never a double payout: redeem burns shares, so a repeat collapses to an honest error).
+  const eligiblePropRows = (agentInfo || []).filter((r) => !r.blocked && r.maxUnits > 0n)
+  const pctNum = Number(propPct)
+  const pctValid = propPct.trim() !== '' && Number.isFinite(pctNum) && pctNum > 0 && pctNum <= 100
+  let propPlan = null
+  if (mode === 'proportional' && agentInfo && pctValid && eligiblePropRows.length > 0) {
+    try {
+      propPlan = planProportionalWithdraw(
+        eligiblePropRows.map((r) => ({ address: r.address, maxUnits: r.maxUnits })),
+        Math.round(pctNum * 100)
+      )
+      if (propPlan.legs.length === 0) propPlan = null
+    } catch {
+      propPlan = null
+    }
+  }
+  const canProportional = propPlan != null && propPlan.legs.length > 0 && status === 'idle'
+  const propTotalDisplay = propPlan ? toDisplay(propPlan.totalUnits) : 0
+
+  const mergeMultiResults = (prev, next) => {
+    if (!prev) return next
+    const byAgent = new Map(prev.results.map((r) => [r.agentAddress, r]))
+    next.results.forEach((r) => byAgent.set(r.agentAddress, r))
+    const results = [...byAgent.values()]
+    return { results, queued: results.filter((r) => !r.ok) }
+  }
+
+  const finishMulti = (merged, freshOk) => {
+    // History rows only for legs confirmed in THIS run — never for unknown/failed legs, and
+    // never twice for legs confirmed by an earlier run.
+    freshOk.forEach((r) => {
+      saveTransaction({
+        txHash: r.transferHash,
+        vaultName: vault.name,
+        vaultAddress: vault.address,
+        protocol: vault.protocol,
+        amountUsdc: toDisplay(r.redeemed),
+        apy: evidencedVaultApy,
+        yieldEvidence,
+        channel: r.channel,
+        type: 'withdraw',
+        network: 'stellar-testnet',
+      })
+    })
+    const confirmedTotal = merged.results
+      .filter((r) => r.ok)
+      .reduce((sum, r) => sum + BigInt(r.redeemed ?? 0n), 0n)
+    const unknownLegs = merged.results.filter((r) => !r.ok && r.error?.submission === 'unknown')
+    const failedLegs = merged.results.filter((r) => !r.ok && r.error?.submission !== 'unknown')
+    commitIfCurrent(() => {
+      setMultiResults(merged)
+      // Confirmed failures and unknown outcomes get SEPARATE banners: an unknown leg may or
+      // may not have landed, so it must never read as a plain failure — and neither banner
+      // ever claims anything was received.
+      setError(
+        failedLegs.length > 0
+          ? `${failedLegs.length} leg(s) failed: ${failedLegs[0].error?.message ?? failedLegs[0].error}`
+          : null
+      )
+      setUnknownNote(
+        unknownLegs.length > 0
+          ? `${unknownLegs.length} leg(s) have unknown status — they may or may not have landed. ` +
+              `Not counted as received; check the explorer, then retry the queue below.`
+          : null
+      )
+      if (merged.queued.length === 0) {
+        setStatus('done')
+        onSuccess(vault.address, confirmedTotal.toString())
+        setTimeout(() => commitIfCurrent(onClose), 700)
+      } else {
+        setStatus('idle')
+        // Reconcile from chain without claiming an amount (same convention as the full-sweep
+        // partial-failure branch above) — some legs moved, the split is per-agent.
+        onSuccess(vault.address, '0')
+      }
+    })
+  }
+
+  const runMultiLegs = async (legs) => {
+    if (status !== 'idle') return null
+    if (!isCurrentOwner()) {
+      onClose()
+      return null
+    }
+    setStatus('loading')
+    setError(null)
+    setUnknownNote(null)
+    setMultiStep(`Withdrawing from ${legs.length} ${legs.length === 1 ? 'agent' : 'agents'}…`)
+    try {
+      const out = await partialWithdrawMulti({
+        owner: userAddress,
+        legs,
+        vault: vault.address,
+        activeAccount,
+        getCurrentActiveAccount: getActiveAccount,
+        signal: actionSignal,
+      })
+      if (!isCurrentOwner()) return null
+      return out
+    } catch (err) {
+      // The composer only throws on a global abort (account switch); per-leg failures arrive
+      // inside results. Belt-and-braces: never let anything escape unhandled.
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED' || !isCurrentOwner()) return null
+      commitIfCurrent(() => {
+        setError(friendlyError(err))
+        setStatus('idle')
+      })
+      return null
+    } finally {
+      commitIfCurrent(() => setMultiStep(null))
+    }
+  }
+
+  const handleProportional = async () => {
+    if (!canProportional) return
+    const out = await runMultiLegs(propPlan.legs)
+    if (!out) return
+    finishMulti(
+      mergeMultiResults(multiResults, out),
+      out.results.filter((r) => r.ok)
+    )
+  }
+
+  const handleRetryQueued = async () => {
+    const queued = multiResults?.queued ?? []
+    if (queued.length === 0 || status !== 'idle') return
+    const out = await runMultiLegs(
+      queued.map((q) => ({ agentAddress: q.agentAddress, amountUnits: q.amountUnits }))
+    )
+    if (!out) return
+    finishMulti(
+      mergeMultiResults(multiResults, out),
+      out.results.filter((r) => r.ok)
+    )
   }
 
   return (
@@ -298,7 +458,11 @@ export default function WithdrawModal({
       >
         <div className="wd-head">
           <div className="modal-eyebrow">
-            {mode === 'full' ? 'Full exit, signed in your wallet' : 'Partial exit, one agent'}
+            {mode === 'full'
+              ? 'Full exit, signed in your wallet'
+              : mode === 'partial'
+                ? 'Partial exit, one agent'
+                : 'Partial exit, every agent'}
           </div>
           <h3 className="modal-title" id="withdraw-title">
             {t(lang, 'withdraw')} from {vault.name}
@@ -322,6 +486,15 @@ export default function WithdrawModal({
               onClick={() => setMode('partial')}
             >
               Partial
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'proportional'}
+              className={`wd-mode-tab${mode === 'proportional' ? ' is-active' : ''}`}
+              onClick={() => setMode('proportional')}
+            >
+              Proportional
             </button>
           </div>
         </div>
@@ -562,9 +735,139 @@ export default function WithdrawModal({
               )}
 
               <div className="wd-callout">
-                First partial withdraw from an agent asks for one signature to register its exit
-                key. After that: zero signatures and two relayed transactions. Network fee sponsored
-                by fee-bump relay.
+                Exit keys registered at grant time mean zero signatures here — otherwise the first
+                partial withdraw from an agent asks for one signature to register its key. Either
+                way the network fee is sponsored by the fee-bump relay.
+              </div>
+            </div>
+          )}
+
+          {mode === 'proportional' && (
+            <div className="wd-body">
+              <p className="wd-lede">
+                Withdraw the same percentage from every eligible agent. The rest keeps farming.
+              </p>
+
+              <div className="wd-section">
+                <label className="wd-section-label" htmlFor="pp-pct">
+                  Percentage of each agent
+                </label>
+                <div className="wd-amount-row">
+                  <input
+                    id="pp-pct"
+                    type="number"
+                    role="spinbutton"
+                    min="1"
+                    max="100"
+                    step="1"
+                    inputMode="numeric"
+                    value={propPct}
+                    onChange={(e) => setPropPct(e.target.value)}
+                    placeholder="25"
+                    className="wd-amount-input mono tnum"
+                    aria-describedby="pp-pct-hint"
+                  />
+                  <span className="wd-amount-unit">%</span>
+                </div>
+                <div className="wd-pct-row" role="group" aria-label="Quick percentages">
+                  {PROP_CHIPS.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="btn btn-chip wd-pct-chip"
+                      onClick={() => setPropPct(c.pct)}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+                <span id="pp-pct-hint" className="wd-hint">
+                  {agentInfo
+                    ? eligiblePropRows.length === 0
+                      ? 'No eligible agents for a proportional withdraw (scopes expired or empty).'
+                      : `${eligiblePropRows.length} eligible ${eligiblePropRows.length === 1 ? 'agent' : 'agents'}.`
+                    : 'Reading agent balances…'}
+                </span>
+              </div>
+
+              {propPlan && (
+                <div
+                  className="grant-receipt wd-receipt"
+                  role="region"
+                  aria-label="Proportional summary"
+                >
+                  {propPlan.legs.map((leg) => (
+                    <div className="grant-receipt-row" key={leg.agentAddress}>
+                      <span className="grant-receipt-k mono">{shortAddr(leg.agentAddress)}</span>
+                      <span className="grant-receipt-v mono tnum">
+                        ~{toDisplay(leg.amountUnits).toFixed(2)} USDC
+                      </span>
+                    </div>
+                  ))}
+                  <div className="grant-receipt-row">
+                    <span className="grant-receipt-k">You receive</span>
+                    <span className="grant-receipt-v mono tnum">
+                      ~{propTotalDisplay.toFixed(2)} USDC
+                    </span>
+                  </div>
+                  <div className="grant-receipt-row">
+                    <span className="grant-receipt-k">Network fee</span>
+                    <span className="grant-receipt-v grant-receipt-v--ok">
+                      Sponsored by fee-bump relay
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {multiStep && (
+                <div className="wd-progress mono" role="status">
+                  {multiStep}
+                </div>
+              )}
+
+              {multiResults && (
+                <div className="wd-section" role="status" aria-label="Withdraw results">
+                  <div className="wd-section-label">Per-agent results</div>
+                  {multiResults.results.map((r) => (
+                    <div className="wd-agent-row" key={r.agentAddress}>
+                      <div className="wd-agent-meta">
+                        <span className="wd-agent-addr mono">{shortAddr(r.agentAddress)}</span>
+                        <span className="wd-agent-idx">
+                          {toDisplay(r.amountUnits).toFixed(2)} USDC
+                        </span>
+                      </div>
+                      <div className="wd-agent-max">
+                        {r.ok ? (
+                          <span className="grant-receipt-v grant-receipt-v--ok">Done</span>
+                        ) : r.error?.submission === 'unknown' ? (
+                          <span className="wd-hint">
+                            <strong>Unknown</strong> — check before retry
+                          </span>
+                        ) : (
+                          <span className="wd-hint wd-hint--err">Failed</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {multiResults.queued.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={handleRetryQueued}
+                      disabled={status !== 'idle'}
+                    >
+                      {status === 'loading'
+                        ? 'Retrying…'
+                        : `Retry ${multiResults.queued.length} queued`}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="wd-callout">
+                One relayed withdraw per agent, no contract change: legs that fail or come back
+                unknown stay queued above with their status — confirmed legs are recorded, the rest
+                are never counted as received.
               </div>
             </div>
           )}
@@ -572,6 +875,13 @@ export default function WithdrawModal({
           {error && (
             <div className="wd-error" role="alert">
               <span>{error}</span>
+            </div>
+          )}
+          {unknownNote && (
+            <div className="wd-callout" role="status">
+              <span>
+                <strong>Status: unknown.</strong> {unknownNote}
+              </span>
             </div>
           )}
         </div>
@@ -595,7 +905,7 @@ export default function WithdrawModal({
                     : 'Withdrawing…'
                   : 'Done'}
             </button>
-          ) : (
+          ) : mode === 'partial' ? (
             <button
               className="btn btn-primary"
               onClick={handlePartial}
@@ -607,6 +917,20 @@ export default function WithdrawModal({
                   ? 'Done'
                   : amount
                     ? `Withdraw ${amount} USDC`
+                    : 'Withdraw'}
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              onClick={handleProportional}
+              disabled={!canProportional}
+            >
+              {status === 'loading'
+                ? 'Withdrawing…'
+                : status === 'done'
+                  ? 'Done'
+                  : propPlan
+                    ? `Withdraw ~${propTotalDisplay.toFixed(2)} USDC`
                     : 'Withdraw'}
             </button>
           )}

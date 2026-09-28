@@ -10,7 +10,10 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { WalletSettings } from '../WalletSettings.jsx'
 import { launchRealChromium, buildHarnessHtml, sweep320 } from '../testSupport/sweep320.js'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 const G_ACCOUNT = {
   kind: 'G',
@@ -138,15 +141,38 @@ describe('WalletSettings — Advanced/Testnet link', () => {
 })
 
 describe('WalletSettings — Base mandate: no unverifiable status claim, no unsupported revoke control', () => {
-  it('hands Base management to the web app without claiming local status or authority', () => {
+  it('stays on the serving pages.dev origin (passkey RP_ID is per-hostname, xyz would strand the user)', () => {
+    vi.stubGlobal('location', { protocol: 'https:', origin: 'https://vibing-farmer.pages.dev' })
     render(<WalletSettings account={G_ACCOUNT} onNav={() => {}} onOpenAdvanced={() => {}} />)
     const link = screen.getByRole('link', { name: /manage base mandate on the web app/i })
     expect(link.getAttribute('href')).toBe(
       'https://vibing-farmer.pages.dev/settings?tab=wallet#base-mandate'
     )
     expect(link.getAttribute('target')).toBe('_blank')
+    expect(screen.queryByText(/kernel address|relayer status|revoke mandate/i)).toBeNull()
+  })
+
+  it('stays on the serving apex origin when the web app runs on xyz', () => {
+    vi.stubGlobal('location', { protocol: 'https:', origin: 'https://vibingfarmer.xyz' })
+    render(<WalletSettings account={G_ACCOUNT} onNav={() => {}} onOpenAdvanced={() => {}} />)
+    const link = screen.getByRole('link', { name: /manage base mandate on the web app/i })
+    expect(link.getAttribute('href')).toBe(
+      'https://vibingfarmer.xyz/settings?tab=wallet#base-mandate'
+    )
+    expect(link.getAttribute('target')).toBe('_blank')
     expect(link.className).toContain('pc-external-link')
     expect(link.hasAttribute('style')).toBe(false)
+    expect(screen.queryByText(/kernel address|relayer status|revoke mandate/i)).toBeNull()
+  })
+
+  it('falls back to the canonical apex (passkey RP_ID domain) from the chrome-extension popup', () => {
+    vi.stubGlobal('location', { protocol: 'chrome-extension:', origin: 'null' })
+    render(<WalletSettings account={G_ACCOUNT} onNav={() => {}} onOpenAdvanced={() => {}} />)
+    const link = screen.getByRole('link', { name: /manage base mandate on the web app/i })
+    expect(link.getAttribute('href')).toBe(
+      'https://vibingfarmer.xyz/settings?tab=wallet#base-mandate'
+    )
+    expect(link.getAttribute('target')).toBe('_blank')
     expect(screen.queryByText(/kernel address|relayer status|revoke mandate/i)).toBeNull()
   })
 

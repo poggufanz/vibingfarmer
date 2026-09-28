@@ -57,4 +57,79 @@ describe('vaultFactsLive', () => {
     await primeVaultFacts({ fetchImpl, storage: memStorage(), now: () => 0 })
     expect(fetchImpl.mock.calls.map(([u]) => u).some((u) => u.includes('hyperfarm'))).toBe(false)
   })
+  it('rejects an unversioned envelope (pre-versioning shape) as a miss, never trusted data', async () => {
+    const storage = memStorage()
+    storage.setItem('vf_vault_facts_live_v1', JSON.stringify({ fetchedAt: 0, overlays: {} }))
+    const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => 7 }))
+    await primeVaultFacts({ fetchImpl, storage, now: () => 1_000 })
+    expect(fetchImpl).toHaveBeenCalled() // cache miss -> refetch
+    expect(getLiveOverlay('aave-v3').refreshed.tvl).toBe(7)
+  })
+
+  it('rejects a future-stamped envelope (clock skew) as a miss', async () => {
+    const storage = memStorage()
+    storage.setItem(
+      'vf_vault_facts_live_v1',
+      JSON.stringify({ version: 1, fetchedAt: 10_000_000, overlays: {} })
+    )
+    const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => 9 }))
+    await primeVaultFacts({ fetchImpl, storage, now: () => 1_000 })
+    expect(fetchImpl).toHaveBeenCalled()
+  })
+
+  it('rejects a partially-corrupt overlay map instead of trusting its good half', async () => {
+    const storage = memStorage()
+    storage.setItem(
+      'vf_vault_facts_live_v1',
+      JSON.stringify({
+        version: 1,
+        fetchedAt: 500,
+        overlays: {
+          'aave-v3': { refreshed: { tvl: 42 }, asOf: 500 },
+          'blend-usdc': { refreshed: { tvl: 'NaN-bogus' }, asOf: 500 },
+        },
+      })
+    )
+    const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => 11 }))
+    await primeVaultFacts({ fetchImpl, storage, now: () => 1_000 })
+    expect(fetchImpl).toHaveBeenCalled() // whole envelope distrusted, not partially trusted
+  })
+
+  it('a total fetch failure after a success drops the overlay (snapshot, never stale-live)', async () => {
+    const storage = memStorage()
+    await primeVaultFacts({
+      fetchImpl: async () => ({ ok: true, json: async () => 42_000_000 }),
+      storage,
+      now: () => 1_000,
+    })
+    expect(getLiveOverlay('aave-v3')).not.toBeNull()
+    _test.reset()
+    // Storage kosong + fetch gagal total -> tidak ada overlay basi yang disajikan sebagai live.
+    await primeVaultFacts({
+      fetchImpl: async () => {
+        throw new Error('offline')
+      },
+      storage: memStorage(),
+      now: () => 2_000,
+    })
+    expect(getLiveOverlay('aave-v3')).toBeNull()
+    expect(resolve('aave-v3').facts.tvl.source).toBe('snapshot')
+  })
+
+  it('collapses concurrent primes into a single fetch fan-out', async () => {
+    let calls = 0
+    const fetchImpl = vi.fn(async () => {
+      calls++
+      await new Promise((r) => setTimeout(r, 10))
+      return { ok: true, json: async () => 5 }
+    })
+    const storage = memStorage()
+    await Promise.all([
+      primeVaultFacts({ fetchImpl, storage, now: () => 1_000 }),
+      primeVaultFacts({ fetchImpl, storage, now: () => 1_000 }),
+    ])
+    // 5 slug non-fixture x 1 fan-out, bukan x2.
+    expect(fetchImpl.mock.calls.length).toBe(calls)
+    expect(calls).toBe(5)
+  })
 })

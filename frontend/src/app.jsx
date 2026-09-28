@@ -35,14 +35,18 @@ import { Icon, Sidebar, TopBar, STEPS } from './components.jsx'
 // exception (now wiring Plan/Protect/Start), so app.jsx renders `<StrategyRoute>` instead of
 // keeping its own copy — one wrapper definition, not two that can drift.
 import { StrategyRoute } from './components/strategy/StrategyRoute.jsx'
+import { RisksPage } from './components/strategy/RisksPage.jsx'
+import { RisksGateModal } from './components/strategy/RisksGateModal.jsx'
+import { needsRisksAck, saveRisksAck } from './strategy/risksAck.js'
 import { strategyFlowReducer, initialStrategyFlowState } from './strategy/flowState.js'
 import { bindPlanToPermissionWindow } from './strategy/permissionWindow.js'
 import { preflightPermission, toPermissionDecisionView } from './strategy/reusePreflight.js'
 import { PermissionPhaseError } from './strategy/permissionError.js'
 import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
 import { buildStrategyViewModel } from './strategy/planModel.js'
-import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from './stellar/grant.js'
+import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE, revokeGrant } from './stellar/grant.js'
 import { RouteFocus, SkipLink } from './components/pocket/RouteFocus.jsx'
+import { Dialog } from './components/pocket/Primitives.jsx'
 import { resolveDocumentTitle } from './app/appShellTitle.js'
 import { shortAddr } from './screens.jsx'
 import { MemoryModal, makeInitialExecState } from './agents.jsx'
@@ -91,6 +95,7 @@ import {
 import { fetchKeeperEvents } from './stellar/keeperEvents.js'
 import { rehydrateScopes } from './stellar/scopeRehydrate.js'
 import { readPricePerShare, readLifeboatState, readTotalShares } from './stellar/vaultReads.js'
+import { recordPpsSample } from './history/ppsHistory.js'
 import { grantMandate } from './stellar/lifeboat.js'
 import { signWithTimeout } from './stellar/agentSetup.js'
 import {
@@ -117,6 +122,8 @@ import {
   persistPositions,
   loadDeployedAgents,
   saveDeployedAgents,
+  loadDepositLedger,
+  projectDepositHints,
   reconcilePositionsFromChain,
   pickRecoverableVaultAgents,
   mergePositions,
@@ -166,7 +173,9 @@ import { buildMyMoneyModel } from './money/myMoneyModel.js'
 // StopAccessDialog.jsx already compute the plan and hand it back via onConfirmFull/onConfirmPartial/
 // onConfirmRevoke/onRecoverAgent; this controller only ever EXECUTES a plan it's given and
 // reconciles the aftermath.
-import { reconcileOwnerAction } from './money/ownerActions.js'
+import { reconcileOwnerAction, friendlyOwnerActionError } from './money/ownerActions.js'
+import { loadActiveGrant } from './money/activeGrant.js'
+import { loadLiveYield } from './money/liveYield.js'
 import {
   classifyKeeperAutomation,
   classifyStrategyConfiguration,
@@ -1068,10 +1077,20 @@ export async function fetchMyMoneySnapshot({
   now = Date.now(),
   discoverScopes = discoverOwnerScopes,
   readMoney = readOwnerMoney,
+  loadLedger = loadDepositLedger,
   signal,
 }) {
   const discovery = await discoverScopes(signal ? { owner, signal } : { owner })
-  const reads = await readMoney({ owner, discovery, now, ...(signal ? { signal } : {}) })
+  // P0 G1 honest-PnL cost basis: the local deposit ledger for this owner. A miss/empty
+  // ledger fails closed to earned:unavailable inside readOwnerMoney — never a guess.
+  const depositLedger = loadLedger(owner)
+  const reads = await readMoney({
+    owner,
+    discovery,
+    now,
+    depositLedger,
+    ...(signal ? { signal } : {}),
+  })
   return { discovery, money: buildMoneySnapshot(reads) }
 }
 
@@ -1450,6 +1469,11 @@ const App = () => {
   // Agent addresses saved from the last orchestrator run (dev-branch discovery path) —
   // fallback source when scopes haven't rehydrated and localStorage cache is empty.
   const deployedAgentsRef = useR([])
+  // P0 G1 honest-PnL: cost-basis hints projected from the last dispatch receipt, consumed
+  // once by handleExecDone's reconcile (which stamps them with live shares+PPS into the
+  // deposit ledger). A ref, not state: never rendered, only threaded into the post-deposit
+  // chain read. Appending across runs is safe — the ledger dedupes by agent+txHash.
+  const pendingDepositHintsRef = useR([])
 
   // Real Web3 state
   // Dev-only read-as override: /agent?as=G... opens the console with that address's chain
@@ -1854,6 +1878,10 @@ const App = () => {
         const pps = await readPricePerShare(SOROBAN_AUTOFARM_VAULT_ADDRESS)
         if (alive && isCurrent()) {
           setAutofarmReads({ pricePerShare: pps == null ? null : toDisplay(pps).toFixed(4) })
+          // P0 #2: feed the local PPS series for the KeeperZone trailing-APY sparkline.
+          // recordPpsSample never throws and throttles to one sample per 15 min, so this
+          // adds no RPC and no unbounded growth to the 15s tick.
+          recordPpsSample(SOROBAN_AUTOFARM_VAULT_ADDRESS, pps)
         }
       } catch (e) {
         // transient RPC failure — the next 15s tick retries; panel keeps its last-known reads
@@ -2739,7 +2767,17 @@ const App = () => {
   const [moneyRead, setMoneyRead] = useS(null) // readOwnerMoney-derived MoneySnapshot (buildMoneySnapshot)
   const [moneyActionPending, setMoneyActionPending] = useS(false)
   const [moneyWithdrawOpen, setMoneyWithdrawOpen] = useS(false)
+  // Settings modal (option B): open-state-driven overlay beside WithdrawDialog et al, so the
+  // TopBar account-panel Settings row pops SettingsPage above the active route without moving
+  // the URL. The /settings route below stays the deep-linkable full-page surface.
+  const [settingsOpen, setSettingsOpen] = useS(false)
   const [moneyStopAccessAddress, setMoneyStopAccessAddress] = useS(null)
+  const [moneyGrant, setMoneyGrant] = useS(null) // activeGrant.js view-model; null = hide card
+  const [moneyGrantPending, setMoneyGrantPending] = useS(false)
+  const [moneyGrantError, setMoneyGrantError] = useS(null)
+  const [moneyLiveYield, setMoneyLiveYield] = useS(null) // liveYield.js view; null = unavailable rows
+  const moneyLiveYieldSeqRef = useR(0)
+  const moneyGrantSeqRef = useR(0) // last-writer-wins guard for overlapping grant refreshes
   const [moneyRecovery, setMoneyRecovery] = useS(null)
   const moneyRevisionRef = useR(null) // freshness.js's nextReconciliationToken/isReconciliationCurrent
   const realAddressRef = useR(realAddress)
@@ -2808,6 +2846,10 @@ const App = () => {
       setMoneyActionPending(false)
       setMoneyWithdrawOpen(false)
       setMoneyStopAccessAddress(null)
+      setMoneyGrant(null)
+      setMoneyGrantPending(false)
+      setMoneyGrantError(null)
+      setMoneyLiveYield(null)
       setMoneyRecovery(null)
       moneyCacheRef.current = {}
       moneyFetchAbortRef.current?.abort()
@@ -3027,6 +3069,79 @@ const App = () => {
   }, [realAddress])
   // MONEY-RELOAD-EFFECT:END
 
+  // P1 G5: the persistent grant widget's own read path (activeGrant.js::loadActiveGrant —
+  // strict allowance + latest ledger + receipt expiry). Read-only: an RPC outage resolves to
+  // `{ state: 'unavailable' }`, never a throw, so the poll below can never crash the route.
+  // Deliberately SEPARATE from refreshMoney/the MONEY-RELOAD effect above (which a source-scan
+  // test pins): the grant changes only via user action or background pulls, so a 60s cadence
+  // plus post-action refreshes is plenty, and a slow allowance read must never stall money.
+  async function refreshMoneyGrant(owner) {
+    const target = owner ?? realAddressRef.current
+    if (!target) {
+      setMoneyGrant(null)
+      return
+    }
+    const seq = (moneyGrantSeqRef.current += 1)
+    const grant = await loadActiveGrant({ owner: target })
+    if (moneyGrantSeqRef.current !== seq) return
+    if (realAddressRef.current !== target) return
+    setMoneyGrant(grant)
+  }
+
+  useE(() => {
+    let alive = true
+    if (!realAddress) {
+      setMoneyGrant(null)
+      setMoneyGrantError(null)
+      return undefined
+    }
+    refreshMoneyGrant(realAddress)
+    const id = setInterval(() => {
+      if (alive) refreshMoneyGrant(realAddress)
+    }, 60_000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [realAddress])
+
+  // G2 follow-up: the production yield section's own read path (money/liveYield.js —
+  // live Blend supply-APR + local PPS series). Read-only and fail-soft like the grant
+  // widget above. Throttled to one APR read per 15 min (the PPS series itself samples at
+  // that same cadence, so polling faster would buy nothing); the PPS series is local and
+  // re-read every tick for free.
+  async function refreshMoneyLiveYield() {
+    const target = realAddressRef.current
+    if (!target) {
+      setMoneyLiveYield(null)
+      return
+    }
+    const seq = (moneyLiveYieldSeqRef.current += 1)
+    const view = await loadLiveYield({ nowMs: Date.now() })
+    if (moneyLiveYieldSeqRef.current !== seq) return
+    if (realAddressRef.current !== target) return
+    setMoneyLiveYield(view)
+  }
+
+  useE(() => {
+    let alive = true
+    if (!realAddress) {
+      setMoneyLiveYield(null)
+      return undefined
+    }
+    refreshMoneyLiveYield()
+    const id = setInterval(
+      () => {
+        if (alive) refreshMoneyLiveYield()
+      },
+      15 * 60 * 1000
+    )
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [realAddress])
+
   // Re-derives the model from an ALREADY-fresh read (an owner action's own reconcileOwnerAction
   // result) when one is available, avoiding a redundant extra readOwnerMoney round-trip; falls
   // back to a full refreshMoney() when the action's reconciliation never got a fresh read (e.g.
@@ -3106,7 +3221,9 @@ const App = () => {
     const { owner, discovery, signal } = assertMoneyActionContext(actionContext)
     return () => {
       assertMoneyActionContext(actionContext)
-      return readOwnerMoney({ owner, discovery, now: Date.now(), signal })
+      // P0 G1: same cost-basis threading as fetchMyMoneySnapshot above.
+      const depositLedger = loadDepositLedger(owner)
+      return readOwnerMoney({ owner, discovery, now: Date.now(), depositLedger, signal })
     }
   }
 
@@ -3300,6 +3417,33 @@ const App = () => {
         })
     } finally {
       if (isMoneyActionContextCurrent(actionContext)) setMoneyActionPending(false)
+    }
+  }
+
+  // P1 G5: the persistent grant card's one-signature kill switch — grant.js::revokeGrant sets
+  // the router allowance back to 0 via OwnerAuthorizationV1 (G owners submit direct, so this
+  // still works with the relayer down). Same epoch-guard shape as handleConfirmRevoke above;
+  // success re-reads the widget (allowance now 0 → the card hides itself), failure surfaces
+  // ownerActions.js's friendly line inline in the card, never a raw payload.
+  async function handleRevokeGrant() {
+    if (!realAddress || moneyGrantPending) return
+    const actionContext = captureMoneyActionContext()
+    setMoneyGrantPending(true)
+    setMoneyGrantError(null)
+    try {
+      await revokeGrant({
+        owner: actionContext.owner,
+        activeAccount: actionContext.activeAccount,
+        getCurrentActiveAccount: () => activeAccountRef.current,
+        signal: actionContext.signal,
+      })
+      if (!isMoneyActionContextCurrent(actionContext)) return
+      await refreshMoneyGrant(actionContext.owner)
+    } catch (err) {
+      if (!isMoneyActionContextCurrent(actionContext)) return
+      setMoneyGrantError(friendlyOwnerActionError(err))
+    } finally {
+      if (isMoneyActionContextCurrent(actionContext)) setMoneyGrantPending(false)
     }
   }
 
@@ -3768,9 +3912,50 @@ const App = () => {
     })
   }
 
+  // P1 G7: the once-per-wallet Risks gate. A fresh grant with no acknowledgement AND no grant
+  // receipt on record opens the gate modal instead of dispatching; confirming persists the ack
+  // and runs the standard flow, dismissing rejects so ProtectStage shows its usual retryable
+  // wallet-class failure (which reopens this gate). Reuse confirmations never pass through
+  // here (onConfirmReuse below), and later grants skip via the stored ack or the receipt.
+  const [risksGateOpen, setRisksGateOpen] = useS(false)
+  const risksGrantSettlerRef = useR(null)
+
   function onRequestGrant() {
+    if (needsRisksAck({ owner: realAddress })) {
+      setRisksGateOpen(true)
+      return new Promise((resolve, reject) => {
+        risksGrantSettlerRef.current = { owner: realAddress, resolve, reject }
+      })
+    }
     dispatchFlow({ type: 'GRANT_REQUESTED' })
     return requestPermissionConfirmation()
+  }
+
+  async function handleRisksGateConfirm() {
+    const settler = risksGrantSettlerRef.current
+    risksGrantSettlerRef.current = null
+    setRisksGateOpen(false)
+    if (!settler) return
+    // A wallet switch while the modal stood open must not grant for the new wallet on the
+    // old one's click — reject into ProtectStage's safe retry instead.
+    if (settler.owner !== realAddress) {
+      settler.reject(new Error('The active wallet account changed.'))
+      return
+    }
+    saveRisksAck({ owner: realAddress })
+    try {
+      dispatchFlow({ type: 'GRANT_REQUESTED' })
+      settler.resolve(await requestPermissionConfirmation())
+    } catch (err) {
+      settler.reject(err)
+    }
+  }
+
+  function handleRisksGateClose() {
+    setRisksGateOpen(false)
+    const settler = risksGrantSettlerRef.current
+    risksGrantSettlerRef.current = null
+    settler?.reject(new Error('Risks acknowledgement was dismissed before the first grant.'))
   }
 
   function onConfirmReuse() {
@@ -4069,6 +4254,20 @@ const App = () => {
         })
       }
       setRunReceipt(receipt)
+      // P0 G1 honest-PnL: project cost-basis hints for succeeded Stellar deposits so
+      // handleExecDone's reconcile can stamp them with live shares+PPS into the deposit
+      // ledger. Best-effort and append-only (deduped by agent+txHash downstream) — a
+      // projection failure only costs the Earned row (unavailable), never this run.
+      try {
+        const hints = projectDepositHints({
+          allocations: receipt.allocations,
+          results: summary.results || [],
+        })
+        if (hints.length > 0)
+          pendingDepositHintsRef.current = [...pendingDepositHintsRef.current, ...hints]
+      } catch {
+        // ignore — missing cost basis fails closed to earned:unavailable downstream.
+      }
       if (summary.baseLeg) {
         const outcome = applyBaseLegOutcome(summary.baseLeg, { stellarOwner: realAddress })
         if (outcome) addLog(outcome)
@@ -4381,13 +4580,20 @@ const App = () => {
 
   // Chain balances can lag 1-2 blocks after a deposit. Retry until at least one
   // vault reports a non-zero balance, then trust the on-chain numbers.
-  async function reconcileWithRetry(address, maxAttempts = 3, delayMs = 3000, agents) {
+  async function reconcileWithRetry(address, maxAttempts = 3, delayMs = 3000, agents, deposits) {
     const agentList = agents?.length ? agents : undefined
+    // P0 G1: cost-basis hints for the deposit ledger (stamped with live shares+PPS inside
+    // reconcilePositionsFromChain). Passed on EVERY attempt — reconcile dedupes by
+    // agent+txHash, so retries can never double-count principal.
+    const depositHints = Array.isArray(deposits) && deposits.length > 0 ? deposits : undefined
     for (let i = 0; i < maxAttempts; i++) {
       let result = null
       try {
         result = agentList
-          ? await reconcilePositionsFromChain(address, { agents: agentList })
+          ? await reconcilePositionsFromChain(
+              address,
+              depositHints ? { agents: agentList, deposits: depositHints } : { agents: agentList }
+            )
           : await reconcilePositions(address)
       } catch {
         result = null
@@ -4437,8 +4643,20 @@ const App = () => {
     // If chain is available, use authoritative balances (can move up or down).
     // If chain unavailable (RPC down / tx not yet mined), ADD seed into existing
     // positions — these are confirmed new deposits, so we sum, not take max.
-    const chain = await reconcileWithRetry(realAddress, 3, 3000, deployedAgentsRef.current)
+    // P0 G1: hand the dispatch receipt's cost-basis hints to the chain read so the deposit
+    // ledger is stamped with live shares+PPS. Consumed only once the chain proves current
+    // (a failed reconcile keeps the hints for the next run's read — missing basis fails
+    // closed to earned:unavailable, never a guess).
+    const depositHints = pendingDepositHintsRef.current
+    const chain = await reconcileWithRetry(
+      realAddress,
+      3,
+      3000,
+      deployedAgentsRef.current,
+      depositHints
+    )
     assertCurrent()
+    if (chain && depositHints.length > 0) pendingDepositHintsRef.current = []
     if (chain) {
       const finalPositions = mergePositions(seedPositions, chain)
       if (Object.keys(finalPositions).length > 0) {
@@ -4688,6 +4906,37 @@ const App = () => {
   }
   const moneyStopAccessAgent =
     moneyRead?.agents?.find((a) => a.address === moneyStopAccessAddress) ?? null
+  // Single source for SettingsPage props: the /settings route and the settings modal below
+  // render the same element, so the two surfaces cannot drift apart (route stays the
+  // deep-linkable full-page surface for ?tab=wallet#base-mandate; the modal is the in-place
+  // popup the TopBar Settings row opens without moving the URL).
+  const settingsPageProps = {
+    userAddress: realAddress,
+    walletPhase,
+    permActive,
+    permExpiresAt,
+    permissionCount: strategy?.agents?.length || 0,
+    agentEnabled,
+    setAgentEnabled,
+    agentSettings,
+    setAgentSettings,
+    skillSource,
+    language,
+    onLanguageChange: handleLanguageChange,
+    onChangeSkill: () => setSkillDrawerOpen(true),
+    onResetSkill: handleResetSkill,
+    onResetAgentSettings: handleResetAgentSettings,
+    onConnect: handleConnect,
+    onDisconnect: handleDisconnect,
+    onRevoke: handleRevoke,
+    addLog,
+    mandateView: baseView.mandateView,
+    connected: baseView.connected,
+    busy: settingUpBaseMandate,
+    error: baseMandateError,
+    onSetup: onSetupBase,
+    onRefresh: () => refreshBaseView(activeAccount),
+  }
   return (
     <div className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'}`} data-pocket-shell>
       <SkipLink />
@@ -4699,6 +4948,11 @@ const App = () => {
           walletPhase={walletPhase}
           walletAddress={realAddress}
           walletLabel={shortAddr(realAddress)}
+          onConnect={handleConnect}
+          onDisconnect={handleDisconnect}
+          onOpenSettings={() => setSettingsOpen(true)}
+          language={language}
+          onLanguageChange={handleLanguageChange}
           notifications={
             <NotificationCenter
               alerts={agentData.alerts}
@@ -4753,6 +5007,11 @@ const App = () => {
                   baseUnavailableReason={BASE_CROSS_CHAIN_UNAVAILABLE_REASON}
                   baseActionError={baseWithdrawError}
                   basePlan={moneyBasePlan}
+                  grant={moneyGrant}
+                  onRevokeGrant={handleRevokeGrant}
+                  revokePending={moneyGrantPending}
+                  revokeError={moneyGrantError}
+                  liveYield={moneyLiveYield}
                   nowMs={presentationNowMs}
                 />
               </>
@@ -4802,34 +5061,21 @@ const App = () => {
             }
           />
           <Route
+            path="/risks"
+            element={
+              <div className="pc-route">
+                <RisksPage />
+              </div>
+            }
+          />
+          <Route
             path="/settings"
             element={
               <div className="pc-route-flush">
+                {/* onRefresh restated explicitly (same expression as settingsPageProps): pinned by
+                    app.settings.test.jsx "keeps the Settings refresh bridge explicitly bound". */}
                 <SettingsPage
-                  userAddress={realAddress}
-                  walletPhase={walletPhase}
-                  permActive={permActive}
-                  permExpiresAt={permExpiresAt}
-                  permissionCount={strategy?.agents?.length || 0}
-                  agentEnabled={agentEnabled}
-                  setAgentEnabled={setAgentEnabled}
-                  agentSettings={agentSettings}
-                  setAgentSettings={setAgentSettings}
-                  skillSource={skillSource}
-                  language={language}
-                  onLanguageChange={handleLanguageChange}
-                  onChangeSkill={() => setSkillDrawerOpen(true)}
-                  onResetSkill={handleResetSkill}
-                  onResetAgentSettings={handleResetAgentSettings}
-                  onConnect={handleConnect}
-                  onDisconnect={handleDisconnect}
-                  onRevoke={handleRevoke}
-                  addLog={addLog}
-                  mandateView={baseView.mandateView}
-                  connected={baseView.connected}
-                  busy={settingUpBaseMandate}
-                  error={baseMandateError}
-                  onSetup={onSetupBase}
+                  {...settingsPageProps}
                   onRefresh={() => refreshBaseView(activeAccount)}
                 />
               </div>
@@ -4856,8 +5102,9 @@ const App = () => {
             element={
               <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
                 {/* Inside the Suspense boundary, so the wrapper commits with the lazy chunk rather
-                    than framing an empty fallback. */}
-                <div className="pc-route">
+                    than framing an empty fallback. `pc-route` stays the base class: `.main:has(.pc-route)`
+                    is what unclips `.main` scrolling; `pc-route--developers` only restyles the column. */}
+                <div className="pc-route pc-route--developers">
                   <DevelopersLayout />
                 </div>
               </Suspense>
@@ -4870,6 +5117,13 @@ const App = () => {
             hoisted out of any single Route so they work identically from /home (MyMoneyRoute) and
             /agent (CrewRoute); e.g. StopAccessDialog's "go to withdraw" and CrewRoute's cancel
             action both open them regardless of which route triggered it. */}
+        {/* P1 G7: the once-per-wallet Risks gate — route-level like the money dialogs above so
+            it can interrupt the strategy flow's grant request from anywhere. */}
+        <RisksGateModal
+          open={risksGateOpen}
+          onConfirm={handleRisksGateConfirm}
+          onClose={handleRisksGateClose}
+        />
         <WithdrawDialog
           open={moneyWithdrawOpen}
           onClose={() => setMoneyWithdrawOpen(false)}
@@ -4882,6 +5136,17 @@ const App = () => {
           onConfirmPartial={handleConfirmPartialExit}
           onConfirmBase={handleConfirmBaseWithdraw}
         />
+        {/* Settings modal (option B): same SettingsPage element as the /settings route above
+            (shared settingsPageProps, no drift) popped above the active route without moving
+            the URL. Close via onClose + Escape/backdrop (owned by Dialog). */}
+        <Dialog
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          label="Settings"
+          className="pc-settings-dialog"
+        >
+          <SettingsPage {...settingsPageProps} />
+        </Dialog>
         <StopAccessDialog
           open={Boolean(moneyStopAccessAddress)}
           onClose={() => setMoneyStopAccessAddress(null)}

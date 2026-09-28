@@ -14,6 +14,7 @@
 
 export const NETWORK_IDS = Object.freeze({
   STELLAR_TESTNET: 'stellar-testnet',
+  STELLAR_MAINNET: 'stellar-mainnet',
   BASE_SEPOLIA: 'base-sepolia',
 })
 
@@ -28,6 +29,21 @@ const STELLAR_META = Object.freeze({
     'Vibing Farmer is an independent project running on Stellar testnet. It is not issued, endorsed, or sponsored by the Stellar Development Foundation.',
 })
 
+// Same Stellar mark as the testnet meta -- the network family is identical, only the network
+// (mainnet vs testnet) differs, and the visible label carries that distinction. Selected at
+// build time (config.js stays mainnet:null until the phase-2 switch), but the identity is
+// registered here so the picker and Credits/About can name it truthfully today.
+const STELLAR_MAINNET_META = Object.freeze({
+  id: NETWORK_IDS.STELLAR_MAINNET,
+  label: 'Stellar mainnet',
+  markPath: '/brand/networks/stellar.svg',
+  sourceUrl: 'https://stellar.org/brand-resources',
+  trademarkNotice:
+    'Stellar and the Stellar logo are trademarks of the Stellar Development Foundation (SDF). Shown here under the SDF brand policy to indicate that this project builds on the Stellar network.',
+  independenceNotice:
+    'Vibing Farmer is an independent project running on Stellar mainnet. It is not issued, endorsed, or sponsored by the Stellar Development Foundation.',
+})
+
 const BASE_META = Object.freeze({
   id: NETWORK_IDS.BASE_SEPOLIA,
   label: 'Base Sepolia',
@@ -39,7 +55,7 @@ const BASE_META = Object.freeze({
     'Vibing Farmer is an independent project. Its optional Base Sepolia leg is not affiliated with or endorsed by Coinbase or the Base team.',
 })
 
-// Returned whenever a networkId is missing or not one of the two known networks above. The label
+// Returned whenever a networkId is missing or not one of the known networks above. The label
 // stays visible on purpose -- an unrecognized id must never collapse to a blank icon or a silent
 // no-op; the user always sees that a network claim exists and could not be identified.
 const UNKNOWN_META = Object.freeze({
@@ -53,10 +69,18 @@ const UNKNOWN_META = Object.freeze({
 
 const NETWORK_META_BY_ID = Object.freeze({
   [NETWORK_IDS.STELLAR_TESTNET]: STELLAR_META,
+  [NETWORK_IDS.STELLAR_MAINNET]: STELLAR_MAINNET_META,
   [NETWORK_IDS.BASE_SEPOLIA]: BASE_META,
 })
 
-/** Immutable roster for Credits/About surfaces -- every known network, in a fixed order. */
+/**
+ * Immutable roster for Credits/About surfaces -- every known network, in a fixed order.
+ *
+ * STELLAR_MAINNET_META is deliberately absent: it is a registered *identity* (the topbar switcher
+ * and any label must resolve it), but the app does not run on mainnet yet -- config.js keeps the
+ * mainnet route null until the phase-2 switch. Crediting an undeployed network would also repeat
+ * the Stellar trademark/attribution text that STELLAR_META already carries verbatim.
+ */
 export const NETWORK_CREDITS = Object.freeze([STELLAR_META, BASE_META])
 
 /**

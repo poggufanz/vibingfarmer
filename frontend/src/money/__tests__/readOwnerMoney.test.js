@@ -2060,4 +2060,109 @@ describe('aggregateOwnerPositions', () => {
     const out = aggregateOwnerPositions({ status: 'complete', agents: [known('100')] })
     expect(out.earned).toEqual({ state: 'unavailable', amount: null })
   })
+
+  // P0 G1 honest-PnL: earned ≈ live vault value − ledger principal — 'known' ONLY with a
+  // valid ledger AND a fully-known live value, otherwise the historical unavailable shape.
+  const vaultAgent = (vaultUnits, over = {}) => ({
+    amount: { token: 'USDC', units: vaultUnits, decimals: 7 },
+    custody: { location: 'stellar-vault' },
+    executionStatus: 'idle',
+    problems: [],
+    vaultShares: {
+      state: 'known',
+      amount: { token: 'USDC', units: vaultUnits, decimals: 7 },
+      checkedAt: NOW,
+    },
+    idleToken: {
+      state: 'known',
+      amount: { token: 'USDC', units: '0', decimals: 7 },
+      checkedAt: NOW,
+    },
+    ...over,
+  })
+
+  it('computes known earned from ledger principal vs live vault value', () => {
+    const out = aggregateOwnerPositions({
+      status: 'complete',
+      agents: [vaultAgent('60000000'), vaultAgent('45000000')],
+      depositLedger: [
+        {
+          agent: 'CAGENT1',
+          shares: '1000000000',
+          assetsIn: '100000000',
+          ppsAtDeposit: '10000000',
+          txHash: 'HASH1',
+        },
+      ],
+    })
+    expect(out.earned).toEqual({
+      state: 'known',
+      amount: { token: 'USDC', units: '5000000', decimals: 7 },
+      deposits: [{ agent: 'CAGENT1', txHash: 'HASH1' }],
+    })
+  })
+
+  it('is unavailable without a ledger and never invents a figure (no-ledger case)', () => {
+    const ledgers = [
+      undefined, // key absent entirely
+      null,
+      [],
+      [{ agent: 'CAGENT1', assetsIn: '0' }], // invalid principal is no principal
+      [{ agent: '', assetsIn: '100000000' }],
+    ]
+    for (const depositLedger of ledgers) {
+      const out = aggregateOwnerPositions({
+        status: 'complete',
+        agents: [vaultAgent('105000000')],
+        ...(depositLedger === undefined ? {} : { depositLedger }),
+      })
+      expect(out.earned).toEqual({ state: 'unavailable', amount: null })
+    }
+  })
+
+  it('is unavailable when discovery is partial or any vault leg is unread, even with a ledger', () => {
+    const depositLedger = [{ agent: 'CAGENT1', assetsIn: '100000000', txHash: 'HASH1' }]
+    const partial = aggregateOwnerPositions({
+      status: 'partial',
+      agents: [vaultAgent('105000000')],
+      depositLedger,
+    })
+    expect(partial.earned).toEqual({ state: 'unavailable', amount: null })
+    const unreadLeg = aggregateOwnerPositions({
+      status: 'complete',
+      agents: [
+        vaultAgent('105000000'),
+        {
+          ...vaultAgent('100'),
+          vaultShares: { state: 'unavailable', amount: null, checkedAt: NOW },
+          problems: ['vault-shares-unavailable'],
+        },
+      ],
+      depositLedger,
+    })
+    expect(unreadLeg.earned).toEqual({ state: 'unavailable', amount: null })
+  })
+
+  it('reports an unrealized loss as known with loss:true and the unsigned magnitude', () => {
+    const out = aggregateOwnerPositions({
+      status: 'complete',
+      agents: [vaultAgent('90000000')],
+      depositLedger: [{ agent: 'CAGENT1', assetsIn: '100000000', txHash: 'HASH1' }],
+    })
+    expect(out.earned).toEqual({
+      state: 'known',
+      amount: { token: 'USDC', units: '10000000', decimals: 7 },
+      deposits: [{ agent: 'CAGENT1', txHash: 'HASH1' }],
+      loss: true,
+    })
+  })
+
+  it('is unavailable once fully exited (zero live value leaves no unrealized position)', () => {
+    const out = aggregateOwnerPositions({
+      status: 'complete',
+      agents: [vaultAgent('0')],
+      depositLedger: [{ agent: 'CAGENT1', assetsIn: '100000000', txHash: 'HASH1' }],
+    })
+    expect(out.earned).toEqual({ state: 'unavailable', amount: null })
+  })
 })

@@ -14,6 +14,7 @@ export const ROUTES = {
   TX: '/tx/:txHash',
   FARM: '/farm',
   WITHDRAW: '/withdraw',
+  RISKS: '/risks',
 }
 
 /**

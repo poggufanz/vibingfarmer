@@ -110,13 +110,15 @@ export async function createBaseSmartAccount({
   passkeyName,
   mode,
   passkeyServerUrl = ZERODEV_PASSKEY_SERVER_URL,
-  // The rp scope every ceremony must share. The hosted ZeroDev server IGNORES client-sent
-  // rpID and always registers under the dashboard domain — and per WebAuthn that domain (the
-  // registrable eTLD+1, pages.dev being on the Public Suffix List) is valid on every subdomain.
-  // So pin register AND sign to it: the SDK's own sign path omits rpId, the browser then
-  // defaults the assertion to the current origin, and a preview subdomain can't see the
-  // credential (register OK, sign NotAllowedError — proven live on dev.vibing-farmer.pages.dev
-  // 2026-07-19). Sign-side enforcement = signWithRpId attached below.
+  // The rp scope every ceremony must share. Defaults to ZERODEV_PASSKEY_RP_ID (base/config.js:
+  // origin-aware, canonicalized to the apex so www + apex share one credential — the hosted
+  // ZeroDev server IGNORES client-sent rpID and always registers under the dashboard domain,
+  // so the dashboard must list every serving domain; per WebAuthn that registrable eTLD+1 is
+  // valid on every subdomain). Pin register AND sign to the SAME value: the SDK's own sign
+  // path omits rpId, the browser then defaults the assertion to the current origin, and a
+  // preview subdomain can't see the credential (register OK, sign NotAllowedError — proven
+  // live on dev.vibing-farmer.pages.dev 2026-07-19). Sign-side enforcement = signWithRpId
+  // attached below.
   rpID = ZERODEV_PASSKEY_RP_ID,
   deps = {},
 }) {

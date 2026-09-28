@@ -305,6 +305,68 @@ describe('MoneyHero — earned/APY only with valid evidence', () => {
     render(<MoneyHero model={model} />)
     expect(screen.getByText(/^Earned 12/)).toBeTruthy()
   })
+
+  // P0 G1 honest-PnL: the Earned row is labeled unrealized-before-fees and links each
+  // deposit txHash to stellar.expert — the proof behind the cost basis.
+  it('labels the Earned row as unrealized, before fee/slippage', () => {
+    const model = baseModel({ earned: { state: 'known', amount: amt(12_0000000n) } })
+    render(<MoneyHero model={model} />)
+    expect(screen.getByText(/unrealized, sebelum fee\/slippage/)).toBeTruthy()
+  })
+
+  it('links each deposit txHash to stellar.expert', () => {
+    const model = baseModel({
+      earned: {
+        state: 'known',
+        amount: amt(5_0000000n),
+        deposits: [
+          { agent: 'CAGENT1', txHash: 'DEADBEEF1234567890ABCDEF' },
+          { agent: 'CAGENT2', txHash: 'CAFEBABE1234567890ABCDEF' },
+        ],
+      },
+    })
+    render(<MoneyHero model={model} />)
+    const links = screen.getAllByRole('link')
+    expect(links).toHaveLength(2)
+    expect(links[0].getAttribute('href')).toBe(
+      'https://stellar.expert/explorer/testnet/tx/DEADBEEF1234567890ABCDEF'
+    )
+    expect(links[1].getAttribute('href')).toBe(
+      'https://stellar.expert/explorer/testnet/tx/CAFEBABE1234567890ABCDEF'
+    )
+    for (const link of links) {
+      expect(link.getAttribute('target')).toBe('_blank')
+      expect(link.getAttribute('rel')).toContain('noopener')
+    }
+  })
+
+  it('renders no basis links when deposits carry no txHash (never a guessed URL)', () => {
+    const model = baseModel({
+      earned: {
+        state: 'known',
+        amount: amt(5_0000000n),
+        deposits: [{ agent: 'CAGENT1', txHash: null }],
+      },
+    })
+    render(<MoneyHero model={model} />)
+    expect(screen.getByText(/^Earned 5/)).toBeTruthy()
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+
+  it('prefixes an unrealized loss with a minus sign, still labeled unrealized', () => {
+    const model = baseModel({
+      earned: { state: 'known', amount: amt(10_0000000n), loss: true, deposits: [] },
+    })
+    render(<MoneyHero model={model} />)
+    expect(screen.getByText(/Earned -10/)).toBeTruthy()
+    expect(screen.getByText(/unrealized, sebelum fee\/slippage/)).toBeTruthy()
+  })
+
+  it('shows neither an Earned row nor basis links while earned is unavailable', () => {
+    render(<MoneyHero model={baseModel()} />)
+    expect(screen.queryByText(/^Earned/)).toBeNull()
+    expect(screen.queryByText(/Basis/)).toBeNull()
+  })
 })
 
 describe('MoneyHero — Partial discovery sits adjacent to totals/actions and exposes coverage', () => {

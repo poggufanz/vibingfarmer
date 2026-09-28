@@ -65,6 +65,8 @@
 //     only) and `onConfirmReuse` (reuse only) -- so which one fires is unambiguous by construction,
 //     not by an integration correctly reading `decision.mode` on its own.
 import { useState } from 'react'
+import { PoolSafetySection } from './PoolSafetyPanel.jsx'
+import GrantFallbackFee from './GrantFallbackFee.jsx'
 import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
 import { AgentMark } from '../pocket/AgentMark.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
@@ -836,6 +838,14 @@ export function ProtectStage({
             </section>
           )}
 
+          {/* P0 G3 pool-safety panel (Blend choosing-pools checklist): the gate evidence behind
+              the PASSED badge above, shown with per-row source + freshness. Same visibility as
+              the background-check section itself (a review-less plan shows neither), Stellar
+              deposit legs only — a bridge-only run has no Blend pool venue to inspect.
+              Snapshot first paint (zero I/O); live utilization loads only via the panel's own
+              refresh button. */}
+          {plan.review?.candidates?.length > 0 &&
+            plan.agents.some((a) => a && a.kind !== 'bridge') && <PoolSafetySection />}
           {!owner && (
             <div>
               <p>Connect a wallet to review and confirm this permission.</p>
@@ -1308,6 +1318,12 @@ export function ProtectStage({
               <p>Each agent signs with its own separate session key.</p>
               <p>Each agent can be stopped on its own, independent of the others.</p>
               <p>Network fee sponsored by fee-bump relay.</p>
+              <GrantFallbackFee
+                owner={owner}
+                agentCount={decision.reviewedAgentInits.length}
+                budgets={decision.reviewedBudgets}
+                durationSeconds={decision.durationSeconds}
+              />
             </div>
           </div>
         )}
