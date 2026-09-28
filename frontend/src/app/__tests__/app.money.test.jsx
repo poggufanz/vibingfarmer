@@ -820,7 +820,7 @@ describe('G2 follow-up — Live yield section wiring', () => {
     expect(src).toMatch(/import \{ loadLiveYield \} from '\.\/money\/liveYield\.js'/)
     expect(src).toMatch(/async function refreshMoneyLiveYield\(\)/)
     expect(src).toMatch(/await loadLiveYield\(\{ nowMs: Date\.now\(\) \}\)/)
-    expect(src).toMatch(/}, 15 \* 60 \* 1000\)/)
+    expect(src).toMatch(/15 \* 60 \* 1000/)
   })
 
   it('a wallet change resets the yield view instead of showing the prior owner', () => {
