@@ -1992,6 +1992,12 @@ pre,
     grid-row: 2;
     width: 100%;
     min-width: 0;
+    /* Bottom-bar: it must never claim viewport height. The old `min-height: 100dvh`
+    floor (inherited from the desktop sidebar column rule) forced the implicit
+    `auto` second grid row to 600px tall, leaving `minmax(0, 1fr)` with 0px --
+    so [data-pocket-main] measured 0px and every wheel gesture went nowhere.
+    `min-height: 0` lets row 1 keep the full viewport for scrolling content. */
+    min-height: 0;
     /* Bottom-bar: pemisah via shadow token, 2px mengikuti separator desktop. */
     border-top: 0;
     box-shadow: 0 -2px 0 var(--pc-shadow-color);
