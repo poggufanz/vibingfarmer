@@ -93,7 +93,26 @@
         "frontend/src/components/console/OpsConsole.jsx",
         "frontend/src/components/console/__tests__/OpsConsole.test.jsx",
         "frontend/src/components/money/my-money.css",
-        "frontend/src/components/money/__tests__/myMoneyCssContract.test.js"
+        "frontend/src/components/money/__tests__/myMoneyCssContract.test.js",
+        "frontend/src/landing/LandingHero.jsx",
+        "frontend/src/landing/useLandingStats.js",
+        "frontend/src/landing/motion/gsap.js",
+        "frontend/src/landing/sections/Hero.jsx",
+        "frontend/src/landing/sections/SetOnce.jsx",
+        "frontend/src/landing/sections/VibeForever.jsx",
+        "frontend/src/landing/sections/RealYield.jsx",
+        "frontend/src/landing/sections/Leash.jsx",
+        "frontend/src/landing/sections/Final.jsx",
+        "frontend/src/landing/sections/FieldArt.jsx",
+        "frontend/src/landing/__tests__/LandingContract.test.jsx",
+        "frontend/src/landing/__tests__/Hero.test.jsx",
+        "frontend/src/landing/__tests__/SetOnce.test.jsx",
+        "frontend/src/landing/__tests__/VibeForever.test.jsx",
+        "frontend/src/landing/__tests__/RealYield.test.jsx",
+        "frontend/src/landing/__tests__/Leash.test.jsx",
+        "frontend/src/landing/__tests__/FieldArt.test.jsx",
+        "frontend/src/landing/__tests__/useLandingStats.test.jsx",
+        "frontend/src/landing/__tests__/motionEnv.js"
       ]
     },
     {
