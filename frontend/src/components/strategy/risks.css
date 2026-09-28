@@ -1,0 +1,410 @@
+/* Risks as a register instrument (2026-09-28): a recessed state strip under the title, one grained
+ * register plate where each row pairs the exposure with the guard that already ships, and an audit
+ * plate that says plainly nothing is audited yet. Same material as History and Settings
+ * (panel-grain.svg, lit top lip, dark bottom rim). Shared by the /risks page and the first-grant
+ * gate dialog, so the tokens live on both roots. Harvest lime means "a guard is live", nothing
+ * else; the audit plate is the only danger tone on the page. */
+.pc-risks-route,
+.pc-risks-gate {
+  --risks-lamp: var(--pc-faint);
+  --risks-well: rgb(7 15 11 / 32%);
+  --risks-lip: rgb(242 245 239 / 7%);
+  --risks-rim: rgb(7 15 11 / 42%);
+  --risks-hairline: rgb(242 245 239 / 8%);
+}
+
+:root[data-theme='day-field'] .pc-risks-route,
+:root[data-theme='day-field'] .pc-risks-gate {
+  --risks-well: rgb(23 37 31 / 5%);
+  --risks-lip: rgb(255 255 255 / 85%);
+  --risks-rim: rgb(23 37 31 / 12%);
+  --risks-hairline: rgb(23 37 31 / 9%);
+}
+
+.pc-risks-route [data-tone='live'],
+.pc-risks-gate [data-tone='live'] {
+  --risks-lamp: var(--pc-harvest);
+}
+
+.pc-risks-route [data-tone='warn'] {
+  --risks-lamp: var(--pc-warning);
+}
+
+.pc-risks-route [data-tone='danger'] {
+  --risks-lamp: var(--pc-danger);
+}
+
+.pc-risks-route [data-tone='idle'] {
+  --risks-lamp: var(--pc-faint);
+}
+
+/* A lamp is a light: halo drawn with outline, same as the History ledger. */
+.pc-risks-lamp {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--pc-radius-round);
+  background: var(--risks-lamp);
+  outline: 3px solid color-mix(in srgb, var(--risks-lamp) 22%, transparent);
+}
+
+:root[data-theme='day-field'] .pc-risks-lamp {
+  outline-color: color-mix(in srgb, var(--risks-lamp) 40%, transparent);
+  box-shadow: inset 0 0 0 1px rgb(23 37 31 / 45%);
+}
+
+/* ---- Page frame ----------------------------------------------------------------------------- */
+
+.pc-risks-route {
+  display: grid;
+  gap: var(--pc-space-8);
+  min-width: 0;
+  color: var(--pc-ink);
+  font-family: var(--pc-font-body);
+}
+
+.pc-risks-head {
+  display: grid;
+  gap: var(--pc-space-3);
+}
+
+.pc-risks-title {
+  margin: 0;
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-page);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: var(--pc-leading-title);
+}
+
+.pc-risks-intro {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body);
+  line-height: var(--pc-leading-body);
+  text-wrap: pretty;
+}
+
+/* One recessed well, cells split by hairlines on each cell's own left and top edge; the well
+ * clips the ones on its border, so a wrapped second row never shows a stray rule. */
+.pc-risks-state {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  margin: var(--pc-space-3) 0 0;
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--risks-well);
+  box-shadow: inset 0 1px 3px var(--risks-rim);
+}
+
+.pc-risks-state-item {
+  display: grid;
+  gap: var(--pc-space-1);
+  min-width: 0;
+  padding: var(--pc-space-3) var(--pc-space-4);
+  box-shadow:
+    -1px 0 0 var(--risks-hairline),
+    0 -1px 0 var(--risks-hairline);
+}
+
+.pc-risks-state-item dt {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 500;
+}
+
+.pc-risks-state-item dd {
+  margin: 0;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* ---- Plates --------------------------------------------------------------------------------- */
+
+.pc-risks-plate {
+  container-type: inline-size;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-dominant);
+  background-color: var(--pc-workspace);
+  background-image: url('../money/panel-grain.svg');
+  box-shadow:
+    inset 0 1px 0 var(--risks-lip),
+    inset 0 -1px 0 var(--risks-rim),
+    var(--pc-shadow-support);
+}
+
+.pc-risks-plate-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--pc-space-2) var(--pc-space-6);
+  padding: var(--pc-space-6) var(--pc-space-6) var(--pc-space-4);
+  border-bottom: 1px solid var(--risks-hairline);
+}
+
+.pc-risks-plate-title {
+  margin: 0;
+  font-family: var(--pc-font-display);
+  font-size: calc(var(--pc-type-body) * 1.25);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: var(--pc-leading-title);
+}
+
+.pc-risks-plate-lede {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+}
+
+/* ---- Register rows: exposure on the left, the shipped guard in a well on the right ---------- */
+
+.pc-risks-list {
+  container-type: inline-size;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pc-risks-row {
+  display: grid;
+  gap: var(--pc-space-4);
+  padding: var(--pc-space-5) var(--pc-space-6);
+}
+
+.pc-risks-row + .pc-risks-row {
+  border-top: 1px solid var(--risks-hairline);
+}
+
+@container (min-width: 44rem) {
+  .pc-risks-row {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--pc-space-8);
+  }
+}
+
+.pc-risks-exposure {
+  min-width: 0;
+}
+
+.pc-risks-tag {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin: 0 0 var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.pc-risks-index {
+  padding: 0 var(--pc-space-2);
+  border: 1px solid var(--risks-hairline);
+  border-radius: var(--pc-radius-round);
+  background: var(--risks-well);
+  color: var(--pc-ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.6;
+}
+
+.pc-risks-name {
+  margin: 0;
+  font-family: var(--pc-font-display);
+  font-size: calc(var(--pc-type-body) * 1.125);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: var(--pc-leading-title);
+}
+
+.pc-risks-body {
+  margin: var(--pc-space-2) 0 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+  text-wrap: pretty;
+}
+
+.pc-risks-guard {
+  display: grid;
+  gap: var(--pc-space-2);
+  min-width: 0;
+  padding: var(--pc-space-4);
+  border: 1px solid var(--risks-hairline);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--risks-well);
+  box-shadow: inset 0 1px 3px var(--risks-rim);
+}
+
+.pc-risks-guard-label {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin: 0;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-technical);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.pc-risks-mitigation {
+  margin: 0;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+  text-wrap: pretty;
+}
+
+/* ---- Audit plate ---------------------------------------------------------------------------- */
+
+.pc-risks-audit {
+  border-color: color-mix(in srgb, var(--pc-danger) 40%, var(--pc-line));
+}
+
+.pc-risks-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border: 1px solid color-mix(in srgb, var(--pc-danger) 45%, transparent);
+  border-radius: var(--pc-radius-round);
+  background: color-mix(in srgb, var(--pc-danger) 10%, transparent);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-label);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pc-risks-audit-body {
+  display: grid;
+  gap: var(--pc-space-5);
+  padding: var(--pc-space-5) var(--pc-space-6) var(--pc-space-6);
+}
+
+@container (min-width: 44rem) {
+  .pc-risks-audit-body {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--pc-space-8);
+  }
+}
+
+.pc-risks-audit-copy {
+  max-width: 60ch;
+  margin: 0;
+  color: var(--pc-ink);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+  text-wrap: pretty;
+}
+
+.pc-risks-scope {
+  padding: var(--pc-space-4);
+  border: 1px solid var(--risks-hairline);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--risks-well);
+  box-shadow: inset 0 1px 3px var(--risks-rim);
+}
+
+.pc-risks-scope-label {
+  margin: 0 0 var(--pc-space-3);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 500;
+}
+
+/* Dashed: scoped for a future audit, not covered by one. */
+.pc-risks-scope-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pc-risks-scope-list li {
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border: 1px dashed var(--pc-line-strong);
+  border-radius: var(--pc-radius-round);
+  color: var(--pc-ink);
+  font-size: var(--pc-type-label);
+  font-weight: 500;
+}
+
+@container (max-width: 30rem) {
+  .pc-risks-plate-head,
+  .pc-risks-audit-body,
+  .pc-risks-row {
+    padding-inline: var(--pc-space-4);
+  }
+}
+
+/* ---- First-grant gate dialog ---------------------------------------------------------------- */
+
+.pc-dialog.pc-risks-gate .pc-dialog-panel {
+  width: min(100%, 40rem);
+}
+
+/* The dialog panel already pads its body; rows sit flush with the title. */
+.pc-risks-gate .pc-risks-row {
+  padding-inline: 0;
+}
+
+.pc-risks-gate .pc-risks-row:first-child {
+  padding-top: 0;
+}
+
+.pc-risks-ack {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-4);
+  padding: var(--pc-space-3) var(--pc-space-4);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--risks-well);
+  box-shadow: inset 0 1px 3px var(--risks-rim);
+  color: var(--pc-ink);
+  cursor: pointer;
+  font-size: var(--pc-type-body-small);
+  font-weight: 500;
+  line-height: var(--pc-leading-body);
+  transition: border-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.pc-risks-ack:hover {
+  border-color: var(--pc-line-strong);
+}
+
+.pc-risks-ack:has(input:checked) {
+  border-color: color-mix(in srgb, var(--pc-harvest) 55%, var(--pc-line));
+}
+
+.pc-risks-ack input {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  accent-color: var(--pc-harvest);
+  cursor: pointer;
+}
+
+.pc-risks-ack input:focus-visible {
+  outline: 3px solid var(--pc-focus);
+  outline-offset: 2px;
+}
