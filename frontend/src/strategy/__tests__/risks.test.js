@@ -32,14 +32,7 @@ describe('RISKS — six risks, two sentences plus a mitigation each', () => {
 
   it('names the shipped mitigations, never vapor', () => {
     const all = RISKS.map((r) => `${r.body} ${r.mitigation}`).join(' ')
-    for (const proof of [
-      'unaudited',
-      'multisig',
-      'revoke',
-      'lifeboat',
-      'testnet',
-      'resumable',
-    ]) {
+    for (const proof of ['unaudited', 'multisig', 'revoke', 'lifeboat', 'testnet', 'resumable']) {
       expect(all).toMatch(new RegExp(proof))
     }
   })

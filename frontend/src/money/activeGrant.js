@@ -87,15 +87,10 @@ export function estimateExpiryMs({
     Number.isInteger(confirmedLedger) &&
     Number.isFinite(confirmedAtSec)
   ) {
-    const ms =
-      confirmedAtSec * 1000 + (expiryLedger - confirmedLedger) * SECONDS_PER_LEDGER * 1000
+    const ms = confirmedAtSec * 1000 + (expiryLedger - confirmedLedger) * SECONDS_PER_LEDGER * 1000
     if (Number.isFinite(ms)) return ms
   }
-  if (
-    Number.isInteger(expiryLedger) &&
-    Number.isInteger(currentLedger) &&
-    Number.isFinite(nowMs)
-  ) {
+  if (Number.isInteger(expiryLedger) && Number.isInteger(currentLedger) && Number.isFinite(nowMs)) {
     return nowMs + (expiryLedger - currentLedger) * SECONDS_PER_LEDGER * 1000
   }
   return null
@@ -131,10 +126,8 @@ export function toActiveGrantView({
   if (remaining < 0n) return { state: 'unavailable' }
   if (remaining === 0n) return { state: 'none' }
   const saneExpiry = Number.isInteger(expiryLedger) && expiryLedger >= 0 ? expiryLedger : null
-  const saneCurrent =
-    Number.isInteger(currentLedger) && currentLedger >= 0 ? currentLedger : null
-  const ledgersLeft =
-    saneExpiry === null || saneCurrent === null ? null : saneExpiry - saneCurrent
+  const saneCurrent = Number.isInteger(currentLedger) && currentLedger >= 0 ? currentLedger : null
+  const ledgersLeft = saneExpiry === null || saneCurrent === null ? null : saneExpiry - saneCurrent
   if (ledgersLeft !== null && ledgersLeft <= 0) return { state: 'none' }
   const estimatedExpiryMs =
     saneExpiry === null

@@ -80,11 +80,7 @@ export function hasRisksAck({ owner, storage } = {}) {
  * grant", the safe side). A wallet switch changes `owner`, so each wallet acknowledges on its
  * own — never inherited, never skipped. Never throws.
  */
-export function needsRisksAck({
-  owner,
-  router = SOROBAN_FUNDING_ROUTER_ADDRESS,
-  storage,
-} = {}) {
+export function needsRisksAck({ owner, router = SOROBAN_FUNDING_ROUTER_ADDRESS, storage } = {}) {
   if (!owner) return false
   try {
     if (hasRisksAck({ owner, storage })) return false

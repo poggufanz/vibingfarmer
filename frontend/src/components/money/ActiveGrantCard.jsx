@@ -38,8 +38,7 @@ function expiryLine(view) {
   }
   const countdown = describeCountdown(view.ledgersLeft)
   if (!countdown) return <p>Expires: Unavailable</p>
-  const when =
-    view.estimatedExpiryMs == null ? null : formatUtcMs(view.estimatedExpiryMs)
+  const when = view.estimatedExpiryMs == null ? null : formatUtcMs(view.estimatedExpiryMs)
   return (
     <p>
       Expires in {countdown}
@@ -48,20 +47,11 @@ function expiryLine(view) {
   )
 }
 
-export function ActiveGrantCard({
-  grant,
-  onRevoke,
-  revokePending = false,
-  revokeError = null,
-}) {
+export function ActiveGrantCard({ grant, onRevoke, revokePending = false, revokeError = null }) {
   if (grant == null || grant.state === 'none') return null
 
   return (
-    <section
-      className="pc-money-section"
-      aria-labelledby="active-grant-heading"
-      data-pocket-enter
-    >
+    <section className="pc-money-section" aria-labelledby="active-grant-heading" data-pocket-enter>
       <header>
         <h2 id="active-grant-heading">Active grant</h2>
       </header>
@@ -70,9 +60,7 @@ export function ActiveGrantCard({
           <>
             <p>Remaining: Unavailable</p>
             <p>Expires: Unavailable</p>
-            <p role="status">
-              The network did not answer. No number here is a balance.
-            </p>
+            <p role="status">The network did not answer. No number here is a balance.</p>
           </>
         ) : (
           <>

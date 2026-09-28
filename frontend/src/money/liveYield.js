@@ -9,10 +9,7 @@
 // derives windows and renders. No contract changes; KeeperZone/console untouched.
 import { readSupplyAprBps } from '../stellar/vaultReads.js'
 import { loadPpsSeries } from '../history/ppsHistory.js'
-import {
-  SOROBAN_AUTOFARM_VAULT_ADDRESS,
-  SOROBAN_BLEND_POOL_ADDRESS,
-} from '../stellar/config.js'
+import { SOROBAN_AUTOFARM_VAULT_ADDRESS, SOROBAN_BLEND_POOL_ADDRESS } from '../stellar/config.js'
 
 /**
  * Load the production yield view-model. Fail-soft by contract: an APR RPC failure (or a

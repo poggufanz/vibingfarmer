@@ -53,16 +53,44 @@ describe('estimateGrantFallbackFee', () => {
       throw new Error('RPC down')
     })
     await expect(
-      estimateGrantFallbackFee({ owner: OWNER, agentCount: 1, budgets: [{ token: TOKEN, units: '1' }], build })
+      estimateGrantFallbackFee({
+        owner: OWNER,
+        agentCount: 1,
+        budgets: [{ token: TOKEN, units: '1' }],
+        build,
+      })
     ).resolves.toBeNull()
   })
 
   it('rejects unshapable input to null before touching the network', async () => {
     const build = vi.fn()
-    await expect(estimateGrantFallbackFee({ owner: '', agentCount: 1, budgets: [{ token: TOKEN, units: '1' }], build })).resolves.toBeNull()
-    await expect(estimateGrantFallbackFee({ owner: OWNER, agentCount: 0, budgets: [{ token: TOKEN, units: '1' }], build })).resolves.toBeNull()
-    await expect(estimateGrantFallbackFee({ owner: OWNER, agentCount: 1, budgets: [], build })).resolves.toBeNull()
-    await expect(estimateGrantFallbackFee({ owner: OWNER, agentCount: 1, budgets: [{ token: TOKEN, units: '0' }], build })).resolves.toBeNull()
+    await expect(
+      estimateGrantFallbackFee({
+        owner: '',
+        agentCount: 1,
+        budgets: [{ token: TOKEN, units: '1' }],
+        build,
+      })
+    ).resolves.toBeNull()
+    await expect(
+      estimateGrantFallbackFee({
+        owner: OWNER,
+        agentCount: 0,
+        budgets: [{ token: TOKEN, units: '1' }],
+        build,
+      })
+    ).resolves.toBeNull()
+    await expect(
+      estimateGrantFallbackFee({ owner: OWNER, agentCount: 1, budgets: [], build })
+    ).resolves.toBeNull()
+    await expect(
+      estimateGrantFallbackFee({
+        owner: OWNER,
+        agentCount: 1,
+        budgets: [{ token: TOKEN, units: '0' }],
+        build,
+      })
+    ).resolves.toBeNull()
     expect(build).not.toHaveBeenCalled()
   })
 

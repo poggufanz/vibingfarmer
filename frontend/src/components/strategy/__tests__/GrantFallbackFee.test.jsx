@@ -17,9 +17,7 @@ describe('GrantFallbackFee', () => {
     const estimate = vi.fn(async () => ({ feeStroops: 12345n, feeXlm: '~0.0012345 XLM' }))
     render(<GrantFallbackFee {...props} estimate={estimate} />)
     expect(screen.getByText(/estimating fallback network fee/i)).toBeTruthy()
-    await waitFor(() =>
-      expect(screen.getByText(/you pay the network fee yourself/i)).toBeTruthy()
-    )
+    await waitFor(() => expect(screen.getByText(/you pay the network fee yourself/i)).toBeTruthy())
     expect(screen.getByText(/~0\.0012345 XLM/i)).toBeTruthy()
     expect(screen.getByText(/simulated estimate, not a quote/i)).toBeTruthy()
     expect(estimate).toHaveBeenCalledWith(

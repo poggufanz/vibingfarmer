@@ -74,9 +74,7 @@ export function normalizeReceiptRows(rows) {
   return (Array.isArray(rows) ? rows : []).map((r, i) => {
     const hash = typeof r?.txHash === 'string' && r.txHash.length > 0 ? r.txHash : null
     const amount =
-      amountText(r?.amountUsdc, 'USDC') ??
-      amountText(r?.amount) ??
-      'Amount unavailable'
+      amountText(r?.amountUsdc, 'USDC') ?? amountText(r?.amount) ?? 'Amount unavailable'
     const time = r?.timestamp ?? r?.savedAt
     return {
       id: `local:${hash ?? `${time ?? 'notime'}-${i}`}`,
@@ -169,17 +167,16 @@ export function normalizeKeeperRows(events) {
     .map((e, i) => {
       const hash = typeof e.txHash === 'string' && e.txHash.length > 0 ? e.txHash : null
       const gain =
-        e.type === 'compound' && e.totalGain != null
-          ? unitsToUsdcText(e.totalGain)
-          : null
+        e.type === 'compound' && e.totalGain != null ? unitsToUsdcText(e.totalGain) : null
       return {
         id: `keeper:${e.type}:${e.ledger ?? i}:${hash ?? i}`,
         time: e.closedAt != null ? msOrNull(e.closedAt) : null,
         kind: e.type,
         label: KEEPER_LABELS[e.type] ?? `Keeper ${e.type}`,
-        detail: [gain ? `+${gain}` : null, e.ledger != null ? `ledger ${e.ledger}` : null]
-          .filter(Boolean)
-          .join(' · ') || 'Details unavailable',
+        detail:
+          [gain ? `+${gain}` : null, e.ledger != null ? `ledger ${e.ledger}` : null]
+            .filter(Boolean)
+            .join(' · ') || 'Details unavailable',
         hash,
         url: stellarTxUrl(hash),
         network: 'stellar',
@@ -195,7 +192,8 @@ export function normalizeBaseRows(rows) {
     const direction = r?.direction ?? r?.action
     return {
       id: `base:${r?.hash ?? r?.id ?? i}`,
-      time: r?.time != null ? msOrNull(r.time) : r?.timestamp != null ? msOrNull(r.timestamp) : null,
+      time:
+        r?.time != null ? msOrNull(r.time) : r?.timestamp != null ? msOrNull(r.timestamp) : null,
       kind: 'base',
       label: direction === 'in' ? 'Received' : direction === 'out' ? 'Sent' : 'Unavailable',
       detail: amountText(r?.amount, r?.symbol ?? r?.asset) ?? 'Details unavailable',
@@ -223,14 +221,14 @@ export function mergeActivityRows(lists = {}) {
     if (!Array.isArray(rows)) continue
     // Stamp the origin on each row: the table names the DATA SOURCE per row, so an
     // unverified row never has to claim a settled route to say where it came from.
-    for (const row of rows) ranked.push({ row: { ...row, source }, rank: order.get(source) ?? order.size })
+    for (const row of rows)
+      ranked.push({ row: { ...row, source }, rank: order.get(source) ?? order.size })
   }
   const seenHash = new Set()
   const deduped = []
   // First pass in priority order so the richest row claims each hash.
   for (const { row, rank } of [...ranked].sort((a, b) => a.rank - b.rank)) {
-    const key =
-      typeof row?.hash === 'string' && row.hash.length > 0 ? row.hash.toLowerCase() : null
+    const key = typeof row?.hash === 'string' && row.hash.length > 0 ? row.hash.toLowerCase() : null
     if (key == null) {
       deduped.push({ row, rank })
       continue

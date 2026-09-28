@@ -41,7 +41,14 @@ describe('loadLiveYield — fail-soft, never a fake percent', () => {
   })
 
   it('a throwing APR read resolves to unavailable, never rejects', async () => {
-    const view = await load({}, { readApr: async () => { throw new Error('rpc down') } })
+    const view = await load(
+      {},
+      {
+        readApr: async () => {
+          throw new Error('rpc down')
+        },
+      }
+    )
     expect(view.liveApr.state).toBe('unavailable')
   })
 
@@ -57,7 +64,14 @@ describe('loadLiveYield — fail-soft, never a fake percent', () => {
   })
 
   it('a hostile series loader degrades to [], never throws', async () => {
-    const view = await load({}, { loadSeries: () => { throw new Error('no storage') } })
+    const view = await load(
+      {},
+      {
+        loadSeries: () => {
+          throw new Error('no storage')
+        },
+      }
+    )
     expect(view.series).toEqual([])
     expect(view.liveApr.state).toBe('live')
   })

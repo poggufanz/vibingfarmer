@@ -91,7 +91,10 @@ describe('ActiveGrantCard — fail-soft, never a fake number', () => {
 })
 
 describe('ActiveGrantCard — no active grant renders nothing', () => {
-  it.each([['null', null], ['none', { state: 'none' }]])('grant=%s renders no DOM', (_label, grant) => {
+  it.each([
+    ['null', null],
+    ['none', { state: 'none' }],
+  ])('grant=%s renders no DOM', (_label, grant) => {
     const { container } = render(<ActiveGrantCard grant={grant} onRevoke={vi.fn()} />)
     expect(container.innerHTML).toBe('')
   })

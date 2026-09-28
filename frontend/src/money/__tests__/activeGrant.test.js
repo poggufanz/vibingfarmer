@@ -93,9 +93,11 @@ describe('loadActiveGrant — remaining + countdown from mocked allowance', () =
 
 describe('loadActiveGrant — fail-soft, never a fake number', () => {
   it('an allowance RPC failure resolves to unavailable, never a coerced zero', async () => {
-    const d = deps({ readAllowance: async () => {
-      throw new Error('rpc down')
-    } })
+    const d = deps({
+      readAllowance: async () => {
+        throw new Error('rpc down')
+      },
+    })
     const view = await loadActiveGrant({ owner: OWNER, router: ROUTER, token: TOKEN, deps: d })
     expect(view).toEqual({ state: 'unavailable' })
   })

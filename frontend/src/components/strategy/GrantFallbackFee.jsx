@@ -27,7 +27,9 @@ export default function GrantFallbackFee({
     }
     estimate({ owner, agentCount, budgets: parsed, durationSeconds }).then((out) => {
       if (dead) return
-      setState(out ? { status: 'ready', feeXlm: out.feeXlm } : { status: 'unavailable', feeXlm: null })
+      setState(
+        out ? { status: 'ready', feeXlm: out.feeXlm } : { status: 'unavailable', feeXlm: null }
+      )
     })
     return () => {
       dead = true
@@ -38,8 +40,8 @@ export default function GrantFallbackFee({
   if (state.status === 'ready')
     return (
       <p>
-        If the relay is down, you pay the network fee yourself: {state.feeXlm} (simulated
-        estimate, not a quote).
+        If the relay is down, you pay the network fee yourself: {state.feeXlm} (simulated estimate,
+        not a quote).
       </p>
     )
   return <p>Fallback network fee estimate unavailable.</p>

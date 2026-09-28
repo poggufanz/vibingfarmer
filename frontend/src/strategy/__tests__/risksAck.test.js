@@ -5,12 +5,7 @@ import { saveGrantReceipt, buildGrantReceiptV1 } from '../../stellar/grantReceip
 // The gate looks the receipt up under config's own default network bucket, so the fixture
 // receipt must be saved under that same bucket — never a hardcoded passphrase that can drift.
 import { NETWORK_PASSPHRASE } from '../../stellar/config.js'
-import {
-  hasRisksAck,
-  loadRisksAck,
-  needsRisksAck,
-  saveRisksAck,
-} from '../risksAck.js'
+import { hasRisksAck, loadRisksAck, needsRisksAck, saveRisksAck } from '../risksAck.js'
 
 const OWNER = 'GOWNER'
 const OTHER = 'GOTHER'

@@ -100,7 +100,11 @@ describe('normalizers', () => {
       { type: 'withdraw', txHash: 'HW', vaultName: 'V', amountUsdc: 2, timestamp: 5 },
       { type: 'transaction', vaultName: 'V', amountUsdc: 1, timestamp: 6 },
     ])
-    expect(w).toMatchObject({ kind: 'withdraw', label: 'Withdraw', url: expect.stringContaining('HW') })
+    expect(w).toMatchObject({
+      kind: 'withdraw',
+      label: 'Withdraw',
+      url: expect.stringContaining('HW'),
+    })
     expect(d).toMatchObject({ kind: 'deposit', label: 'Deposit', hash: null, url: null })
   })
 
@@ -172,7 +176,13 @@ describe('fetchUnifiedActivity', () => {
           },
         ],
         getTransactions: () => [
-          { type: 'transaction', txHash: 'HR', vaultName: 'V', amountUsdc: 5, timestamp: 1700000000000 },
+          {
+            type: 'transaction',
+            txHash: 'HR',
+            vaultName: 'V',
+            amountUsdc: 5,
+            timestamp: 1700000000000,
+          },
         ],
         loadDepositLedger: () => [{ agent: 'CA', assetsIn: '10000000', txHash: 'HR' }],
         fetchAgents: async () => ({ status: 'complete', agents: [{ address: 'CAGENT9' }] }),
@@ -211,7 +221,11 @@ describe('fetchUnifiedActivity', () => {
       },
     })
     expect(out.rows).toEqual([])
-    expect(out.sources).toMatchObject({ horizon: 'unavailable', grant: 'unavailable', local: 'empty' })
+    expect(out.sources).toMatchObject({
+      horizon: 'unavailable',
+      grant: 'unavailable',
+      local: 'empty',
+    })
     expect(out.partial).toBe(true)
   })
 

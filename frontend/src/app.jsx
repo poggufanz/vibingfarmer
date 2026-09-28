@@ -3130,9 +3130,12 @@ const App = () => {
       return undefined
     }
     refreshMoneyLiveYield()
-    const id = setInterval(() => {
-      if (alive) refreshMoneyLiveYield()
-    }, 15 * 60 * 1000)
+    const id = setInterval(
+      () => {
+        if (alive) refreshMoneyLiveYield()
+      },
+      15 * 60 * 1000
+    )
     return () => {
       alive = false
       clearInterval(id)
@@ -5071,7 +5074,10 @@ const App = () => {
               <div className="pc-route-flush">
                 {/* onRefresh restated explicitly (same expression as settingsPageProps): pinned by
                     app.settings.test.jsx "keeps the Settings refresh bridge explicitly bound". */}
-                <SettingsPage {...settingsPageProps} onRefresh={() => refreshBaseView(activeAccount)} />
+                <SettingsPage
+                  {...settingsPageProps}
+                  onRefresh={() => refreshBaseView(activeAccount)}
+                />
               </div>
             }
           />
@@ -5133,7 +5139,12 @@ const App = () => {
         {/* Settings modal (option B): same SettingsPage element as the /settings route above
             (shared settingsPageProps, no drift) popped above the active route without moving
             the URL. Close via onClose + Escape/backdrop (owned by Dialog). */}
-        <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} label="Settings" className="pc-settings-dialog">
+        <Dialog
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          label="Settings"
+          className="pc-settings-dialog"
+        >
           <SettingsPage {...settingsPageProps} />
         </Dialog>
         <StopAccessDialog

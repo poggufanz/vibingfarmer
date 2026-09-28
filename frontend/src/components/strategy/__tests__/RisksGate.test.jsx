@@ -71,9 +71,7 @@ describe('RisksGateModal — checkbox required before continuing', () => {
   })
 
   it('reopening resets the checkbox', () => {
-    const { rerender } = render(
-      <RisksGateModal open onConfirm={vi.fn()} onClose={vi.fn()} />
-    )
+    const { rerender } = render(<RisksGateModal open onConfirm={vi.fn()} onClose={vi.fn()} />)
     fireEvent.click(screen.getByRole('checkbox', { name: /saya paham/i }))
     expect(screen.getByRole('button', { name: 'Acknowledge and continue' }).disabled).toBe(false)
     rerender(<RisksGateModal open={false} onConfirm={vi.fn()} onClose={vi.fn()} />)
@@ -95,9 +93,7 @@ describe('Risks shell — permanent footer link to /risks', () => {
       </MemoryRouter>
     )
     fireEvent.click(screen.getByRole('button', { name: 'Risks' }))
-    expect(screen.getByRole('button', { name: 'Risks' }).getAttribute('aria-current')).toBe(
-      'page'
-    )
+    expect(screen.getByRole('button', { name: 'Risks' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('the four-item primary nav is untouched by the footer link', () => {
