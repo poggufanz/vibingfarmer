@@ -14,7 +14,7 @@ export function RisksGateModal({ open, onConfirm, onClose }) {
   const [checked, setChecked] = useState(false)
   useEffect(() => {
     if (open) setChecked(false)
-  }, [open ])
+  }, [open])
 
   return (
     <Dialog
@@ -22,6 +22,7 @@ export function RisksGateModal({ open, onConfirm, onClose }) {
       title="Understand the risks"
       description="Your first grant needs one acknowledgement, stored on this device only."
       onClose={onClose}
+      className="pc-risks-gate"
       actions={
         <>
           <button type="button" className="pc-button pc-button--secondary" onClick={onClose}>
@@ -43,11 +44,7 @@ export function RisksGateModal({ open, onConfirm, onClose }) {
     >
       <RisksContent />
       <label className="pc-risks-ack">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => setChecked(e.target.checked)}
-        />
+        <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
         Saya paham risiko di atas dan ingin melanjutkan.
       </label>
     </Dialog>

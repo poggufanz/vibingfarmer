@@ -13,6 +13,7 @@
 export const RISKS = Object.freeze([
   {
     id: 'smart-contract',
+    area: 'Contracts',
     title: 'Smart-contract risk',
     body: 'The vault, router, strategy, and agent contracts are unaudited hackathon code. A bug could lock funds or move them somewhere unrecoverable.',
     mitigation:
@@ -20,6 +21,7 @@ export const RISKS = Object.freeze([
   },
   {
     id: 'oracle',
+    area: 'Pricing',
     title: 'Oracle risk',
     body: 'Lending pools price collateral through oracles, and a stale or manipulated price misvalues what the strategy holds. The display could look healthy while the position is not.',
     mitigation:
@@ -27,6 +29,7 @@ export const RISKS = Object.freeze([
   },
   {
     id: 'liquidity',
+    area: 'Withdrawals',
     title: 'Liquidity risk',
     body: 'Withdrawals need free pool liquidity to settle. At extreme utilization a withdrawal can queue and arrive late instead of all at once.',
     mitigation:
@@ -34,6 +37,7 @@ export const RISKS = Object.freeze([
   },
   {
     id: 'testnet-reset',
+    area: 'Network',
     title: 'Testnet reset risk',
     body: 'Stellar testnet resets wipe all chain state: grants, positions, and history disappear. Anything you see here can vanish on reset day.',
     mitigation:
@@ -41,6 +45,7 @@ export const RISKS = Object.freeze([
   },
   {
     id: 'bridge-delay',
+    area: 'Cross-chain',
     title: 'Bridge delay risk',
     body: 'The Base leg settles only after Circle attests the burn, which takes minutes on a good day. An attestation can also stall and leave funds visibly in flight.',
     mitigation:
@@ -48,6 +53,7 @@ export const RISKS = Object.freeze([
   },
   {
     id: 'grant-scope',
+    area: 'Permissions',
     title: 'Grant scope risk',
     body: 'A grant lets agents move funds within its cap and expiry without asking you again. A leaked session key could be abused inside that scope until it expires.',
     mitigation:

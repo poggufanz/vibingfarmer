@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import ReplayPage from '../ReplayPage.jsx'
 
@@ -108,6 +108,26 @@ describe('ReplayPage', () => {
     expect(screen.getByText('Swarm Execution')).toBeTruthy()
     expect(screen.getByText('Human Reaction')).toBeTruthy()
     expect(screen.queryByText(/Stellar testnet|live yield/i)).toBeNull()
+  })
+
+  it('lists every fork swap in reaction-time order and marks the first-block swap as the agent', () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {}))
+    )
+    renderReplay(readFor('current', { ground: GROUND, mc: MC }))
+
+    const rows = within(screen.getByRole('list', { name: /swap result at each reaction time/i }))
+      .getAllByRole('listitem')
+      .map((row) => row.textContent)
+
+    expect(rows).toEqual([
+      '24 sAgent+2 blocks700.88 WETH',
+      '3 min+15 blocks700.06 WETH',
+      '10 min+50 blocks701.83 WETH',
+      '30 min+150 blocks703.58 WETH',
+      '2 h+600 blocks700.02 WETH',
+    ])
   })
 
   it('keeps a ground-only fixture visible with an explicit Monte Carlo notice', () => {
