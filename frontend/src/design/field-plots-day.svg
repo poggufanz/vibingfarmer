@@ -1,0 +1,48 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000'>
+<!-- Aerial farmland: furrowed parcels that thin out toward the lower left, worn by a noise mask. Generated (seed 21); each parcel is one polygon, so retune by editing points. -->
+<defs>
+<filter id='wear' x='0' y='0' width='1600' height='1000' filterUnits='userSpaceOnUse'><feTurbulence type='fractalNoise' baseFrequency='0.016' numOctaves='3' seed='7' result='n'/><feDisplacementMap in='SourceGraphic' in2='n' scale='5' xChannelSelector='R' yChannelSelector='G' result='d'/><feTurbulence type='fractalNoise' baseFrequency='0.03 0.045' numOctaves='2' seed='19'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2.8 0 0 0 -0.95' result='m'/><feComposite in='d' in2='m' operator='in'/></filter>
+<filter id='track' x='0' y='0' width='1600' height='1000' filterUnits='userSpaceOnUse'><feTurbulence type='fractalNoise' baseFrequency='0.02' numOctaves='2' seed='3'/><feDisplacementMap in='SourceGraphic' scale='4' xChannelSelector='R' yChannelSelector='G'/></filter>
+<pattern id='p0' width='12' height='12' patternUnits='userSpaceOnUse' patternTransform='rotate(76.2)'><path d='M0 6H12' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c0'><polygon points='410.2,53.3 609.2,-5.8 589.1,215.6 398.3,190.8'/></clipPath>
+<pattern id='p1' width='6' height='6' patternUnits='userSpaceOnUse' patternTransform='rotate(75.5)'><path d='M0 3H6' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c1'><polygon points='621.7,-6.3 792.4,-55.9 850.9,180.8 600.9,215.6'/></clipPath>
+<pattern id='p2' width='6' height='6' patternUnits='userSpaceOnUse' patternTransform='rotate(78.2)'><path d='M0 3H6' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c2'><polygon points='804.3,-59 1043.9,-98.6 1063.8,97.7 862.5,178.2'/></clipPath>
+<pattern id='p3' width='6' height='6' patternUnits='userSpaceOnUse' patternTransform='rotate(83.2)'><path d='M0 3H6' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c3'><polygon points='1056.8,-100.7 1303.6,-130.1 1344.4,107.4 1078.4,96.2'/></clipPath>
+<pattern id='p4' width='8' height='8' patternUnits='userSpaceOnUse' patternTransform='rotate(95.6)'><path d='M0 4H8' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c4'><polygon points='1316.3,-130.9 1517.2,-120.6 1501.5,11.6 1355.6,104.8'/></clipPath>
+<pattern id='p5' width='6' height='6' patternUnits='userSpaceOnUse' patternTransform='rotate(82.2)'><path d='M0 3H6' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c5'><polygon points='183.6,242 386.7,204.1 470.7,415.8 182.8,516.6'/></clipPath>
+<pattern id='p6' width='10' height='10' patternUnits='userSpaceOnUse' patternTransform='rotate(96)'><path d='M0 5H10' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c6'><polygon points='398.2,201.9 589.1,229.2 626.4,368.4 482.2,411'/></clipPath>
+<pattern id='p7' width='6' height='6' patternUnits='userSpaceOnUse' patternTransform='rotate(-21.1)'><path d='M0 3H6' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c7'><polygon points='866,190.6 1067.5,110.1 1159.9,347.2 866.6,396.6'/></clipPath>
+<pattern id='p8' width='6' height='6' patternUnits='userSpaceOnUse' patternTransform='rotate(94.6)'><path d='M0 3H6' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c8'><polygon points='1079.1,107.1 1344.8,118.8 1345.4,281.6 1171.9,343.2'/></clipPath>
+<pattern id='p9' width='6' height='6' patternUnits='userSpaceOnUse' patternTransform='rotate(-31.9)'><path d='M0 3H6' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c9'><polygon points='1359.3,117.6 1505.9,24.4 1561.6,260.2 1358.6,279.3'/></clipPath>
+<pattern id='p10' width='8' height='8' patternUnits='userSpaceOnUse' patternTransform='rotate(74)'><circle cx='4' cy='4' r='1.1' fill='#17251f'/></pattern>
+<clipPath id='c10'><polygon points='485.3,425.8 630.8,381.7 689.1,640.4 512.5,636'/></clipPath>
+<pattern id='p12' width='12' height='12' patternUnits='userSpaceOnUse' patternTransform='rotate(-12.9)'><path d='M0 6H12' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c12'><polygon points='868.8,406.7 1161.3,357.4 1183.2,572.6 919.6,560'/></clipPath>
+<pattern id='p13' width='8' height='8' patternUnits='userSpaceOnUse' patternTransform='rotate(-23.2)'><path d='M0 4H8' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c13'><polygon points='1174.9,356.9 1349.2,294.5 1405.5,545.5 1195.7,570'/></clipPath>
+<pattern id='p14' width='10' height='10' patternUnits='userSpaceOnUse' patternTransform='rotate(-7.9)'><path d='M0 5H10' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c14'><polygon points='1360.3,291.6 1563.7,273.2 1612.9,436.8 1416.2,543.1'/></clipPath>
+<pattern id='p15' width='12' height='12' patternUnits='userSpaceOnUse' patternTransform='rotate(-2.5)'><path d='M0 6H12' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c15'><polygon points='514.7,649.8 689.6,654.1 736.1,828.7 539.5,840.8'/></clipPath>
+<pattern id='p16' width='8' height='8' patternUnits='userSpaceOnUse' patternTransform='rotate(82.7)'><circle cx='4' cy='4' r='1.1' fill='#17251f'/></pattern>
+<clipPath id='c16'><polygon points='1198.8,581.4 1406.1,557.6 1447.9,713.3 1242.2,712.4'/></clipPath>
+<pattern id='p18' width='12' height='12' patternUnits='userSpaceOnUse' patternTransform='rotate(0.6)'><circle cx='6' cy='6' r='1.1' fill='#17251f'/></pattern>
+<clipPath id='c18'><polygon points='1242.1,724.3 1450,724.7 1470.1,929.9 1283.5,948.4'/></clipPath>
+<pattern id='p19' width='10' height='10' patternUnits='userSpaceOnUse' patternTransform='rotate(88.1)'><circle cx='5' cy='5' r='1.1' fill='#17251f'/></pattern>
+<clipPath id='c19'><polygon points='1462.6,723.5 1684.9,704.2 1650.4,892.8 1482.2,928.7'/></clipPath>
+<pattern id='p20' width='6' height='6' patternUnits='userSpaceOnUse' patternTransform='rotate(-9.6)'><path d='M0 3H6' stroke='#17251f' stroke-width='1.1'/></pattern>
+<clipPath id='c20'><polygon points='1483.2,942.3 1652.5,907.1 1684.5,1149.9 1504.8,1160.6'/></clipPath>
+</defs>
+<g filter='url(#wear)' opacity='0.1'><rect clip-path='url(#c0)' width='1600' height='1000' fill='url(#p0)'/><rect clip-path='url(#c1)' width='1600' height='1000' fill='url(#p1)'/><rect clip-path='url(#c2)' width='1600' height='1000' fill='url(#p2)'/><rect clip-path='url(#c3)' width='1600' height='1000' fill='url(#p3)'/><rect clip-path='url(#c4)' width='1600' height='1000' fill='url(#p4)'/><rect clip-path='url(#c5)' width='1600' height='1000' fill='url(#p5)'/><rect clip-path='url(#c6)' width='1600' height='1000' fill='url(#p6)'/><rect clip-path='url(#c7)' width='1600' height='1000' fill='url(#p7)'/><rect clip-path='url(#c8)' width='1600' height='1000' fill='url(#p8)'/><rect clip-path='url(#c9)' width='1600' height='1000' fill='url(#p9)'/><rect clip-path='url(#c10)' width='1600' height='1000' fill='url(#p10)'/><rect clip-path='url(#c12)' width='1600' height='1000' fill='url(#p12)'/><rect clip-path='url(#c13)' width='1600' height='1000' fill='url(#p13)'/><rect clip-path='url(#c14)' width='1600' height='1000' fill='url(#p14)'/><rect clip-path='url(#c15)' width='1600' height='1000' fill='url(#p15)'/><rect clip-path='url(#c16)' width='1600' height='1000' fill='url(#p16)'/><rect clip-path='url(#c18)' width='1600' height='1000' fill='url(#p18)'/><rect clip-path='url(#c19)' width='1600' height='1000' fill='url(#p19)'/><rect clip-path='url(#c20)' width='1600' height='1000' fill='url(#p20)'/></g>
+<g filter='url(#track)' fill='none' stroke='#17251f' stroke-opacity='0.05' stroke-width='1.4'><polygon points='402.7,48.3 615.2,-12.5 595,222.4 391.2,196.3'/><polygon points='615.2,-12.5 796.7,-63.8 858.2,186.1 595,222.4'/><polygon points='796.7,-63.8 1049.4,-105.7 1071.6,102.1 858.2,186.1'/><polygon points='1049.4,-105.7 1309.6,-136.9 1351.6,112.9 1071.6,102.1'/><polygon points='1309.6,-136.9 1523.8,-126.7 1509.3,16.1 1351.6,112.9'/><polygon points='176.7,236.2 391.2,196.3 478.9,419.4 177.6,523.9'/><polygon points='391.2,196.3 595,222.4 634,373.3 478.9,419.4'/><polygon points='858.2,186.1 1071.6,102.1 1167.9,351.3 860.5,403.2'/><polygon points='1071.6,102.1 1351.6,112.9 1353,286.3 1167.9,351.3'/><polygon points='1351.6,112.9 1509.3,16.1 1568.7,265.7 1353,286.3'/><polygon points='478.9,419.4 634,373.3 695.2,647 508,643.8'/><polygon points='634,373.3 860.5,403.2 912.5,565.5 695.2,647'/><polygon points='860.5,403.2 1167.9,351.3 1190.7,577.5 912.5,565.5'/><polygon points='1167.9,351.3 1353,286.3 1412.5,551.2 1190.7,577.5'/><polygon points='1353,286.3 1568.7,265.7 1621.2,440.2 1412.5,551.2'/><polygon points='508,643.8 695.2,647 743.3,834 533.7,847.7'/><polygon points='1190.7,577.5 1412.5,551.2 1455.7,717.8 1235.4,718.3'/><polygon points='1412.5,551.2 1621.2,440.2 1691.4,698 1455.7,717.8'/><polygon points='1235.4,718.3 1455.7,717.8 1476.8,935.9 1278.5,955.9'/><polygon points='1455.7,717.8 1691.4,698 1656.8,899.1 1476.8,935.9'/><polygon points='1476.8,935.9 1656.8,899.1 1690.6,1156.4 1500,1168.2'/></g>
+<g fill='none' stroke='#17251f' stroke-opacity='0.14' stroke-width='1.2'><path d='M590 222.4h10M595 217.4v10'/><path d='M386.2 196.3h10M391.2 191.3v10'/><path d='M1346.6 112.9h10M1351.6 107.9v10'/><path d='M1504.3 16.1h10M1509.3 11.1v10'/><path d='M171.7 236.2h10M176.7 231.2v10'/><path d='M172.6 523.9h10M177.6 518.9v10'/><path d='M1162.9 351.3h10M1167.9 346.3v10'/><path d='M503 643.8h10M508 638.8v10'/><path d='M1407.5 551.2h10M1412.5 546.2v10'/><path d='M1450.7 717.8h10M1455.7 712.8v10'/><path d='M1230.4 718.3h10M1235.4 713.3v10'/><path d='M1471.8 935.9h10M1476.8 930.9v10'/><path d='M1273.5 955.9h10M1278.5 950.9v10'/></g>
+</svg>
