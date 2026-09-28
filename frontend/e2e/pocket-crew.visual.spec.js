@@ -2149,7 +2149,8 @@ const compatibilityThemes = Object.freeze(['forest', 'day-field'])
 // /developers currently redirects a disconnected visitor to the same Landing takeover as "/"
 // (app.jsx's `!skipLanding && !realAddress` gate runs before the /developers route ever mounts,
 // and app.jsx is not in this task's file list) -- this asserts what genuinely renders today, not
-// a fixed IA.
+// a fixed IA. 3dcdaf52 renamed the takeover H1 from "One signature. Bounded workers." to
+// "Set once. Vibe forever.", so this shares landing's landmark.
 const ROUTE_LANDMARKS = Object.freeze({
   landing: { role: 'heading', name: /Set once/i },
   home: { role: 'button', name: 'Connect Wallet' },
@@ -2158,7 +2159,7 @@ const ROUTE_LANDMARKS = Object.freeze({
   history: { role: 'heading', name: 'History', exact: true },
   settings: { text: 'Agent Configuration' },
   explorer: { role: 'heading', name: 'Explorer' },
-  developers: { role: 'heading', name: /One signature/i },
+  developers: { role: 'heading', name: /Set once/i },
 })
 
 test.describe('Pocket Crew disconnected compatibility', () => {
