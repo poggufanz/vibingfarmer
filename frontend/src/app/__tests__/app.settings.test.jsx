@@ -96,6 +96,7 @@ vi.mock('../../stellar/index.js', () => ({
 vi.mock('../../stellar/vaultReads.js', () => ({
   readTotalShares: vi.fn(async () => 0n),
   readPricePerShare: vi.fn(async () => null),
+  readSupplyAprBps: vi.fn(async () => null),
   readLifeboatState: vi.fn(async () => null),
 }))
 

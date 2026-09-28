@@ -175,6 +175,7 @@ vi.mock('../../strategy/reusePreflight.js', async (importOriginal) => ({
 vi.mock('../../stellar/vaultReads.js', () => ({
   readTotalShares: vi.fn(async () => 0n),
   readPricePerShare: vi.fn(async () => null),
+  readSupplyAprBps: vi.fn(async () => null),
   readLifeboatState: vi.fn(async () => null),
 }))
 vi.mock('../../stellar/lifeboat.js', async (importOriginal) => ({
