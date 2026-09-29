@@ -67,6 +67,7 @@
 import { useState } from 'react'
 import { PoolSafetySection } from './PoolSafetyPanel.jsx'
 import GrantFallbackFee from './GrantFallbackFee.jsx'
+import { toneFor } from './CrewSplit.jsx'
 import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
 import { AgentMark } from '../pocket/AgentMark.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
@@ -639,8 +640,8 @@ export function ProtectStage({
           <span>Bounded</span>
         </li>
       </ul>
-      <p>{stopFutureAccessCopy.copy}</p>
-      <p>{withdrawalSeparateCopy.label}</p>
+      <p className="pc-ceiling-note">{stopFutureAccessCopy.copy}</p>
+      <p className="pc-ceiling-note">{withdrawalSeparateCopy.label}</p>
     </>
   )
 
@@ -1154,7 +1155,7 @@ export function ProtectStage({
                   data-agent-address={a.agentAddress}
                 >
                   <div className="pc-protect-agent-identity">
-                    <AgentMark identity={identity} state="existing" size={44} label="agent" />
+                    <AgentMark identity={identity} state="existing" size={20} label="agent" />
                     <img
                       className="pc-protect-agent-avatar pc-crew-avatar"
                       src={persona.avatar}
@@ -1247,7 +1248,7 @@ export function ProtectStage({
                   data-agent-address={e.agentAddress}
                 >
                   <div className="pc-protect-agent-identity">
-                    <AgentMark identity={identity} state="existing" size={44} label="agent" />
+                    <AgentMark identity={identity} state="existing" size={20} label="agent" />
                     <img
                       className="pc-protect-agent-avatar pc-crew-avatar"
                       src={persona.avatar}
@@ -1285,39 +1286,43 @@ export function ProtectStage({
           <div className="pc-support">
             <div className="pc-support-content">
               {ceilingCard}
-              {decision.reviewedBudgets.map((b) => (
-                <p key={b.token}>Headroom after granting: {exactCoreAmountText(b)}</p>
-              ))}
-              {decision.reviewedAgentInits.map((r, i) => {
-                const exposure = maxAtRisk({
-                  capPerPeriod: BigInt(r.cap.units),
-                  periodDuration: r.periodSeconds,
-                  expiry: r.expiry,
-                  nowSec: decision.checkedAt,
-                  // Minor (review finding): this is the PRE-approval review screen -- nothing has
-                  // been approved yet, so claiming `approvedByUser: true` here was the wrong
-                  // signal (permissionScope.js's guard exists precisely to catch that claim).
-                  // Omitted, not `false`: `assertScope` only throws on a literal `false` (an
-                  // explicit refusal), and this call is pure display math, never the actual grant
-                  // args (`toAuthorizeArgs`) -- so leaving the field simply unset never claims
-                  // either state one way or the other.
-                })
-                return (
-                  <p key={r.allocationId}>
-                    {/* Fix loop 1 -- I3/C1: label from THIS agent's own reviewed cap token, never
+              <div className="pc-ceiling-exposure">
+                {decision.reviewedBudgets.map((b) => (
+                  <p key={b.token}>Headroom after granting: {exactCoreAmountText(b)}</p>
+                ))}
+                {decision.reviewedAgentInits.map((r, i) => {
+                  const exposure = maxAtRisk({
+                    capPerPeriod: BigInt(r.cap.units),
+                    periodDuration: r.periodSeconds,
+                    expiry: r.expiry,
+                    nowSec: decision.checkedAt,
+                    // Minor (review finding): this is the PRE-approval review screen -- nothing has
+                    // been approved yet, so claiming `approvedByUser: true` here was the wrong
+                    // signal (permissionScope.js's guard exists precisely to catch that claim).
+                    // Omitted, not `false`: `assertScope` only throws on a literal `false` (an
+                    // explicit refusal), and this call is pure display math, never the actual grant
+                    // args (`toAuthorizeArgs`) -- so leaving the field simply unset never claims
+                    // either state one way or the other.
+                  })
+                  return (
+                    <p key={r.allocationId}>
+                      {/* Fix loop 1 -- I3/C1: label from THIS agent's own reviewed cap token, never
                         plan.amount.token -- a mixed-token plan's second agent can be budgeted in a
                         different Stellar contract than the plan's display token names. */}
-                    Worst case for agent {i + 1}:{' '}
-                    {exactCoreAmountText({
-                      ...r.cap,
-                      units: exposure.toString(),
-                    })}
-                  </p>
-                )
-              })}
-              <p>Each agent signs with its own separate session key.</p>
-              <p>Each agent can be stopped on its own, independent of the others.</p>
-              <p>Network fee sponsored by fee-bump relay.</p>
+                      Worst case for agent {i + 1}:{' '}
+                      {exactCoreAmountText({
+                        ...r.cap,
+                        units: exposure.toString(),
+                      })}
+                    </p>
+                  )
+                })}
+              </div>
+              <ul className="pc-ceiling-guarantees">
+                <li>Each agent signs with its own separate session key.</li>
+                <li>Each agent can be stopped on its own, independent of the others.</li>
+                <li>Network fee sponsored by fee-bump relay.</li>
+              </ul>
               <GrantFallbackFee
                 owner={owner}
                 agentCount={decision.reviewedAgentInits.length}
@@ -1352,9 +1357,10 @@ export function ProtectStage({
                 key={planAgent.allocationId}
                 className="pc-agent-lane"
                 data-agent-kind={planAgent.kind}
+                data-tone={toneFor(persona, planAgent.kind)}
               >
                 <div className="pc-protect-agent-identity">
-                  <AgentMark identity={identity} state="planned" size={44} label="agent" />
+                  <AgentMark identity={identity} state="planned" size={20} label="agent" />
                   <img
                     className="pc-protect-agent-avatar pc-crew-avatar"
                     src={persona.avatar}

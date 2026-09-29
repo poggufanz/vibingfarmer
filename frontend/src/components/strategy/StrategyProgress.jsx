@@ -7,10 +7,20 @@
 // never invents its own "is it safe to go back" policy; the caller, which knows whether a plan
 // has been signed/dispatched, decides what counts as reached).
 const STEPS = Object.freeze([
-  { id: 'plan', label: 'Plan' },
-  { id: 'protect', label: 'Protect' },
-  { id: 'start', label: 'Start' },
+  { id: 'plan', label: 'Plan', caption: 'Amount and comfort' },
+  { id: 'protect', label: 'Protect', caption: 'Limits and one signature' },
+  { id: 'start', label: 'Start', caption: 'Crew goes to work' },
 ])
+
+// Station rail (2026-09-28 redesign): each step is a station with a lamp. The accessible name is
+// still exactly "N · Label" -- one screen-reader-only text node -- and the visible lamp number,
+// label and caption are aria-hidden duplicates of it, so the rail can look like an instrument
+// without changing what assistive tech or the tests read.
+function stationState(index, currentIndex) {
+  if (index < currentIndex) return 'done'
+  if (index === currentIndex) return 'current'
+  return 'ahead'
+}
 
 /**
  * @param {object} props
@@ -39,9 +49,17 @@ export function StrategyProgress({ current, reached, onNavigate }) {
             type="button"
             aria-current={isCurrent ? 'step' : undefined}
             disabled={!canNavigate}
+            data-station={stationState(index, currentIndex)}
             onClick={canNavigate ? () => onNavigate(step.id) : undefined}
           >
-            {`${index + 1} · ${step.label}`}
+            <span className="pc-visually-hidden">{`${index + 1} · ${step.label}`}</span>
+            <span className="pc-stage-lamp" aria-hidden="true">
+              {index + 1}
+            </span>
+            <span className="pc-stage-text" aria-hidden="true">
+              <span className="pc-stage-label">{step.label}</span>
+              <span className="pc-stage-caption">{step.caption}</span>
+            </span>
           </button>
         )
       })}

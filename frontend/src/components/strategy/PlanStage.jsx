@@ -31,6 +31,7 @@ import { hashStrategy } from '../../strategy/attestation.js'
 import { SOROBAN_DECIMALS, SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
 import { personaForOrdinal } from '../../crew/personas.js'
 import { parseAssetUnits } from '../../money/assetUnits.js'
+import { CrewSplit, formatShare, shareBasisPoints, toneFor } from './CrewSplit.jsx'
 import {
   formatCoreAmount,
   normalizeCoreAmount,
@@ -63,6 +64,42 @@ function formatElapsed(seconds) {
 // Task 3 (Pocket Crew design alignment) -- quick amount shortcuts under the amount field. Written
 // into the existing amountValue state, nothing else; no new persistence/state.
 const AMOUNT_PRESETS = Object.freeze(['50', '250', '1000'])
+
+// 2026-09-28 redesign: each comfort tile says what actually changes -- the number of separate agent
+// accounts the money is split across (RISK_PROFILES.targetSlots). Kept out of the radio's name
+// (aria-hidden, wired back in through aria-describedby) so the name stays exactly the label.
+const COMFORT_NOTES = Object.freeze({
+  low: 'One agent account holds all of it.',
+  med: 'Split across two agent accounts.',
+  high: 'Spread over three agent accounts.',
+})
+
+// The same exact expandAgentSlots split a generation call makes, projected into CrewSplit
+// segments for the live preview. Presentation only: nothing here feeds a plan or a grant.
+function previewSegments(amount, risk) {
+  if (!amount || !risk) return []
+  try {
+    if (BigInt(amount.units) <= 0n) return []
+    const agents = expandAgentSlots({
+      risk,
+      stellarUnits: BigInt(amount.units),
+      stellarDecimals: amount.decimals,
+    })
+    return agents.map((agent, index) => {
+      const persona = personaForOrdinal(index)
+      return {
+        id: agent.allocationId,
+        units: agent.allocation.units,
+        decimals: agent.allocation.decimals,
+        tone: toneFor(persona, agent.kind),
+        name: persona?.name,
+        avatar: persona?.avatar,
+      }
+    })
+  } catch {
+    return []
+  }
+}
 
 function defaultInstruction(agent) {
   return agent.kind === 'bridge'
@@ -114,7 +151,7 @@ function parseTypedAmount(value) {
 // Task 3 (Pocket Crew design alignment): run the real expandAgentSlots split (the same one a
 // generation call makes) against the canonical typed amount. No display number is widened before
 // the exact split or formatting boundary.
-function formatShare(amount, risk) {
+function formatCrewShare(amount, risk) {
   if (!amount) return ''
   try {
     if (BigInt(amount.units) <= 0n) return ''
@@ -357,7 +394,8 @@ export function PlanStage({
 
   const canSubmit = amountValue.trim() !== '' && Boolean(risk) && phase !== 'generating'
   const typedAmount = parseTypedAmount(amountValue)
-  const crewShare = typedAmount ? formatShare(typedAmount, risk) : ''
+  const crewShare = typedAmount ? formatCrewShare(typedAmount, risk) : ''
+  const splitPreview = previewSegments(typedAmount, risk)
   const executionCheck = plan ? validateExecutionAllocations({ plan, vaultTotalShares }) : null
   const canAccept = phase === 'ready' && !planInvalidated && executionCheck?.ok === true
   const stellarYield = toLiveVenueView(stellarVenue)
@@ -380,6 +418,15 @@ export function PlanStage({
   const allocationDisplay = plan ? safeAmountDisplayMap(plan.agents, 'allocation') : null
   const capDisplay = plan ? safeAmountDisplayMap(plan.agents, 'cap') : null
   const planExpiry = plan?.agents[0] ? formatExpiry(plan.agents[0].expiry) : null
+  const reviewSegments = plan
+    ? plan.agents.map((agent, index) => ({
+        id: agent.allocationId,
+        units: agent.allocation.units,
+        decimals: agent.allocation.decimals,
+        tone: toneFor(personaForOrdinal(index), agent.kind),
+      }))
+    : []
+  const reviewShares = shareBasisPoints(reviewSegments)
 
   // Task 4 -- the aside's live "plan so far" summary. Before a plan exists this reflects the
   // typed amount only; once one does, it reflects the REAL reviewed totals (never a different
@@ -533,31 +580,57 @@ export function PlanStage({
   return (
     <div className="pc-strategy-layout">
       <div className="pc-strategy-decision pc-dominant pc-dominant--decision">
-        <h2 className="pc-strategy-question">How much do you want to put to work?</h2>
+        <h2 className="pc-strategy-question">
+          {phase === 'ready' && plan ? 'Review your plan' : 'How much do you want to put to work?'}
+        </h2>
 
         {phase === 'input' && (
-          <form onSubmit={handleSubmit}>
-            <div className="pc-field">
+          <form onSubmit={handleSubmit} className="pc-plan-form">
+            <div className="pc-field pc-amount-field">
               <label htmlFor="plan-amount">Amount in USDC</label>
-              <input
-                id="plan-amount"
-                className="pc-strategy-amount"
-                type="text"
-                inputMode="decimal"
-                // The field had no placeholder, and its own styling gave it no boundary either, so
-                // an empty Plan stage showed a blank area with a hairline under it and nothing to
-                // say it accepted input. Not a label substitute -- the <label> above stays.
-                placeholder="0"
-                value={amountValue}
-                onChange={(e) => setAmountValue(e.target.value)}
-                // Wave 6 Task 14 (scoped exception, owner-authorized): role="alert" only announces
-                // the error once, at the moment it appears -- a screen-reader user tabbing back to
-                // this field afterwards heard the label and nothing else. aria-describedby makes
-                // the error part of the field's accessible description so it is read every time the
-                // field is focused, not just on the first announcement. Only present while an error
-                // exists (never a dangling reference to an absent element).
-                aria-describedby={fieldError ? 'plan-amount-error' : undefined}
-              />
+              {/* 2026-09-28 redesign: the input sits in a recessed well with its unit beside it,
+                  and the quick amounts are a rack attached to the well's foot. */}
+              <div className="pc-amount-well">
+                <input
+                  id="plan-amount"
+                  className="pc-strategy-amount"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  // The field had no placeholder, and its own styling gave it no boundary either, so
+                  // an empty Plan stage showed a blank area with a hairline under it and nothing to
+                  // say it accepted input. Not a label substitute -- the <label> above stays.
+                  placeholder="0"
+                  value={amountValue}
+                  onChange={(e) => setAmountValue(e.target.value)}
+                  // Wave 6 Task 14 (scoped exception, owner-authorized): role="alert" only announces
+                  // the error once, at the moment it appears -- a screen-reader user tabbing back to
+                  // this field afterwards heard the label and nothing else. aria-describedby makes
+                  // the error part of the field's accessible description so it is read every time
+                  // the field is focused, not just on the first announcement. Only present while an
+                  // error exists (never a dangling reference to an absent element).
+                  aria-describedby={fieldError ? 'plan-amount-error' : undefined}
+                />
+                <span className="pc-amount-unit" aria-hidden="true">
+                  USDC
+                </span>
+                <div className="pc-amount-presets" role="group" aria-label="Quick amounts">
+                  {AMOUNT_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      aria-pressed={amountValue === preset}
+                      className={`pc-amount-preset${amountValue === preset ? ' pc-amount-preset--active' : ''}`}
+                      onClick={() => {
+                        setAmountValue(preset)
+                        setFieldError(null)
+                      }}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {fieldError && (
                 <p id="plan-amount-error" className="pc-field-error" role="alert">
                   {fieldError}
@@ -565,56 +638,74 @@ export function PlanStage({
               )}
             </div>
 
-            <div className="pc-amount-presets" role="group" aria-label="Quick amounts">
-              {AMOUNT_PRESETS.map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  aria-pressed={amountValue === preset}
-                  className={`pc-amount-preset${amountValue === preset ? ' pc-amount-preset--active' : ''}`}
-                  onClick={() => {
-                    setAmountValue(preset)
-                    setFieldError(null)
-                  }}
-                >
-                  {preset}
-                </button>
-              ))}
-            </div>
-
-            <div className="pc-comfort-group" role="radiogroup" aria-label="Comfort level">
-              {RISK_IDS.map((id, index) => (
-                <button
-                  key={id}
-                  ref={(el) => (radioRefs.current[index] = el)}
-                  type="button"
-                  role="radio"
-                  aria-checked={risk === id}
-                  tabIndex={(risk ? risk === id : index === 0) ? 0 : -1}
-                  className={`pc-button ${risk === id ? 'pc-button--primary' : 'pc-button--secondary'}`}
-                  onClick={() => setRisk(id)}
-                  onKeyDown={(e) => handleRadioKeyDown(e, index)}
-                >
-                  {RISK_PROFILES[id].label}
-                </button>
-              ))}
-            </div>
-
-            {/* Task 3 -- read-only, DERIVED crew count (D-28.6: never user-set -- no control lets
-                the user pick this number, see the "never renders an advanced crew-count input"
-                test). */}
-            {risk && (
-              <p className="pc-crew-line">
-                {RISK_PROFILES[risk].targetSlots} crew member
-                {RISK_PROFILES[risk].targetSlots > 1 ? 's' : ''}
-                {crewShare && (
-                  <>
-                    {' · '}
-                    <span className="pc-proof-label">Planned</span> each handles about {crewShare}
-                  </>
-                )}
+            <div className="pc-field pc-comfort-field">
+              <p className="pc-comfort-label" aria-hidden="true">
+                Comfort level
               </p>
-            )}
+              <div
+                className="pc-comfort-group"
+                role="radiogroup"
+                aria-label="Comfort level"
+                data-selected={risk || undefined}
+              >
+                {RISK_IDS.map((id, index) => (
+                  <button
+                    key={id}
+                    ref={(el) => (radioRefs.current[index] = el)}
+                    type="button"
+                    role="radio"
+                    aria-checked={risk === id}
+                    aria-describedby={`plan-comfort-note-${id}`}
+                    tabIndex={(risk ? risk === id : index === 0) ? 0 : -1}
+                    className="pc-comfort-tile"
+                    onClick={() => setRisk(id)}
+                    onKeyDown={(e) => handleRadioKeyDown(e, index)}
+                  >
+                    <span className="pc-comfort-name">{RISK_PROFILES[id].label}</span>
+                    <span className="pc-comfort-pips" aria-hidden="true">
+                      {[1, 2, 3].map((pip) => (
+                        <span
+                          key={pip}
+                          data-lit={pip <= RISK_PROFILES[id].targetSlots ? 'true' : undefined}
+                        />
+                      ))}
+                    </span>
+                    <span
+                      id={`plan-comfort-note-${id}`}
+                      className="pc-comfort-note"
+                      aria-hidden="true"
+                    >
+                      {COMFORT_NOTES[id]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="pc-split-panel">
+              {/* Task 3 -- read-only, DERIVED crew count (D-28.6: never user-set -- no control lets
+                  the user pick this number, see the "never renders an advanced crew-count input"
+                  test). */}
+              {risk ? (
+                <p className="pc-crew-line">
+                  {RISK_PROFILES[risk].targetSlots} crew member
+                  {RISK_PROFILES[risk].targetSlots > 1 ? 's' : ''}
+                  {crewShare && (
+                    <>
+                      {' · '}
+                      <span className="pc-proof-label">Planned</span> each handles about {crewShare}
+                    </>
+                  )}
+                </p>
+              ) : (
+                <p className="pc-split-title">How your crew splits it</p>
+              )}
+              <CrewSplit
+                segments={splitPreview}
+                legend
+                emptyText="Pick an amount and a comfort level to see the split."
+              />
+            </div>
 
             <p className="pc-field-help">Nothing moves until you review and confirm.</p>
 
@@ -680,7 +771,7 @@ export function PlanStage({
         )}
 
         {phase === 'ready' && plan && (
-          <div>
+          <div className="pc-plan-review">
             {/* Fix loop N -- item 1 (owner report): the source badge, the optional Retry-live-check
                 button, and the plan total amount were three bare inline siblings with no
                 separating container -- concatenating as "Live AI + live market checks100 USDC"
@@ -746,10 +837,16 @@ export function PlanStage({
               <p className="pc-plan-yield-note">APY Unavailable</p>
             )}
 
+            {/* 2026-09-28 redesign: the reviewed split drawn once above the rows. Each row below
+                carries the same `data-seg` as its segment, so hovering a row lights its segment
+                (CSS :has), and the row's share tag is the segment's legend. */}
+            <CrewSplit segments={reviewSegments} />
+
             <ul className="pc-allocation-list">
               {plan.agents.map((planAgent, i) => {
                 const isBridge = planAgent.kind === 'bridge'
                 const persona = personaForOrdinal(i)
+                const segment = reviewSegments[i]
                 const plannedIdentity = toAgentIdentityView({
                   phase: 'planned',
                   allocationId: planAgent.allocationId,
@@ -762,13 +859,12 @@ export function PlanStage({
                     className="pc-allocation-row"
                     data-agent-kind={planAgent.kind}
                     data-allocation-id={planAgent.allocationId}
+                    data-seg={i}
+                    data-tone={segment?.tone}
                   >
-                    {/* Item 5 (owner report): at least 36px (was the AgentMark default of 32,
-                        measured as reading "nearly invisible" in a real browser), pinned to the
-                        row's own start (see strategy.css) so it lines up with the crew-name line
-                        that now leads each row's content instead of centering against the whole,
-                        much taller, multi-line row. */}
-                    <AgentMark identity={plannedIdentity} state="planned" size={44} label="agent" />
+                    {/* Status chip riding the avatar's lower-right corner (see strategy.css): the
+                        avatar is the one visible face, the chip carries identity color + state. */}
+                    <AgentMark identity={plannedIdentity} state="planned" size={20} label="agent" />
                     <img
                       className="pc-plan-agent-avatar pc-crew-avatar"
                       src={persona.avatar}
@@ -777,10 +873,17 @@ export function PlanStage({
                       width="44"
                       height="44"
                     />
-                    <div>
-                      <p className="pc-worker-name">{persona.name}</p>
+                    <div className="pc-allocation-body">
+                      <div className="pc-allocation-head">
+                        <p className="pc-worker-name">{persona.name}</p>
+                        <span className="pc-allocation-share">
+                          {formatShare(reviewShares[i] ?? 0)}
+                          <span className="pc-visually-hidden"> of this plan</span>
+                        </span>
+                      </div>
                       {isBridge && <NetworkRoute context={BRIDGE_NETWORK_CONTEXT} />}
                       <PlannedAmount
+                        className="pc-allocation-amount"
                         amount={planAgent.allocation}
                         display={allocationDisplay?.[planAgent.allocationId]}
                       />

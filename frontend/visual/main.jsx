@@ -684,8 +684,11 @@ async function fillPlanForm(root, { amount, risk }) {
   })
   setNativeValue(amountField, amount)
   const radio = await waitFor(() => {
+    // Comfort tiles carry a note and pips beside the name; match the name span only.
     const candidate = Array.from(root.querySelectorAll('[role="radio"]')).find(
-      (r) => r.textContent.trim() === risk && r.getClientRects().length > 0
+      (r) =>
+        (r.querySelector('.pc-comfort-name') || r).textContent.trim() === risk &&
+        r.getClientRects().length > 0
     )
     return candidate || null
   })

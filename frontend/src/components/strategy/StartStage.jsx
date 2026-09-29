@@ -54,12 +54,15 @@
 // file's phase names instead come directly from the brief's own lane-state list, mapped only onto
 // events that genuinely fire.
 import { useMemo, useRef } from 'react'
+import gsap from 'gsap'
+import { useGSAP } from '@gsap/react'
 import { StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
 import { AgentMark } from '../pocket/AgentMark.jsx'
 import { NetworkRoute } from '../pocket/NetworkIdentity.jsx'
 import { usePocketTransition } from '../../design/usePocketTransition.js'
 import { SOROBAN_TOKEN_ADDRESS, STELLAR_USDC_SAC } from '../../stellar/config.js'
 import { StrategyReceipt } from './StrategyReceipt.jsx'
+import { toneFor } from './CrewSplit.jsx'
 import { CREW_PERSONAS, personaForOrdinal } from '../../crew/personas.js'
 import { baseRecoveryIdentityKey } from '../../strategy/baseRecoveryIdentity.js'
 import {
@@ -69,6 +72,8 @@ import {
   toBaseCustodyTruth,
   toStartProgress,
 } from '../../core/coreRouteAdapters.js'
+
+gsap.registerPlugin(useGSAP)
 
 const TOKEN_SYMBOLS = Object.freeze({
   [SOROBAN_TOKEN_ADDRESS]: 'USDC',
@@ -238,6 +243,106 @@ export function bridgeLanePhase(events) {
     }
   }
   return failed ? 'failed' : phase
+}
+
+// 2026-09-28 redesign -- the lane station rail. Pure projection of the SAME reducers above onto
+// four named stations; nothing here reads a timer or guesses. `rank` counts stations reached. A
+// failed lane re-runs its reducer with the failure events removed to find the last station that
+// really started, and marks THAT station failed -- it was in flight when the failure arrived.
+const DEPOSIT_STATIONS = Object.freeze(['Queued', 'Moving', 'Depositing', 'Working'])
+const BRIDGE_STATIONS = Object.freeze(['Burning', 'Attesting', 'Minting', 'Arrived'])
+const DEPOSIT_STATION_RANK = Object.freeze({ queued: 1, moving: 2, depositing: 3, working: 4 })
+const BRIDGE_STATION_RANK = Object.freeze({
+  burning: 1,
+  'awaiting-attestation': 2,
+  minting: 3,
+  // Settled but without fresh custody proof: never light "Arrived".
+  'in-transit': 3,
+  confirmed: 4,
+})
+const FAILURE_EVENTS = new Set(['failed', 'farm-failed', 'baseleg-failed'])
+
+function laneStationRank(lane, permissionMode, events) {
+  const isBridge = lane.kind === 'bridge'
+  const ranks = isBridge ? BRIDGE_STATION_RANK : DEPOSIT_STATION_RANK
+  if (lane.phase !== 'failed') return { rank: ranks[lane.phase] || 0, failed: false }
+  const survived = events.filter(
+    (evt) =>
+      !FAILURE_EVENTS.has(evt?.name) &&
+      !(evt?.name === 'farm-completed' && evt?.data?.status === 'error')
+  )
+  const reached = isBridge
+    ? bridgeLanePhase(survived)
+    : depositLanePhase(lane.allocationId, permissionMode, survived)
+  return { rank: ranks[reached] || 0, failed: true }
+}
+
+function stationStateAt(index, { rank, failed }) {
+  if (failed) {
+    const failedAt = Math.min(Math.max(rank - 1, 0), 3)
+    if (index < failedAt) return 'done'
+    return index === failedAt ? 'failed' : 'ahead'
+  }
+  if (index < rank - 1) return 'done'
+  if (index === rank - 1) return rank === 4 ? 'done' : 'current'
+  return 'ahead'
+}
+
+// Labels are drawn from `data-label` in CSS: they repeat the lane's own phase text, so they stay out
+// of the text and accessibility trees entirely (the phase line and the progressbar already carry it).
+// A lamp that just changed state pops once. Keyed on the committed station states, so the first
+// render (nothing changed yet) and every unrelated re-render stay still.
+function LaneStations({ kind, rank }) {
+  const railRef = useRef(null)
+  const labels = kind === 'bridge' ? BRIDGE_STATIONS : DEPOSIT_STATIONS
+  const states = labels.map((_, index) => stationStateAt(index, rank))
+  const signature = states.join(',')
+  const previousRef = useRef(signature)
+
+  useGSAP(
+    () => {
+      const before = previousRef.current.split(',')
+      previousRef.current = signature
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+      const lamps = railRef.current?.querySelectorAll('.pc-lane-station-lamp') || []
+      const changed = [...lamps].filter(
+        (_, index) => before[index] !== states[index] && states[index] !== 'ahead'
+      )
+      if (changed.length === 0) return
+      gsap.from(changed, {
+        scale: 0.3,
+        duration: 0.45,
+        ease: 'back.out(3)',
+        stagger: 0.08,
+        clearProps: 'transform',
+      })
+    },
+    { dependencies: [signature], scope: railRef }
+  )
+
+  return (
+    <ol ref={railRef} className="pc-lane-stations" aria-hidden="true">
+      {labels.map((label, index) => (
+        <li key={label} data-label={label} data-station={states[index]}>
+          <span className="pc-lane-station-lamp" />
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+// Run state strip counts. Buckets come straight from lane.phase; "Moving now" is anything between
+// its first real event and a terminal verdict.
+function runCounts(lanes) {
+  let settled = 0
+  let failed = 0
+  let moving = 0
+  for (const lane of lanes) {
+    if (lane.phase === 'working' || lane.phase === 'confirmed') settled += 1
+    else if (lane.phase === 'failed') failed += 1
+    else if (!['pending', 'creating', 'ready'].includes(lane.phase)) moving += 1
+  }
+  return { settled, failed, moving }
 }
 
 function laneMarkState(phase) {
@@ -742,6 +847,8 @@ export function StartStage({
 
   const anyFailed = lanes.some((lane) => lane.phase === 'failed')
   const announcement = summarizeLanes(lanes)
+  const permissionMode = permission?.mode === 'reuse' ? 'reuse' : 'fresh'
+  const counts = runCounts(lanes)
   const baseCustodyTruth = toBaseCustodyTruth()
   // Step 2: GSAP animates only state changes the reducer has already committed. `events.length`
   // plus a settled-receipt marker is exactly that committed state -- never a wall-clock timer.
@@ -752,12 +859,39 @@ export function StartStage({
     <div ref={scopeRef} className="pc-start-stage">
       <div className="pc-strategy-layout">
         <div className="pc-strategy-decision pc-dominant pc-dominant--decision">
-          <h2 className="pc-strategy-question">
-            {receipt ? 'Your run is complete' : 'Starting your run'}
-          </h2>
+          <div className="pc-run-head">
+            <h2 className="pc-strategy-question">
+              {receipt ? 'Your run is complete' : 'Starting your run'}
+            </h2>
+            <p className="pc-run-live" data-tone={receipt ? 'settled' : 'live'}>
+              <span className="pc-run-live-lamp" aria-hidden="true" />
+              {receipt ? 'Run settled' : 'Live updates'}
+            </p>
+          </div>
           <p className="pc-visually-hidden" role="status" aria-live="polite">
             {announcement}
           </p>
+
+          {/* 2026-09-28 redesign: the run at a glance, counted from the same lane phases the
+              lanes below render -- a board, not a second source of truth. */}
+          <dl className="pc-run-state">
+            <div data-tone="idle">
+              <dt>Crew</dt>
+              <dd>{lanes.length}</dd>
+            </div>
+            <div data-tone={counts.settled > 0 ? 'live' : 'idle'}>
+              <dt>Landed</dt>
+              <dd>{counts.settled}</dd>
+            </div>
+            <div data-tone={counts.moving > 0 ? 'warn' : 'idle'}>
+              <dt>Moving now</dt>
+              <dd>{counts.moving}</dd>
+            </div>
+            <div data-tone={counts.failed > 0 ? 'danger' : 'idle'}>
+              <dt>Needs attention</dt>
+              <dd>{counts.failed}</dd>
+            </div>
+          </dl>
 
           <ul className="pc-agent-lanes">
             {lanes.map((lane, index) => {
@@ -823,18 +957,36 @@ export function StartStage({
                   data-agent-kind={lane.kind}
                   data-lane-phase={lane.phase}
                   data-agent-address={agentAddress || undefined}
+                  data-tone={toneFor(persona, lane.kind)}
                 >
-                  <AgentMark
-                    identity={identity}
-                    state={laneMarkState(lane.phase)}
-                    size={44}
-                    label="agent"
+                  <img
+                    className="pc-crew-avatar pc-lane-avatar"
+                    src={persona.avatar}
+                    alt=""
+                    aria-hidden="true"
+                    width="48"
+                    height="48"
                   />
                   <div className="pc-agent-lane-body" data-pocket-enter>
-                    <p className="pc-worker-name">{persona.name}</p>
-                    {assignmentSyncing && (
-                      <p className="pc-crew-syncing">Crew assignment syncing.</p>
-                    )}
+                    <div className="pc-agent-lane-head">
+                      <div className="pc-lane-who">
+                        <AgentMark
+                          identity={identity}
+                          state={laneMarkState(lane.phase)}
+                          size={20}
+                          label="agent"
+                        />
+                        <div>
+                          <p className="pc-worker-name">{persona.name}</p>
+                          {assignmentSyncing && (
+                            <p className="pc-crew-syncing">Crew assignment syncing.</p>
+                          )}
+                        </div>
+                      </div>
+                      <p className="pc-lane-phase" data-tone={laneMarkState(lane.phase)}>
+                        {phaseLabel || lane.phase}
+                      </p>
+                    </div>
                     <div className="pc-agent-lane-meta">
                       <NetworkRoute
                         context={
@@ -849,7 +1001,10 @@ export function StartStage({
                         <p className="pc-lane-cap">{exactCoreAmountText(planAgent.cap)}</p>
                       )}
                     </div>
-                    <p className="pc-lane-phase">{phaseLabel || lane.phase}</p>
+                    <LaneStations
+                      kind={lane.kind}
+                      rank={laneStationRank(lane, permissionMode, events)}
+                    />
                     {isBridge && (
                       <VenueTruth
                         kind={baseCustodyTruth.yield.state === 'none' ? 'base-proxy' : 'unknown'}

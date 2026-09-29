@@ -1624,9 +1624,11 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
           }
 
           const row = document.querySelector('.pc-allocation-row')
-          const mark = row.querySelector('.pc-agent-mark')
+          // The persona avatar is the row's visible face; the AgentMark chip rides its corner.
+          const face = row.querySelector('.pc-plan-agent-avatar')
+          const chipRect = row.querySelector('.pc-agent-mark').getBoundingClientRect()
           const name = row.querySelector('.pc-worker-name')
-          const markRect = mark.getBoundingClientRect()
+          const markRect = face.getBoundingClientRect()
           const nameRect = name.getBoundingClientRect()
           const rowRect = row.getBoundingClientRect()
           const markCenter = markRect.top + markRect.height / 2
@@ -1652,6 +1654,12 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
             textareaEffectiveBackground: effectiveBg,
             textareaColor: parseColor(taStyle.color),
             markSize: markRect.width,
+            // Chip's center sits inside the avatar's lower-right quadrant.
+            chipOnAvatarCorner:
+              chipRect.left + chipRect.width / 2 > markRect.left + markRect.width / 2 &&
+              chipRect.left + chipRect.width / 2 <= markRect.right &&
+              chipRect.top + chipRect.height / 2 > markRect.top + markRect.height / 2 &&
+              chipRect.top + chipRect.height / 2 <= markRect.bottom,
             distanceToName: Math.abs(markCenter - nameCenter),
             distanceToRowCenter: Math.abs(markCenter - rowCenter),
             acceptButtonWidth: acceptButton.getBoundingClientRect().width,
@@ -1675,10 +1683,11 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
         )
         expect(textareaContrast).toBeGreaterThanOrEqual(4.5)
 
-        // Item 5: at least 36px, and closer to the header (crew-name) line it belongs to than to
-        // the vertical center of the whole, much taller, multi-line row (was the reverse -- the
-        // avatar centered on the whole row via the row's own locked `align-items: center`).
+        // Item 5: the row's face (persona avatar) is at least 32px and closer to the header
+        // (crew-name) line it belongs to than to the vertical center of the whole, much taller,
+        // multi-line row. The AgentMark chip rides that avatar's corner, not a second slot.
         expect(result.markSize).toBeGreaterThanOrEqual(32)
+        expect(result.chipOnAvatarCorner).toBe(true)
         expect(result.distanceToName).toBeLessThan(result.distanceToRowCenter)
 
         expect(result.finalActionsWidth).toBeGreaterThanOrEqual(result.decisionContentWidth * 0.9)
