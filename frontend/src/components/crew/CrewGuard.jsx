@@ -63,7 +63,70 @@ function prefersReducedMotion() {
   )
 }
 
-export function CrewGuard({ protection = null, onRenew, pending = false, nowMs }) {
+// Radar geometry (SVG user units, 160 box). Pure decoration over facts stated in text beside it:
+// hour ticks, the mandate's remaining share of a 24 hour window (the renew action grants 24h), and
+// one blip per crew account whose money sits in the guarded vault, placed on a golden-angle spiral
+// so the picture is stable between renders.
+const R = 80
+const DAY_S = 24 * 3600
+const ARC_R = 74
+const ARC_LENGTH = 2 * Math.PI * ARC_R
+const MAX_BLIPS = 12
+const TICKS = Array.from({ length: 24 }, (_, hour) => {
+  const angle = (hour / 24) * 2 * Math.PI
+  const inner = hour % 6 === 0 ? 66 : 70
+  return {
+    x1: R + inner * Math.sin(angle),
+    y1: R - inner * Math.cos(angle),
+    x2: R + 77 * Math.sin(angle),
+    y2: R - 77 * Math.cos(angle),
+    major: hour % 6 === 0,
+  }
+})
+
+function blipPoints(count) {
+  return Array.from({ length: Math.min(count, MAX_BLIPS) }, (_, index) => {
+    const angle = ((index * 137.5 + 32) * Math.PI) / 180
+    const radius = 22 + ((index * 17) % 38)
+    return { x: R + radius * Math.sin(angle), y: R - radius * Math.cos(angle) }
+  })
+}
+
+function RadarScope({ phase, remaining, vaultAccounts }) {
+  const fraction = phase === 'armed' ? Math.min(1, Math.max(0, remaining / DAY_S)) : 0
+  const blips = Number.isSafeInteger(vaultAccounts) ? blipPoints(vaultAccounts) : []
+  return (
+    <svg className="pc-crew-radar-scope" viewBox="0 0 160 160" focusable="false">
+      <circle className="pc-crew-radar-arc-track" cx={R} cy={R} r={ARC_R} />
+      {fraction > 0 ? (
+        <circle
+          className="pc-crew-radar-arc"
+          cx={R}
+          cy={R}
+          r={ARC_R}
+          strokeDasharray={`${fraction * ARC_LENGTH} ${ARC_LENGTH}`}
+          transform={`rotate(-90 ${R} ${R})`}
+        />
+      ) : null}
+      {TICKS.map((tick, hour) => (
+        <line
+          key={hour}
+          className="pc-crew-radar-tick"
+          data-major={tick.major ? 'true' : undefined}
+          x1={tick.x1}
+          y1={tick.y1}
+          x2={tick.x2}
+          y2={tick.y2}
+        />
+      ))}
+      {blips.map((blip, index) => (
+        <circle key={index} className="pc-crew-radar-blip" cx={blip.x} cy={blip.y} r="3.2" />
+      ))}
+    </svg>
+  )
+}
+
+export function CrewGuard({ protection = null, onRenew, pending = false, nowMs, vaultAccounts }) {
   // Number arithmetic throughout (never fed into BigInt) -- mandateExpiry is a real unix-seconds
   // integer off-chain evidence, not user input, so `* 1000` here never enters the
   // BigInt(Math.round(x*N)) overflow zone the rest of this plan has hit three times.
@@ -117,24 +180,46 @@ export function CrewGuard({ protection = null, onRenew, pending = false, nowMs }
       aria-labelledby="crew-guard-heading"
     >
       <div className="pc-crew-guard-head">
-        <h2 id="crew-guard-heading" className="pc-crew-stat-label">
+        <h2 id="crew-guard-heading" className="pc-crew-panel-title">
           Emergency guard
         </h2>
         <span className="pc-crew-guard-state">{copy.state}</span>
       </div>
-      <div className="pc-crew-radar" aria-hidden="true">
-        <span className="pc-crew-radar-ring" />
-        <span className="pc-crew-radar-ring pc-crew-radar-ring--inner" />
-        <span
-          className={`pc-crew-radar-sweep${sweepActive ? ' pc-crew-radar-sweep--active' : ''}`}
-        />
-        <span className="pc-crew-radar-core" />
+      <div className="pc-crew-guard-instrument">
+        <div className="pc-crew-radar" aria-hidden="true">
+          <RadarScope phase={phase} remaining={remaining} vaultAccounts={vaultAccounts} />
+          <span className="pc-crew-radar-ring" />
+          <span className="pc-crew-radar-ring pc-crew-radar-ring--inner" />
+          <span
+            className={`pc-crew-radar-sweep${sweepActive ? ' pc-crew-radar-sweep--active' : ''}`}
+          >
+            <svg viewBox="0 0 160 160" focusable="false">
+              <path className="pc-crew-radar-wedge" d="M80 80 L32.43 23.31 A74 74 0 0 1 80 6 Z" />
+              <line className="pc-crew-radar-beam" x1="80" y1="80" x2="80" y2="6" />
+            </svg>
+          </span>
+          <span className="pc-crew-radar-core" />
+        </div>
+        <dl className="pc-crew-guard-readouts">
+          <div>
+            <dt>Time left</dt>
+            <dd className="pc-crew-guard-clock">
+              {phase === 'unknown' || phase === 'engaged' ? 'Unavailable' : formatClock(remaining)}
+            </dd>
+          </div>
+          {Number.isSafeInteger(vaultAccounts) ? (
+            <div>
+              <dt>Accounts covered</dt>
+              <dd>{vaultAccounts}</dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>Scope</dt>
+            <dd className="pc-crew-guard-scope">Vault-wide</dd>
+          </div>
+        </dl>
       </div>
       <p className="pc-crew-guard-line">{copy.line}</p>
-      <p className="pc-crew-guard-scope">Scope: vault-wide</p>
-      <p className="pc-crew-guard-clock">
-        {phase === 'unknown' || phase === 'engaged' ? 'Unavailable' : formatClock(remaining)}
-      </p>
       {canRenew ? (
         <button
           type="button"
@@ -147,7 +232,9 @@ export function CrewGuard({ protection = null, onRenew, pending = false, nowMs }
       ) : (
         <p className="pc-crew-guard-renew-note">
           Only the configured authority can renew this.
-          {authority ? ` Authority: ${authority}` : ''}
+          {authority ? (
+            <span className="pc-crew-guard-authority">Authority: {authority}</span>
+          ) : null}
         </p>
       )}
     </section>

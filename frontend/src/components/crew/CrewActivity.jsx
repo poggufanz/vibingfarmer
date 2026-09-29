@@ -23,6 +23,26 @@ function shortHash(hash) {
   return value ? `${value.slice(0, 8)}…${value.slice(-6)}` : ''
 }
 
+// Keeper transactions run on Stellar testnet; only a full 64-hex Stellar hash gets a link.
+const STELLAR_TX_EXPLORER = 'https://stellar.expert/explorer/testnet/tx/'
+
+function TxHash({ hash }) {
+  const label = shortHash(hash)
+  if (!label) return null
+  if (!/^[A-Fa-f0-9]{64}$/.test(hash)) return <span>{label}</span>
+  return (
+    <a
+      className="pc-crew-tx"
+      href={`${STELLAR_TX_EXPLORER}${hash}`}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`Open transaction ${label} on Stellar Expert`}
+    >
+      {label}
+    </a>
+  )
+}
+
 function closedAtMs(value) {
   if (typeof value === 'number' && Number.isSafeInteger(value)) return value
   if (typeof value === 'string' && value.trim()) {
@@ -161,22 +181,26 @@ export function CrewActivity({ keeperEvents = [], decisions = [] }) {
         </p>
       ) : null}
 
-      <section aria-labelledby="crew-keeper-activity-heading">
-        <h2 id="crew-keeper-activity-heading" className="pc-crew-stat-label">
-          Keeper activity
-        </h2>
+      <section className="pc-crew-feed" aria-labelledby="crew-keeper-activity-heading">
+        <div className="pc-crew-feed-head">
+          <h2 id="crew-keeper-activity-heading" className="pc-crew-panel-title">
+            Keeper activity
+          </h2>
+          <span className="pc-crew-feed-count" aria-hidden="true">
+            {keeperRows.length}
+          </span>
+        </div>
         {keeperRows.length === 0 ? (
           <p className="pc-crew-empty-note">No keeper activity yet on this device.</p>
         ) : (
           <ul className="pc-crew-keeper-list">
             {keeperRows.map((event) => {
-              const hash = shortHash(event.txHash)
               const closed = evidenceTime(event.closedAt)
               return (
-                <li key={event.id} className="pc-crew-keeper-row">
-                  <span>{keeperRowText(event)}</span>
+                <li key={event.id} className="pc-crew-keeper-row" data-kind={event.kind}>
+                  <span className="pc-crew-keeper-text">{keeperRowText(event)}</span>
                   <span className="pc-crew-keeper-time">
-                    {hash ? <span>{hash}</span> : null}
+                    <TxHash hash={event.txHash} />
                     {closed ? (
                       <span>
                         <span>Ledger closed </span>
@@ -191,10 +215,15 @@ export function CrewActivity({ keeperEvents = [], decisions = [] }) {
         )}
       </section>
 
-      <section aria-labelledby="crew-decision-log-heading">
-        <h2 id="crew-decision-log-heading" className="pc-crew-stat-label">
-          Decisions we logged
-        </h2>
+      <section className="pc-crew-feed" aria-labelledby="crew-decision-log-heading">
+        <div className="pc-crew-feed-head">
+          <h2 id="crew-decision-log-heading" className="pc-crew-panel-title">
+            Decisions we logged
+          </h2>
+          <span className="pc-crew-feed-count" aria-hidden="true">
+            {decisionRows.length}
+          </span>
+        </div>
         {decisionRows.length === 0 ? (
           <p className="pc-crew-empty-note">No decisions logged yet.</p>
         ) : (

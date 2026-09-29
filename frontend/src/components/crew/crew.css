@@ -1,19 +1,43 @@
 /* frontend/src/components/crew/crew.css
-   Task 9 (Pocket Crew design alignment). Token-only (--pc-* from src/design/pocket-crew.css) --
-   no hex literals, no new dependencies.
+ * /agent as a crew deck (2026-09-29 redesign). Same instrument material as Strategy, History,
+ * Settings and My Money: grained Grove plates with a lit top lip and a dark bottom rim, recessed
+ * wells for anything read-only, and lamps. Harvest lime means "on, live, or the next action" and
+ * nothing else. Each persona keeps one colour everywhere it appears (rail segment, legend key, bay
+ * socket, share meter), taken from the same --pc-crew-N slots the Strategy split uses.
+ *
+ * Test-pinned rules kept on purpose (search crew/__tests__ and coreRoutes.styles.test.js before
+ * renaming any of them):
+ *   - `.pc-route` keeps the tokenized gap/gutter bridge; `.pc-button` stays byte-identical to the
+ *     my-money.css/strategy.css copies (this route is lazy-loaded and cannot borrow theirs).
+ *   - `pc-crew-sweep` is the only keyframe family; the sweep only turns while the guard is ARMED.
+ *   - `.pc-crew-side`, `.pc-crew-guard` and `.pc-crew-activity` keep `min-width: 0`, the renew note
+ *     wraps anywhere, and the keeper row collapses at 640px.
+ *   - No fade paint functions, no blur, no layout transitions, no literal z-index.
+ */
 
-   Fix round 1, F1: `.pc-route`/`.pc-route-header`/`.pc-route-title`/`.pc-route-sub`/`.pc-button`*
-   are ported byte-identical from strategy.css (:90-96,108-130,698-738; my-money.css carries its
-   own equivalent copies too) rather than assumed-shared. `my-money.css:59-60` says this in so many
-   words: "pocket-crew.css does not define `.pc-route`/`.pc-route-stack`; only strategy.css has
-   ported them so far, and this route must not depend on that file being loaded." `app.jsx:112-145`
-   already lazy-loads routes, so this file cannot assume any sibling route's stylesheet is present
-   in the bundle -- it carries its own copy, same as every other route does for every other route.
-   `.pc-money`/`.pc-money--unknown` are Foundation primitives (Primitives.jsx's own CSS, loaded
-   wherever MoneyFigure itself is used) and are not ported here since they belong to that shared
-   component, not to a route surface. */
+:root {
+  --crew-well: rgb(7 15 11 / 32%);
+  --crew-plate: rgb(242 245 239 / 4%);
+  --crew-plate-hover: rgb(242 245 239 / 7%);
+  --crew-lip: rgb(242 245 239 / 7%);
+  --crew-rim: rgb(7 15 11 / 42%);
+  --crew-hairline: rgb(242 245 239 / 9%);
+  --crew-lit: color-mix(in srgb, var(--pc-harvest) 12%, transparent);
+  --crew-signal: var(--pc-harvest);
+}
 
-/* Route shell -- verbatim copy of strategy.css:90-96/108-130 (byte-identical; do not diverge). */
+:root[data-theme='day-field'] {
+  --crew-well: rgb(23 37 31 / 5%);
+  --crew-plate: rgb(255 255 255 / 45%);
+  --crew-plate-hover: rgb(255 255 255 / 80%);
+  --crew-lip: rgb(255 255 255 / 85%);
+  --crew-rim: rgb(23 37 31 / 12%);
+  --crew-hairline: rgb(23 37 31 / 10%);
+  --crew-lit: color-mix(in srgb, var(--pc-harvest) 55%, transparent);
+  --crew-signal: var(--pc-field);
+}
+
+/* Route shell -- verbatim copy of strategy.css (byte-identical; do not diverge). */
 .pc-route {
   display: grid;
   gap: var(--pc-route-gap);
@@ -43,7 +67,7 @@
   text-wrap: pretty;
 }
 
-/* Controls -- verbatim copy of strategy.css:698-738/my-money.css:92-135 (byte-identical). */
+/* Controls -- verbatim copy of strategy.css/my-money.css (byte-identical). */
 .pc-button {
   display: inline-flex;
   align-items: center;
@@ -81,65 +105,324 @@
   cursor: not-allowed;
   opacity: 0.58;
 }
+.pc-crew-route .pc-button--secondary:where(:hover):not(:disabled) {
+  border-color: var(--pc-ink);
+  background-color: var(--crew-plate-hover);
+}
+.pc-crew-route .pc-button--primary:where(:hover, :focus-visible):not(:disabled) {
+  transform: translateY(-1px);
+}
 
 .pc-crew-route {
   display: grid;
   gap: clamp(28px, 4vw, 44px);
 }
 
+.pc-crew-new-plan {
+  justify-self: end;
+}
+
+/* ---- Persona tones ------------------------------------------------------------------------ */
+
+[data-tone='1'] {
+  --crew-tone: var(--pc-crew-1);
+}
+[data-tone='2'] {
+  --crew-tone: var(--pc-crew-2);
+}
+[data-tone='3'] {
+  --crew-tone: var(--pc-crew-3);
+}
+[data-tone='5'] {
+  --crew-tone: var(--pc-crew-5);
+}
+[data-tone='6'] {
+  --crew-tone: var(--pc-crew-6);
+}
+
+/* ---- Lamps -------------------------------------------------------------------------------- */
+
+.pc-crew-stat,
+.pc-crew-child-state,
+.pc-crew-persona-state {
+  --crew-lamp: var(--pc-faint);
+}
+[data-tone='live'] {
+  --crew-lamp: var(--pc-harvest);
+}
+[data-tone='warn'] {
+  --crew-lamp: var(--pc-warning);
+}
+[data-tone='danger'] {
+  --crew-lamp: var(--pc-danger);
+}
+[data-tone='busy'] {
+  --crew-lamp: var(--pc-ink);
+}
+[data-tone='custody'] {
+  --crew-lamp: var(--pc-crew-2);
+}
+
+.pc-crew-stat-label::before,
+.pc-crew-child-state::before,
+.pc-crew-persona-state::before,
+.pc-crew-guard-state::before {
+  content: '';
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-lamp);
+}
+
+[data-tone='live'] > .pc-crew-stat-label::before,
+.pc-crew-child-state[data-tone='live']::before,
+.pc-crew-persona-state[data-tone='live']::before {
+  outline: 3px solid color-mix(in srgb, var(--pc-harvest) 20%, transparent);
+}
+
+:root[data-theme='day-field'] .pc-crew-stat-label::before,
+:root[data-theme='day-field'] .pc-crew-child-state::before,
+:root[data-theme='day-field'] .pc-crew-persona-state::before,
+:root[data-theme='day-field'] .pc-crew-guard-state::before {
+  box-shadow: inset 0 0 0 1px rgb(23 37 31 / 45%);
+}
+
+/* ---- The deck: working balance, split rail, four readouts --------------------------------- */
+
+.pc-crew-deck {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--pc-space-8);
+  align-items: stretch;
+  min-width: 0;
+  padding: var(--pc-space-8);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-dominant);
+  background-color: var(--pc-workspace);
+  background-image: url('../money/panel-grain.svg');
+  box-shadow:
+    inset 0 1px 0 var(--crew-lip),
+    inset 0 -1px 0 var(--crew-rim),
+    var(--pc-shadow-dominant);
+}
+
+.pc-crew-balance {
+  display: grid;
+  align-content: space-between;
+  gap: var(--pc-space-5);
+  min-width: 0;
+}
+
+.pc-crew-balance-label {
+  margin: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 600;
+}
+
+.pc-crew-balance-value,
+.pc-crew-balance-value.pc-crew-amount-list {
+  display: grid;
+  gap: var(--pc-space-1);
+  margin: 0;
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-page);
+  font-weight: 700;
+  line-height: var(--pc-leading-title);
+  letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
+}
+
+.pc-crew-balance-value li + li {
+  color: var(--pc-muted);
+  font-size: var(--pc-type-section);
+}
+
+/* Split rail: the bar sits in a recessed well; the legend keys are the controls. */
+.pc-crew-rail {
+  display: grid;
+  gap: var(--pc-space-3);
+  min-width: 0;
+}
+
+.pc-crew-rail-track {
+  padding: var(--pc-space-2);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--crew-well);
+  box-shadow: inset 0 1px 3px var(--crew-rim);
+}
+
+.pc-crew-rail-bar {
+  display: block;
+  width: 100%;
+  height: 14px;
+}
+
+.pc-crew-rail-seg {
+  fill: var(--crew-tone);
+  transition: fill-opacity var(--pc-duration-base) var(--pc-ease-standard);
+}
+
+.pc-crew-rail[data-spotlight] .pc-crew-rail-seg:not([data-lit]) {
+  fill-opacity: 0.25;
+}
+
+.pc-crew-rail-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pc-crew-rail-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  min-height: 36px;
+  padding: 0 var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-plate);
+  color: var(--pc-ink);
+  font: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color var(--pc-duration-fast) var(--pc-ease-standard),
+    border-color var(--pc-duration-fast) var(--pc-ease-standard),
+    opacity var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.pc-crew-rail-key:hover,
+.pc-crew-rail-key[data-lit] {
+  border-color: color-mix(in srgb, var(--crew-tone) 70%, transparent);
+  background: var(--crew-plate-hover);
+}
+
+.pc-crew-rail-key[aria-pressed='true'] {
+  border-color: var(--crew-tone);
+  background: color-mix(in srgb, var(--crew-tone) 18%, transparent);
+}
+
+.pc-crew-rail[data-spotlight] .pc-crew-rail-key:not([data-lit]) {
+  opacity: 0.6;
+}
+
+.pc-crew-rail-key:focus-visible,
+.pc-crew-bay-toggle:focus-visible,
+.pc-crew-tool:focus-visible,
+.pc-crew-tx:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pc-crew-rail-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-tone);
+}
+
+.pc-crew-rail-share {
+  color: var(--pc-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Readouts: one recessed well, four cells split by hairlines. */
 .pc-crew-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 24px;
-  padding: 24px;
-  margin: 0 -24px 24px -24px;
-  background: var(--pc-workspace);
-  border: none;
-  border-bottom: 1px solid var(--pc-line);
-  border-radius: var(--pc-radius-support) var(--pc-radius-support) 0 0;
-  box-shadow: inset 0 1px 2px rgba(242, 245, 239, 0.04);
-  position: relative;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: stretch;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--crew-well);
+  box-shadow: inset 0 1px 3px var(--crew-rim);
 }
-.pc-crew-stats::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' seed='2'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-  pointer-events: none;
-  border-radius: var(--pc-radius-support) var(--pc-radius-support) 0 0;
+
+.pc-crew-stat {
+  display: grid;
+  align-content: start;
+  gap: var(--pc-space-2);
+  padding: var(--pc-space-4) var(--pc-space-5);
+  box-shadow:
+    -1px 0 0 var(--crew-hairline),
+    0 -1px 0 var(--crew-hairline);
 }
-.pc-crew-stat-label {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  color: var(--pc-faint);
-  text-transform: uppercase;
-}
+
 .pc-crew-stat,
 .pc-crew-stat-value {
   min-width: 0;
   max-width: 100%;
 }
+
+.pc-crew-stat-label {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 600;
+}
+
 .pc-crew-stat-value {
-  margin: 8px 0 0;
-  font-size: 28px;
+  margin: 0;
+  font-size: var(--pc-type-section);
   font-weight: 700;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
-  line-height: 1.2;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
+
+.pc-crew-stat[data-tone='idle'] .pc-crew-stat-value {
+  color: var(--pc-muted);
+}
+
+/* `var(--pc-harvest)` as bare text is invisible on the day-field canvas; --pc-focus resolves to
+ * Harvest in forest and to Field in day-field. */
+.pc-crew-stat-value[data-tone='good'] {
+  color: var(--pc-focus);
+}
+.pc-crew-stat-value[data-tone='warn'] {
+  color: var(--pc-warning);
+}
+
+.pc-crew-pips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.pc-crew-pips > span {
+  width: 14px;
+  height: 4px;
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-line);
+}
+
+.pc-crew-pips > [data-lit] {
+  background: var(--crew-signal);
+}
+
 .pc-crew-rate-evidence {
-  display: block;
+  display: grid;
+  gap: 2px;
   max-width: 100%;
-  margin-top: var(--pc-space-1);
   color: var(--pc-faint);
   font-family: var(--pc-font-mono);
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
+
 .pc-crew-amount-list {
   display: grid;
   min-width: 0;
@@ -148,7 +431,6 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-family: var(--pc-font-mono);
   font-variant-numeric: tabular-nums;
 }
 .pc-crew-amount-list li {
@@ -158,229 +440,486 @@
 }
 .pc-crew-coverage {
   display: block;
-  margin-top: var(--pc-space-1);
   color: var(--pc-warning);
-  font-family: var(--pc-font-mono);
-  font-size: 11px;
+  font-size: var(--pc-type-technical);
   font-weight: 650;
 }
-/* Task 12 fix round 1, F2: `var(--pc-harvest)` as a bare foreground text color measured 1.02:1
- * on the day-field canvas (#DFF56C on #E9EEE8) -- effectively invisible; --pc-harvest is a FIXED
- * brand color across both themes (pocket-crew.css: "Brand identity is unchanged in light mode"),
- * calibrated only for use as a FILL with --pc-harvest-ink text on top (see the harvestInk/harvest
- * contrast.js pair), never as bare text on --pc-canvas. `--pc-focus` is the existing token that
- * already resolves the way `--pc-danger` (ALARM ONLY's own color, same slot) does: forest =
- * var(--pc-harvest) (byte-identical to what was here -- zero forest regression, verified by
- * re-running the forest baselines unchanged), day-field = var(--pc-field) (near-black, 13.52:1 on
- * --pc-canvas). Measured before/after in the fix-round-1 report. */
-.pc-crew-stat-value[data-tone='good'] {
-  color: var(--pc-focus);
-}
-.pc-crew-stat-value[data-tone='warn'] {
-  color: var(--pc-warning);
-}
+
+/* ---- Console: crew bays beside the guard and activity column ------------------------------- */
 
 .pc-crew-console {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
-  gap: clamp(24px, 4vw, 48px);
+  grid-template-columns: minmax(0, 8fr) minmax(300px, 4fr);
+  gap: clamp(24px, 3vw, 40px);
   align-items: start;
   min-width: 0;
 }
 
-/* Fix round 1, F2: `pc-crew-side` (the guard + activity column, CrewRoute.jsx) had no rule at
-   all -- the guard card and CrewActivity stacked with zero gap between them. */
 .pc-crew-side {
   display: grid;
-  gap: var(--pc-space-6);
+  gap: var(--pc-space-5);
   align-content: start;
   min-width: 0;
 }
 
-/* Persistent persona cards and their exact child accounts. */
+.pc-crew-section-title,
+.pc-crew-panel-title {
+  margin: 0;
+  font-size: calc(var(--pc-type-body) * 1.2);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
 .pc-crew-lanes-section {
   display: grid;
-  gap: var(--pc-space-3);
+  gap: var(--pc-space-4);
+  min-width: 0;
 }
+
 .pc-crew-personas,
 .pc-crew-children,
 .pc-crew-leg-list,
 .pc-crew-problem-list,
-.pc-crew-pending ul {
+.pc-crew-pending ul,
+.pc-crew-bench-roster {
   list-style: none;
   margin: 0;
   padding: 0;
 }
+
 .pc-crew-personas {
   display: grid;
   gap: var(--pc-space-4);
 }
+
+/* One grained bay per persona. */
 .pc-crew-persona {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--pc-line);
   border-radius: var(--pc-radius-support);
-  background: var(--pc-canvas);
+  background-color: var(--pc-workspace);
+  background-image: url('../money/panel-grain.svg');
   box-shadow:
-    0 1px 3px rgba(7, 15, 11, 0.2),
-    inset 0 1px 0 rgba(242, 245, 239, 0.08);
-  position: relative;
+    inset 0 1px 0 var(--crew-lip),
+    inset 0 -1px 0 var(--crew-rim),
+    var(--pc-shadow-support);
+  scroll-margin-block: var(--pc-space-20);
+  transition:
+    opacity var(--pc-duration-base) var(--pc-ease-standard),
+    border-color var(--pc-duration-base) var(--pc-ease-standard);
 }
+
+.pc-crew-persona[data-lit] {
+  border-color: color-mix(in srgb, var(--crew-tone) 65%, transparent);
+}
+
+.pc-crew-personas[data-spotlight] > .pc-crew-persona:not([data-lit]) {
+  opacity: 0.42;
+}
+
 .pc-crew-persona-head {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) minmax(150px, auto);
+  grid-template-columns: 60px minmax(0, 1fr) auto auto;
   gap: var(--pc-space-4);
   align-items: center;
   padding: var(--pc-space-5);
 }
+
+.pc-crew-persona-socket {
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-well);
+  box-shadow: inset 0 1px 3px var(--crew-rim);
+  outline: 2px solid color-mix(in srgb, var(--crew-tone) 70%, transparent);
+  outline-offset: 2px;
+}
+
 .pc-crew-persona-avatar {
   display: block;
-  width: 56px;
-  height: 56px;
+  width: 40px;
+  height: 40px;
   object-fit: contain;
 }
+
+.pc-crew-persona-who {
+  min-width: 0;
+}
+
 .pc-crew-persona h3,
 .pc-crew-persona p {
   margin: 0;
 }
+
 .pc-crew-persona h3 {
   font-size: 20px;
   font-weight: 700;
-  line-height: 1.3;
-  letter-spacing: -0.015em;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
 }
-.pc-crew-persona-head > div > p {
-  margin-top: var(--pc-space-1);
+
+.pc-crew-persona-who > p {
+  margin-top: 2px;
   color: var(--pc-faint);
-  font-size: 13px;
+  font-size: var(--pc-type-label);
 }
+
 .pc-crew-persona-summary {
   display: grid;
   justify-items: end;
   gap: var(--pc-space-1);
+  min-width: 0;
   text-align: right;
 }
-.pc-crew-persona-state {
-  color: var(--pc-muted);
-  font-size: 12px;
+
+.pc-crew-persona-state,
+.pc-crew-child-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  width: max-content;
+  padding: 2px var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-well);
+  font-size: var(--pc-type-technical);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.pc-crew-persona-total {
+  font-size: 20px;
   font-weight: 700;
+  letter-spacing: -0.02em;
 }
-.pc-crew-persona-empty {
-  padding: var(--pc-space-4) var(--pc-space-5);
-  border-bottom: 1px solid var(--pc-line);
-  border-top: 1px solid var(--pc-line);
+
+/* CrewAmountList renders a bare span when a persona holds nothing: keep it quiet. */
+.pc-crew-persona-summary > span.pc-crew-persona-total {
   color: var(--pc-faint);
-  font-size: 13px;
+  font-size: var(--pc-type-label);
+  font-weight: 500;
 }
+
+.pc-crew-bay-toggle {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: var(--crew-well);
+  color: var(--pc-muted);
+  cursor: pointer;
+  transition:
+    color var(--pc-duration-fast) var(--pc-ease-standard),
+    border-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.pc-crew-bay-toggle:hover {
+  border-color: var(--pc-line-strong);
+  color: var(--pc-ink);
+}
+
+.pc-crew-bay-toggle svg {
+  transition: transform var(--pc-duration-base) var(--pc-ease-out);
+}
+
+.pc-crew-bay-toggle[aria-expanded='false'] svg {
+  transform: rotate(-90deg);
+}
+
+.pc-crew-persona-empty {
+  margin: 0 var(--pc-space-5) var(--pc-space-5);
+  padding: var(--pc-space-3) var(--pc-space-4);
+  border: 1px dashed var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  color: var(--pc-faint);
+  font-size: var(--pc-type-label);
+}
+
+/* Accounts sit in a recessed well inside their persona's bay. */
+.pc-crew-children {
+  margin: 0 var(--pc-space-4) var(--pc-space-4);
+  overflow: hidden;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background-color: var(--crew-well);
+  box-shadow: inset 0 1px 3px var(--crew-rim);
+}
+
 .pc-crew-child {
   min-width: 0;
-  padding: var(--pc-space-4) var(--pc-space-5);
-  border-top: 1px solid var(--pc-line);
-  background: var(--pc-workspace);
+  padding: var(--pc-space-4);
   transition: background-color var(--pc-duration-fast) var(--pc-ease-standard);
 }
-.pc-crew-child:hover:not([data-revoked='true']) {
-  background: rgba(32, 52, 43, 0.8);
+
+.pc-crew-child + .pc-crew-child {
+  border-top: 1px solid var(--crew-hairline);
 }
+
+.pc-crew-child:hover:not([data-revoked='true']) {
+  background-color: var(--crew-plate);
+}
+
 .pc-crew-child[data-revoked='true'] {
   opacity: 0.55;
 }
+
 .pc-crew-child-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--pc-space-4);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--pc-space-3) var(--pc-space-4);
 }
+
+.pc-crew-child-id {
+  display: grid;
+  gap: var(--pc-space-2);
+  min-width: 0;
+}
+
+.pc-crew-child-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-2);
+  min-width: 0;
+}
+
 .pc-crew-child-address {
   margin: 0;
   font-family: var(--pc-font-mono);
-  font-size: 14px;
+  font-size: var(--pc-type-body-small);
+  font-weight: 600;
 }
+
 .pc-crew-child-state {
-  margin: var(--pc-space-1) 0 0;
-  font-size: 13px;
-  color: var(--pc-faint);
+  margin: 0;
 }
+
+.pc-crew-child-networks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2);
+}
+
+.pc-crew-child-networks .network-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  min-height: 24px;
+  padding: 1px var(--pc-space-3);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-weight: 600;
+}
+
+/* Network marks are single-colour SVG images: knocked out to the chip's ink per theme. */
+.pc-crew-child-networks .network-mark {
+  display: block;
+  flex: none;
+  filter: brightness(0) invert(1);
+}
+
+:root[data-theme='day-field'] .pc-crew-child-networks .network-mark {
+  filter: brightness(0);
+}
+
 .pc-crew-child-identity-unavailable {
   color: var(--pc-faint);
-  font-size: 13px;
+  font-size: var(--pc-type-label);
 }
-.pc-crew-child-total {
+
+.pc-crew-child-money {
+  display: grid;
   justify-items: end;
+  gap: var(--pc-space-2);
+  min-width: 0;
   text-align: right;
 }
+
+.pc-crew-child-total {
+  justify-items: end;
+  font-size: var(--pc-type-body);
+  font-weight: 700;
+}
+
+.pc-crew-child-share {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  color: var(--pc-faint);
+  font-size: var(--pc-type-technical);
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-crew-meter svg {
+  display: block;
+  width: 64px;
+  height: 4px;
+}
+
+.pc-crew-meter-track {
+  fill: var(--pc-line);
+}
+
+.pc-crew-meter-fill {
+  fill: var(--crew-tone);
+}
+
+/* Copy and explorer: small square tools beside the address. */
+.pc-crew-tools {
+  display: inline-flex;
+  gap: var(--pc-space-1);
+}
+
+.pc-crew-tool {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-control);
+  background: transparent;
+  color: var(--pc-muted);
+  cursor: pointer;
+  transition:
+    color var(--pc-duration-fast) var(--pc-ease-standard),
+    border-color var(--pc-duration-fast) var(--pc-ease-standard),
+    background-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.pc-crew-tool:hover {
+  border-color: var(--pc-line-strong);
+  background: var(--crew-plate-hover);
+  color: var(--pc-ink);
+}
+
+.pc-crew-tool[data-done] {
+  border-color: var(--pc-harvest);
+  background: var(--crew-lit);
+  color: var(--pc-ink);
+}
+
+/* Technical details: a quiet drawer with a turning chevron. */
 .pc-crew-child-details {
   margin-top: var(--pc-space-3);
-  border-top: 1px solid var(--pc-line);
+  border-top: 1px solid var(--crew-hairline);
 }
+
 .pc-crew-child-details summary {
   display: flex;
   align-items: center;
-  min-height: 44px;
+  gap: var(--pc-space-2);
+  min-height: 40px;
   cursor: pointer;
+  list-style: none;
   color: var(--pc-muted);
-  font-family: var(--pc-font-mono);
-  font-size: 12px;
+  font-size: var(--pc-type-technical);
+  font-weight: 600;
 }
+
+.pc-crew-child-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.pc-crew-child-details summary::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: rotate(-45deg);
+  transition: transform var(--pc-duration-base) var(--pc-ease-out);
+}
+
+.pc-crew-child-details[open] summary::before {
+  transform: rotate(45deg);
+}
+
+.pc-crew-child-details summary:hover {
+  color: var(--pc-ink);
+}
+
 .pc-crew-child-details summary:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }
+
 .pc-crew-child-details-body {
   display: grid;
   gap: var(--pc-space-4);
-  padding: 0 0 var(--pc-space-4);
+  padding: var(--pc-space-3);
+  border-radius: var(--pc-radius-control);
+  background: var(--crew-plate);
 }
+
 .pc-crew-child-facts {
   display: grid;
   margin: 0;
 }
+
 .pc-crew-child-facts > div {
   display: grid;
   grid-template-columns: minmax(120px, 0.34fr) minmax(0, 1fr);
   gap: var(--pc-space-3);
   padding-block: var(--pc-space-2);
-  border-bottom: 1px solid var(--pc-line);
+  border-bottom: 1px solid var(--crew-hairline);
 }
+
 .pc-crew-child-facts dt,
 .pc-crew-evidence-block h4 {
   color: var(--pc-faint);
-  font-size: 12px;
+  font-size: var(--pc-type-technical);
   font-weight: 650;
 }
+
 .pc-crew-child-facts dd {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
   font-family: var(--pc-font-mono);
-  font-size: 12px;
+  font-size: var(--pc-type-technical);
 }
+
 .pc-crew-evidence-block h4,
 .pc-crew-evidence-block p {
   margin: 0;
 }
+
 .pc-crew-evidence-block p,
 .pc-crew-leg-list,
 .pc-crew-problem-list {
   margin-top: var(--pc-space-2);
-  font-size: 12px;
+  font-size: var(--pc-type-technical);
 }
+
 .pc-crew-leg-list {
   display: grid;
 }
+
 .pc-crew-leg-list li {
   display: flex;
   justify-content: space-between;
   gap: var(--pc-space-3);
   padding-block: var(--pc-space-2);
-  border-bottom: 1px solid var(--pc-line);
+  border-bottom: 1px solid var(--crew-hairline);
 }
+
 .pc-crew-leg-list li span:last-child {
   min-width: 0;
   overflow-wrap: anywhere;
   text-align: right;
   font-family: var(--pc-font-mono);
 }
+
 .pc-crew-problem-list {
   display: grid;
   gap: var(--pc-space-1);
@@ -388,6 +927,7 @@
   font-family: var(--pc-font-mono);
   overflow-wrap: anywhere;
 }
+
 .pc-crew-child-actions {
   display: flex;
   flex-wrap: wrap;
@@ -396,13 +936,35 @@
   margin-top: var(--pc-space-3);
 }
 
+.pc-crew-child-actions .pc-button {
+  min-height: 40px;
+  padding: 0 var(--pc-space-4);
+}
+
+.pc-crew-route .pc-crew-cancel:where(:hover):not(:disabled) {
+  border-color: var(--pc-danger);
+  color: var(--pc-danger);
+}
+
+:root[data-theme='day-field'] .pc-crew-route .pc-crew-cancel:where(:hover):not(:disabled) {
+  border-color: var(--pc-danger-on-light);
+  color: var(--pc-danger-on-light);
+}
+
+/* ---- Syncing assignments ------------------------------------------------------------------ */
+
 .pc-crew-pending {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 0.7fr);
   gap: var(--pc-space-5);
   padding: var(--pc-space-5);
-  border: 1px solid var(--pc-warning);
+  border: 1px solid color-mix(in srgb, var(--pc-warning) 55%, transparent);
   border-radius: var(--pc-radius-support);
+  background-color: var(--pc-workspace);
+  background-image: url('../money/panel-grain.svg');
+  box-shadow:
+    inset 0 1px 0 var(--crew-lip),
+    inset 0 -1px 0 var(--crew-rim);
 }
 .pc-crew-pending h2,
 .pc-crew-pending p {
@@ -414,20 +976,26 @@
 .pc-crew-pending p {
   margin-top: var(--pc-space-2);
   color: var(--pc-muted);
-  font-size: 13px;
+  font-size: var(--pc-type-label);
 }
 .pc-crew-pending ul {
   display: grid;
   align-content: start;
+  padding: var(--pc-space-2) var(--pc-space-3);
+  border-radius: var(--pc-radius-control);
+  background: var(--crew-well);
 }
 .pc-crew-pending li {
   display: flex;
   justify-content: space-between;
   gap: var(--pc-space-3);
   padding-block: var(--pc-space-2);
-  border-bottom: 1px solid var(--pc-line);
+  border-bottom: 1px solid var(--crew-hairline);
   font-family: var(--pc-font-mono);
-  font-size: 12px;
+  font-size: var(--pc-type-technical);
+}
+.pc-crew-pending li:last-child {
+  border-bottom: 0;
 }
 .pc-crew-pending li span:last-child {
   min-width: 0;
@@ -448,89 +1016,223 @@
   color: var(--pc-faint);
 }
 
-/* Emergency guard */
-.pc-crew-guard {
-  min-width: 0;
+/* ---- Empty: the crew on the bench --------------------------------------------------------- */
+
+.pc-crew-bench {
+  display: grid;
+  justify-items: start;
+  gap: var(--pc-space-6);
+  padding: var(--pc-space-8);
   border: 1px solid var(--pc-line);
-  border-radius: 16px;
-  padding: 20px;
-  background: var(--pc-canvas);
+  border-radius: var(--pc-radius-dominant);
+  background-color: var(--pc-workspace);
+  background-image: url('../money/panel-grain.svg');
   box-shadow:
-    0 2px 8px rgba(7, 15, 11, 0.16),
-    inset 0 1px 0 rgba(242, 245, 239, 0.08);
-  position: relative;
+    inset 0 1px 0 var(--crew-lip),
+    inset 0 -1px 0 var(--crew-rim),
+    var(--pc-shadow-dominant);
 }
-.pc-crew-guard::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='guard-noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' seed='3'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23guard-noise)' opacity='0.02'/%3E%3C/svg%3E");
-  pointer-events: none;
-  border-radius: 16px;
+
+.pc-crew-bench-roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-5);
 }
+
+.pc-crew-bench-roster li {
+  display: grid;
+  justify-items: center;
+  gap: var(--pc-space-2);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 600;
+}
+
+.pc-crew-bench-roster img {
+  width: 64px;
+  height: 64px;
+  padding: var(--pc-space-3);
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-well);
+  box-shadow: inset 0 1px 3px var(--crew-rim);
+  outline: 2px dashed color-mix(in srgb, var(--crew-tone) 60%, transparent);
+  outline-offset: 3px;
+}
+
+.pc-crew-bench-copy {
+  max-width: 48ch;
+  margin: 0;
+  color: var(--pc-muted);
+  line-height: var(--pc-leading-body);
+}
+
+/* ---- Emergency guard ---------------------------------------------------------------------- */
+
+.pc-crew-guard {
+  container-type: inline-size;
+  display: grid;
+  gap: var(--pc-space-4);
+  min-width: 0;
+  padding: var(--pc-space-5);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-support);
+  background-color: var(--pc-workspace);
+  background-image: url('../money/panel-grain.svg');
+  box-shadow:
+    inset 0 1px 0 var(--crew-lip),
+    inset 0 -1px 0 var(--crew-rim),
+    var(--pc-shadow-support);
+}
+
 .pc-crew-guard-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--pc-space-3);
 }
-.pc-crew-guard-head .pc-crew-stat-label {
-  margin: 0;
-}
-/* Task 12 fix round 1, F2: same `--pc-harvest`-as-bare-text defect as `.pc-crew-stat-value[data-
- * tone='good']` above (see that rule's own comment for the measured contrast and why `--pc-focus`
- * is the correct existing token) -- this is the ARMED badge the reviewer's F2 finding named
- * directly. `data-guard-phase='lapsed'`/`='unknown'` below already override this with
- * `--pc-danger`/`--pc-faint`, both of which are correctly per-theme-calibrated; only the base
- * (ARMED) rule had the bug. */
+
+/* `--pc-focus` rather than bare Harvest text: see `.pc-crew-stat-value[data-tone='good']`. */
 .pc-crew-guard-state {
-  font-family: var(--pc-font-mono);
-  font-size: 12px;
+  --crew-lamp: var(--pc-harvest);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-space-2);
+  padding: 2px var(--pc-space-3);
+  border: 1px solid color-mix(in srgb, var(--pc-harvest) 45%, transparent);
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-lit);
   color: var(--pc-focus);
+  font-family: var(--pc-font-mono);
+  font-size: var(--pc-type-technical);
+  font-weight: 700;
 }
-/* Fix round 1, F3: third `data-guard-phase='unknown'` hook alongside the existing armed/lapsed
-   pair -- a failed protection read gets its own neutral (never alarming, never confident) color. */
-.pc-crew-guard[data-guard-phase='lapsed'] .pc-crew-guard-state {
+
+:root[data-theme='day-field'] .pc-crew-guard-state {
+  color: var(--pc-ink);
+}
+
+.pc-crew-guard[data-guard-phase='lapsed'] .pc-crew-guard-state,
+.pc-crew-guard[data-guard-phase='engaged'] .pc-crew-guard-state {
+  --crew-lamp: var(--pc-danger);
+  border-color: color-mix(in srgb, var(--pc-danger) 55%, transparent);
+  background: var(--crew-well);
   color: var(--pc-danger);
 }
+
+:root[data-theme='day-field'] .pc-crew-guard[data-guard-phase='lapsed'] .pc-crew-guard-state,
+:root[data-theme='day-field'] .pc-crew-guard[data-guard-phase='engaged'] .pc-crew-guard-state {
+  color: var(--pc-danger-on-light);
+}
+
 .pc-crew-guard[data-guard-phase='unknown'] .pc-crew-guard-state {
+  --crew-lamp: var(--pc-faint);
+  border-color: var(--pc-line);
+  background: var(--crew-well);
   color: var(--pc-faint);
 }
+
+.pc-crew-guard-instrument {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: var(--pc-space-5);
+  align-items: center;
+}
+
 .pc-crew-radar {
   position: relative;
-  width: 132px;
-  height: 132px;
-  margin: 16px auto;
-  border-radius: 999px;
-  border: 1px solid var(--pc-line);
+  width: 160px;
+  height: 160px;
   overflow: hidden;
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-well);
+  box-shadow: inset 0 2px 8px var(--crew-rim);
 }
+
+.pc-crew-radar-scope,
+.pc-crew-radar-sweep,
+.pc-crew-radar-sweep svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.pc-crew-radar-arc-track {
+  fill: none;
+  stroke: var(--crew-hairline);
+  stroke-width: 3;
+}
+
+.pc-crew-radar-arc {
+  fill: none;
+  stroke: var(--crew-signal);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.pc-crew-radar-tick {
+  stroke: var(--pc-line);
+  stroke-width: 1;
+}
+
+.pc-crew-radar-tick[data-major] {
+  stroke: var(--pc-muted);
+  stroke-width: 1.5;
+}
+
+.pc-crew-radar-blip {
+  fill: var(--pc-faint);
+}
+
+.pc-crew-guard[data-guard-phase='armed'] .pc-crew-radar-blip {
+  fill: var(--crew-signal);
+}
+
 .pc-crew-radar-ring {
   position: absolute;
-  inset: 26px;
-  border-radius: 999px;
+  inset: 28px;
+  border-radius: var(--pc-radius-round);
   border: 1px solid var(--pc-line);
 }
+
 .pc-crew-radar-ring--inner {
-  inset: 52px;
+  inset: 54px;
 }
+
 .pc-crew-radar-sweep {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 2px;
-  height: 50%;
-  transform-origin: top center;
+  transform-origin: 50% 50%;
   transform: rotate(45deg);
-  background: var(--pc-muted);
-  opacity: 0.85;
   animation: none;
 }
+
 .pc-crew-radar-sweep--active {
-  background: var(--pc-harvest);
+  transform: rotate(0deg);
   animation: pc-crew-sweep 5.5s linear infinite;
 }
+
+.pc-crew-radar-wedge {
+  fill: var(--crew-signal);
+  fill-opacity: 0;
+}
+
+.pc-crew-radar-sweep--active .pc-crew-radar-wedge {
+  fill-opacity: 0.16;
+}
+
+.pc-crew-radar-beam {
+  stroke: var(--pc-muted);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.pc-crew-radar-sweep--active .pc-crew-radar-beam {
+  stroke: var(--crew-signal);
+}
+
+.pc-crew-guard[data-guard-phase='lapsed'] .pc-crew-radar-beam {
+  stroke: var(--pc-danger);
+}
+
 .pc-crew-radar-core {
   position: absolute;
   left: 50%;
@@ -538,210 +1240,379 @@
   width: 8px;
   height: 8px;
   margin: -4px 0 0 -4px;
-  border-radius: 999px;
-  background: var(--pc-harvest);
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-signal);
 }
-.pc-crew-guard-clock {
-  margin: 8px 0 16px;
-  font-size: 28px;
-  font-weight: 720;
-  letter-spacing: -0.04em;
+
+.pc-crew-guard-readouts {
+  display: grid;
+  gap: var(--pc-space-3);
+  min-width: 0;
+  margin: 0;
+}
+
+.pc-crew-guard-readouts > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pc-crew-guard-readouts dt {
+  color: var(--pc-faint);
+  font-size: var(--pc-type-technical);
+  font-weight: 600;
+}
+
+.pc-crew-guard-readouts dd {
+  margin: 0;
+  font-size: var(--pc-type-body-small);
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
+
+.pc-crew-guard-readouts .pc-crew-guard-clock {
+  font-size: 26px;
+  font-weight: 720;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+
+.pc-crew-guard-line {
+  margin: 0;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-body-small);
+  line-height: var(--pc-leading-body);
+}
+
 .pc-crew-guard-renew {
   width: 100%;
 }
-/* Final-review fix, F1: honest alternative for every visitor who is not the vault's configured
- * authority -- same 13px/--pc-faint convention `.pc-crew-empty-note` below already uses (this
- * file has no --pc-type-* tokens, brief-verbatim precedent). */
+
 .pc-crew-guard-renew-note {
+  display: grid;
+  gap: var(--pc-space-1);
   margin: 0;
-  font-size: 13px;
+  padding: var(--pc-space-3);
+  border-radius: var(--pc-radius-control);
+  background: var(--crew-well);
+  font-size: var(--pc-type-label);
   color: var(--pc-faint);
   overflow-wrap: anywhere;
 }
+
+.pc-crew-guard-authority {
+  font-family: var(--pc-font-mono);
+  font-size: var(--pc-type-technical);
+}
+
+/* A narrow side column stacks the readouts under the radar instead of crushing them. */
+@container (max-width: 320px) {
+  .pc-crew-guard-instrument {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+  }
+  .pc-crew-guard-readouts {
+    width: 100%;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  }
+}
+
 @keyframes pc-crew-sweep {
   to {
     transform: rotate(360deg);
   }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .pc-crew-radar-sweep,
   .pc-crew-radar-sweep--active {
     animation: none;
     transform: rotate(45deg);
-    background: var(--pc-muted);
   }
 }
 
-/* Activity: keeper feed + decision log */
+/* ---- Activity: keeper feed and decision log as timelines ---------------------------------- */
+
 .pc-crew-activity {
   display: grid;
-  gap: 24px;
+  gap: var(--pc-space-6);
   min-width: 0;
-  padding: 20px;
-  background: var(--pc-canvas);
+  padding: var(--pc-space-5);
   border: 1px solid var(--pc-line);
   border-radius: var(--pc-radius-support);
+  background-color: var(--pc-workspace);
+  background-image: url('../money/panel-grain.svg');
   box-shadow:
-    0 1px 3px rgba(7, 15, 11, 0.12),
-    inset 0 1px 0 rgba(242, 245, 239, 0.04);
+    inset 0 1px 0 var(--crew-lip),
+    inset 0 -1px 0 var(--crew-rim),
+    var(--pc-shadow-support);
 }
+
 .pc-crew-activity-live {
   margin: 0;
   color: var(--pc-muted);
-  font-size: 12px;
+  font-size: var(--pc-type-technical);
 }
+
+.pc-crew-feed {
+  display: grid;
+  gap: var(--pc-space-3);
+  min-width: 0;
+}
+
+.pc-crew-feed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+}
+
+.pc-crew-feed-count {
+  min-width: 26px;
+  padding: 1px var(--pc-space-2);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-well);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-technical);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-align: center;
+}
+
 .pc-crew-keeper-list,
 .pc-crew-decision-list {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
+  position: relative;
   display: grid;
-  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
+
+/* The rail every event hangs from. */
+.pc-crew-keeper-list::before,
+.pc-crew-decision-list::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 4px;
+  width: 1px;
+  background: var(--pc-line);
+}
+
+/* The side column is narrow, so the event reads first and its ledger evidence sits beneath. */
 .pc-crew-keeper-row {
+  position: relative;
   min-width: 0;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
-  padding-block: 8px;
-  border-bottom: 1px solid var(--pc-line);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--pc-space-1);
+  padding: var(--pc-space-3) 0 var(--pc-space-3) var(--pc-space-6);
+  font-size: var(--pc-type-label);
+  border-bottom: 1px solid var(--crew-hairline);
 }
+
+.pc-crew-keeper-row:last-child,
+.pc-crew-decision-row:last-child {
+  border-bottom: 0;
+}
+
+.pc-crew-keeper-row::before {
+  content: '';
+  position: absolute;
+  top: calc(var(--pc-space-3) + 4px);
+  left: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--pc-radius-round);
+  background: var(--crew-signal);
+  outline: 3px solid var(--pc-workspace);
+}
+
+.pc-crew-keeper-row[data-kind='rebalance_executed']::before {
+  background: var(--pc-crew-2);
+}
+
+.pc-crew-keeper-text {
+  min-width: 0;
+  font-weight: 600;
+}
+
 .pc-crew-keeper-time {
   display: grid;
   min-width: 0;
   max-width: 100%;
-  gap: var(--pc-space-1);
+  gap: 2px;
+  justify-items: start;
   font-family: var(--pc-font-mono);
-  font-size: 12px;
+  font-size: 11px;
   color: var(--pc-faint);
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
 .pc-crew-keeper-time > span {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+.pc-crew-tx {
+  color: var(--pc-muted);
+  text-decoration: underline;
+  text-decoration-color: var(--pc-line);
+  text-underline-offset: 3px;
+}
+
+.pc-crew-tx:hover {
+  color: var(--pc-ink);
+  text-decoration-color: currentcolor;
+}
+
 .pc-crew-decision-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  gap: var(--pc-space-2) var(--pc-space-3);
   align-items: start;
-  padding-block: 8px;
-  border-bottom: 1px solid var(--pc-line);
+  padding-block: var(--pc-space-3);
+  border-bottom: 1px solid var(--crew-hairline);
 }
+
 .pc-crew-decision-dot {
-  width: 8px;
-  height: 8px;
-  margin-top: 6px;
-  border-radius: 999px;
+  position: relative;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border-radius: var(--pc-radius-round);
   background: var(--pc-muted);
+  outline: 3px solid var(--pc-workspace);
 }
+
 .pc-crew-decision-row[data-tone='kept'] .pc-crew-decision-dot {
-  background: var(--pc-harvest);
+  background: var(--crew-signal);
 }
+
 .pc-crew-decision-row[data-tone='watch'] .pc-crew-decision-dot {
   background: var(--pc-warning);
 }
+
 .pc-crew-decision-row[data-tone='rejected'] .pc-crew-decision-dot {
   background: var(--pc-danger);
 }
+
 .pc-crew-decision-title {
   margin: 0;
+  font-size: var(--pc-type-body-small);
   font-weight: 650;
 }
+
 .pc-crew-decision-detail {
   margin: 2px 0 0;
-  font-size: 13px;
   color: var(--pc-faint);
+  font-size: var(--pc-type-label);
 }
+
 .pc-crew-decision-time {
+  grid-column: 2 / -1;
   min-width: 0;
   max-width: 100%;
   font-family: var(--pc-font-mono);
-  font-size: 12px;
+  font-size: 11px;
   color: var(--pc-faint);
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
 .pc-crew-decision-tone {
+  padding: 1px var(--pc-space-2);
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-round);
   color: var(--pc-muted);
-  font-size: 12px;
+  font-size: var(--pc-type-technical);
   font-weight: 700;
 }
+
 .pc-crew-empty-note {
-  margin: 8px 0 0;
-  font-size: 13px;
+  margin: 0;
+  padding: var(--pc-space-3);
+  border: 1px dashed var(--pc-line);
+  border-radius: var(--pc-radius-control);
   color: var(--pc-faint);
+  font-size: var(--pc-type-label);
 }
 
+/* ---- Responsive --------------------------------------------------------------------------- */
+
 @media (max-width: 1023px) {
-  .pc-crew-console {
-    grid-template-columns: minmax(0, 1fr);
-  }
+  .pc-crew-deck,
+  .pc-crew-console,
   .pc-crew-pending {
     grid-template-columns: minmax(0, 1fr);
   }
-  .pc-crew-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding: 20px;
-    margin: 0 -20px 20px -20px;
-    gap: 20px;
+  .pc-crew-side {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    align-items: start;
   }
 }
-@media (max-width: 767px) {
-  .pc-crew-stats {
-    grid-template-columns: 1fr;
-  }
 
-  /* Task 12 (visual harness fixtures) fix, found via the crew fixture's own
-   * assertNoVerticalTextTrap guard (pocket-crew.visual.spec.js) at mobile-320/360: `.pc-route-
-   * header` is ported from strategy.css (this file's own header comment, :5-11) but that port only
-   * copied the DESKTOP `grid-template-columns: minmax(0,760px) minmax(180px,1fr)` declaration
-   * (:24-29 above), never strategy.css's own `@media (max-width: 767px) { .pc-route-header {
-   * grid-template-columns: 1fr } }` collapse (strategy.css:1014-1021). CrewRoute.jsx's header
-   * (unlike StrategyRoute.jsx's, which always fills column 2 with its own `.pc-route-step`) has
-   * only ONE child -- the empty second column still reserved its 180px minimum track width
-   * regardless, squeezing `.pc-route-title`/`.pc-route-sub` down to a real, confirmed 76px column
-   * on every phone-width visit to `/agent`, not merely a harness artifact. Completes the port
-   * verbatim (strategy.css's own rule, same property/value) rather than inventing a new one.
-   * Verified by mutation: reverted this rule, re-ran the crew fixture's forest-theme test, got RED
-   * (`vertical text trap` at width 76, e.g. `.pc-route-sub` 76x260); restored it, GREEN again.
-   */
+@media (max-width: 767px) {
+  /* CrewRoute's header can hold a single child (the empty state), so the ported two-track header
+   * must collapse the same way strategy.css does, or phone widths squeeze the title into a
+   * vertical text column. */
   .pc-route-header {
     grid-template-columns: 1fr;
     gap: var(--pc-space-6);
   }
-
+  .pc-crew-new-plan {
+    justify-self: start;
+  }
+  .pc-crew-deck,
+  .pc-crew-bench {
+    padding: var(--pc-space-5);
+    border-radius: var(--pc-radius-support);
+  }
   .pc-crew-persona-head {
-    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-columns: 52px minmax(0, 1fr) auto;
     padding: var(--pc-space-4);
   }
+  .pc-crew-persona-socket {
+    width: 52px;
+    height: 52px;
+  }
   .pc-crew-persona-avatar {
-    width: 48px;
-    height: 48px;
+    width: 34px;
+    height: 34px;
   }
   .pc-crew-persona-summary {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-items: start;
+    text-align: left;
+  }
+  .pc-crew-children {
+    margin-inline: var(--pc-space-3);
+  }
+  .pc-crew-persona-empty {
+    margin-inline: var(--pc-space-4);
+  }
+  .pc-crew-child-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .pc-crew-child-money {
     grid-column: 1 / -1;
     justify-items: start;
     text-align: left;
   }
-  .pc-crew-child,
-  .pc-crew-persona-empty {
-    padding-inline: var(--pc-space-4);
+  .pc-crew-child-total {
+    justify-items: start;
   }
-  .pc-crew-child-head,
   .pc-crew-leg-list li,
   .pc-crew-pending li {
     align-items: flex-start;
     flex-direction: column;
   }
-  .pc-crew-child-total,
   .pc-crew-leg-list li span:last-child,
   .pc-crew-pending li span:last-child {
-    justify-items: start;
     text-align: left;
   }
   .pc-crew-child-facts > div {
@@ -755,6 +1626,9 @@
   .pc-crew-child-actions .pc-button {
     width: 100%;
   }
+  .pc-crew-side {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 640px) {
@@ -765,12 +1639,27 @@
   }
   .pc-crew-keeper-time {
     justify-items: start;
+    text-align: left;
   }
   .pc-crew-decision-row {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: 12px minmax(0, 1fr);
   }
   .pc-crew-decision-tone,
   .pc-crew-decision-time {
     grid-column: 2;
+  }
+}
+
+@media (max-width: 520px) {
+  .pc-crew-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pc-crew-guard-instrument {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+  }
+  .pc-crew-guard-readouts {
+    width: 100%;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   }
 }

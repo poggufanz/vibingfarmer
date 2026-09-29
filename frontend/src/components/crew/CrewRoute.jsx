@@ -1,7 +1,9 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { CrewAmountList, CrewLanes, formatCrewAmount } from './CrewLanes.jsx'
 import { CrewGuard } from './CrewGuard.jsx'
 import { CrewActivity } from './CrewActivity.jsx'
+import { CrewShareRail } from './CrewShareRail.jsx'
+import { toneFor } from '../strategy/CrewSplit.jsx'
 import { usePocketTransition } from '../../design/usePocketTransition.js'
 import { toAgentIdentityView, toFactView, toLiveVenueView } from '../../core/coreRouteAdapters.js'
 import './crew.css'
@@ -63,6 +65,40 @@ function earnedStateCopy(model) {
 
 function assignedCount(crew) {
   return crew.personas.reduce((sum, persona) => sum + persona.children.length, 0)
+}
+
+// Accounts whose money sits in the guarded Stellar vault -- the ones the emergency guard covers.
+function vaultAccountCount(crew) {
+  return crew.personas
+    .flatMap((persona) => persona.children)
+    .filter((child) => child.workingLegs?.some((leg) => leg.location === 'stellar-vault')).length
+}
+
+const KEEPER_TONE = Object.freeze({
+  Running: 'live',
+  Stale: 'warn',
+  Configured: 'idle',
+  Unavailable: 'warn',
+})
+
+// Capped so a very large crew still reads as a strip of pips, not a wall of them.
+const MAX_PIPS = 12
+
+function WorkingPips({ active, total }) {
+  if (!Number.isSafeInteger(total) || total <= 0 || total > MAX_PIPS) return null
+  return (
+    <span className="pc-crew-pips" aria-hidden="true">
+      {Array.from({ length: total }, (_, index) => (
+        <span key={index} data-lit={index < active ? 'true' : undefined} />
+      ))}
+    </span>
+  )
+}
+
+function prefersReducedMotion() {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false
 }
 
 function emptyStateCopy(crew) {
@@ -165,7 +201,20 @@ export function CrewRoute({
   const keeperLabel = keeperStatusLabel(keeper)
   const earned = earnedFact(model)
   const rootRef = useRef(null)
+  const [focusId, setFocusId] = useState(null)
+  const [previewId, setPreviewId] = useState(null)
   usePocketTransition(rootRef, childCount)
+
+  // Pressing a persona in the rail spotlights its bay and brings it into view; pressing it again
+  // clears the spotlight. Hover only previews -- it never scrolls.
+  function toggleFocus(personaId) {
+    const next = focusId === personaId ? null : personaId
+    setFocusId(next)
+    if (!next) return
+    rootRef.current
+      ?.querySelector(`[data-persona-id="${next}"]`)
+      ?.scrollIntoView?.({ block: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+  }
 
   if (childCount === 0) {
     return (
@@ -181,12 +230,32 @@ export function CrewRoute({
           </div>
         </header>
         <PendingAssignments pendingAssignments={pendingAssignments} />
-        <button type="button" className="pc-button pc-button--primary" onClick={onStartStrategy}>
-          Put it to work
-        </button>
+        <section className="pc-crew-bench" aria-label="Your crew is off duty">
+          {crew.personas.length ? (
+            <ul className="pc-crew-bench-roster" aria-hidden="true">
+              {crew.personas.map((persona) => (
+                <li key={persona.id} data-tone={toneFor(persona)}>
+                  <img src={persona.avatar} alt="" width="64" height="64" />
+                  <span>{persona.name}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <p className="pc-crew-bench-copy">
+            Sprout, Clover and Mochi wait here until a plan hires them. One signature starts all of
+            them.
+          </p>
+          <button type="button" className="pc-button pc-button--primary" onClick={onStartStrategy}>
+            Put it to work
+          </button>
+        </section>
       </div>
     )
   }
+
+  const spotlightId = previewId ?? focusId
+  const keeperTone = KEEPER_TONE[keeperLabel] ?? 'warn'
+  const earnedTone = earned ? 'live' : 'idle'
 
   return (
     <div className="pc-route pc-crew-route" ref={rootRef}>
@@ -198,41 +267,80 @@ export function CrewRoute({
             account actions stay attached to each exact child address.
           </p>
         </div>
+        {typeof onStartStrategy === 'function' ? (
+          <button
+            type="button"
+            className="pc-button pc-button--secondary pc-crew-new-plan"
+            onClick={onStartStrategy}
+          >
+            Start a new plan
+          </button>
+        ) : null}
       </header>
 
-      <div className="pc-crew-stats" role="group" aria-label="Crew status" data-pocket-enter>
-        <div className="pc-crew-stat">
-          <p className="pc-crew-stat-label">Status</p>
-          <p className="pc-crew-stat-value" data-tone={keeperLabel === 'Running' ? 'good' : 'warn'}>
-            {keeperLabel}
-          </p>
+      <section className="pc-crew-deck" aria-labelledby="crew-balance-heading" data-pocket-enter>
+        <div className="pc-crew-balance">
+          <h2 id="crew-balance-heading" className="pc-crew-balance-label">
+            Working balance
+          </h2>
+          <CrewAmountList
+            amounts={crew.totals}
+            empty="Unavailable"
+            className="pc-crew-balance-value"
+          />
+          <CrewShareRail
+            personas={crew.personas}
+            focusId={focusId}
+            spotlightId={spotlightId}
+            onFocus={toggleFocus}
+            onPreview={setPreviewId}
+          />
         </div>
-        <div className="pc-crew-stat">
-          <p className="pc-crew-stat-label">Working for you</p>
-          <p className="pc-crew-stat-value">
-            {crew.activeCount} of {crew.productiveAgentCount}
-          </p>
-          {crew.status !== 'complete' && <span className="pc-crew-coverage">Partial coverage</span>}
-        </div>
-        <div className="pc-crew-stat">
-          <p className="pc-crew-stat-label">Earned this run</p>
-          <div className="pc-crew-stat-value">
-            <CrewAmountList amounts={earned ? [earned.value] : []} empty={earnedStateCopy(model)} />
+
+        <div className="pc-crew-stats" role="group" aria-label="Crew status">
+          <div className="pc-crew-stat" data-tone={keeperTone}>
+            <p className="pc-crew-stat-label">Status</p>
+            <p
+              className="pc-crew-stat-value"
+              data-tone={keeperLabel === 'Running' ? 'good' : 'warn'}
+            >
+              {keeperLabel}
+            </p>
+          </div>
+          <div className="pc-crew-stat" data-tone={crew.activeCount > 0 ? 'live' : 'idle'}>
+            <p className="pc-crew-stat-label">Working for you</p>
+            <p className="pc-crew-stat-value">
+              {crew.activeCount} of {crew.productiveAgentCount}
+            </p>
+            <WorkingPips active={crew.activeCount} total={crew.productiveAgentCount} />
+            {crew.status !== 'complete' && (
+              <span className="pc-crew-coverage">Partial coverage</span>
+            )}
+          </div>
+          <div className="pc-crew-stat" data-tone={earnedTone}>
+            <p className="pc-crew-stat-label">Earned this run</p>
+            <div className="pc-crew-stat-value">
+              <CrewAmountList
+                amounts={earned ? [earned.value] : []}
+                empty={earnedStateCopy(model)}
+              />
+            </div>
+          </div>
+          <div className="pc-crew-stat" data-tone={yieldView ? 'live' : 'idle'}>
+            <p className="pc-crew-stat-label">Blended rate</p>
+            <p className="pc-crew-stat-value">
+              {yieldView ? `${yieldView.apy.toFixed(1)}%` : 'Unavailable'}
+            </p>
+            {yieldView ? (
+              <span className="pc-crew-rate-evidence">
+                <span>Source: {yieldView.source}</span>
+                <span>As of: {String(yieldView.asOf)}</span>
+                <span>Checked: {String(yieldView.checkedAt)}</span>
+              </span>
+            ) : null}
           </div>
         </div>
-        <div className="pc-crew-stat">
-          <p className="pc-crew-stat-label">Blended rate</p>
-          <p className="pc-crew-stat-value">
-            {yieldView ? `${yieldView.apy.toFixed(1)}%` : 'Unavailable'}
-          </p>
-          {yieldView ? (
-            <span className="pc-crew-rate-evidence">
-              Source: {yieldView.source} · As of: {String(yieldView.asOf)} · Checked:{' '}
-              {String(yieldView.checkedAt)}
-            </span>
-          ) : null}
-        </div>
-      </div>
+      </section>
 
       <PendingAssignments pendingAssignments={pendingAssignments} />
 
@@ -242,6 +350,8 @@ export function CrewRoute({
           onCancelAgent={onCancelAgent}
           onWithdrawAgent={onWithdrawAgent}
           actionPending={actionPending}
+          focusId={focusId}
+          spotlightId={spotlightId}
         />
         <div className="pc-crew-side" data-pocket-enter>
           <CrewGuard
@@ -249,6 +359,7 @@ export function CrewRoute({
             onRenew={onRenewMandate}
             pending={actionPending}
             nowMs={nowMs}
+            vaultAccounts={vaultAccountCount(crew)}
           />
           <CrewActivity keeperEvents={keeperEvents} decisions={decisions} nowMs={nowMs} />
         </div>
