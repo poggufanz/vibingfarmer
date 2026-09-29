@@ -1,8 +1,9 @@
 // frontend/src/components/pocket/AgentMark.jsx
-// Per-agent identity mark -- a rounded seed/crew shape with a lower-left tail (Design Spec
-// §6.6), geometrically distinct from the fixed product mark (BrandLockup: a closed, notch-only
-// pocket). Fill is seeded ONLY from the required `identity` string (the agent's real address or
-// run seed) so the same agent always gets the same color across reorder/remount/re-fetch --
+// Per-agent identity mark -- a round identity chip carrying a status icon, geometrically distinct
+// from the fixed product mark (BrandLockup: a closed, notch-only pocket) and from the rounded-
+// square persona avatars it sits beside. Fill is seeded ONLY from the required `identity` string
+// (the agent's real address or run seed) so the same agent always gets the same color across
+// reorder/remount/re-fetch --
 // deriving it from list index instead would silently reassign colors on every re-sort, which is
 // exactly the kind of quiet-but-wrong behavior this mark exists to avoid (Design Spec §6.6: "one
 // crew mark always means one actually deployed account").
@@ -25,9 +26,10 @@ const CREW_PALETTE = [
 const INK_DARK = '#17251F'
 const INK_LIGHT = '#F2F5EF'
 
-// Which ink reads correctly on each crew swatch, per theme -- precomputed against the literal
-// hex values in pocket-crew.css via contrastRatio() and exhaustively registered in
-// src/design/contrast.js (forest.crewInk/crew1..6, day.crewInk/crew1..6, all >=4.5:1). A fill
+// Which ink reads correctly on each crew swatch, per theme -- the status icon is drawn in it,
+// precomputed against the literal hex values in pocket-crew.css via contrastRatio() and
+// exhaustively registered in src/design/contrast.js (forest.crewInk/crew1..6,
+// day.crewInk/crew1..6, all >=4.5:1, well past the 3:1 a graphic needs). A fill
 // that is light enough for dark ink in one theme can be recalibrated dark enough to need light
 // ink in the other (see day-field's --pc-crew-2/4/6), so this table is genuinely per-theme, not
 // a single global choice. Re-run the calibration and update both this table and the registry
@@ -37,10 +39,10 @@ const CREW_INK_BY_THEME = Object.freeze({
   [THEME_IDS.DAY_FIELD]: [INK_DARK, INK_LIGHT, INK_DARK, INK_LIGHT, INK_DARK, INK_LIGHT],
 })
 
-// State is dual-coded (text glyph + color); no state relies on color alone. `colorKey` groups
-// states that share an underlying semantic color (planned/existing/idle all read as "not yet
-// live", so they share the muted tone) -- this is the join key into both maps below.
-const STATE_COLOR_KEY = Object.freeze({
+// State is coded by icon shape, never by color: the chip's color is the identity, so a status
+// color on top of it would fight it. `glyph` groups states that read the same way (planned/
+// existing/idle are all "not yet live": an open ring).
+const STATE_GLYPH = Object.freeze({
   planned: 'idle',
   existing: 'idle',
   idle: 'idle',
@@ -49,25 +51,13 @@ const STATE_COLOR_KEY = Object.freeze({
   failed: 'failed',
 })
 
-const STATE_BADGE_VAR = Object.freeze({
-  active: 'var(--pc-harvest)',
-  confirmed: 'var(--pc-ink)',
-  failed: 'var(--pc-danger)',
-  idle: 'var(--pc-muted)',
-})
-
-// Ink for the state-badge glyph, chosen against that badge's own fixed color (not the crew fill
-// -- the glyph is drawn fully inside the solid badge circle, so it never has to fight the
-// identity color underneath). Registered in src/design/contrast.js as forest.stateInk/* and
-// day.stateInk/* -- all >=4.5:1 (well past the 3:1 a small glyph needs).
-const STATE_INK_BY_THEME = Object.freeze({
-  [THEME_IDS.FOREST]: { active: INK_DARK, confirmed: INK_DARK, failed: INK_DARK, idle: INK_DARK },
-  [THEME_IDS.DAY_FIELD]: {
-    active: INK_DARK,
-    confirmed: INK_LIGHT,
-    failed: INK_LIGHT,
-    idle: INK_LIGHT,
-  },
+// Icons on the 32-unit grid, centered on (16,16). Stroked icons use round caps; `active` is a
+// filled play triangle so it differs from the stroked ones in weight as well as outline.
+const GLYPH_D = Object.freeze({
+  idle: 'M16 11.25A4.75 4.75 0 1 1 16 20.75A4.75 4.75 0 1 1 16 11.25Z',
+  active: 'M13 10.5L22 16L13 21.5Z',
+  confirmed: 'M10.5 16.5L14.25 20.25L21.5 12.25',
+  failed: 'M11.75 11.75L20.25 20.25M20.25 11.75L11.75 20.25',
 })
 
 // 36 added for Strategy Task 14 fix (owner report item 5): the Plan review crew avatars measured
@@ -86,11 +76,9 @@ function hashIdentity(identity) {
   return Math.abs(hash)
 }
 
-// Body: a rounded vertical capsule (seed silhouette). Tail: a small triangle poking out past the
-// body's lower-left edge -- the one required distinguishing feature vs. the product mark.
-const BODY_D =
-  'M16 4C10.477 4 6 8.477 6 14V20C6 25.523 10.477 30 16 30C21.523 30 26 25.523 26 20V14C26 8.477 21.523 4 16 4Z'
-const TAIL_D = 'M9 25L9 30L4 28Z'
+// Body: a full circle -- round against the rounded-square persona avatars and the pocket product
+// mark, so it never reads as a second logo.
+const BODY_D = 'M16 1A15 15 0 1 1 16 31A15 15 0 1 1 16 1Z'
 
 function identityInput(identity) {
   // Existing My Money rows pass their authoritative address string. Keep that caller contract
@@ -181,11 +169,9 @@ export function AgentMark({ identity, state = 'planned', size = 32, label, class
   const executionState =
     state === 'planned' && resolved.state !== 'planned' ? resolved.state : state
   const stateLabel = stateLabelFor(executionState)
-  const colorKey = Object.prototype.hasOwnProperty.call(STATE_COLOR_KEY, executionState)
-    ? STATE_COLOR_KEY[executionState]
+  const glyph = Object.prototype.hasOwnProperty.call(STATE_GLYPH, executionState)
+    ? STATE_GLYPH[executionState]
     : 'idle'
-  const badgeFill = STATE_BADGE_VAR[colorKey]
-  const badgeInk = STATE_INK_BY_THEME[theme][colorKey]
   const ariaLabel = `${identityLabel}${label ? ` ${label}` : ''}, ${stateLabel}`
 
   return (
@@ -204,19 +190,18 @@ export function AgentMark({ identity, state = 'planned', size = 32, label, class
       className={`pc-agent-mark pc-agent-mark--${px}${className ? ` ${className}` : ''}`}
     >
       <path d={BODY_D} fill={fill} />
-      <path d={TAIL_D} fill={fill} />
-      {label && (
-        <text x="16" y="19" textAnchor="middle" className="pc-agent-mark-label" fill={fillInk}>
-          {label}
-        </text>
-      )}
-      {/* Always-present visible state cue -- a short text glyph inside its own solid badge, not
-          a color-only dot and never drawn directly over the (arbitrary) identity fill -- so both
-          the badge and its text stay legible regardless of which crew color this agent got. */}
-      <circle cx="23" cy="25" r="6.25" fill={badgeFill} />
-      <text x="23" y="27.5" textAnchor="middle" className="pc-agent-mark-state" fill={badgeInk}>
-        {stateLabel.charAt(0)}
-      </text>
+      {/* Always-present state cue, coded by shape. `label` stays in the accessible name only:
+          no caller's label ever fit legibly inside the chip. */}
+      <path
+        d={GLYPH_D[glyph]}
+        className="pc-agent-mark-state"
+        data-glyph={glyph}
+        fill={glyph === 'active' ? fillInk : 'none'}
+        stroke={fillInk}
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }

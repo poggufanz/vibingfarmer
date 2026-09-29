@@ -473,24 +473,16 @@ body {
   line-height: 1;
 }
 
+/* No `fill`/`stroke` rules for the mark's paths on purpose: AgentMark.jsx sets them inline,
+   per-crew-fill, so the status icon always clears 4.5:1 against whichever identity color it
+   landed on (a stylesheet rule would win the SVG cascade and undo the calibration). */
 .pc-agent-mark {
   flex: none;
-  overflow: visible;
 }
 
-.pc-agent-mark-label {
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 600;
-  /* No `fill` here on purpose: AgentMark.jsx sets it inline, per-crew-fill, so the label always
-     clears 4.5:1 against whichever identity color it landed on (a stylesheet fill would win the
-     SVG cascade over that presentation attribute and silently undo the calibration). */
-}
-
-.pc-agent-mark-state {
-  font-family: var(--font-sans);
-  font-size: 8px;
-  font-weight: 700;
+/* svg only: the persona <img> avatars on My Money share the class and keep their own shape. */
+svg.pc-agent-mark {
+  border-radius: 50%;
 }
 
 .pc-money {

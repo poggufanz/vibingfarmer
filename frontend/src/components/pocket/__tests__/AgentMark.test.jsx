@@ -16,18 +16,16 @@ function bodyFill(container) {
 }
 
 describe('AgentMark', () => {
-  it('is an inline SVG with at least two paths (body + a small lower-left tail)', () => {
+  it('is an inline SVG: a round identity body plus one status icon', () => {
     const { container } = render(<AgentMark identity="GA1AGENT" />)
     const svg = container.querySelector('svg')
     expect(svg).toBeTruthy()
-    expect(svg.tagName.toLowerCase()).toBe('svg')
     const paths = container.querySelectorAll('svg path')
-    expect(paths.length).toBeGreaterThanOrEqual(2)
-    // Tail path sits left of and below the body's own bounding path start (x <~ 10, y > 20) --
-    // asserted loosely against the fixed geometry rather than pixel measurement (jsdom has no
-    // layout engine).
-    const tailPath = paths[paths.length - 1]
-    expect(tailPath.getAttribute('d')).toMatch(/^M9 25/)
+    expect(paths).toHaveLength(2)
+    // Full circle body (two half-arcs of r=15 around 16,16) -- no tail, no letter badge.
+    expect(paths[0].getAttribute('d')).toBe('M16 1A15 15 0 1 1 16 31A15 15 0 1 1 16 1Z')
+    expect(paths[1].classList.contains('pc-agent-mark-state')).toBe(true)
+    expect(container.querySelector('text')).toBeNull()
   })
 
   it('identical identity strings always produce the same crew color across reorder', () => {
@@ -214,15 +212,19 @@ describe('AgentMark', () => {
     expect(screen.getByText('Agent identity unavailable')).toBeTruthy()
   })
 
-  it('state is dual-coded: visible text/glyph changes with state, not only color', () => {
-    const active = render(<AgentMark identity="GA-STATE" state="active" />)
-    const activeGlyph = active.container.querySelector('.pc-agent-mark-state').textContent
-    active.unmount()
+  it('state is coded by icon shape, not color: each state group draws a different icon', () => {
+    const icons = ['planned', 'active', 'confirmed', 'failed'].map((state) => {
+      const { container, unmount } = render(<AgentMark identity="GA-STATE" state={state} />)
+      const icon = container.querySelector('.pc-agent-mark-state')
+      const drawn = { d: icon.getAttribute('d'), stroke: icon.getAttribute('stroke') }
+      unmount()
+      return drawn
+    })
+    expect(new Set(icons.map((icon) => icon.d))).toHaveLength(4)
+    // Same identity, same ink: only the shape varies with state.
+    expect(new Set(icons.map((icon) => icon.stroke))).toHaveLength(1)
 
-    const failed = render(<AgentMark identity="GA-STATE" state="failed" />)
-    const failedGlyph = failed.container.querySelector('.pc-agent-mark-state').textContent
-
-    expect(activeGlyph).not.toBe(failedGlyph)
+    render(<AgentMark identity="GA-STATE" state="failed" />)
     expect(screen.getByRole('img', { name: /Failed/i })).toBeTruthy()
   })
 
@@ -255,9 +257,10 @@ describe('AgentMark', () => {
     }
   })
 
-  it('renders an optional label as the visible center glyph', () => {
-    render(<AgentMark identity="GA-LABEL" label="A1" />)
-    expect(screen.getByText('A1')).toBeTruthy()
+  it('carries an optional label in the accessible name, never as text inside the chip', () => {
+    const { container } = render(<AgentMark identity="GA-LABEL" label="A1" />)
+    expect(screen.getByRole('img', { name: /^Deployed A1, / })).toBeTruthy()
+    expect(container.textContent).toBe('')
   })
 
   for (const size of [16, 20, 32]) {

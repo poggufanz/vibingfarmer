@@ -56,7 +56,7 @@ export const CONTRAST_REQUIREMENTS = Object.freeze(
     ['day.warn/owned', DAY_FIELD['--pc-warning'], DAY_FIELD['--pc-owned'], 4.5],
 
     // AgentMark identity crew palette (Foundation Task 5 review fix) -- the ink AgentMark.jsx
-    // picks per crew fill for its optional identity label (`CREW_INK_BY_THEME`). Text-tier 4.5:1.
+    // picks per crew fill for its status icon (`CREW_INK_BY_THEME`). Text-tier 4.5:1.
     ['forest.crewInk/crew1', FOREST['--pc-owned-ink'], FOREST_CREW['--pc-crew-1'], 4.5],
     ['forest.crewInk/crew2', FOREST['--pc-owned-ink'], FOREST_CREW['--pc-crew-2'], 4.5],
     ['forest.crewInk/crew3', FOREST['--pc-owned-ink'], FOREST_CREW['--pc-crew-3'], 4.5],
@@ -70,8 +70,8 @@ export const CONTRAST_REQUIREMENTS = Object.freeze(
     ['day.crewInk/crew5', DAY_FIELD['--pc-owned-ink'], DAY_FIELD_CREW['--pc-crew-5'], 4.5],
     ['day.crewInk/crew6', DAY_FIELD['--pc-owned'], DAY_FIELD_CREW['--pc-crew-6'], 4.5],
 
-    // AgentMark state badge -- the ink AgentMark.jsx picks for the state glyph against its own
-    // solid badge chip (`STATE_INK_BY_THEME`), never against the identity fill underneath it.
+    // Ink on the solid state colors (harvest/owned/danger/muted chips). AgentMark no longer draws
+    // a state badge, but the pairs stay registered for any solid state chip.
     ['forest.stateInk/active', FOREST['--pc-harvest-ink'], FOREST['--pc-harvest'], 4.5],
     ['forest.stateInk/confirmed', FOREST['--pc-owned-ink'], FOREST['--pc-owned'], 4.5],
     ['forest.stateInk/failed', FOREST['--pc-owned-ink'], FOREST['--pc-danger'], 4.5],

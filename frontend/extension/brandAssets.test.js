@@ -33,12 +33,10 @@ const ASSETS_MANIFEST = resolve(PUBLIC_DIR, 'brand/assets.manifest.json')
 const POCKET_D = 'M8 11H21L25 17H39L43 11H56V50C56 55 52 59 47 59H17C12 59 8 55 8 50Z'
 const V_D = 'M18 24L31 48L43 24'
 
-// AgentMark's capsule body + tail (src/components/pocket/AgentMark.jsx) -- the product mark must
+// AgentMark's round chip body (src/components/pocket/AgentMark.jsx) -- the product mark must
 // never share this geometry. AgentMark exists so "one crew mark always means one actually
 // deployed account"; a wallet-only respray of it would defeat that contract.
-const AGENT_MARK_BODY_D =
-  'M16 4C10.477 4 6 8.477 6 14V20C6 25.523 10.477 30 16 30C21.523 30 26 25.523 26 20V14C26 8.477 21.523 4 16 4Z'
-const AGENT_MARK_TAIL_D = 'M9 25L9 30L4 28Z'
+const AGENT_MARK_BODY_D = 'M16 1A15 15 0 1 1 16 31A15 15 0 1 1 16 1Z'
 
 const PAGES = ['popup.html', 'approve.html', 'ceremony.html']
 // Brief step 1 asks for a mark "readable at 16px". Not machine-checkable: readability is a
@@ -102,14 +100,13 @@ describe('extension brand asset contract', () => {
     expect(sha256(logo)).toBe(sha256(mark))
   })
 
-  it('the extension ships exactly one logo SVG and it carries the frozen pocket/V geometry, never the AgentMark capsule+tail', () => {
+  it('the extension ships exactly one logo SVG and it carries the frozen pocket/V geometry, never the AgentMark chip', () => {
     const svgFiles = readdirSync(EXT_DIR).filter((f) => f.endsWith('.svg'))
     expect(svgFiles).toEqual(['vibing_farmer.logo.svg'])
     const content = readFileSync(LOGO_SVG, 'utf8')
     expect(content).toContain(POCKET_D)
     expect(content).toContain(V_D)
     expect(content).not.toContain(AGENT_MARK_BODY_D)
-    expect(content).not.toContain(AGENT_MARK_TAIL_D)
   })
 
   it('gen-ext-icons.mjs renders 16/32/48/128 PNGs deterministically from a source whose hash matches the frozen manifest entry, without touching any tracked file', () => {
