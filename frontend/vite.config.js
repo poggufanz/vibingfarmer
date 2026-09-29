@@ -104,9 +104,17 @@ export default defineConfig(({ mode }) => {
   if (env.TRANSAK_ENVIRONMENT) process.env.TRANSAK_ENVIRONMENT = env.TRANSAK_ENVIRONMENT
   if (env.TRANSAK_REFERRER_DOMAIN) process.env.TRANSAK_REFERRER_DOMAIN = env.TRANSAK_REFERRER_DOMAIN
 
+  // `VF_DEV_API_TARGET=https://vibing-farmer.pages.dev` (.env.local) runs the local UI against a
+  // deployed backend: every /api call is proxied there instead of the local handlers, so the real
+  // relayer secret, D1 and CF-Connecting-IP apply. Origin is rewritten to the target because the
+  // deployed CORS allowlist only admits its own origin. `.js` paths stay local: the browser
+  // imports pure modules such as /api/agent-index/recovery.js as source.
+  const devApiTarget = env.VF_DEV_API_TARGET || ''
+
   const apiProxyPlugin = {
     name: 'api-proxy',
     configureServer(s) {
+      if (devApiTarget) return
       s.middlewares.use('/api/vf-cross', vfCrossViteProxy)
       s.middlewares.use('/api/agent-index', agentIndexViteUnavailableMiddleware)
       s.middlewares.use('/api/vf', vfRouter)
@@ -152,6 +160,16 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      proxy: devApiTarget
+        ? {
+            '/api': {
+              target: devApiTarget,
+              changeOrigin: true,
+              headers: { origin: devApiTarget },
+              bypass: (req) => (req.url.split('?', 1)[0].endsWith('.js') ? req.url : undefined),
+            },
+          }
+        : undefined,
       historyApiFallback: true,
       // frontend/src/stellar/vaultReads.js imports keeper/src/apr.js via a relative cross-package
       // path (T2 Fix 3 dedup) — that file lives outside this Vite root ('.' == frontend/), so the
