@@ -363,8 +363,8 @@ export function planProportionalWithdraw(agentRows, pctBps) {
 
 /**
  * Withdraw from MANY agents in one call — sequential composition of the single-agent
- * `ensureExitSigner` + `partialWithdraw` pair per leg (a no-op registration when the grant
- * already bundled the exit signer, P1 G7). Never throws an aggregate: every leg settles
+ * `ensureExitSigner` + `partialWithdraw` pair per leg (a no-op registration when this browser
+ * already holds the agent's exit key). Never throws an aggregate: every leg settles
  * into `results`, failures captured with their `code`/`submission` intact so the UI can
  * badge `unknown` vs confirmed-failed honestly. Only an active-account switch (global abort,
  * never a leg outcome) propagates.

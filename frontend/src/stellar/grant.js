@@ -131,51 +131,6 @@ function randomSalt() {
 }
 
 /**
- * Normalize one grant-time exit-signer pubkey to raw 32 bytes for the `set_exit_signer`
- * op arg. Accepts what `wallet/exitKey.js::generateExitKey` returns (a strkey `G…` string)
- * or raw 32 bytes — anything else throws before any network is touched.
- * @param {Uint8Array|string} pubkey
- * @returns {Promise<Uint8Array>}
- */
-export async function exitSignerBytes(pubkey) {
-  if (pubkey instanceof Uint8Array) {
-    if (pubkey.length !== 32) throw new Error('Each exit signer must be 32 bytes.')
-    return pubkey
-  }
-  if (typeof pubkey === 'string') {
-    const { StrKey } = await sdk()
-    try {
-      return StrKey.decodeEd25519PublicKey(pubkey)
-    } catch {
-      throw new Error('Each exit signer must be a valid ed25519 public key.')
-    }
-  }
-  throw new Error('Each exit signer must be a 32-byte public key (raw bytes or strkey).')
-}
-
-/**
- * Normalize the opt-in `exitSigners` parallel array (one slot per agent init, `null` =
- * no exit op for that agent — e.g. Bridge-kind agents hold no vault shares to exit).
- * Returns null when there is nothing to bundle, so the grant stays the proven single-op
- * transaction (relay-sponsored, byte-identical to the live smoke path).
- * @param {Array<Uint8Array|string|null|undefined>|undefined} exitSigners
- * @param {number} count
- * @returns {Promise<{slots:Array<Uint8Array|null>}|null>}
- */
-async function normalizeExitSigners(exitSigners, count) {
-  if (exitSigners == null) return null
-  if (!Array.isArray(exitSigners) || exitSigners.length !== count) {
-    throw new Error('exitSigners must be an array with one slot per agent init.')
-  }
-  const slots = []
-  for (const slot of exitSigners) {
-    slots.push(slot == null ? null : await exitSignerBytes(slot))
-  }
-  if (slots.every((s) => s == null)) return null
-  return { slots }
-}
-
-/**
  * Build + simulate-assemble the ONE grant tx. `txSource` is the transaction's envelope source —
  * the owner itself for a classic G account, or a funded relayer G when the owner is a passkey C
  * account (which can never be a transaction source; see ownerAuthorization.js). The `grant` call's
@@ -188,14 +143,9 @@ async function normalizeExitSigners(exitSigners, count) {
  *          cap:bigint, token:string, target:string, kind:number,
  *          mintRecipient:Uint8Array|string, destinationDomain:number, periodDuration:number,
  *          expiry:number}>, router?:string, server?:object, txSource?:string,
- *          reviewedExpiryUnix?:number, nowSec?:number,
- *          exitSigners?:Array<Uint8Array|string|null|undefined>}} p `exitSigners` is opt-in
- *          and parallel to `agentInits` (`null` = no exit op for that agent): each non-null
- *          slot appends a `set_exit_signer` op for the deployed agent into the SAME envelope,
- *          so the owner's one signature covers it and later partial withdraws need no extra
- *          owner popup. Absent (or all null) the tx is the proven single grant op, unchanged.
+ *          reviewedExpiryUnix?:number, nowSec?:number}} p
  * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], expiryLedger:number,
- *          bridgeAgentAddress:string|null, exitSignerCount:number}>}
+ *          bridgeAgentAddress:string|null}>}
  */
 export async function buildGrantTx({
   owner,
@@ -207,19 +157,10 @@ export async function buildGrantTx({
   txSource = owner,
   reviewedExpiryUnix,
   nowSec,
-  exitSigners,
 }) {
   if (!router) throw new Error('The funding router is not configured.')
   if (!agentInits || agentInits.length === 0)
     throw new Error('The grant requires at least one agent.')
-  // Fail fast on a malformed bundling request before any ledger read — the per-slot key
-  // validation itself still happens in normalizeExitSigners once addresses are simulated.
-  if (
-    exitSigners != null &&
-    (!Array.isArray(exitSigners) || exitSigners.length !== agentInits.length)
-  ) {
-    throw new Error('exitSigners must be an array with one slot per agent init.')
-  }
   const s = server || (await rpcServer())
   const { Contract, TransactionBuilder, BASE_FEE } = await sdk()
 
@@ -239,39 +180,33 @@ export async function buildGrantTx({
       : latest.sequence + Math.ceil((reviewedExpiryUnix - currentUnix) / SECONDS_PER_LEDGER)
 
   const budgetsVec = xdr.ScVal.scvVec(budgets.map(tokenBudgetScVal))
-  // Salts are materialized ONCE: the pre-simulation below derives the deployed addresses from
-  // them, and the bundled envelope (when exit signers are requested) must re-encode the SAME
-  // salts or its grant op would deploy different addresses than the exit ops target.
-  const salts = agentInits.map((a) => a.salt || randomSalt())
-  const grantOp = () => {
-    const encoded = agentInits.map((a, i) =>
-      agentInitScVal({
-        signer: a.signer,
-        salt: salts[i],
-        cap: a.cap,
-        token: a.token,
-        target: a.target,
-        kind: a.kind,
-        mintRecipient: a.mintRecipient,
-        destinationDomain: a.destinationDomain,
-        periodDuration: a.periodDuration,
-        expiry: a.expiry,
-      })
-    )
-    return new Contract(router).call(
-      'grant',
-      addrScVal(owner),
-      budgetsVec,
-      u32ScVal(expiryLedger),
-      xdr.ScVal.scvVec(encoded)
-    )
-  }
+  const encoded = agentInits.map((a) =>
+    agentInitScVal({
+      signer: a.signer,
+      salt: a.salt || randomSalt(),
+      cap: a.cap,
+      token: a.token,
+      target: a.target,
+      kind: a.kind,
+      mintRecipient: a.mintRecipient,
+      destinationDomain: a.destinationDomain,
+      periodDuration: a.periodDuration,
+      expiry: a.expiry,
+    })
+  )
+  const grantOp = new Contract(router).call(
+    'grant',
+    addrScVal(owner),
+    budgetsVec,
+    u32ScVal(expiryLedger),
+    xdr.ScVal.scvVec(encoded)
+  )
   const account = await s.getAccount(txSource)
   const raw = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
   })
-    .addOperation(grantOp())
+    .addOperation(grantOp)
     // The grant is the ONE tx a human reads before signing — its timebound must outlive the
     // 120s the wallet path allows for that read. See TX_TIMEBOUND_SECONDS.
     .setTimeout(TX_TIMEBOUND_SECONDS)
@@ -289,42 +224,17 @@ export async function buildGrantTx({
   const lastInit = agentInits[agentInits.length - 1]
   const bridgeAgentAddress =
     lastInit?.kind === AGENT_KIND_BRIDGE ? agentAddresses[agentAddresses.length - 1] : null
-  // …then prepare (simulate + assemble, sets the resource fee). Without exit signers this is
-  // the proven single-op path, unchanged. With exit signers the SAME envelope grows one
-  // `set_exit_signer` op per bundled agent, targeted at the just-simulated addresses: the tx
-  // source is still the owner, so the owner's single envelope signature covers the whole auth
-  // tree (grant + nested approve + every set_exit_signer, all owner.require_auth) — still one
-  // popup. Soroban applies ops sequentially, so each exit op invokes an agent the grant op
-  // deployed earlier in the same transaction. We do NOT re-prepare after signing:
-  // the owner's tx-envelope signature covers footprint + resources, so a post-sign re-prepare would
-  // invalidate it. (The re-prepare-after-sign trick is only for the agent ed25519 auth-entry path,
-  // whose signature excludes the footprint — see buildAgentPull below.)
-  const bundled = await normalizeExitSigners(exitSigners, agentInits.length)
-  let tx
-  let exitSignerCount = 0
-  if (!bundled) {
-    tx = await s.prepareTransaction(raw)
-  } else {
-    const builder = new TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase: NETWORK_PASSPHRASE,
-    }).addOperation(grantOp())
-    bundled.slots.forEach((slot, i) => {
-      if (slot == null) return
-      builder.addOperation(
-        new Contract(agentAddresses[i]).call('set_exit_signer', bytes32ScVal(slot))
-      )
-      exitSignerCount += 1
-    })
-    tx = await s.prepareTransaction(builder.setTimeout(TX_TIMEBOUND_SECONDS).build())
-  }
+  // …then prepare (simulate + assemble, sets the resource fee). The grant MUST stay a single op:
+  // Soroban rejects any tx carrying more than one InvokeHostFunction op ("Transaction contains
+  // more than one operation"). Exit signers therefore register lazily at the first partial
+  // withdraw (partialWithdraw.js ensureExitSigner), never inside this envelope.
+  const tx = await s.prepareTransaction(raw)
   return {
     tx,
     xdr: tx.toEnvelope().toXDR('base64'),
     agentAddresses,
     expiryLedger,
     bridgeAgentAddress,
-    exitSignerCount,
   }
 }
 
@@ -801,17 +711,10 @@ export async function submitGrantV3({
  * @param {{owner:string, budgets:Array<{budget:bigint|number, token:string}>,
  *          durationSeconds:number, agentInits:Array, router?:string, server?:object,
  *          reviewedExpiryUnix?:number, nowSec?:number,
- *          exitSigners?:Array<Uint8Array|string|null|undefined>,
  *          sign?:Function, activeAccount?:{kind:'G'|'C', address:string},
- *          getRelayerAddress?:Function, kit?:object}} p `exitSigners` registers each non-null
- *          slot's key via `set_exit_signer` in the SAME grant envelope (P1 G7) — one popup, and
- *          later partial withdraws need no extra owner authorization. A bundled grant is always
- *          direct-submitted (the relay sponsors a single contract invocation only), so the owner
- *          pays its small XLM fee; unbundled grants keep the relay-preferred path unchanged.
- *          C owners cannot bundle (relay-only, single-op) and throw before signing — they keep
- *          the proven single-op grant plus lazy registration at first partial withdraw.
+ *          getRelayerAddress?:Function, kit?:object}} p
  * @returns {Promise<{hash:string, status:string, relayer?:string, agentAddresses:string[],
- *          expiryLedger:number, bridgeAgentAddress:string|null, exitSignersRegistered:boolean}>}
+ *          expiryLedger:number, bridgeAgentAddress:string|null}>}
  */
 export async function submitGrant({
   owner,
@@ -822,7 +725,6 @@ export async function submitGrant({
   server,
   reviewedExpiryUnix,
   nowSec,
-  exitSigners,
   sign = signWithTimeout,
   activeAccount = { kind: 'G', address: owner },
   getRelayerAddress: getRelayer = getRelayerAddress,
@@ -846,14 +748,6 @@ export async function submitGrant({
     signal,
   })
   check()
-  const wantsBundle = exitSigners != null && exitSigners.some((s) => s != null)
-  if (wantsBundle && model.kind === 'C') {
-    throw new Error(
-      'Exit signers cannot be bundled into a passkey-owner grant: the relay sponsors a single ' +
-        'contract invocation only. The grant stays single-op; exit signers register lazily at ' +
-        'the first partial withdraw instead.'
-    )
-  }
   const built = await buildGrantTx({
     owner,
     budgets,
@@ -864,7 +758,6 @@ export async function submitGrant({
     txSource: model.source,
     reviewedExpiryUnix,
     nowSec,
-    ...(wantsBundle ? { exitSigners } : {}),
   })
   check()
   const result = await submitOwnerAuthorizedTx({
@@ -893,12 +786,7 @@ export async function submitGrant({
             }),
     server,
     label: 'grant',
-    // A bundled grant (grant + set_exit_signer ops) is a multi-op envelope: the relay
-    // sponsors a single contract invocation only (api/stellar-relay.js), so it would refuse
-    // it — and a refusal is NOT-submitted, never a direct fallback. Route bundled grants
-    // direct from the start (the G owner pays the small XLM fee); unbundled grants keep the
-    // relay-preferred path byte-for-byte.
-    classicSubmission: wantsBundle ? 'direct' : 'prefer-relay',
+    classicSubmission: 'prefer-relay',
     activeAccount,
     getCurrentActiveAccount,
     signal,
@@ -918,7 +806,6 @@ export async function submitGrant({
     agentAddresses: built.agentAddresses,
     expiryLedger: built.expiryLedger,
     bridgeAgentAddress: built.bridgeAgentAddress,
-    exitSignersRegistered: wantsBundle && built.exitSignerCount > 0,
   }
 }
 

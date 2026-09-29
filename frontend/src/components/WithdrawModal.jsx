@@ -735,9 +735,9 @@ export default function WithdrawModal({
               )}
 
               <div className="wd-callout">
-                Exit keys registered at grant time mean zero signatures here — otherwise the first
-                partial withdraw from an agent asks for one signature to register its key. Either
-                way the network fee is sponsored by the fee-bump relay.
+                The first partial withdraw from an agent asks for one signature to register its
+                exit key; later withdraws need none. The network fee is sponsored by the fee-bump
+                relay.
               </div>
             </div>
           )}
