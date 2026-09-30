@@ -2532,6 +2532,21 @@
   .pc-strategy-aside {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  /* Below 1024px the aside's two cards split the width, so a fact row's value auto-column
+   * starves the label track the same way it does at 320px (see the mobile rule below):
+   * the value drops beneath the label in the same flexible track. */
+  .pc-fact-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pc-fact-value {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+    min-width: 0;
+    text-align: left;
+  }
 }
 
 /* ---- Mobile: one column, every action reachable ------------------------------------------- */
@@ -2594,6 +2609,17 @@
     justify-self: start;
     min-width: 0;
     text-align: left;
+  }
+
+  /* The REJECTED badge's longer auto-column starves the candidate text track at 320px: the
+   * badge drops beneath the body in the same flexible track. */
+  .pc-candidate-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pc-candidate-badge {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .pc-strategy-decision {

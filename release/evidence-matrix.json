@@ -36,7 +36,7 @@
         "frontend/src/components/strategy/__tests__/RisksGate.test.jsx",
         "frontend/src/components/strategy/GrantFallbackFee.jsx",
         "frontend/src/components/strategy/__tests__/GrantFallbackFee.test.jsx",
-        "frontend/src/stellar/__tests__/grantExitSigner.test.js",
+        "frontend/src/stellar/__tests__/partialWithdraw.test.js",
         "frontend/src/money/activeGrant.js",
         "frontend/src/money/__tests__/activeGrant.test.js",
         "frontend/src/components/money/ActiveGrantCard.jsx",
