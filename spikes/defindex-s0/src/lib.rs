@@ -5,7 +5,7 @@ use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contractimpl, contracttype, symbol_short,
     token::TokenClient,
-    Address, Env, IntoVal, Symbol, Val, Vec,
+    Address, Env, IntoVal, String, Symbol, Val, Vec,
 };
 
 #[contracttype]
@@ -17,6 +17,43 @@ pub enum DataKey {
 
 #[contract]
 pub struct DefindexS0;
+/// Mirror of DeFindex `common::models::Strategy` (field names/order must match).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S0Strategy {
+    pub address: Address,
+    pub name: String,
+    pub paused: bool,
+}
+
+/// Mirror of DeFindex `common::models::AssetStrategySet`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S0AssetStrategySet {
+    pub address: Address,
+    pub strategies: Vec<S0Strategy>,
+}
+
+/// Mirror of DeFindex `vault::models::StrategyAllocation`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S0StrategyAllocation {
+    pub strategy_address: Address,
+    pub amount: i128,
+    pub paused: bool,
+}
+
+/// Mirror of DeFindex `vault::models::CurrentAssetInvestmentAllocation`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S0CurrentAssetInvestmentAllocation {
+    pub asset: Address,
+    pub total_amount: i128,
+    pub idle_amount: i128,
+    pub invested_amount: i128,
+    pub strategy_allocations: Vec<S0StrategyAllocation>,
+}
+
 
 const APPROVE_TTL: u32 = 200;
 
@@ -138,5 +175,32 @@ impl DefindexS0 {
 
         let args: Vec<Val> = (df_amount, mins, me).into_val(&e);
         e.invoke_contract(&vault, &symbol_short!("withdraw"), args)
+    }
+
+    /// Full struct decode of `get_assets` + `fetch_total_managed_funds` (SDK 22->26 check).
+    /// Returns (assets_len, strategies_len_asset0, strategy0_paused, idle, invested, total).
+    pub fn read_views(e: Env) -> (u32, u32, bool, i128, i128, i128) {
+        let vault = Self::vault(&e);
+        let assets: Vec<S0AssetStrategySet> = e.invoke_contract(
+            &vault,
+            &Symbol::new(&e, "get_assets"),
+            Vec::new(&e),
+        );
+        let funds: Vec<S0CurrentAssetInvestmentAllocation> = e.invoke_contract(
+            &vault,
+            &Symbol::new(&e, "fetch_total_managed_funds"),
+            Vec::new(&e),
+        );
+        let a0 = assets.get(0).unwrap();
+        let s0 = a0.strategies.get(0).unwrap();
+        let f0 = funds.get(0).unwrap();
+        (
+            assets.len(),
+            a0.strategies.len(),
+            s0.paused,
+            f0.idle_amount,
+            f0.invested_amount,
+            f0.total_amount,
+        )
     }
 }
