@@ -1,0 +1,2 @@
+ℹ️  Simulation identified as read-only. Send by rerunning with `--send=yes`.
+[{"asset":"CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU","idle_amount":"9730440478","invested_amount":"0","strategy_allocations":[{"amount":"0","paused":false,"strategy_address":"CALLOM5I7XLQPPOPQMYAHUWW4N7O3JKT42KQ4ASEEVBXDJQNJOALFSUY"}],"total_amount":"9730440478"}]

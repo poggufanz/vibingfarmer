@@ -1,0 +1,9 @@
+ℹ️  Simulating transaction…
+ℹ️  Signing transaction: 10d8a16f06c7751d3d58f010aa6a89493de9717e7035cb89b38108236124388a
+🌎 Sending transaction…
+✅ Transaction submitted successfully!
+🔗 https://stellar.expert/explorer/testnet/tx/10d8a16f06c7751d3d58f010aa6a89493de9717e7035cb89b38108236124388a
+📅 CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN - Success - Event: [{"symbol":"burn"},{"address":"CAN22V2K7H6YJQIHPMZMQWTJKVYV64WRHYX5D5XFTCWLBSDLOF7QOYA5"}] = {"i128":"100000000"}
+📅 CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU - Success - Event: [{"symbol":"transfer"},{"address":"CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN"},{"address":"CAN22V2K7H6YJQIHPMZMQWTJKVYV64WRHYX5D5XFTCWLBSDLOF7QOYA5"},{"string":"USDC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"}] = {"i128":"100000000"}
+📅 CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN - Success - Event: [{"string":"DeFindexVault"},{"symbol":"withdraw"}] = {"map":[{"key":{"symbol":"amounts_withdrawn"},"val":{"vec":[{"i128":"100000000"}]}},{"key":{"symbol":"df_tokens_burned"},"val":{"i128":"100000000"}},{"key":{"symbol":"total_managed_funds_before"},"val":{"vec":[{"map":[{"key":{"symbol":"asset"},"val":{"address":"CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU"}},{"key":{"symbol":"idle_amount"},"val":{"i128":"9730440478"}},{"key":{"symbol":"invested_amount"},"val":{"i128":"0"}},{"key":{"symbol":"strategy_allocations"},"val":{"vec":[{"map":[{"key":{"symbol":"amount"},"val":{"i128":"0"}},{"key":{"symbol":"paused"},"val":{"bool":false}},{"key":{"symbol":"strategy_address"},"val":{"address":"CALLOM5I7XLQPPOPQMYAHUWW4N7O3JKT42KQ4ASEEVBXDJQNJOALFSUY"}}]}]}},{"key":{"symbol":"total_amount"},"val":{"i128":"9730440478"}}]}]}},{"key":{"symbol":"total_supply_before"},"val":{"i128":"9730440478"}},{"key":{"symbol":"withdrawer"},"val":{"address":"CAN22V2K7H6YJQIHPMZMQWTJKVYV64WRHYX5D5XFTCWLBSDLOF7QOYA5"}}]}
+["100000000"]

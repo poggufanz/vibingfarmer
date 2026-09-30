@@ -1,0 +1,6 @@
+ℹ️  Simulating transaction…
+ℹ️  Signing transaction: 4ea37b7359bb0e942808abb6392e3ff416fdcf781e886ade82e4d68ae003837d
+🌎 Sending transaction…
+✅ Transaction submitted successfully!
+🔗 https://stellar.expert/explorer/testnet/tx/4ea37b7359bb0e942808abb6392e3ff416fdcf781e886ade82e4d68ae003837d
+["100000000","9730440478","10000000","100000000","900000000",1]
