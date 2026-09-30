@@ -18,6 +18,7 @@
 ## 2. Addresses used
 
 | Role | Address | stellar.expert (testnet) | How resolved |
+|---|---|---|---|
 | Trial contract `defindex-s0` | `CAN22V2K7H6YJQIHPMZMQWTJKVYV64WRHYX5D5XFTCWLBSDLOF7QOYA5` | https://stellar.expert/explorer/testnet/contract/CAN22V2K7H6YJQIHPMZMQWTJKVYV64WRHYX5D5XFTCWLBSDLOF7QOYA5 | Deployed in this spike (`stellar contract deploy`, evidence/01) |
 | View-decode contract (2nd instance) | `CABZD345WHDPAFQS7NBHMRMXJZA5OBJMRKDRMFKHR57NVQFYL2BPWEZZ` | https://stellar.expert/explorer/testnet/contract/CABZD345WHDPAFQS7NBHMRMXJZA5OBJMRKDRMFKHR57NVQFYL2BPWEZZ | Same source + added `read_views` (follow-up commit), deployed evidence/12-read-views-deploy |
 | DeFindex USDC vault (dfToken) | `CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN` | https://stellar.expert/explorer/testnet/contract/CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN | Official JSON `testnet.contracts.json` (no diff vs brief); wasm hash verified |
@@ -27,7 +28,9 @@
 | Throwaway identity `s0-defindex` | `GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ` | https://stellar.expert/explorer/testnet/account/GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ | `stellar keys generate` + faucet-funded; deployer/funder only, never `from` |
 
 Trial contract source: `spikes/defindex-s0/src/lib.rs` (sdk 26.1.0, `deposit` /
-`read_position` / `withdraw` only, no admin gate — throwaway). Vault interface
+`read_position` / `withdraw` / `read_views`, no admin gate — throwaway).
+`CAN22V2…` was deployed from commit `83a38b6` (before `read_views` existed);
+`CABZD345…` from the follow-up commit adding `read_views`. Vault interface
 saved verbatim: `evidence/00-vault-interface.txt`
 (`stellar contract info interface --contract-id <vault> --network testnet --output rust`).
 
@@ -52,6 +55,8 @@ saved verbatim: `evidence/00-vault-interface.txt`
 | 13c | `read_views` (tx, 2nd instance) | [`23a319d3…4a05ef`](https://stellar.expert/explorer/testnet/tx/23a319d31643a33cc626711f396911120c316569c3460fdd308154bd214a05ef) | `[1,1,false,"9630440478","0","9630440478"]` — full struct decode OK |
 
 Raw secret-free CLI output per step: `evidence/01-deploy.txt` … `evidence/12-read-views.txt` (deploy output for the 2nd instance: `evidence/12-read-views-deploy.txt`).
+
+All 12 submitted txs were independently re-fetched via RPC getTransaction: SUCCESS, events match (ledgers 4946163–4946184 for steps 1–12, 4946234–4946237 for steps 13a–13c).
 
 ## 4. Numbers
 
