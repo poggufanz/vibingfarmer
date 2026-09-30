@@ -1,0 +1,1180 @@
+ℹ️  Transaction hash is fc3ee7010651b390cba3a7d8225a0d6c06a29efda048d8ff92fa338c7e031001
+🔗 https://stellar.expert/explorer/testnet/tx/fc3ee7010651b390cba3a7d8225a0d6c06a29efda048d8ff92fa338c7e031001
+{
+  "status": "SUCCESS",
+  "ledger": 4946169,
+  "application_order": 3,
+  "fee_bump": false,
+  "tx_hash": "fc3ee7010651b390cba3a7d8225a0d6c06a29efda048d8ff92fa338c7e031001",
+  "created_at": 1790754432,
+  "envelope": {
+    "tx": {
+      "tx": {
+        "source_account": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+        "fee": 80000,
+        "seq_num": "3289944950020",
+        "cond": {
+          "time": {
+            "min_time": "0",
+            "max_time": "0"
+          }
+        },
+        "memo": "none",
+        "operations": [
+          {
+            "source_account": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+            "body": {
+              "change_trust": {
+                "line": {
+                  "credit_alphanum4": {
+                    "asset_code": "USDC",
+                    "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                  }
+                },
+                "limit": "9223372036854775807"
+              }
+            }
+          },
+          {
+            "source_account": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+            "body": {
+              "payment": {
+                "destination": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                "asset": {
+                  "credit_alphanum4": {
+                    "asset_code": "USDC",
+                    "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                  }
+                },
+                "amount": "10000000000"
+              }
+            }
+          },
+          {
+            "source_account": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+            "body": {
+              "change_trust": {
+                "line": {
+                  "credit_alphanum4": {
+                    "asset_code": "BLND",
+                    "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                  }
+                },
+                "limit": "9223372036854775807"
+              }
+            }
+          },
+          {
+            "source_account": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+            "body": {
+              "payment": {
+                "destination": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                "asset": {
+                  "credit_alphanum4": {
+                    "asset_code": "BLND",
+                    "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                  }
+                },
+                "amount": "50000000000"
+              }
+            }
+          },
+          {
+            "source_account": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+            "body": {
+              "change_trust": {
+                "line": {
+                  "credit_alphanum4": {
+                    "asset_code": "wETH",
+                    "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                  }
+                },
+                "limit": "9223372036854775807"
+              }
+            }
+          },
+          {
+            "source_account": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+            "body": {
+              "payment": {
+                "destination": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                "asset": {
+                  "credit_alphanum4": {
+                    "asset_code": "wETH",
+                    "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                  }
+                },
+                "amount": "5000000"
+              }
+            }
+          },
+          {
+            "source_account": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+            "body": {
+              "change_trust": {
+                "line": {
+                  "credit_alphanum4": {
+                    "asset_code": "wBTC",
+                    "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                  }
+                },
+                "limit": "9223372036854775807"
+              }
+            }
+          },
+          {
+            "source_account": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+            "body": {
+              "payment": {
+                "destination": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                "asset": {
+                  "credit_alphanum4": {
+                    "asset_code": "wBTC",
+                    "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                  }
+                },
+                "amount": "500000"
+              }
+            }
+          }
+        ],
+        "ext": "v0"
+      },
+      "signatures": [
+        {
+          "hint": "4e7bcc5e",
+          "signature": "6798c46f664afe8d1d0fbf65ac879fe2cf74d60c2bfd19c318045709e252029113617133098f2bace7d61e206fa1f28bd25895b7fda23c80b13c77c00292c90d"
+        },
+        {
+          "hint": "0a1a131d",
+          "signature": "12535d5551bc10ff7976a9fb6c1f41c4483ee98939a902dac759dfa9a5a34ed647fc6d3b98089e737b117cbe89d708b1825801f6202c7a435188cb6d93ae1b06"
+        }
+      ]
+    }
+  },
+  "result": {
+    "fee_charged": "800",
+    "result": {
+      "tx_success": [
+        {
+          "op_inner": {
+            "change_trust": "success"
+          }
+        },
+        {
+          "op_inner": {
+            "payment": "success"
+          }
+        },
+        {
+          "op_inner": {
+            "change_trust": "success"
+          }
+        },
+        {
+          "op_inner": {
+            "payment": "success"
+          }
+        },
+        {
+          "op_inner": {
+            "change_trust": "success"
+          }
+        },
+        {
+          "op_inner": {
+            "payment": "success"
+          }
+        },
+        {
+          "op_inner": {
+            "change_trust": "success"
+          }
+        },
+        {
+          "op_inner": {
+            "payment": "success"
+          }
+        }
+      ]
+    },
+    "ext": "v0"
+  },
+  "result_meta": {
+    "v4": {
+      "ext": "v0",
+      "tx_changes_before": [
+        {
+          "state": {
+            "last_modified_ledger_seq": 4946169,
+            "data": {
+              "account": {
+                "account_id": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+                "balance": "199297692307",
+                "seq_num": "3289944950019",
+                "num_sub_entries": 0,
+                "inflation_dest": null,
+                "flags": 0,
+                "home_domain": "",
+                "thresholds": "01000000",
+                "signers": [],
+                "ext": {
+                  "v1": {
+                    "liabilities": {
+                      "buying": "0",
+                      "selling": "0"
+                    },
+                    "ext": {
+                      "v2": {
+                        "num_sponsored": 0,
+                        "num_sponsoring": 0,
+                        "signer_sponsoring_i_ds": [],
+                        "ext": {
+                          "v3": {
+                            "ext": "v0",
+                            "seq_ledger": 4946044,
+                            "seq_time": "1790753807"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          }
+        },
+        {
+          "updated": {
+            "last_modified_ledger_seq": 4946169,
+            "data": {
+              "account": {
+                "account_id": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+                "balance": "199297692307",
+                "seq_num": "3289944950020",
+                "num_sub_entries": 0,
+                "inflation_dest": null,
+                "flags": 0,
+                "home_domain": "",
+                "thresholds": "01000000",
+                "signers": [],
+                "ext": {
+                  "v1": {
+                    "liabilities": {
+                      "buying": "0",
+                      "selling": "0"
+                    },
+                    "ext": {
+                      "v2": {
+                        "num_sponsored": 0,
+                        "num_sponsoring": 0,
+                        "signer_sponsoring_i_ds": [],
+                        "ext": {
+                          "v3": {
+                            "ext": "v0",
+                            "seq_ledger": 4946169,
+                            "seq_time": "1790754432"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          }
+        }
+      ],
+      "operations": [
+        {
+          "ext": "v0",
+          "changes": [
+            {
+              "created": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "USDC",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "0",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "state": {
+                "last_modified_ledger_seq": 4946164,
+                "data": {
+                  "account": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "balance": "99971655065",
+                    "seq_num": "21242938310787074",
+                    "num_sub_entries": 0,
+                    "inflation_dest": null,
+                    "flags": 0,
+                    "home_domain": "",
+                    "thresholds": "01000000",
+                    "signers": [],
+                    "ext": {
+                      "v1": {
+                        "liabilities": {
+                          "buying": "0",
+                          "selling": "0"
+                        },
+                        "ext": {
+                          "v2": {
+                            "num_sponsored": 0,
+                            "num_sponsoring": 0,
+                            "signer_sponsoring_i_ds": [],
+                            "ext": {
+                              "v3": {
+                                "ext": "v0",
+                                "seq_ledger": 4946164,
+                                "seq_time": "1790754407"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "updated": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "account": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "balance": "99971655065",
+                    "seq_num": "21242938310787074",
+                    "num_sub_entries": 1,
+                    "inflation_dest": null,
+                    "flags": 0,
+                    "home_domain": "",
+                    "thresholds": "01000000",
+                    "signers": [],
+                    "ext": {
+                      "v1": {
+                        "liabilities": {
+                          "buying": "0",
+                          "selling": "0"
+                        },
+                        "ext": {
+                          "v2": {
+                            "num_sponsored": 0,
+                            "num_sponsoring": 0,
+                            "signer_sponsoring_i_ds": [],
+                            "ext": {
+                              "v3": {
+                                "ext": "v0",
+                                "seq_ledger": 4946164,
+                                "seq_time": "1790754407"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "ext": "v0"
+              }
+            }
+          ],
+          "events": []
+        },
+        {
+          "ext": "v0",
+          "changes": [
+            {
+              "state": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "USDC",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "0",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "updated": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "USDC",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "10000000000",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            }
+          ],
+          "events": [
+            {
+              "ext": "v0",
+              "contract_id": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+              "type_": "contract",
+              "body": {
+                "v0": {
+                  "topics": [
+                    {
+                      "symbol": "mint"
+                    },
+                    {
+                      "address": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ"
+                    },
+                    {
+                      "string": "USDC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                    }
+                  ],
+                  "data": {
+                    "i128": "10000000000"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ext": "v0",
+          "changes": [
+            {
+              "created": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "BLND",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "0",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "state": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "account": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "balance": "99971655065",
+                    "seq_num": "21242938310787074",
+                    "num_sub_entries": 1,
+                    "inflation_dest": null,
+                    "flags": 0,
+                    "home_domain": "",
+                    "thresholds": "01000000",
+                    "signers": [],
+                    "ext": {
+                      "v1": {
+                        "liabilities": {
+                          "buying": "0",
+                          "selling": "0"
+                        },
+                        "ext": {
+                          "v2": {
+                            "num_sponsored": 0,
+                            "num_sponsoring": 0,
+                            "signer_sponsoring_i_ds": [],
+                            "ext": {
+                              "v3": {
+                                "ext": "v0",
+                                "seq_ledger": 4946164,
+                                "seq_time": "1790754407"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "updated": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "account": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "balance": "99971655065",
+                    "seq_num": "21242938310787074",
+                    "num_sub_entries": 2,
+                    "inflation_dest": null,
+                    "flags": 0,
+                    "home_domain": "",
+                    "thresholds": "01000000",
+                    "signers": [],
+                    "ext": {
+                      "v1": {
+                        "liabilities": {
+                          "buying": "0",
+                          "selling": "0"
+                        },
+                        "ext": {
+                          "v2": {
+                            "num_sponsored": 0,
+                            "num_sponsoring": 0,
+                            "signer_sponsoring_i_ds": [],
+                            "ext": {
+                              "v3": {
+                                "ext": "v0",
+                                "seq_ledger": 4946164,
+                                "seq_time": "1790754407"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "ext": "v0"
+              }
+            }
+          ],
+          "events": []
+        },
+        {
+          "ext": "v0",
+          "changes": [
+            {
+              "state": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "BLND",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "0",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "updated": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "BLND",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "50000000000",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            }
+          ],
+          "events": [
+            {
+              "ext": "v0",
+              "contract_id": "CB22KRA3YZVCNCQI64JQ5WE7UY2VAV7WFLK6A2JN3HEX56T2EDAFO7QF",
+              "type_": "contract",
+              "body": {
+                "v0": {
+                  "topics": [
+                    {
+                      "symbol": "mint"
+                    },
+                    {
+                      "address": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ"
+                    },
+                    {
+                      "string": "BLND:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                    }
+                  ],
+                  "data": {
+                    "i128": "50000000000"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ext": "v0",
+          "changes": [
+            {
+              "created": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "wETH",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "0",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "state": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "account": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "balance": "99971655065",
+                    "seq_num": "21242938310787074",
+                    "num_sub_entries": 2,
+                    "inflation_dest": null,
+                    "flags": 0,
+                    "home_domain": "",
+                    "thresholds": "01000000",
+                    "signers": [],
+                    "ext": {
+                      "v1": {
+                        "liabilities": {
+                          "buying": "0",
+                          "selling": "0"
+                        },
+                        "ext": {
+                          "v2": {
+                            "num_sponsored": 0,
+                            "num_sponsoring": 0,
+                            "signer_sponsoring_i_ds": [],
+                            "ext": {
+                              "v3": {
+                                "ext": "v0",
+                                "seq_ledger": 4946164,
+                                "seq_time": "1790754407"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "updated": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "account": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "balance": "99971655065",
+                    "seq_num": "21242938310787074",
+                    "num_sub_entries": 3,
+                    "inflation_dest": null,
+                    "flags": 0,
+                    "home_domain": "",
+                    "thresholds": "01000000",
+                    "signers": [],
+                    "ext": {
+                      "v1": {
+                        "liabilities": {
+                          "buying": "0",
+                          "selling": "0"
+                        },
+                        "ext": {
+                          "v2": {
+                            "num_sponsored": 0,
+                            "num_sponsoring": 0,
+                            "signer_sponsoring_i_ds": [],
+                            "ext": {
+                              "v3": {
+                                "ext": "v0",
+                                "seq_ledger": 4946164,
+                                "seq_time": "1790754407"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "ext": "v0"
+              }
+            }
+          ],
+          "events": []
+        },
+        {
+          "ext": "v0",
+          "changes": [
+            {
+              "state": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "wETH",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "0",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "updated": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "wETH",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "5000000",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            }
+          ],
+          "events": [
+            {
+              "ext": "v0",
+              "contract_id": "CAZAQB3D7KSLSNOSQKYD2V4JP5V2Y3B4RDJZRLBFCCIXDCTE3WHSY3UE",
+              "type_": "contract",
+              "body": {
+                "v0": {
+                  "topics": [
+                    {
+                      "symbol": "mint"
+                    },
+                    {
+                      "address": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ"
+                    },
+                    {
+                      "string": "wETH:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                    }
+                  ],
+                  "data": {
+                    "i128": "5000000"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ext": "v0",
+          "changes": [
+            {
+              "created": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "wBTC",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "0",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "state": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "account": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "balance": "99971655065",
+                    "seq_num": "21242938310787074",
+                    "num_sub_entries": 3,
+                    "inflation_dest": null,
+                    "flags": 0,
+                    "home_domain": "",
+                    "thresholds": "01000000",
+                    "signers": [],
+                    "ext": {
+                      "v1": {
+                        "liabilities": {
+                          "buying": "0",
+                          "selling": "0"
+                        },
+                        "ext": {
+                          "v2": {
+                            "num_sponsored": 0,
+                            "num_sponsoring": 0,
+                            "signer_sponsoring_i_ds": [],
+                            "ext": {
+                              "v3": {
+                                "ext": "v0",
+                                "seq_ledger": 4946164,
+                                "seq_time": "1790754407"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "updated": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "account": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "balance": "99971655065",
+                    "seq_num": "21242938310787074",
+                    "num_sub_entries": 4,
+                    "inflation_dest": null,
+                    "flags": 0,
+                    "home_domain": "",
+                    "thresholds": "01000000",
+                    "signers": [],
+                    "ext": {
+                      "v1": {
+                        "liabilities": {
+                          "buying": "0",
+                          "selling": "0"
+                        },
+                        "ext": {
+                          "v2": {
+                            "num_sponsored": 0,
+                            "num_sponsoring": 0,
+                            "signer_sponsoring_i_ds": [],
+                            "ext": {
+                              "v3": {
+                                "ext": "v0",
+                                "seq_ledger": 4946164,
+                                "seq_time": "1790754407"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "ext": "v0"
+              }
+            }
+          ],
+          "events": []
+        },
+        {
+          "ext": "v0",
+          "changes": [
+            {
+              "state": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "wBTC",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "0",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            },
+            {
+              "updated": {
+                "last_modified_ledger_seq": 4946169,
+                "data": {
+                  "trustline": {
+                    "account_id": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ",
+                    "asset": {
+                      "credit_alphanum4": {
+                        "asset_code": "wBTC",
+                        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                      }
+                    },
+                    "balance": "500000",
+                    "limit": "9223372036854775807",
+                    "flags": 1,
+                    "ext": "v0"
+                  }
+                },
+                "ext": "v0"
+              }
+            }
+          ],
+          "events": [
+            {
+              "ext": "v0",
+              "contract_id": "CAP5AMC2OHNVREO66DFIN6DHJMPOBAJ2KCDDIMFBR7WWJH5RZBFM3UEI",
+              "type_": "contract",
+              "body": {
+                "v0": {
+                  "topics": [
+                    {
+                      "symbol": "mint"
+                    },
+                    {
+                      "address": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ"
+                    },
+                    {
+                      "string": "wBTC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                    }
+                  ],
+                  "data": {
+                    "i128": "500000"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "tx_changes_after": [],
+      "soroban_meta": null,
+      "events": [
+        {
+          "stage": "before_all_txs",
+          "event": {
+            "ext": "v0",
+            "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+            "type_": "contract",
+            "body": {
+              "v0": {
+                "topics": [
+                  {
+                    "symbol": "fee"
+                  },
+                  {
+                    "address": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                  }
+                ],
+                "data": {
+                  "i128": "800"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "diagnostic_events": []
+    }
+  },
+  "events": {
+    "contract_events": [
+      [],
+      [
+        {
+          "ext": "v0",
+          "contract_id": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+          "type_": "contract",
+          "body": {
+            "v0": {
+              "topics": [
+                {
+                  "symbol": "mint"
+                },
+                {
+                  "address": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ"
+                },
+                {
+                  "string": "USDC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                }
+              ],
+              "data": {
+                "i128": "10000000000"
+              }
+            }
+          }
+        }
+      ],
+      [],
+      [
+        {
+          "ext": "v0",
+          "contract_id": "CB22KRA3YZVCNCQI64JQ5WE7UY2VAV7WFLK6A2JN3HEX56T2EDAFO7QF",
+          "type_": "contract",
+          "body": {
+            "v0": {
+              "topics": [
+                {
+                  "symbol": "mint"
+                },
+                {
+                  "address": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ"
+                },
+                {
+                  "string": "BLND:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                }
+              ],
+              "data": {
+                "i128": "50000000000"
+              }
+            }
+          }
+        }
+      ],
+      [],
+      [
+        {
+          "ext": "v0",
+          "contract_id": "CAZAQB3D7KSLSNOSQKYD2V4JP5V2Y3B4RDJZRLBFCCIXDCTE3WHSY3UE",
+          "type_": "contract",
+          "body": {
+            "v0": {
+              "topics": [
+                {
+                  "symbol": "mint"
+                },
+                {
+                  "address": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ"
+                },
+                {
+                  "string": "wETH:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                }
+              ],
+              "data": {
+                "i128": "5000000"
+              }
+            }
+          }
+        }
+      ],
+      [],
+      [
+        {
+          "ext": "v0",
+          "contract_id": "CAP5AMC2OHNVREO66DFIN6DHJMPOBAJ2KCDDIMFBR7WWJH5RZBFM3UEI",
+          "type_": "contract",
+          "body": {
+            "v0": {
+              "topics": [
+                {
+                  "symbol": "mint"
+                },
+                {
+                  "address": "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ"
+                },
+                {
+                  "string": "wBTC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                }
+              ],
+              "data": {
+                "i128": "500000"
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "diagnostic_events": [],
+    "transaction_events": [
+      {
+        "stage": "before_all_txs",
+        "event": {
+          "ext": "v0",
+          "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+          "type_": "contract",
+          "body": {
+            "v0": {
+              "topics": [
+                {
+                  "symbol": "fee"
+                },
+                {
+                  "address": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+                }
+              ],
+              "data": {
+                "i128": "800"
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

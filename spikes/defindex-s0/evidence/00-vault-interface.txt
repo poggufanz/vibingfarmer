@@ -1,0 +1,235 @@
+ℹ️  Network: Test SDF Network ; September 2015
+🌎 Downloading contract spec: CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN
+#[soroban_sdk::contractargs(name = "Args")]
+#[soroban_sdk::contractclient(name = "Client")]
+pub trait Contract {
+    fn report(env: soroban_sdk::Env) -> Result<soroban_sdk::Vec<Report>, ContractError>;
+    fn rescue(
+        env: soroban_sdk::Env,
+        strategy_address: soroban_sdk::Address,
+        caller: soroban_sdk::Address,
+    ) -> Result<(), ContractError>;
+    fn deposit(
+        env: soroban_sdk::Env,
+        amounts_desired: soroban_sdk::Vec<i128>,
+        amounts_min: soroban_sdk::Vec<i128>,
+        from: soroban_sdk::Address,
+        invest: bool,
+    ) -> Result<
+        (
+            soroban_sdk::Vec<i128>,
+            i128,
+            Option<soroban_sdk::Vec<Option<AssetInvestmentAllocation>>>,
+        ),
+        ContractError,
+    >;
+    fn upgrade(
+        env: soroban_sdk::Env,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), ContractError>;
+    fn get_fees(env: soroban_sdk::Env) -> (u32, u32);
+    fn withdraw(
+        env: soroban_sdk::Env,
+        withdraw_shares: i128,
+        min_amounts_out: soroban_sdk::Vec<i128>,
+        from: soroban_sdk::Address,
+    ) -> Result<soroban_sdk::Vec<i128>, ContractError>;
+    fn lock_fees(
+        env: soroban_sdk::Env,
+        new_fee_bps: Option<u32>,
+    ) -> Result<soroban_sdk::Vec<Report>, ContractError>;
+    fn rebalance(
+        env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
+        instructions: soroban_sdk::Vec<Instruction>,
+    ) -> Result<(), ContractError>;
+    fn get_assets(
+        env: soroban_sdk::Env,
+    ) -> Result<soroban_sdk::Vec<AssetStrategySet>, ContractError>;
+    fn get_manager(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, ContractError>;
+    fn set_manager(
+        env: soroban_sdk::Env,
+        new_manager: soroban_sdk::Address,
+    ) -> Result<(), ContractError>;
+    fn release_fees(
+        env: soroban_sdk::Env,
+        strategy: soroban_sdk::Address,
+        amount: i128,
+    ) -> Result<Report, ContractError>;
+    fn __constructor(
+        env: soroban_sdk::Env,
+        assets: soroban_sdk::Vec<AssetStrategySet>,
+        roles: soroban_sdk::Map<u32, soroban_sdk::Address>,
+        vault_fee: u32,
+        defindex_protocol_receiver: soroban_sdk::Address,
+        defindex_protocol_rate: u32,
+        soroswap_router: soroban_sdk::Address,
+        name_symbol: soroban_sdk::Map<soroban_sdk::String, soroban_sdk::String>,
+        upgradable: bool,
+    );
+    fn pause_strategy(
+        env: soroban_sdk::Env,
+        strategy_address: soroban_sdk::Address,
+        caller: soroban_sdk::Address,
+    ) -> Result<(), ContractError>;
+    fn distribute_fees(
+        env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
+    ) -> Result<soroban_sdk::Vec<(soroban_sdk::Address, i128)>, ContractError>;
+    fn get_fee_receiver(
+        env: soroban_sdk::Env,
+    ) -> Result<soroban_sdk::Address, ContractError>;
+    fn set_fee_receiver(
+        env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
+        new_fee_receiver: soroban_sdk::Address,
+    );
+    fn unpause_strategy(
+        env: soroban_sdk::Env,
+        strategy_address: soroban_sdk::Address,
+        caller: soroban_sdk::Address,
+    ) -> Result<(), ContractError>;
+    fn get_emergency_manager(
+        env: soroban_sdk::Env,
+    ) -> Result<soroban_sdk::Address, ContractError>;
+    fn get_rebalance_manager(
+        env: soroban_sdk::Env,
+    ) -> Result<soroban_sdk::Address, ContractError>;
+    fn set_emergency_manager(
+        env: soroban_sdk::Env,
+        emergency_manager: soroban_sdk::Address,
+    );
+    fn set_rebalance_manager(
+        env: soroban_sdk::Env,
+        new_rebalance_manager: soroban_sdk::Address,
+    );
+    fn fetch_total_managed_funds(
+        env: soroban_sdk::Env,
+    ) -> Result<soroban_sdk::Vec<CurrentAssetInvestmentAllocation>, ContractError>;
+    fn get_asset_amounts_per_shares(
+        env: soroban_sdk::Env,
+        vault_shares: i128,
+    ) -> Result<soroban_sdk::Vec<i128>, ContractError>;
+    fn burn(env: soroban_sdk::Env, from: soroban_sdk::Address, amount: i128);
+    fn name(env: soroban_sdk::Env) -> soroban_sdk::String;
+    fn symbol(env: soroban_sdk::Env) -> soroban_sdk::String;
+    fn approve(
+        env: soroban_sdk::Env,
+        from: soroban_sdk::Address,
+        spender: soroban_sdk::Address,
+        amount: i128,
+        expiration_ledger: u32,
+    );
+    fn balance(env: soroban_sdk::Env, id: soroban_sdk::Address) -> i128;
+    fn decimals(env: soroban_sdk::Env) -> u32;
+    fn transfer(
+        env: soroban_sdk::Env,
+        from: soroban_sdk::Address,
+        to: soroban_sdk::Address,
+        amount: i128,
+    );
+    fn allowance(
+        env: soroban_sdk::Env,
+        from: soroban_sdk::Address,
+        spender: soroban_sdk::Address,
+    ) -> i128;
+    fn burn_from(
+        env: soroban_sdk::Env,
+        spender: soroban_sdk::Address,
+        from: soroban_sdk::Address,
+        amount: i128,
+    );
+    fn total_supply(env: soroban_sdk::Env) -> i128;
+    fn transfer_from(
+        env: soroban_sdk::Env,
+        spender: soroban_sdk::Address,
+        from: soroban_sdk::Address,
+        to: soroban_sdk::Address,
+        amount: i128,
+    );
+    fn quote(
+        env: soroban_sdk::Env,
+        amount_a: i128,
+        reserve_a: i128,
+        reserve_b: i128,
+    ) -> Result<i128, SoroswapLibraryError>;
+    fn pair_for(
+        env: soroban_sdk::Env,
+        factory: soroban_sdk::Address,
+        token_a: soroban_sdk::Address,
+        token_b: soroban_sdk::Address,
+    ) -> Result<soroban_sdk::Address, SoroswapLibraryError>;
+    fn sort_tokens(
+        env: soroban_sdk::Env,
+        token_a: soroban_sdk::Address,
+        token_b: soroban_sdk::Address,
+    ) -> Result<(soroban_sdk::Address, soroban_sdk::Address), SoroswapLibraryError>;
+    fn get_amount_in(
+        env: soroban_sdk::Env,
+        amount_out: i128,
+        reserve_in: i128,
+        reserve_out: i128,
+    ) -> Result<i128, SoroswapLibraryError>;
+    fn get_amounts_in(
+        env: soroban_sdk::Env,
+        factory: soroban_sdk::Address,
+        amount_out: i128,
+        path: soroban_sdk::Vec<soroban_sdk::Address>,
+    ) -> Result<soroban_sdk::Vec<i128>, SoroswapLibraryError>;
+    fn get_amount_out(
+        env: soroban_sdk::Env,
+        amount_in: i128,
+        reserve_in: i128,
+        reserve_out: i128,
+    ) -> Result<i128, SoroswapLibraryError>;
+    fn get_amounts_out(
+        env: soroban_sdk::Env,
+        factory: soroban_sdk::Address,
+        amount_in: i128,
+        path: soroban_sdk::Vec<soroban_sdk::Address>,
+    ) -> Result<soroban_sdk::Vec<i128>, SoroswapLibraryError>;
+    fn get_reserves_with_pair(
+        env: soroban_sdk::Env,
+        pair: soroban_sdk::Address,
+        token_a: soroban_sdk::Address,
+        token_b: soroban_sdk::Address,
+    ) -> Result<(i128, i128), SoroswapLibraryError>;
+    fn get_reserves_with_factory(
+        env: soroban_sdk::Env,
+        factory: soroban_sdk::Address,
+        token_a: soroban_sdk::Address,
+        token_b: soroban_sdk::Address,
+    ) -> Result<(i128, i128), SoroswapLibraryError>;
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AllowanceValue {
+    pub amount: i128,
+    pub expiration_ledger: u32,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AllowanceDataKey {
+    pub from: soroban_sdk::Address,
+    pub spender: soroban_sdk::Address,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct InvestEvent {
+    pub asset_investments: soroban_sdk::Vec<AssetInvestmentAllocation>,
+    pub rebalance_method: soroban_sdk::Symbol,
+    pub report: Report,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct UnwindEvent {
+    pub call_params: soroban_sdk::Vec<
+        (soroban_sdk::Address, i128, soroban_sdk::Address),
+    >,
+    pub rebalance_method: soroban_sdk::Symbol,
+    pub report: Report,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct SwapExactInEvent {
+    pub rebalance_method: soroban_s

@@ -1,0 +1,7 @@
+ℹ️  Simulating transaction…
+ℹ️  Signing transaction: 2cc87c48deb6e9d1b3c07be6b208abc5d0aa6c9db9b16abc095accfb2703e47d
+🌎 Sending transaction…
+✅ Transaction submitted successfully!
+🔗 https://stellar.expert/explorer/testnet/tx/2cc87c48deb6e9d1b3c07be6b208abc5d0aa6c9db9b16abc095accfb2703e47d
+📅 CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU - Success - Event: TransferWithAmountOnly (transfer), from: "GCM7WCEI6O5T53KYWX6AZ4AQGGOLOXQCH62PZVSEIZGGZWIKDIJR2BTQ", to: "CAN22V2K7H6YJQIHPMZMQWTJKVYV64WRHYX5D5XFTCWLBSDLOF7QOYA5", amount: "1000000000"
+
