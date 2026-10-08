@@ -21,7 +21,7 @@ The AI does not get custody of your funds. Each agent runs in a disposable on-ch
 
 ## Try it in two minutes
 
-1. Open [vibing-farmer.pages.dev](https://vibing-farmer.pages.dev).
+1. Open [vibingfarmer.xyz](https://vibingfarmer.xyz).
 2. Create a VF Wallet (passkey-based, no seed phrase, no extension required). Freighter, xBull, and Albedo work on testnet if you prefer those.
 3. Get test USDC from VF Wallet's built-in faucet.
 4. Go to Strategy, set amount, risk, and number of agents, review the plan, then sign once.
